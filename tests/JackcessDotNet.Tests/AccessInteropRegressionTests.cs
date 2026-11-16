@@ -118,6 +118,32 @@ public sealed class AccessInteropRegressionTests : IDisposable
             $"expected a 5000-char memo to use more LVAL pages than a short one (small={smallPages}, large={largePages})");
     }
 
+    // Access keeps a long value in the row only up to 64 bytes. Kept there at up to 1,024, a memo of 255 to 1,022
+    // characters read back here but showed #Error in Access (qcatco/exportmdb.interop#29).
+    [Theory]
+    [InlineData(62, true)]     // 62 Latin-1 characters: 64 bytes with the compression marker
+    [InlineData(63, false)]
+    [InlineData(255, false)]
+    [InlineData(1022, false)]
+    public void Memo_IsKeptInTheRow_OnlyUpToAccesssOwnLimit(int characters, bool inRow)
+    {
+        var value = new string('x', characters);
+        Assert.Equal(value, RoundTripMemo(value));
+        Assert.Equal(inRow, MemoRefType(_path, value) == 0x80);
+    }
+
+    [Fact]
+    public void Memo_OfOtherThanLatin1_IsKeptInTheRow_OnlyUpToAccesssOwnLimit()
+    {
+        var inRow = new string('\u043C', 32);     // 64 bytes of UTF-16
+        Assert.Equal(inRow, RoundTripMemo(inRow));
+        Assert.Equal(0x80, MemoRefType(_path, inRow));
+
+        var onAPage = new string('\u043C', 33);
+        Assert.Equal(onAPage, RoundTripMemo(onAPage));
+        Assert.Equal(0x40, MemoRefType(_path, onAPage));
+    }
+
     [Fact]
     public void LargeMemo_MovesToLvalPages_AndRoundTrips()
     {
@@ -191,6 +217,29 @@ public sealed class AccessInteropRegressionTests : IDisposable
         }
         using var reopen = Database.Open(_path);
         return reopen.GetTable("T").ReadAllRows()[0];
+    }
+
+    /// <summary>
+    /// The type byte of the one row's memo reference in the file RoundTripMemo left: 0x80 in the row, 0x40 one row of
+    /// a long-value page, 0x00 a chain of them. The reference is the last thing in the row before its end-of-data
+    /// offset, twelve bytes then the value when it is in the row.
+    /// </summary>
+    private static int MemoRefType(string path, string value)
+    {
+        using var db = Database.Open(path);
+        var table = db.GetTable("T");
+        using var file = new PageFile(path, JetFormat.Jet4, FileMode.Open, FileAccess.Read);
+        for (int p = 0; p < file.PageCount; p++)
+        {
+            byte[] page = file.ReadPage(p);
+            if (page[0] != JetFormat.PageTypeData
+                || ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) != table.Definition.TdefPageNumber)
+                continue;
+            int rowStart = ByteUtil.GetUShort(page, JetFormat.Jet4.OffsetDataRowTable) & JetFormat.RowOffsetMask;
+            // [columnCount:2][Id:4][memo reference ...]
+            return page[rowStart + 2 + 4 + 3];
+        }
+        throw new InvalidOperationException("The table's data page was not found.");
     }
 
     /// <summary>Every 4096-byte page whose bytes 4-7 spell "LVAL".</summary>

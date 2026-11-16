@@ -249,18 +249,18 @@ public sealed class RowEncoder
     }
 
     /// <summary>
+    /// The most bytes of a long value kept in the parent row (THIS_PAGE); a longer one goes to a long-value page.
+    /// It is Access's own limit, and Java Jackcess's (MAX_INLINE_LONG_VALUE_SIZE). The engine kept up to 1,024 bytes
+    /// in the row: it read them back, and so did other lenient readers, but Access showed #Error for every such
+    /// value (qcatco/exportmdb.interop#29).
+    /// </summary>
+    internal const int InlineLvalThreshold = 64;
+
+    /// <summary>
     /// Builds a THIS_PAGE inline LvRef in the REAL Jet format (matches Java
     /// Jackcess / what ACE writes): the type lives in the top two bits of the
     /// 32-bit length ([lengthWithFlags:4][lval_dp:4][unknown:4][data]).
     /// </summary>
-    /// <summary>
-    /// Long values up to this many bytes are stored inline in the parent row
-    /// (THIS_PAGE) instead of on LVAL pages - conservative enough that a row
-    /// with one inline memo plus ordinary columns stays under Jet4's ~4060-byte
-    /// row limit.
-    /// </summary>
-    internal const int InlineLvalThreshold = 1024;
-
     private static byte[] BuildInlineLvRef(byte[] data)
     {
         var lvRef = new byte[12 + data.Length];
@@ -290,9 +290,8 @@ public sealed class RowEncoder
                 byte[] textBytes = _format.Version == JetVersion.Jet3
                     ? _format.TextEncoding.GetBytes(text)
                     : EncodeText(col, text);
-                // Small values are stored inline in the row (THIS_PAGE), like
-                // real Access and upstream Jackcess; only genuinely large
-                // values go to LVAL pages. LVAL-bound text is stored as plain
+                // Values Access itself keeps in the row (THIS_PAGE) are stored
+                // there; anything longer goes to LVAL pages. LVAL-bound text is stored as plain
                 // UTF-16LE without the 0xFF 0xFE compression marker - that is
                 // what Access itself writes for chained memos, and ACE fails to
                 // decode compressed content spread across LVAL chunks.
