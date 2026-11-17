@@ -229,14 +229,16 @@ public sealed class Table
         int? highestGiven = null;
         if (newValues is not null && _autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
         {
-            if (AutoNumberInsertAllowed)
+            // A null is not a number to bring: the column keeps the one it has, whether or not a row may bring
+            // its own. Access holds no AutoNumber as null.
+            bool allowed = AutoNumberInsertAllowed;
+            newValues = new Row(newValues.Where(v => (allowed && v.Value is not null) || !_autoNumberColumns.Any(c =>
+                c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
+            if (allowed)
                 highestGiven = _autoNumberColumns
-                    .Where(c => c.DataType == DataType.Long && newValues.TryGetValue(c.Name, out var v) && v is not null)
+                    .Where(c => c.DataType == DataType.Long && newValues.ContainsKey(c.Name))
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
-            else
-                newValues = new Row(newValues.Where(v => !_autoNumberColumns.Any(c =>
-                    c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
         }
 
         // The key the rewritten row is found under: the one newValues brings for the primary-key column, when it

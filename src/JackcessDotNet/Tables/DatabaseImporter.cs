@@ -259,7 +259,7 @@ public static class DatabaseImporter
                 for (int i = 0; i < props.Count; i++)
                 {
                     object? raw = props[i].GetValue(item);
-                    if (columns[i].IsAutoNumber && raw is 0) continue;
+                    if (columns[i].IsAutoNumber && IsUnnumbered(raw)) continue;
                     if (stringFallback[i] && raw is not null) raw = raw.ToString();
                     row[columnNames[i]] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
                 }
@@ -397,7 +397,7 @@ public static class DatabaseImporter
                 object? raw = prop.GetValue(item);
 
                 // An identity property still at 0 is an object the database has yet to number.
-                if (tgt.IsAutoNumber && raw is 0) continue;
+                if (tgt.IsAutoNumber && IsUnnumbered(raw)) continue;
 
                 if (raw is not null && options.FallbackUnmappableToString
                     && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
@@ -411,6 +411,9 @@ public static class DatabaseImporter
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
+
+    /// <summary>An identity property still at zero, whatever integer type it is: an object yet to be numbered.</summary>
+    private static bool IsUnnumbered(object? identity) => identity is 0 or 0L or (short)0 or 0u or 0ul or (ushort)0;
 
     private static string ResolveTableName(string? explicitName, string? fromSource, string fallback)
     {

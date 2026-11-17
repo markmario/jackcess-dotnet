@@ -388,6 +388,22 @@ public sealed class AutoNumberTests : IDisposable
     }
 
     [Fact]
+    public void An_update_that_brings_null_for_an_AutoNumber_leaves_the_number_the_row_has()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.CreateTable("T", Columns(), primaryKey: "Id");
+        table.Insert(new Row { ["Txt"] = "one" });
+        table.AllowAutoNumberInsert = true;
+
+        table.UpdateByPrimaryKey(1, new Row { ["Id"] = null, ["Txt"] = "changed" });
+
+        var row = Assert.Single(table.ReadAllRows());
+        Assert.Equal(1, row["Id"]);
+        Assert.Equal("changed", row["Txt"]);
+        Assert.Equal(1, table.LastAutoNumber);
+    }
+
+    [Fact]
     public void An_update_to_a_primary_key_another_row_has_is_refused_and_changes_nothing()
     {
         using var db = Database.Create(_path, JetVersion.Jet4);
