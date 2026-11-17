@@ -238,7 +238,7 @@ public sealed class AccessCatalogTests : IDisposable
 
         var (isReference, free, _) = JetPages.GlobalFreePages(file, file.PageCount);
         Assert.False(isReference);
-        Assert.Empty(free.Where(p => p >= blankEnd));
+        Assert.DoesNotContain(free, p => p >= blankEnd);
     }
 
     [Fact]
@@ -258,7 +258,7 @@ public sealed class AccessCatalogTests : IDisposable
         var (isReference, free, mapPages) = JetPages.GlobalFreePages(file, file.PageCount + 10);
         Assert.True(isReference);
         Assert.All(mapPages, m => Assert.Equal(JetFormat.PageTypeUsageMap, file.ReadPage(m)[0]));
-        Assert.Empty(free.Where(p => p >= blankEnd && p < file.PageCount));
+        Assert.DoesNotContain(free, p => p >= blankEnd && p < file.PageCount);
         Assert.Contains(file.PageCount, free);   // the next page Access would add is free
     }
 

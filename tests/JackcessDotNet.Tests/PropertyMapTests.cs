@@ -1,6 +1,5 @@
 using System.IO;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace JackcessDotNet.Tests;
 

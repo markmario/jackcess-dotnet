@@ -327,6 +327,6 @@ public sealed class EngineReviewTests : IDisposable
 
         Assert.True(db.File.ReadCount - before <= 2, $"{db.File.ReadCount - before} pages read for 200 appended");
         var (_, free, _) = JetPages.GlobalFreePages(db.File, db.File.PageCount);
-        Assert.Empty(free.Where(p => p >= 50));
+        Assert.DoesNotContain(free, p => p >= 50);
     }
 }
