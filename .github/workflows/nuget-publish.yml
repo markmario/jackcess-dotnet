@@ -20,11 +20,14 @@ jobs:
       # arrived in the 9.0.2xx SDK. global.json rolls forward to latestMajor so
       # this currently works off whatever the runner image ships - installing
       # 9.0.x explicitly makes that deterministic instead of incidental.
+      # 10.0.x because the tests need it: global.json has `dotnet test` run
+      # them on Microsoft Testing Platform, which only the 10 SDK's does.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
 
       - name: Verify test corpus
         shell: pwsh
@@ -40,7 +43,7 @@ jobs:
       # hosted runners now live in tests/corpus, so there is no longer a reason
       # to publish a release that was never tested.
       - name: Test
-        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build --verbosity normal
+        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build
 
       - name: Upload package artifact
         if: github.event_name != 'pull_request'
