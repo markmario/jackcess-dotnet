@@ -53,8 +53,8 @@ package of that version and is not published anywhere. If you distribute a build
 Each of these was found by having Access or ACE open a file the engine wrote.
 
 - **Three target frameworks:** `net8.0`, `net472` and `netstandard2.0`.
-- **Files of any size.** A table's usage map grows past its first window of pages, as Access's does.
-  Before, a file could not be written past about 2 MB.
+- **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
+  Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
 - **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
   also stay in insertion order. A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
