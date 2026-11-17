@@ -239,17 +239,35 @@ public sealed class Table
                     c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
         }
 
+        // The key the rewritten row is found under: the one newValues brings for the primary-key column, when it
+        // brings a different one, and otherwise the key it had. A key another row already has is refused here,
+        // before the row is rewritten.
+        bool indexed = _definition.PrimaryKeyColumnName is not null && _definition.PrimaryKeyIndexPage > 0;
+        object newKey = primaryKeyValue;
+        if (indexed && newValues is not null
+            && newValues.TryGetValue(_definition.PrimaryKeyColumnName!, out var replacement) && replacement is not null)
+        {
+            var keyColumns = IndexWriter.PrimaryKeyColumns(_definition);
+            if (keyColumns.Count == 1
+                && !IndexKeys.Encode(keyColumns, new[] { replacement })
+                        .AsSpan().SequenceEqual(IndexKeys.Encode(keyColumns, new[] { primaryKeyValue })))
+            {
+                if (new IndexWriter(_file, _allocator).FindRowByPrimaryKey(_definition, replacement) is not null)
+                    throw new InvalidOperationException(
+                        $"{Name} already has a row whose primary key is {replacement}. The table is left as it was.");
+                newKey = replacement;
+            }
+        }
+
         var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!);
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
 
-        // The merged row that was actually written carries the (unchanged) PK value, so we can
-        // index it under primaryKeyValue without inspecting newValues for the PK column.
-        if (_definition.PrimaryKeyColumnName is not null && _definition.PrimaryKeyIndexPage > 0)
+        if (indexed)
         {
             var writer = new IndexWriter(_file, _allocator);
             writer.RemovePrimaryKey(_definition, new[] { primaryKeyValue }, oldRowPtr);
-            writer.InsertPrimaryKey(_definition, primaryKeyValue, newRowPtr);
+            writer.InsertPrimaryKey(_definition, newKey, newRowPtr);
         }
     }
 

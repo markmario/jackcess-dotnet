@@ -295,9 +295,11 @@ public static class DatabaseImporter
     /// by name (case-insensitive); source columns with no matching target column
     /// are silently dropped. Values are coerced to each target column's
     /// declared <see cref="DataType"/> via <see cref="TypeMapper.CoerceForJet"/>.
+    /// The target numbers the rows itself, unless <see cref="ImportOptions.KeepIdentity"/> keeps the source's.
     /// </summary>
     private static void AppendDataTableRows(Table target, DataTable source, ImportOptions options)
     {
+        using var identity = KeepIdentity.On(target, options);
         var targetByName = target.Columns.ToDictionary(
             c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
 
@@ -334,6 +336,31 @@ public static class DatabaseImporter
     }
 
     /// <summary>
+    /// Lets the rows of one append bring their own AutoNumber values, when the options ask for it, and puts the
+    /// table back as it was afterwards.
+    /// </summary>
+    private readonly struct KeepIdentity : IDisposable
+    {
+        private readonly Table? _table;
+        private readonly bool? _before;
+
+        private KeepIdentity(Table table)
+        {
+            _table = table;
+            _before = table.AllowAutoNumberInsert;
+            table.AllowAutoNumberInsert = true;
+        }
+
+        public static KeepIdentity On(Table target, ImportOptions options)
+            => options.KeepIdentity ? new KeepIdentity(target) : default;
+
+        public void Dispose()
+        {
+            if (_table is not null) _table.AllowAutoNumberInsert = _before;
+        }
+    }
+
+    /// <summary>
     /// POCO sibling of <see cref="AppendDataTableRows"/>. Matches public
     /// readable properties of <c>T</c> to <paramref name="target"/>'s columns
     /// by name (honouring <c>[Column]</c> + <c>[NotMapped]</c>). Properties
@@ -341,6 +368,7 @@ public static class DatabaseImporter
     /// </summary>
     private static void AppendCollectionRows<T>(Table target, IEnumerable<T> items, ImportOptions options)
     {
+        using var identity = KeepIdentity.On(target, options);
         var targetByName = target.Columns.ToDictionary(
             c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
 
@@ -367,6 +395,9 @@ public static class DatabaseImporter
             foreach (var (prop, tgt) in pairs)
             {
                 object? raw = prop.GetValue(item);
+
+                // An identity property still at 0 is an object the database has yet to number.
+                if (tgt.IsAutoNumber && raw is 0) continue;
 
                 if (raw is not null && options.FallbackUnmappableToString
                     && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
@@ -481,4 +512,18 @@ public sealed class ImportOptions
     /// pre-existing behaviour.</para>
     /// </summary>
     public bool AppendIfExists { get; init; }
+
+    /// <summary>
+    /// When rows are appended to an existing table (<see cref="AppendIfExists"/>), whether they keep the values
+    /// the source has for the table's AutoNumber columns.
+    /// <para>When <c>false</c> (default), the table numbers the appended rows itself, on from its own counter, and
+    /// a value the source has is ignored - as <c>SqlBulkCopy</c> does without <c>KeepIdentity</c>. Two batches
+    /// that each count from the same number cannot then collide.</para>
+    /// <para>Set it to <c>true</c> when other tables refer to the source's values - the tables of a
+    /// <see cref="DataSet"/> appended one after another - so a child row still finds its parent. A value another
+    /// row of the table already has is then the caller's to avoid. A typed object's identity property still at 0
+    /// is numbered by the table either way.</para>
+    /// <para>A table the import creates always keeps the source's values: nothing is there to collide with.</para>
+    /// </summary>
+    public bool KeepIdentity { get; init; }
 }

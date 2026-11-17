@@ -328,6 +328,83 @@ public sealed class AutoNumberTests : IDisposable
         Assert.Equal(9, table.LastAutoNumber);
     }
 
+    private static DataTable PeopleCountingFrom(int seed, params string[] names)
+    {
+        var source = new DataTable("People");
+        source.Columns.Add(new DataColumn("Id", typeof(int)) { AutoIncrement = true, AutoIncrementSeed = seed });
+        source.Columns.Add("Name", typeof(string));
+        foreach (string name in names) source.Rows.Add(null, name);
+        return source;
+    }
+
+    [Fact]
+    public void Rows_appended_to_a_table_are_numbered_by_the_table_unless_the_import_keeps_their_own()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.ImportTable(PeopleCountingFrom(1, "A", "B"));
+
+        // A second batch that counts from 1 again: its numbers are the table's, not its own.
+        db.ImportTable(PeopleCountingFrom(1, "C", "D"), options: new ImportOptions { AppendIfExists = true });
+        Assert.Equal(new[] { 1, 2, 3, 4 }, Ids(table));
+
+        // Rows other tables refer to keep the numbers they came with.
+        db.ImportTable(PeopleCountingFrom(100, "E", "F"), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        Assert.Equal(new[] { 1, 2, 3, 4, 100, 101 }, Ids(table));
+        Assert.Equal(101, table.LastAutoNumber);
+        Assert.Null(table.AllowAutoNumberInsert);
+    }
+
+    [Fact]
+    public void Objects_appended_keeping_identity_keep_the_one_they_have_and_one_without_is_numbered()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.ImportTable(new[] { new Person { Name = "A" } });
+
+        db.ImportTable(new[] { new Person { Id = 50, Name = "B" }, new Person { Name = "C" } },
+            options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+
+        Assert.Equal(new[] { 1, 50, 51 }, Ids(table));
+    }
+
+    [Fact]
+    public void An_update_that_changes_the_primary_key_moves_the_row_s_index_entry_to_the_new_key()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.CreateTable("T", Columns(), primaryKey: "Id");
+        table.Insert(new Row { ["Txt"] = "one" });
+        table.Insert(new Row { ["Txt"] = "two" });
+
+        table.AllowAutoNumberInsert = true;
+        table.UpdateByPrimaryKey(1, new Row { ["Id"] = 40 });
+
+        // The index itself, not a cursor: a cursor that finds no entry reads the table instead.
+        var index = new IndexWriter(db.File, new PageAllocator(db.File));
+        Assert.NotNull(index.FindRowByPrimaryKey(table.Definition, 40));
+        Assert.Null(index.FindRowByPrimaryKey(table.Definition, 1));
+        Assert.NotNull(index.FindRowByPrimaryKey(table.Definition, 2));
+
+        Assert.Equal("one", table.NewIndexCursor().FindRowByPrimaryKey(40)!["Txt"]);
+        Assert.Equal(40, table.LastAutoNumber);
+    }
+
+    [Fact]
+    public void An_update_to_a_primary_key_another_row_has_is_refused_and_changes_nothing()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.CreateTable("T", Columns(), primaryKey: "Id");
+        table.Insert(new Row { ["Txt"] = "one" });
+        table.Insert(new Row { ["Txt"] = "two" });
+        table.AllowAutoNumberInsert = true;
+
+        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(1, new Row { ["Id"] = 2, ["Txt"] = "x" }));
+
+        Assert.Equal(new[] { 1, 2 }, Ids(table));
+        var cursor = table.NewIndexCursor();
+        Assert.Equal("one", cursor.FindRowByPrimaryKey(1)!["Txt"]);
+        Assert.Equal("two", cursor.FindRowByPrimaryKey(2)!["Txt"]);
+        Assert.Equal(2, table.LastAutoNumber);
+    }
+
     public static TheoryData<string, string> AccessTablesWithALongAutoNumber()
     {
         var data = new TheoryData<string, string>();
