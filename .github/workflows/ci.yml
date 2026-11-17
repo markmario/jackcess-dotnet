@@ -25,11 +25,14 @@ jobs:
       # arrived in the 9.0.2xx SDK. Our global.json rolls forward to latestMajor
       # so this currently works off whatever the runner image ships - installing
       # 9.0.x explicitly makes that deterministic instead of incidental.
+      # 10.0.x because the tests need it: global.json has `dotnet test` run
+      # them on Microsoft Testing Platform, which only the 10 SDK's does.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
 
       # Hash every fixture against tests/corpus/MANIFEST.sha256 BEFORE building.
       # A missing, truncated, edited or newline-mangled .mdb otherwise surfaces
@@ -63,7 +66,7 @@ jobs:
       # No --filter. The whole suite runs, corpus tests included: they are the
       # only thing that checks this parser against files real Access wrote.
       - name: Test
-        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build --report-xunit-trx --report-xunit-trx-filename test-results.trx
 
       - name: Upload test results
         if: always()
