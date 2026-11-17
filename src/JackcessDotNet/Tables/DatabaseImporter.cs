@@ -158,20 +158,30 @@ public static class DatabaseImporter
 
         var t = db.CreateTable(name, columns, primaryKey: pk);
 
-        // Stream rows.
-        foreach (DataRow dr in table.Rows)
+        // Stream rows. An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to
+        // them - so the new table takes them as given, and its counter ends at the highest: rows added later,
+        // here or in Access, are numbered on from it.
+        t.AllowAutoNumberInsert = true;
+        try
         {
-            if (dr.RowState == DataRowState.Deleted) continue;
-            var row = new Row();
-            for (int i = 0; i < columnSources.Count; i++)
+            foreach (DataRow dr in table.Rows)
             {
-                var dc = columnSources[i];
-                object? raw = dr[dc];
-                if (raw == DBNull.Value) raw = null;
-                if (stringFallback[i] && raw is not null) raw = raw.ToString();
-                row[columns[i].Name] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
+                if (dr.RowState == DataRowState.Deleted) continue;
+                var row = new Row();
+                for (int i = 0; i < columnSources.Count; i++)
+                {
+                    var dc = columnSources[i];
+                    object? raw = dr[dc];
+                    if (raw == DBNull.Value) raw = null;
+                    if (stringFallback[i] && raw is not null) raw = raw.ToString();
+                    row[columns[i].Name] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
+                }
+                t.Insert(row);
             }
-            t.Insert(row);
+        }
+        finally
+        {
+            t.AllowAutoNumberInsert = null;
         }
 
         return t;
@@ -237,17 +247,28 @@ public static class DatabaseImporter
 
         var t = db.CreateTable(name, columns, primaryKey: pk);
 
-        foreach (var item in items)
+        // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
+        // number - is numbered by the table.
+        t.AllowAutoNumberInsert = true;
+        try
         {
-            if (item is null) continue;
-            var row = new Row();
-            for (int i = 0; i < props.Count; i++)
+            foreach (var item in items)
             {
-                object? raw = props[i].GetValue(item);
-                if (stringFallback[i] && raw is not null) raw = raw.ToString();
-                row[columnNames[i]] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
+                if (item is null) continue;
+                var row = new Row();
+                for (int i = 0; i < props.Count; i++)
+                {
+                    object? raw = props[i].GetValue(item);
+                    if (columns[i].IsAutoNumber && raw is 0) continue;
+                    if (stringFallback[i] && raw is not null) raw = raw.ToString();
+                    row[columnNames[i]] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
+                }
+                t.Insert(row);
             }
-            t.Insert(row);
+        }
+        finally
+        {
+            t.AllowAutoNumberInsert = null;
         }
         return t;
     }

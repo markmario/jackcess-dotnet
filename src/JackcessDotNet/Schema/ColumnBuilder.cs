@@ -42,10 +42,14 @@ public sealed class ColumnBuilder
         return this;
     }
 
+    /// <summary>
+    /// Makes the column an AutoNumber, filled in by <see cref="Table.Insert"/>: a Long column counts up from the
+    /// table's counter, a Guid column (Access's Replication ID) gets a new GUID.
+    /// </summary>
     public ColumnBuilder WithAutoNumber(bool autoNumber = true)
     {
-        if (_dataType != DataType.Long)
-            throw new InvalidOperationException("AutoNumber requires DataType.Long.");
+        if (_dataType is not (DataType.Long or DataType.Guid))
+            throw new InvalidOperationException("AutoNumber requires DataType.Long or DataType.Guid.");
         _isAutoNumber = autoNumber;
         return this;
     }

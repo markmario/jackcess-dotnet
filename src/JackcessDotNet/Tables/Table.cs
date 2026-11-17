@@ -14,6 +14,8 @@ public sealed class Table
     private readonly TableDefinition _definition;
     private readonly DataPageWriter  _dataWriter;
     private readonly Database?       _owningDb;
+    /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
+    private readonly IReadOnlyList<Column> _autoNumberColumns;
 
     internal Table(PageFile file, PageAllocator allocator, TableDefinition definition,
                    Database? owningDb = null)
@@ -23,6 +25,12 @@ public sealed class Table
         _definition  = definition  ?? throw new ArgumentNullException(nameof(definition));
         _dataWriter  = new DataPageWriter(file, allocator);
         _owningDb    = owningDb;
+        // A complex column (attachments, multi-value fields) carries the flag too: its number is the key of the
+        // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
+        _autoNumberColumns = definition.Columns
+            .Where(c => c.IsAutoNumber && c.DataType != DataType.Complex)
+            .OrderBy(c => c.ColumnNumber)
+            .ToArray();
     }
 
     /// <summary>The table's definition, for tests that look at its pages.</summary>
@@ -34,6 +42,27 @@ public sealed class Table
     public IReadOnlyList<Column> Columns => _definition.Columns;
     /// <summary>Indexes defined on this table (read from the on-disk TDEF).</summary>
     public IReadOnlyList<Index>  Indexes => _definition.Indexes;
+
+    /// <summary>The number of rows in the table, as its definition counts them.</summary>
+    public int RowCount => ByteUtil.GetInt(ReadDefinitionPage(), _file.Format.TdefOffsetNumRows);
+
+    /// <summary>
+    /// The last Long auto-number the table handed out, or was given: the next row inserted gets one more. It is
+    /// kept in the table's definition, where Access keeps it, so it is the same number after the file is closed
+    /// and opened again, and the one Access itself continues from. 0 for a table that has numbered no row.
+    /// </summary>
+    public int LastAutoNumber => ByteUtil.GetInt(ReadDefinitionPage(), _file.Format.TdefOffsetLastAutoNumber);
+
+    /// <summary>
+    /// Whether a row may bring its own value for an AutoNumber column of this table: <c>true</c> or <c>false</c>
+    /// decides it for this table, <c>null</c> (the default) leaves it to
+    /// <see cref="Database.AllowAutoNumberInsert"/>, where what each choice does is described.
+    /// </summary>
+    public bool? AllowAutoNumberInsert { get; set; }
+
+    private bool AutoNumberInsertAllowed => AllowAutoNumberInsert ?? _owningDb?.AllowAutoNumberInsert ?? false;
+
+    private byte[] ReadDefinitionPage() => _file.ReadPage(_definition.TdefPageNumber);
 
     private PropertyMaps? _propertiesCache;
     /// <summary>
@@ -73,17 +102,104 @@ public sealed class Table
     /// The total row count in the table's TDEF is updated on every insert.
     /// When the table has a primary-key column configured, a leaf entry is also
     /// appended to the PK index page so <see cref="IndexCursor.FindRow"/> can use it.
+    /// <para>
+    /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values
+    /// afterwards: a Long column gets one more than <see cref="LastAutoNumber"/>, a Guid column a new GUID. A
+    /// value the row already holds for such a column is ignored and replaced, unless
+    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own. An insert that fails before the row is
+    /// written leaves the counter and <paramref name="row"/> as they were, so the number is not lost.
+    /// </para>
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The table has an AutoNumber column that is neither Long nor Guid, or a primary key that cannot be kept.
+    /// </exception>
     public void Insert(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsurePrimaryKeyCanBeKept();
 
-        _owningDb?.ValidateForeignKeysForInsert(this, row);
+        var given = AutoNumberValuesIn(row);
+        int? lastAutoNumber;
+        int  rowPtr;
+        try
+        {
+            lastAutoNumber = FillAutoNumbers(row);
+            _owningDb?.ValidateForeignKeysForInsert(this, row);
+            rowPtr = _dataWriter.InsertRow(_definition, row);
+        }
+        catch when (given is not null)
+        {
+            // The row was not written: it goes back to the caller as it came. The counter was never moved - it
+            // is written with the row count, below - so the next insert is given this row's number.
+            foreach (var (name, had, value) in given)
+            {
+                if (had) row[name] = value;
+                else     row.Remove(name);
+            }
+            throw;
+        }
 
-        int rowPtr = _dataWriter.InsertRow(_definition, row);
-        _dataWriter.IncrementTdefRowCount(_definition.TdefPageNumber);
+        // The counter and the row count go to the definition together, once the row is on its page and before its
+        // key: a row in the file is always one the counter has passed, whatever becomes of the key.
+        _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
         MaybeAddPrimaryKeyIndexEntry(row, rowPtr);
+    }
+
+    /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
+    private List<(string Name, bool Had, object? Value)>? AutoNumberValuesIn(Row row)
+    {
+        if (_autoNumberColumns.Count == 0) return null;
+        var values = new List<(string, bool, object?)>(_autoNumberColumns.Count);
+        foreach (var column in _autoNumberColumns)
+            values.Add((column.Name, row.TryGetValue(column.Name, out var value), value));
+        return values;
+    }
+
+    /// <summary>
+    /// Puts each AutoNumber column's value in <paramref name="row"/> and returns what the table's Long counter
+    /// becomes once the row is written (null when the table has no Long AutoNumber). Nothing is written here.
+    /// </summary>
+    private int? FillAutoNumbers(Row row)
+    {
+        if (_autoNumberColumns.Count == 0) return null;
+
+        foreach (var column in _autoNumberColumns)
+            if (column.DataType is not (DataType.Long or DataType.Guid))
+                throw new NotSupportedException(
+                    $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
+                    "AutoNumbers are generated. The table is left as it was.");
+
+        bool allowed = AutoNumberInsertAllowed;
+        int? last = null;
+        foreach (var column in _autoNumberColumns)
+        {
+            object? given = allowed && row.TryGetValue(column.Name, out var value) ? value : null;
+            if (column.DataType == DataType.Guid)
+            {
+                row[column.Name] = given switch
+                {
+                    null      => Guid.NewGuid(),
+                    Guid guid => guid,
+                    _         => Guid.Parse(Convert.ToString(given, System.Globalization.CultureInfo.InvariantCulture)!),
+                };
+                continue;
+            }
+
+            last ??= LastAutoNumber;
+            if (given is null)
+            {
+                // Past int.MaxValue the counter wraps to the negative numbers.
+                last = unchecked(last.Value + 1);
+                row[column.Name] = last.Value;
+            }
+            else
+            {
+                int number = Convert.ToInt32(given, System.Globalization.CultureInfo.InvariantCulture);
+                row[column.Name] = number;
+                if (number > last) last = number;
+            }
+        }
+        return last;
     }
 
     /// <summary>
@@ -102,11 +218,30 @@ public sealed class Table
     /// Updates the row with the given primary-key value.
     /// Old LVAL chunks are freed and their space is reclaimed before the new row is written.
     /// The row's primary-key entry moves to the rewritten row, as Access keeps an index.
+    /// An AutoNumber column keeps the value the row has: one in <paramref name="newValues"/> is ignored, unless
+    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
+    /// moves the counter up to it.
     /// </summary>
     public void UpdateByPrimaryKey(object primaryKeyValue, Row newValues)
     {
         EnsurePrimaryKeyCanBeKept();
-        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues);
+
+        int? highestGiven = null;
+        if (newValues is not null && _autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
+        {
+            if (AutoNumberInsertAllowed)
+                highestGiven = _autoNumberColumns
+                    .Where(c => c.DataType == DataType.Long && newValues.TryGetValue(c.Name, out var v) && v is not null)
+                    .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
+                    .Max();
+            else
+                newValues = new Row(newValues.Where(v => !_autoNumberColumns.Any(c =>
+                    c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
+        }
+
+        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!);
+        if (highestGiven is { } given)
+            _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
 
         // The merged row that was actually written carries the (unchanged) PK value, so we can
         // index it under primaryKeyValue without inspecting newValues for the PK column.

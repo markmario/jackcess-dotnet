@@ -258,6 +258,7 @@ public sealed class FreedSpaceTests : IDisposable
             int pages = LvalPages(db, table, blob).Count;
 
             table.DeleteRow(key, keyValue);
+            table.AllowAutoNumberInsert = true;   // the key is the table's AutoNumber: the new row takes the old one's
             var row = new Row { [key] = keyValue, [blob] = Bytes(length, 7) };
             table.Insert(row);
 
