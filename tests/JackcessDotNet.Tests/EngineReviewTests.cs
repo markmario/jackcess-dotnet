@@ -6,7 +6,7 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// What the review of qcatco/jackcess-dotnet#3 found, each seen failing first: a table registered in a file whose
-/// catalog sorts text in an order the engine does not key; an index root that moved under a writer holding the old
+/// catalog sorts text in an order the engine did not then key (Access 2010's General, which it has keyed since); an index root that moved under a writer holding the old
 /// one; text columns created with no sort order, which Access then keys in another collation; a primary key an
 /// earlier version wrote; a delete or insert that changed a table before finding its key could not be kept; a name a
 /// query already has; and the global usage map read again for every page appended. With them a guard, which passed
@@ -58,17 +58,19 @@ public sealed class EngineReviewTests : IDisposable
         new object[] { "V2010", "calcFieldV2010.accdb" },
     };
 
-    // Access 2010 files whose catalog keeps names in Access 2010's General order, whose keys the engine does not write.
+    // Access 2010 files whose catalog keeps names in Access 2010's General order.
     public static IEnumerable<object[]> GeneralOrderFiles() => new[]
     {
         new object[] { "V2010", "indexV2010.accdb" },
         new object[] { "V2010", "common1V2010.accdb" },
+        new object[] { "V2010", "indexCodesV2010.accdb" },
     };
 
     // The keys Access itself wrote for its catalog rows are the reference: the engine's key for each row must be the
     // same bytes, or Access cannot find by name a table the engine registers.
     [Theory]
     [MemberData(nameof(GeneralLegacyFiles))]
+    [MemberData(nameof(GeneralOrderFiles))]
     public void The_engine_keys_every_catalog_row_as_Access_keyed_it(string version, string filename)
     {
         using var db = Database.Open(CopyOf(version, filename));
@@ -88,19 +90,52 @@ public sealed class EngineReviewTests : IDisposable
         Assert.True(compared >= 10, $"{compared} rows compared");
     }
 
+    // The catalog of such a file names the new table in the General order, where Access looks for it, and the
+    // table's own text sorts as the database's does: ACE gives a table it adds to such a file that order.
     [Theory]
     [MemberData(nameof(GeneralOrderFiles))]
-    public void A_file_whose_catalog_sorts_in_the_newer_General_order_is_not_given_a_table(string version, string filename)
+    public void A_table_made_in_a_file_that_sorts_in_General_is_named_and_keyed_in_General(string version, string filename)
     {
+        string[] codes = { "b", "Café", "a-b", "Ünïcødé", "日本語", "ab", "Æsir", "a\U0001F600" };
         string path = CopyOf(version, filename);
-        byte[] before = File.ReadAllBytes(path);
         using (var db = Database.Open(path))
         {
-            int pages = db.File.PageCount;
-            Assert.Throws<NotSupportedException>(() => db.CreateTable("EngineMade", OneColumn()));
-            Assert.Equal(pages, db.File.PageCount);
+            var table = db.CreateTable("Ünïcødé Made", new[]
+            {
+                new ColumnBuilder("Code", DataType.Text).MaxLength(20).Build(),
+                new ColumnBuilder("Notes", DataType.Memo).Build(),
+                new ColumnBuilder("N", DataType.Long).Build(),
+            }, primaryKey: "Code");
+            for (int i = 0; i < codes.Length; i++)
+                table.Insert(new Row { ["Code"] = codes[i], ["N"] = i });
         }
-        Assert.Equal(before, File.ReadAllBytes(path));
+
+        using (var db = Database.Open(path))
+        {
+            var file = db.File;
+            int tdef = TdefOf(file, "Ünïcødé Made");
+            byte[] page = file.ReadPage(tdef);
+            int columnDefs = 63 + ByteUtil.GetInt(page, 51) * 12;
+            Assert.Equal("09040001", Convert.ToHexString(page, columnDefs + 0 * 25 + 11, 4));   // 1033, version 1: General
+            Assert.Equal("09040001", Convert.ToHexString(page, columnDefs + 1 * 25 + 11, 4));
+
+            // The name's entry in the catalog is the key of the General order.
+            var parentIdName = db.GetTable("MSysObjects").Indexes.Single(ix => ix.Name == "ParentIdName");
+            var block = JetPages.IndexBlocks(file, JetFormat.PageSystemCatalog)[parentIdName.IndexDataNumber];
+            Assert.Empty(JetPages.RuleBreaks(file, block.Root, JetFormat.PageSystemCatalog));
+            string nameKey = Convert.ToHexString(IndexKeys.EncodeText(TextIndexCodes.General, true, "Ünïcødé Made"));
+            Assert.Contains(JetPages.LeafEntries(file, block.Root), e => e.Hex.EndsWith(nameKey, StringComparison.Ordinal));
+
+            // The table's key holds each code's General key, and finds its row.
+            var table = db.GetTable("Ünïcødé Made");
+            int root = JetPages.IndexBlocks(file, tdef)[0].Root;
+            Assert.Empty(JetPages.RuleBreaks(file, root, tdef));
+            Assert.Equal(
+                codes.Select(c => Convert.ToHexString(IndexKeys.EncodeText(TextIndexCodes.General, true, c))).OrderBy(k => k, StringComparer.Ordinal),
+                JetPages.LeafEntries(file, root).Select(e => e.Hex));
+            for (int i = 0; i < codes.Length; i++)
+                Assert.Equal(i, table.NewIndexCursor().FindRowByPrimaryKey(codes[i])?["N"]);
+        }
     }
 
     [Fact]
@@ -122,14 +157,14 @@ public sealed class EngineReviewTests : IDisposable
         Assert.Equal("09040000", SortOrder(2));
     }
 
-    // An index on text kept in an order the engine does not key is not used to find rows: the table is scanned, so
-    // every row is found. Access 2010 keyed these tables' text, which holds the characters whose keys differ most
-    // between the orders, in its General order.
+    // Access 2010 keyed these tables' text, which holds the characters whose keys differ most between the orders,
+    // in its General order. Every row is found, and through the index wherever the engine makes the value's key:
+    // the entry Access wrote for the row is at the key the engine makes.
     [Fact]
-    public void A_text_index_in_the_newer_General_order_is_not_trusted_to_find_rows()
+    public void Rows_are_found_through_a_text_index_Access_2010_made_in_the_General_order()
     {
         using var db = Database.Open(CopyOf("V2010", "indexCodesV2010.accdb"));
-        int found = 0;
+        int found = 0, throughIndex = 0, valuesNotKeyed = 0;
         foreach (string name in db.ListTables())
         {
             var table = db.GetTable(name);
@@ -144,12 +179,89 @@ public sealed class EngineReviewTests : IDisposable
                     Assert.NotNull(hit);
                     Assert.Equal(row[column], hit![column]);
                     found++;
+
+                    Assert.True(index.Columns[0].Column.SortOrder.IsGeneral);
+                    if (!IndexKeys.CanSearch(index.Columns, new[] { row[column] })) { valuesNotKeyed++; continue; }
+                    Assert.NotEmpty(new IndexReader(db.File, index).FindRowPointers(row[column]!));
+                    throughIndex++;
                 }
             }
         }
         Assert.True(found > 0, "no single-column text index with rows was found to test");
+        Assert.True(throughIndex > 100, $"{throughIndex} rows found through an index");
+        // This file holds no value the engine makes no key for; Every_row_is_found_through_every_text_index_Access_made
+        // has the corpus's one value that is scanned for.
+        Assert.Equal(0, valuesNotKeyed);
     }
 
+    // Every Jet4 file of the corpus Access made, in either order the engine writes.
+    public static IEnumerable<object[]> Jet4CorpusFiles()
+        => TestCorpus.Files("*.*", "V2000", "V2003", "V2007", "V2010", "V2019")
+            .Where(f => f.EndsWith(".mdb", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".accdb", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new object[] { Path.GetFileName(Path.GetDirectoryName(f)!), Path.GetFileName(f) });
+
+    // A lookup through an index that misses says the row is not there, so a key the engine makes otherwise than
+    // Access made it loses a row. Every row of every table of the corpus is looked up through each of the table's
+    // indexes that has a text column, by the row's own values: its entry must be at the key the engine makes -
+    // over a million rows, some 267,000 in each of four files that hold a table per kind of character, in General
+    // - Legacy (Access 2000, 2003, 2007) and in General (Access 2010).
+    //
+    // A value whose key a search cannot trust is one a lookup scans the table for, and that must find the row
+    // too. The corpus has one: 255 characters whose key Jackcess wrote whole, 685 bytes, where Access - Jet 4.0,
+    // ACE 12 and ACE 16 alike - cuts a key at 510. It has no indexed value with a character Access keys by its
+    // neighbours; ExportMdb.Interop's EngineTablesInAccessTests has ACE write those.
+    [Theory]
+    [MemberData(nameof(Jet4CorpusFiles))]
+    public void Every_row_is_found_through_every_text_index_Access_made(string version, string filename)
+    {
+        Database db;
+        try { db = Database.Open(CopyOf(version, filename)); }
+        catch (Exception e) when (e is NotSupportedException or InvalidDataException or UnauthorizedAccessException) { return; }   // encrypted, or not a database
+
+        var misses = new List<string>();
+        int lookedUp = 0, scannedFor = 0;
+        using (db)
+        {
+            foreach (string name in db.ListTables())
+            {
+                Table table;
+                IReadOnlyList<Row> rows;
+                try { table = db.GetTable(name); rows = table.ReadAllRows(); }
+                catch (Exception e) when (e is NotSupportedException or InvalidDataException) { continue; }   // a table the engine does not read
+
+                foreach (var index in table.Indexes.Where(ix => ix.RootPageNumber > 0 && ix.Columns.Any(c => c.Column.DataType == DataType.Text)))
+                {
+                    var reader = new IndexReader(db.File, index);
+                    if (!reader.CanResolveKey) continue;   // a column type or an order whose keys the engine does not make
+                    foreach (var row in rows)
+                    {
+                        object?[] values = index.Columns.Select(c => Value(row, c.Column.Name)).ToArray();
+                        if (values.Any(v => v is null)) continue;   // an index that ignores nulls holds no entry for the row
+
+                        bool found;
+                        if (IndexKeys.CanSearch(index.Columns, values))
+                        {
+                            lookedUp++;
+                            found = reader.FindRowPointersForEntry(values).Any();
+                        }
+                        else
+                        {
+                            scannedFor++;
+                            found = table.NewIndexCursor(index.Name).FindRowByEntry(values!) is not null;
+                        }
+                        if (!found)
+                            misses.Add($"{name}.{index.Name}: {string.Join(" | ", values.Select(v => v is string s ? string.Join(" ", s.Select(ch => ((int)ch).ToString("X4"))) : v!.ToString()))}");
+                    }
+                }
+            }
+        }
+        Assert.True(misses.Count == 0, $"{misses.Count} of {lookedUp + scannedFor} rows not found:\n" + string.Join("\n", misses.Take(40)));
+
+        // The files that hold a table per kind of character are looked up whole, and the one long key scanned for.
+        if (filename.StartsWith("indexCodes", StringComparison.OrdinalIgnoreCase))
+            Assert.True(lookedUp > 260_000, $"{lookedUp} rows looked up");
+        Assert.Equal(filename == "unicodeCompV2003.mdb" ? 1 : 0, scannedFor);
+    }
     // ── Index roots ─────────────────────────────────────────────────────────
 
     // Each table registers several ACE rows; a root split by one of them moved, and the next went into the old root.
@@ -261,7 +373,8 @@ public sealed class EngineReviewTests : IDisposable
 
     // ── A key that cannot be kept ──────────────────────────────────────────
 
-    // A text key in Access 2010's General order: the engine cannot write its entries, so it changes nothing.
+    // A text key in an order the engine does not write (here 1049, Access's Russian order): it cannot write the key's
+    // entries, so it changes nothing.
     [Fact]
     public void A_table_whose_key_the_engine_cannot_write_is_left_as_it_was()
     {
@@ -276,11 +389,11 @@ public sealed class EngineReviewTests : IDisposable
             foreach (var code in new[] { "a", "b", "c" })
                 table.Insert(new Row { ["Code"] = code, ["N"] = 1 });
 
-            // The key column now says Access 2010's General order (version 1).
+            // The key column now says sort order 1049.
             int tdef = TdefOf(db.File, "Coded");
             byte[] page = db.File.ReadPage(tdef);
             int columnDefs = 63 + ByteUtil.GetInt(page, 51) * 12;
-            page[columnDefs + 0 * 25 + 14] = 1;
+            page[columnDefs + 0 * 25 + 11] = 0x19;
             db.File.WritePage(tdef, page);
         }
 

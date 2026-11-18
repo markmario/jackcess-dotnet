@@ -84,6 +84,8 @@
     <EmbeddedResource Include="Resources\\empty2003.mdb" />
     <EmbeddedResource Include="Resources\\index_codes_genleg.txt" />
     <EmbeddedResource Include="Resources\\index_codes_ext_genleg.txt" />
+    <EmbeddedResource Include="Resources\\index_codes_gen.txt" />
+    <EmbeddedResource Include="Resources\\index_codes_ext_gen.txt" />
   </ItemGroup>
 
 </Project>

@@ -368,10 +368,13 @@ internal sealed class ForeignKeyEnforcer
     private static byte[] KeyPart(Column type, object? value)
     {
         if (value is null) return Array.Empty<byte>();
-        if (IndexKeys.CanEncode(type))
+        // (Text Access keys by the characters around it has no key here: it is compared as text, below. Only
+        // Access can have written it in a key, and a change that would write it is refused by the table's indexes.)
+        if (IndexKeys.CanEncode(type, value))
         {
-            // The bytes the column's index would hold for the value. An ascending key never begins with 0xFF.
-            try { return IndexKeys.EncodeColumn(type.DataType, ascending: true, value); }
+            // The bytes the column's index would hold for the value, whole - text in the column's sort order, so
+            // in a database that sorts in General as General holds it. An ascending key never begins with 0xFF.
+            try { return IndexKeys.EncodeColumn(type, ascending: true, value); }
             catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
             {
                 // Not a value the column can hold: it equals none that is.

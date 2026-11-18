@@ -310,10 +310,12 @@ public sealed class SecondaryIndexTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3, ["Code"] = "TAKEN" }));   // now it is a row's
     }
 
-    // A key no index page could hold three of is refused with the row, before anything is written - not found
-    // out when a page will not split, with the row already in the table and in some of its indexes.
+    // Five text columns of 255 characters make a key of some 1,290 bytes, which no index page could hold three
+    // of. Access keeps no key longer than 510 bytes: it cuts the key there and ends it in a digest of the rest
+    // (ACE does so for a key of several columns as for one; EngineIndexesInAccessTests in ExportMdb.Interop). So
+    // the row is written, under the cut key, and found by it.
     [Fact]
-    public void A_row_whose_key_is_too_long_for_an_index_page_is_refused_before_anything_is_written()
+    public void A_row_whose_key_is_longer_than_an_entry_holds_is_kept_under_the_key_Access_cuts()
     {
         using var db = Database.Create(_path, JetVersion.Jet4);
         var table = db.CreateTable("Wide", new[]
@@ -328,15 +330,15 @@ public sealed class SecondaryIndexTests : IDisposable
         string Text(int seed, int length) => new string(Enumerable.Range(0, length).Select(i => (char)('a' + (i * 7 + seed) % 26)).ToArray());
         for (int i = 1; i <= 40; i++)
             table.Insert(new Row { ["Id"] = i, ["A"] = Text(i, 255), ["B"] = Text(i + 1, 100), ["C"] = "c" });
-        var before = IndexChecks.AllPages(db);
 
-        var refused = Assert.Throws<InvalidOperationException>(() =>
-            table.Insert(new Row { ["Id"] = 41, ["A"] = Text(1, 255), ["B"] = Text(2, 255), ["C"] = Text(3, 255), ["D"] = Text(4, 255), ["E"] = Text(5, 255) }));
-        Assert.Contains("ByAll", refused.Message);
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(5, new Row { ["B"] = Text(2, 255), ["C"] = Text(3, 255), ["D"] = Text(4, 255), ["E"] = Text(5, 255) }));
+        table.Insert(new Row { ["Id"] = 41, ["A"] = Text(1, 255), ["B"] = Text(2, 255), ["C"] = Text(3, 255), ["D"] = Text(4, 255), ["E"] = Text(5, 255) });
+        table.UpdateByPrimaryKey(5, new Row { ["B"] = Text(2, 255), ["C"] = Text(3, 255), ["D"] = Text(4, 255), ["E"] = Text(5, 255) });
 
-        IndexChecks.AssertUnchanged(before, db);
-        Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Wide", expectedRows: 40));
+        Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Wide", expectedRows: 41));
+        var byAll = db.GetTable("Wide").Indexes.Single(ix => ix.Name == "ByAll");
+        var longest = JetPages.LeafEntries(db.File, byAll.RootPageNumber).Max(e => e.Key.Length);
+        Assert.Equal(IndexKeys.MaxKeyLength, longest);
+        Assert.Equal(41, table.NewIndexCursor("ByAll").FindRowByEntry(Text(1, 255), Text(2, 255), Text(3, 255), Text(4, 255), Text(5, 255))?["Id"]);
     }
 
     // A Yes/No given as a number or as text is read once, for the row and for its key: 1 is Yes in both. (The row

@@ -1,3 +1,5 @@
+using JackcessDotNet.Util;
+
 namespace JackcessDotNet;
 
 /// <summary>
@@ -22,12 +24,22 @@ internal static class IndexKeys
 
     /// <summary>
     /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
-    /// encodes and, for text, a column that sorts in General - Legacy, the order of the text keys it writes.
+    /// encodes and, for text, a column that sorts in an order whose keys it writes (<see cref="TextIndexCodes.For"/>).
     /// </summary>
     public static bool CanEncode(Column column)
         => CanEncode(column.DataType)
         && !column.IsStoredOtherwise
-        && (column.DataType is not (DataType.Text or DataType.Memo) || column.SortOrder.IsGeneralLegacy);
+        && (column.DataType is not (DataType.Text or DataType.Memo) || TextIndexCodes.For(column.SortOrder) is not null);
+
+    /// <summary>
+    /// True when <see cref="Encode"/> writes the key Access writes for <paramref name="value"/> in
+    /// <paramref name="column"/>: a column it writes keys for and, for text, a value with no character Access keys
+    /// by the characters around it (<see cref="TextIndexCodes.CanEncode"/>).
+    /// </summary>
+    public static bool CanEncode(Column column, object? value)
+        => CanEncode(column)
+        && (column.DataType is not (DataType.Text or DataType.Memo) || value is null
+            || TextIndexCodes.For(column.SortOrder)!.CanEncode(Convert.ToString(value) ?? string.Empty));
 
     /// <summary>Why <paramref name="column"/>'s keys cannot be written (<see cref="CanEncode(Column)"/> is false).</summary>
     public static string WhyNot(Column column)
@@ -35,12 +47,16 @@ internal static class IndexKeys
             ? $"{column.Name} is a {column.DataType} column, whose keys this library does not write"
             : column.IsStoredOtherwise
                 ? $"{column.Name} is a {column.DataType} column kept {(column.DataType.IsVariableLength() ? "among the row's fixed-length values" : "among the row's variable-length values")}, where this library does not read it"
-                : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy}";
+                : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy} and {SortOrder.General}";
+
+    /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are written.</summary>
+    public static string WhyNot(Column column, object? value)
+        => $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
 
     /// <summary>
     /// The key of an entry whose columns hold <paramref name="values"/>, in the index's column order. Refuses a
     /// column whose keys it does not write as Access does (<see cref="CanEncode(Column)"/>), rather than make a key
-    /// no entry of that index has.
+    /// no entry of that index has, and a text value whose key it does not make (<see cref="CanEncode(Column, object?)"/>).
     /// </summary>
     public static byte[] Encode(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
@@ -49,13 +65,106 @@ internal static class IndexKeys
         foreach (var column in columns)
             if (!CanEncode(column.Column))
                 throw new NotSupportedException($"No key is made for this index: {WhyNot(column.Column)}.");
+        return Truncate(EncodeWhole(columns, values));
+    }
+
+    /// <summary>
+    /// True when the key of <paramref name="values"/> is longer than an entry holds, so that <see cref="Encode"/>
+    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it, or under
+    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it.
+    /// </summary>
+    public static bool IsCut(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+        => EncodeWhole(columns, values).Length > MaxKeyLength;
+
+    /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
+    internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+    {
         var key = new List<byte>();
         for (int i = 0; i < columns.Count; i++)
-            key.AddRange(EncodeColumn(columns[i].Column.DataType, columns[i].IsAscending, values[i]));
+            key.AddRange(EncodeColumn(columns[i].Column, columns[i].IsAscending, values[i]));
         return key.ToArray();
     }
 
-    /// <summary>One column's part of a key: its flag, then its value's bytes.</summary>
+    /// <summary>
+    /// True when a row with <paramref name="values"/> in <paramref name="columns"/> is surely at the key
+    /// <see cref="Encode"/> makes, so that a search of the index that misses means there is no such row: every
+    /// value is one a key is made for (<see cref="CanEncode(Column, object?)"/>), and the key is no longer than an
+    /// entry holds. Access cuts a longer key and ends it in a digest, and so does <see cref="Encode"/>, but
+    /// Jackcess and versions of this library before the digest wrote such a key whole, where a search by the cut
+    /// key does not find it. A caller scans the table for values this is false for.
+    /// </summary>
+    public static bool CanSearch(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+    {
+        if (values.Count != columns.Count) return false;
+        for (int i = 0; i < columns.Count; i++)
+            if (!CanEncode(columns[i].Column, values[i])) return false;
+        return EncodeWhole(columns, values).Length <= MaxKeyLength;
+    }
+
+    /// <summary>
+    /// A key as an entry holds it: whole up to <see cref="MaxKeyLength"/> bytes, and a longer one cut to that
+    /// length, its last two bytes a digest of what was cut off (all of it but the last byte), as Access writes a
+    /// long text key. The digest is CRC-16 with the polynomial 0x8005, its register kept in the order the entry
+    /// holds it.
+    /// </summary>
+    public static byte[] Truncate(byte[] key)
+    {
+        if (key.Length <= MaxKeyLength) return key;
+
+        const int kept = MaxKeyLength - 2;
+        int digest = 0;
+        for (int i = kept; i < key.Length - 1; i++)
+            digest = (digest >> 8) ^ DigestTable[digest & 0xFF] ^ key[i];
+
+        byte[] truncated = key.Slice(0, MaxKeyLength);
+        truncated[kept] = (byte)(digest >> 8);
+        truncated[kept + 1] = (byte)digest;
+        return truncated;
+    }
+
+    /// <summary>The most bytes an index entry's key has.</summary>
+    internal const int MaxKeyLength = 510;
+
+    private static readonly ushort[] DigestTable = BuildDigestTable();
+
+    private static ushort[] BuildDigestTable()
+    {
+        var table = new ushort[256];
+        for (int i = 0; i < table.Length; i++)
+        {
+            int register = i << 8;
+            for (int bit = 0; bit < 8; bit++)
+                register = (register << 1 & 0xFFFF) ^ ((register & 0x8000) != 0 ? 0x8005 : 0);
+            table[i] = (ushort)((register & 0xFF) << 8 | register >> 8);
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// One column's part of a key: its flag, then its value's bytes. Text is keyed in the column's sort order, and
+    /// refused in an order whose keys this library does not write. A Memo is keyed as text, by the characters a
+    /// key holds.
+    /// </summary>
+    public static byte[] EncodeColumn(Column column, bool ascending, object? value)
+    {
+        if (column.DataType is not (DataType.Text or DataType.Memo))
+            return EncodeColumn(column.DataType, ascending, value);
+        if (value is null)
+            return new[] { ascending ? AscNullFlag : DescNullFlag };
+
+        var codes = TextIndexCodes.For(column.SortOrder)
+            ?? throw new NotSupportedException($"No key is made for this column: {WhyNot(column)}.");
+        return EncodeText(codes, ascending, Convert.ToString(value) ?? string.Empty);
+    }
+
+    /// <summary>
+    /// A text column's part of a key in the order of <paramref name="codes"/>: its flag, then the text's codes,
+    /// which hold their own end markers, flipped with the rest for a descending column.
+    /// </summary>
+    public static byte[] EncodeText(TextIndexCodes codes, bool ascending, string value)
+        => Prepend(ascending ? AscStartFlag : DescStartFlag, codes.Encode(value, ascending));
+
+    /// <summary>One column's part of a key, for a type whose key does not depend on a sort order: any but Text and Memo.</summary>
     public static byte[] EncodeColumn(DataType type, bool ascending, object? value)
     {
         if (RowValues.IsNull(value) && type != DataType.Boolean)
@@ -64,13 +173,6 @@ internal static class IndexKeys
         byte[] bytes;
         switch (type)
         {
-            case DataType.Text:
-            case DataType.Memo:
-                // The text encoder writes its own end markers and does its own
-                // flipping for a descending column. A Memo is keyed as text, by the
-                // characters a key holds (the encoder's limit).
-                bytes = GeneralLegacyIndexCodes.EncodeText(Convert.ToString(value) ?? string.Empty, ascending);
-                return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
             case DataType.Byte:
                 bytes = new[] { Convert.ToByte(value) };
                 break;

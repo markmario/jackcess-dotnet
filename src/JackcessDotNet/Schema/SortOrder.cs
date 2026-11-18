@@ -7,7 +7,8 @@ namespace JackcessDotNet;
 /// sort order's code (1033 for Access's "General" orders) and, in Jet4's four bytes, its version. Access 2000 to
 /// 2007 sort in "General - Legacy" (version 0), Access 2010 and later make new databases in "General" (version 1),
 /// and Access 97 has an order of its own. An index entry's key is the text in its column's order, so a key can be
-/// written or searched for only in an order this library writes: General - Legacy.
+/// written or searched for only in an order this library writes: General - Legacy and General
+/// (<see cref="TextIndexCodes.For"/>).
 /// </summary>
 internal readonly record struct SortOrder(short Code, byte Version)
 {
@@ -16,10 +17,15 @@ internal readonly record struct SortOrder(short Code, byte Version)
     // Not a version Jet4 writes: Access 97's two-byte sort orders have none.
     private const byte Access97Version = 0xFF;
 
-    /// <summary>"General - Legacy": the order whose keys <see cref="GeneralLegacyIndexCodes"/> writes.</summary>
+    /// <summary>"General - Legacy": the order of Access 2000 to 2007, and of a new database in any later Access.</summary>
     public static SortOrder GeneralLegacy { get; } = new(GeneralCode, 0);
 
+    /// <summary>"General": the order Access 2010 and later can make a new database in.</summary>
+    public static SortOrder General { get; } = new(GeneralCode, 1);
+
     public bool IsGeneralLegacy => this == GeneralLegacy;
+
+    public bool IsGeneral => this == General;
 
     /// <summary>One of Access 97's orders, read from a Jet3 column: Jet4 has no form for it.</summary>
     public bool IsAccess97 => Version == Access97Version;
@@ -48,7 +54,7 @@ internal readonly record struct SortOrder(short Code, byte Version)
 
     public override string ToString()
         => IsGeneralLegacy ? "General - Legacy"
-         : Code == GeneralCode && Version == 1 ? "General"
+         : IsGeneral ? "General"
          : Version == Access97Version ? $"Access 97's order {Code}"
          : $"order {Code}, version {Version}";
 }

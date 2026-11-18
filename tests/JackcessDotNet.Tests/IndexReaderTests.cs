@@ -90,7 +90,7 @@ public sealed class IndexReaderTests
 
     /// <summary>
     /// Same shape as the integer test above, but probes Text-keyed single-column indexes.
-    /// Exercises GeneralLegacyIndexCodes against real Access-encoded entries.
+    /// Exercises TextIndexCodes.GeneralLegacy against real Access-encoded entries.
     /// </summary>
     [Theory]
     [MemberData(nameof(CorpusFiles))]

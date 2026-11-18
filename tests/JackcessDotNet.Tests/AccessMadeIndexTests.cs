@@ -35,6 +35,7 @@ public sealed class AccessMadeIndexTests : IDisposable
     [InlineData("V2000", "indexCodesV2000.mdb")]
     [InlineData("V2003", "indexCodesV2003.mdb")]
     [InlineData("V2007", "indexCodesV2007.accdb")]
+    [InlineData("V2010", "indexCodesV2010.accdb")]   // text and Memo in Access 2010's General order
     public void The_keys_the_engine_makes_are_the_keys_Access_wrote(string version, string file)
     {
         using var db = Open(version, file);
@@ -187,6 +188,50 @@ public sealed class AccessMadeIndexTests : IDisposable
             table.UpdateByPrimaryKey($"new{i:D3}", new Row { ["data"] = ValueOf(i + 300) });
 
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, tableName, expectedRows: accessRows.Count + 200 - 4 - 40));
+    }
+
+    // The same in Access 2010's file, whose text sorts in General: every table with an index on a Text or a Memo
+    // column, ascending and descending, and each of them under a text primary key in that order. Rows go in,
+    // change and go, Access's own among them, and both indexes hold exactly the rows left, under General keys.
+    [Fact]
+    public void A_text_or_Memo_index_Access_2010_made_in_General_is_kept()
+    {
+        using var db = Open("V2010", "indexCodesV2010.accdb");
+        if (db is null) return;
+
+        string[] words = { "résumé", "Æther", "naïve", "Zürich", "日本", "a-b", "O'Brien", "ß", "Ελληνικά", "\U0001F600", "テスト" };
+        var kept = new List<string>();
+        foreach (string tableName in db.ListTables())
+        {
+            var table = db.GetTable(tableName);
+            var data = table.Columns.SingleOrDefault(c => c.Name == "data");
+            if (data is null || data.DataType is not (DataType.Text or DataType.Memo) || table.Indexes.Count != 2) continue;
+            Assert.True(data.SortOrder.IsGeneral && table.Columns.Single(c => c.Name == "name").SortOrder.IsGeneral);
+            var accessRows = table.ReadAllRows().Select(r => (string)r["name"]!).ToList();
+            if (accessRows.Count > 2000) continue;   // the tables of every character: looked up whole elsewhere
+
+            string ValueOf(int i) => data.DataType == DataType.Memo && i % 4 == 0
+                ? new string('é', 300) + i                              // beyond a key's 255 characters
+                : $"{words[i % words.Length]} {i % 30}";
+            for (int i = 0; i < 120; i++)
+                table.Insert(new Row { ["name"] = $"{words[i % words.Length]} new{i:D3}", ["data"] = i % 9 == 0 ? null : ValueOf(i) });
+            foreach (string name in accessRows.Take(3))
+                table.DeleteRow("name", name);                                // rows and entries Access wrote
+            foreach (string name in accessRows.Skip(3).Take(3))
+                table.UpdateByPrimaryKey(name, new Row { ["data"] = ValueOf(50) });
+            for (int i = 0; i < 120; i += 5)
+                table.DeleteRow("name", $"{words[i % words.Length]} new{i:D3}");
+            for (int i = 1; i < 120; i += 5)
+                table.UpdateByPrimaryKey($"{words[i % words.Length]} new{i:D3}", new Row { ["data"] = ValueOf(i + 300) });
+
+            Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, tableName, expectedRows: accessRows.Count + 120 - Math.Min(3, accessRows.Count) - 24));
+            kept.Add($"{data.DataType}{(table.Indexes.SelectMany(ix => ix.Columns).Any(c => !c.IsAscending) ? " descending" : "")}");
+        }
+        // (The table with an ascending index on Text is the one of every character, left out above; each of these
+        // tables has an ascending text key of its own, its primary key on "name".)
+        Assert.Contains("Text descending", kept);
+        Assert.Contains("Memo", kept);
+        Assert.Contains(kept, k => k.EndsWith("descending", StringComparison.Ordinal));
     }
 
     // What reading forgave, writing must not trust: an index block that names a column the table has not is read

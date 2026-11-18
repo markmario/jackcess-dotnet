@@ -69,10 +69,22 @@ public sealed class Column
     public bool IsCompressedUnicode { get; internal set; } = true;
 
     /// <summary>
-    /// The order a Text or Memo column's values sort in, in its indexes, read from its TDEF. Columns this library
-    /// creates sort in General - Legacy, the order whose keys it writes.
+    /// The order a Text or Memo column's values sort in, in its indexes, read from its TDEF. A column of a table
+    /// this library creates sorts in the order of the database the table is created in.
     /// </summary>
     internal SortOrder SortOrder { get; set; } = SortOrder.GeneralLegacy;
+
+    /// <summary>
+    /// A copy of this column for a table being created, its text sorting in <paramref name="textOrder"/> - the
+    /// order of the database the table is created in. The new table numbers and lays out the copy; this column,
+    /// which may be another table's, is not changed.
+    /// </summary>
+    internal Column CopyFor(SortOrder textOrder)
+    {
+        var copy = (Column)MemberwiseClone();
+        if (DataType is DataType.Text or DataType.Memo) copy.SortOrder = textOrder;
+        return copy;
+    }
 
     internal Column(
         string name,

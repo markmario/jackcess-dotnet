@@ -403,6 +403,37 @@ public sealed class IndexWriter
         }
     }
 
+    /// <summary>
+    /// Every entry whose key begins with <paramref name="prefix"/>, in order, in the tree rooted at
+    /// <paramref name="rootPage"/>: its key as the tree holds it, and its row pointer. A key that was cut and the
+    /// same key written whole - as versions of this library before the cut, and Jackcess before it, wrote one -
+    /// begin alike, so this finds an entry under either.
+    /// </summary>
+    internal IEnumerable<(byte[] Key, int RowPointer)> EntriesWithPrefix(int rootPage, byte[] prefix)
+    {
+        var first = new Entry(prefix, 0, 0);
+        var page  = Read(rootPage);
+        while (!page.IsLeaf)
+        {
+            UseTail(page, target: null);
+            int slot  = FirstAtLeast(page.Entries, first);
+            int child = slot >= 0 ? page.Entries[slot].SubPage : page.Tail;
+            if (child <= 0) yield break;
+            page = Read(child);
+        }
+
+        while (true)
+        {
+            foreach (var e in page.Entries)
+            {
+                if (e.Key.Length >= prefix.Length && e.Key.AsSpan(0, prefix.Length).SequenceEqual(prefix)) yield return (e.Key, e.RowPtr);
+                else if (CompareBytes(e.Key, prefix) > 0) yield break;
+            }
+            if (page.Next <= 0) yield break;
+            page = Read(page.Next);
+        }
+    }
+
     // ── Splitting ────────────────────────────────────────────────────────────
 
     /// <summary>
