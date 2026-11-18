@@ -28,6 +28,45 @@ internal static class NumericCodec
         return new decimal(low, mid, high, row[offset] != 0, (byte)scale);
     }
 
+    /// <summary>Whether the value at <paramref name="offset"/> is negative, as <see cref="Decode"/> reads its sign.</summary>
+    public static bool IsNegative(byte[] row, int offset) => row[offset] != 0;
+
+    /// <summary>
+    /// The number at <paramref name="offset"/> without its sign or its decimal point, as <see cref="Decode"/>
+    /// reads it: all 128 bits, whether or not a <see cref="decimal"/> holds them.
+    /// </summary>
+    public static BigInteger Unscaled(byte[] row, int offset)
+    {
+        var unscaled = BigInteger.Zero;
+        for (int word = 0; word < 4; word++)
+            unscaled = unscaled << 32 | (uint)ByteUtil.GetInt(row, offset + 1 + word * 4);
+        return unscaled;
+    }
+
+    /// <summary>
+    /// The same bytes as versions of this library before qcatco/exportmdb.interop#61 wrote and read them: sixteen
+    /// bytes, the most significant first.
+    /// </summary>
+    public static BigInteger UnscaledInEarlierByteOrder(byte[] row, int offset)
+    {
+        var unscaled = BigInteger.Zero;
+        for (int i = 1; i < Size; i++)
+            unscaled = unscaled << 8 | row[offset + i];
+        return unscaled;
+    }
+
+    /// <summary>
+    /// <paramref name="unscaled"/> with its sign and <paramref name="scale"/> digits after the point; null for a
+    /// number a <see cref="decimal"/> cannot hold, where <see cref="Decode"/> gives null.
+    /// </summary>
+    public static decimal? ToDecimal(BigInteger unscaled, bool negative, int scale)
+    {
+        if (unscaled >> 96 != 0 || scale > 28) return null;
+        return new decimal(unchecked((int)(uint)(unscaled & uint.MaxValue)),
+                           unchecked((int)(uint)(unscaled >> 32 & uint.MaxValue)),
+                           unchecked((int)(uint)(unscaled >> 64)), negative, (byte)scale);
+    }
+
     /// <summary>
     /// <paramref name="value"/> as a column of <paramref name="precision"/> digits, <paramref name="scale"/> of
     /// them after the point, holds it: rounded to the scale, half away from zero.

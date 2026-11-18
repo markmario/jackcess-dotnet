@@ -374,6 +374,31 @@ have been deleted - and a row Access moved to another page is read where its poi
   agreed (a 1 written by an earlier release is 16,777,216 to Access, and now to this library too). Such a value
   cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
   certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
+
+  `Database.FindDecimalsBeyondPrecision()`, and the same on a `Table`, lists the values that read with more digits
+  than their column holds: the table, the column, the row (its primary key, and its place among the table's rows),
+  the value as it reads and the value its bytes make in the earlier order
+  ([qcatco/exportmdb.interop#66](https://github.com/qcatco/exportmdb.interop/issues/66)). It changes nothing - a
+  read returns what it did - and repairs nothing:
+
+  ```csharp
+  foreach (var suspect in db.FindDecimalsBeyondPrecision())
+      Console.WriteLine(suspect);
+  // Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order
+  ```
+
+  It finds some such values, not all: a number written in the earlier order can still read within its column's
+  precision. In a column of precision 7 or less, every number under 4,294,967,296 (before its decimal point is
+  placed) that is not a multiple of 256 is listed; of precision 8 or 9, some; of precision 10 or more - 18 is
+  the default, Access's and this library's - none, and only larger numbers can be. An empty list does not say
+  the file has no such value.
+
+  Neither Access nor Java Jackcess checks a Decimal against its column's precision when it reads one. Jackcess
+  returns the number. In Access, DAO returns it and SQL computes with it (the 1 above is found by
+  `WHERE Price = 16777216`), but the OLE DB provider cannot hand it over - reading the column fails with
+  "Conversion failed because the Decimal data value overflowed the type specified" - and a query that sorts its
+  rows, or writes the value back, is refused: "The decimal field's precision is too small to accept the numeric
+  you attempted to add."
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
 - **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a

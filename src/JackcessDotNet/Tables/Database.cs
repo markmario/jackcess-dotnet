@@ -397,6 +397,14 @@ public sealed class Database : IDisposable
         => _catalog.GetTableNames(includeSystem);
 
     /// <summary>
+    /// Lists the Decimal (Numeric) values in the database's tables - not its system tables - that read with more
+    /// digits than their column's precision allows: <see cref="Table.FindDecimalsBeyondPrecision"/> for each
+    /// table, where what it finds, and what it cannot, is described. Nothing is changed.
+    /// </summary>
+    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
+        => ListTables().SelectMany(name => GetTable(name).FindDecimalsBeyondPrecision());
+
+    /// <summary>
     /// Reads MSysRelationships and returns the schema's foreign-key / join
     /// relationships, grouping the per-column-pair rows back into one entry
     /// per named relationship. Returns an empty list when MSysRelationships
