@@ -69,6 +69,11 @@ public sealed class PageFile : IDisposable
         // the caller gives: an Access 97 file opened as another format is an Access 97 file still. A file in a
         // format that is only read is never held by a handle that could write to it, so whatever is asked of it
         // later, not a byte of it changes. (A mode that creates the file anew replaces whatever was there.)
+        // Emptying the file that is there, or adding to its end, is a change to it, and is refused as any other
+        // is - before the handle is opened, since opening one to truncate is the truncation.
+        if (mode is FileMode.Truncate or FileMode.Append && File.Exists(path) && FormatOf(path) is { IsReadOnly: true })
+            throw ReadOnlyFormat($"'{path}' was not changed.");
+
         bool opensWhatIsThere = mode is FileMode.Open or FileMode.OpenOrCreate;
         _readOnly = format.IsReadOnly || (opensWhatIsThere && FormatOf(path) is { IsReadOnly: true });
         if (_readOnly)

@@ -375,6 +375,20 @@ public sealed class Access97ReadOnlyTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
+    [Theory]
+    [InlineData(FileMode.Truncate)]
+    [InlineData(FileMode.Append)]
+    public void A_page_file_is_not_opened_to_empty_or_add_to_an_Access_97_file(FileMode mode)
+    {
+        // Opening a file to truncate it is the truncation: the file is asked what it is before any handle is opened.
+        string path = CopyOfFixture();
+        byte[] before = File.ReadAllBytes(path);
+
+        AssertRefused(() => new PageFile(path, JetFormat.Jet4, mode, FileAccess.Write).Dispose());
+
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
     [Fact]
     public void A_Jet4_database_can_be_created_where_an_Access_97_file_was()
     {
