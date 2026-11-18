@@ -19,6 +19,11 @@ namespace JackcessDotNet.Tests;
 ///   general-ace16.tsv              General (Access 2010 and later): the first file's values, and the second's
 ///                                  kinds, with surrogates alone and in pairs, which that order weighs.
 ///
+///   access97-ace12.tsv             Access 97's order, which the engine does not write: the keys the 32-bit ACE 12.0
+///                                  wrote into a Jet3 file (Jet 4.0 writes the same), kept for the port of that
+///                                  order (qcatco/exportmdb.interop#26), as ACE 16 cannot make them. No test
+///                                  reads it; IndexKeys/README.md says why it is there.
+///
 /// Each value was indexed by ACE and its entries read back, by tools/ace-text-keys.ps1. A value with a character
 /// Access keys by the characters around it is in the files with ACE's key, and the engine must refuse it.
 /// </summary>
