@@ -40,7 +40,7 @@ public static class DatabaseImporter
     /// the disposal.
     /// </summary>
     public static Database CreateFromDataTable(
-        string path, DataTable table, JetVersion version = JetVersion.Jet4,
+        string path, DataTable table, FileFormat version = FileFormat.Access2000,
         string? tableName = null, string? primaryKey = null,
         ImportOptions? options = null)
     {
@@ -62,7 +62,7 @@ public static class DatabaseImporter
     /// <see cref="DataTable"/> in <paramref name="dataSet"/>.
     /// </summary>
     public static Database CreateFromDataSet(
-        string path, DataSet dataSet, JetVersion version = JetVersion.Jet4,
+        string path, DataSet dataSet, FileFormat version = FileFormat.Access2000,
         ImportOptions? options = null)
     {
         var db = Database.Create(path, version);
@@ -83,7 +83,7 @@ public static class DatabaseImporter
     /// <paramref name="items"/> as a single table.
     /// </summary>
     public static Database CreateFromCollection<T>(
-        string path, IEnumerable<T> items, JetVersion version = JetVersion.Jet4,
+        string path, IEnumerable<T> items, FileFormat version = FileFormat.Access2000,
         string? tableName = null, string? primaryKey = null,
         ImportOptions? options = null)
     {
@@ -269,13 +269,13 @@ public static class DatabaseImporter
 
     /// <summary>
     /// Case-insensitive check for whether <paramref name="db"/> already has a
-    /// table named <paramref name="name"/>. <see cref="Database.ListTables"/>
+    /// table named <paramref name="name"/>. <see cref="Database.GetTableNames"/>
     /// already returns the case as it appears in MSysObjects, so we compare
     /// with <see cref="StringComparison.OrdinalIgnoreCase"/>.
     /// </summary>
     private static bool TableExists(Database db, string name)
     {
-        foreach (var existing in db.ListTables())
+        foreach (var existing in db.GetTableNames())
             if (string.Equals(existing, name, StringComparison.OrdinalIgnoreCase))
                 return true;
         return false;

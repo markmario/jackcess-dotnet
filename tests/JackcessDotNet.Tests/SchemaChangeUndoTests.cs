@@ -24,7 +24,7 @@ public sealed class SchemaChangeUndoTests : IDisposable
 
     private void Create()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var child = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name") }, primaryKey: "Id");
         for (int k = 1; k <= 5; k++) parent.Insert(new Row { ["K"] = k, ["Name"] = $"parent {k}" });
@@ -82,7 +82,7 @@ public sealed class SchemaChangeUndoTests : IDisposable
         using var after = Database.Open(_path);
         var child = after.GetTable("Child");
         child.Insert(new Row { ["Id"] = 900, ["K"] = 1, ["Notes"] = new string('n', 6_000) });
-        Assert.Equal(new string('n', 6_000), child.NewIndexCursor().FindRowByPrimaryKey(900)!["Notes"]);
+        Assert.Equal(new string('n', 6_000), child.FindRowByPrimaryKey(900)!["Notes"]);
     }
 
     [Fact]

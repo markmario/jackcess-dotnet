@@ -148,11 +148,11 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     // ── Tables ───────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData(JetVersion.Jet12)]
-    [InlineData(JetVersion.Jet14)]
-    [InlineData(JetVersion.Jet16)]
-    [InlineData(JetVersion.Jet17)]
-    public void Values_come_back_as_they_went_in_and_every_index_holds_them(JetVersion version)
+    [InlineData(FileFormat.Access2007)]
+    [InlineData(FileFormat.Access2010)]
+    [InlineData(FileFormat.Access2016)]
+    [InlineData(FileFormat.Access2019)]
+    public void Values_come_back_as_they_went_in_and_every_index_holds_them(FileFormat version)
     {
         string path = NewPath();
         using (var db = Database.Create(path, version))
@@ -173,7 +173,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
             Assert.Equal(DataType.ExtendedDateTime, table.Columns[2].DataType);
             Assert.Equal(42, table.Columns[2].Length);
 
-            var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(Numbers.Length + 1000, rows.Count);
             for (int i = 0; i < Numbers.Length; i++)
             {
@@ -189,12 +189,12 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
             Assert.Equal(6, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: rows.Count));
 
             // Found through the indexes, by a long, by an int, and by a date to the tick.
-            Assert.Equal(1, table.NewIndexCursor("NAsc").FindRow("N", long.MaxValue)!["Id"]);
-            Assert.Equal(9, table.NewIndexCursor("NAsc").FindRow("N", 256)!["Id"]);
-            Assert.Equal(5, table.NewIndexCursor("DAsc").FindRow("D", Dates[4]!.Value)!["Id"]);
-            Assert.Equal(6, table.NewIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(1))!["Id"]);
-            Assert.Null(table.NewIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(2)));
-            Assert.Equal(7, table.NewIndexCursor("NThenD").FindRowByEntry(-4294967296L, Dates[6]!.Value)!["Id"]);
+            Assert.Equal(1, table.CreateIndexCursor("NAsc").FindRow("N", long.MaxValue)!["Id"]);
+            Assert.Equal(9, table.CreateIndexCursor("NAsc").FindRow("N", 256)!["Id"]);
+            Assert.Equal(5, table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value)!["Id"]);
+            Assert.Equal(6, table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(1))!["Id"]);
+            Assert.Null(table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(2)));
+            Assert.Equal(7, table.CreateIndexCursor("NThenD").FindRowByEntry(-4294967296L, Dates[6]!.Value)!["Id"]);
 
             // Changed and deleted, each index following.
             table.UpdateByPrimaryKey(3, new Row { ["N"] = long.MinValue + 1, ["D"] = DateTime.MaxValue.AddTicks(-1) });
@@ -207,7 +207,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("T");
-            var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(Numbers.Length + 1000 - 2, rows.Count);
             Assert.Equal(long.MinValue + 1, rows[3]["N"]);
             Assert.Equal(DateTime.MaxValue.AddTicks(-1), rows[3]["D"]);
@@ -223,7 +223,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     public void A_large_number_is_a_primary_key_and_a_unique_index_refuses_a_second_of_either()
     {
         string path = NewPath();
-        using var db = Database.Create(path, JetVersion.Jet17);
+        using var db = Database.Create(path, FileFormat.Access2019);
         var table = db.CreateTable("Keyed", new[] { ColumnBuilder.BigInt("K").Build(), ColumnBuilder.ExtendedDateTime("At").Build() },
             new[] { "K" }, new[] { new IndexDefinition("OneAt", "At") { IsUnique = true } });
         var at = new DateTime(2026, 11, 18, 9, 30, 0);
@@ -238,9 +238,9 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         Assert.Throws<OverflowException>(() => table.Insert(new Row { ["K"] = 9223372036854775808m, ["At"] = at.AddTicks(3) }));
         Assert.Equal(before, IndexChecks.AllPages(db));
 
-        Assert.Equal(at.AddTicks(1), table.NewIndexCursor().FindRowByPrimaryKey(long.MaxValue - 1)!["At"]);
+        Assert.Equal(at.AddTicks(1), table.FindRowByPrimaryKey(long.MaxValue - 1)!["At"]);
         table.UpdateByPrimaryKey(long.MaxValue, new Row { ["At"] = at.AddTicks(9) });
-        Assert.Equal(at.AddTicks(9), table.NewIndexCursor().FindRowByPrimaryKey(long.MaxValue)!["At"]);
+        Assert.Equal(at.AddTicks(9), table.FindRowByPrimaryKey(long.MaxValue)!["At"]);
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "Keyed", expectedRows: 2);
     }
 
@@ -263,7 +263,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         using (var db = Database.Open(path))
             foreach (string name in new[] { "BySql", "ByDao" })
             {
-                var rows = db.GetTable(name).ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+                var rows = db.GetTable(name).Rows.ToDictionary(r => (int)r["Id"]!);
                 Assert.Equal(Numbers.Length + 300 - 1, rows.Count);
                 Assert.Equal(7L, rows[2]["N"]);
                 Assert.Equal(Dates[1], rows[2]["D"]);   // not named by the update: as Access stored it
@@ -277,15 +277,15 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     // Access gives the file the version of the format that has the column when a table first gets one, and
     // never takes it back down: 05 00 for a Large Number, 06 00 for a Date/Time Extended.
     [Theory]
-    [InlineData(JetVersion.Jet12, DataType.BigInt, 0x05)]
-    [InlineData(JetVersion.Jet14, DataType.BigInt, 0x05)]
-    [InlineData(JetVersion.Jet16, DataType.BigInt, 0x05)]
-    [InlineData(JetVersion.Jet17, DataType.BigInt, 0x06)]
-    [InlineData(JetVersion.Jet12, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(JetVersion.Jet14, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(JetVersion.Jet16, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(JetVersion.Jet17, DataType.ExtendedDateTime, 0x06)]
-    public void A_table_with_such_a_column_makes_the_file_one_of_the_format_that_has_it(JetVersion created, DataType type, byte version)
+    [InlineData(FileFormat.Access2007, DataType.BigInt, 0x05)]
+    [InlineData(FileFormat.Access2010, DataType.BigInt, 0x05)]
+    [InlineData(FileFormat.Access2016, DataType.BigInt, 0x05)]
+    [InlineData(FileFormat.Access2019, DataType.BigInt, 0x06)]
+    [InlineData(FileFormat.Access2007, DataType.ExtendedDateTime, 0x06)]
+    [InlineData(FileFormat.Access2010, DataType.ExtendedDateTime, 0x06)]
+    [InlineData(FileFormat.Access2016, DataType.ExtendedDateTime, 0x06)]
+    [InlineData(FileFormat.Access2019, DataType.ExtendedDateTime, 0x06)]
+    public void A_table_with_such_a_column_makes_the_file_one_of_the_format_that_has_it(FileFormat created, DataType type, byte version)
     {
         string path = NewPath();
         using (var db = Database.Create(path, created))
@@ -301,8 +301,8 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
 
         using (var db = Database.Open(path))
         {
-            Assert.Equal(version == 0x05 ? JetVersion.Jet16 : JetVersion.Jet17, db.File.Format.Version);
-            Assert.Equal(new[] { "Newer", "Plain" }, db.ListTables().OrderBy(n => n));
+            Assert.Equal(version == 0x05 ? FileFormat.Access2016 : FileFormat.Access2019, db.File.Format.Version);
+            Assert.Equal(new[] { "Newer", "Plain" }, db.GetTableNames().OrderBy(n => n));
         }
     }
 
@@ -312,7 +312,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     public void An_mdb_has_no_such_column_and_the_table_is_refused_with_nothing_written(DataType type)
     {
         string path = NewPath(".mdb");
-        using var db = Database.Create(path, JetVersion.Jet4);
+        using var db = Database.Create(path, FileFormat.Access2000);
         var before = IndexChecks.AllPages(db);
 
         var refused = Assert.Throws<NotSupportedException>(() =>
@@ -320,7 +320,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
 
         Assert.Contains(".mdb", refused.Message);
         Assert.Equal(before, IndexChecks.AllPages(db));
-        Assert.Empty(db.ListTables());
+        Assert.Empty(db.GetTableNames());
     }
 
     // ── Other ways in and out ────────────────────────────────────────────────
@@ -329,7 +329,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     public void They_export_as_long_and_DateTime_and_neither_is_an_AutoNumber()
     {
         string path = NewPath();
-        using var db = Database.Create(path, JetVersion.Jet17);
+        using var db = Database.Create(path, FileFormat.Access2019);
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(RowOf(1, long.MinValue, DateTime.MaxValue));
 

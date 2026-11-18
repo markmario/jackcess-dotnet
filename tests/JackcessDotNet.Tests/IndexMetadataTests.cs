@@ -27,7 +27,7 @@ public sealed class IndexMetadataTests
         using var db = Database.Open(path);
 
         bool sawPk = false;
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
             _output.WriteLine($"{name}: {t.Indexes.Count} index(es)");
@@ -52,7 +52,7 @@ public sealed class IndexMetadataTests
         using var db = Database.Open(path);
 
         bool sawPk = false;
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
             _output.WriteLine($"{name}: {t.Indexes.Count} index(es)");
@@ -75,7 +75,7 @@ public sealed class IndexMetadataTests
         if (!File.Exists(path)) return;
 
         using var db = Database.Open(path);
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
             foreach (var ix in t.Indexes)
@@ -97,7 +97,7 @@ public sealed class IndexMetadataTests
         string path = Path.Combine(Path.GetTempPath(), $"idx_meta_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
+            using (var db = Database.Create(path, FileFormat.Access2000))
             {
                 db.CreateTable("Foo", new[]
                 {
@@ -130,7 +130,7 @@ public sealed class IndexMetadataTests
         string path = Path.Combine(Path.GetTempPath(), $"idx_meta_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
+            using (var db = Database.Create(path, FileFormat.Access2000))
             {
                 db.CreateTable("Foo", new[]
                 {

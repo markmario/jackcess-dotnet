@@ -23,7 +23,7 @@ public sealed class RowLayoutTests : IDisposable
         => File.Copy(TestCorpus.File(version, file) ?? throw new FileNotFoundException($"{file} is not in the corpus."), _path, overwrite: true);
 
     private static List<string> Rows(Table table)
-        => table.ReadAllRows()
+        => table.Rows.ToList()
             .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
@@ -48,10 +48,12 @@ public sealed class RowLayoutTests : IDisposable
         var added = new Row();
         using (var db = Database.Open(_path))
         {
+            // The row added below names no row of the tables Table1 refers to: this is about where its values go.
+            db.EnforceForeignKeys = false;
             var table = db.GetTable("Table1");
             Assert.True(table.Definition.MaxColumnCount > table.Columns.Count, "the table has had no column deleted");
             before = Rows(table);
-            var template = table.ReadAllRows()[0];
+            var template = table.Rows.ToList()[0];
             foreach (var column in table.Columns)
                 added[column.Name] = column.DataType switch
                 {
@@ -97,7 +99,7 @@ public sealed class RowLayoutTests : IDisposable
     {
         // A byte for a Yes/No column, which Access gives none: Access reads rows by the offsets the definition
         // gives, so it reads these, and files made by earlier releases have them.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
             new ColumnBuilder("Flag", DataType.Boolean).Build(), new ColumnBuilder("Id", DataType.Long).Build(),
@@ -127,7 +129,7 @@ public sealed class RowLayoutTests : IDisposable
     {
         // As Access writes a table of one Yes/No or one Byte column: the row is long enough to hold, in its place,
         // where it went if it ever has to move.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var flags = db.CreateTable("Flags", new[] { new ColumnBuilder("A", DataType.Boolean).Build() });
         var bytes = db.CreateTable("Bytes", new[] { new ColumnBuilder("B", DataType.Byte).Build() });
 
@@ -138,7 +140,7 @@ public sealed class RowLayoutTests : IDisposable
     [Fact]
     public void A_definition_that_puts_two_columns_in_one_place_is_not_written_by()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build(), new ColumnBuilder("B", DataType.Long).Build() }, primaryKey: "A")
               .Insert(new Row { ["A"] = 1, ["B"] = 2 });
         byte[] before = File.ReadAllBytes(_path);
@@ -165,7 +167,7 @@ public sealed class RowLayoutTests : IDisposable
         {
             var table = db.GetTable("MSP_PROJECTS");
             Assert.True(table.Definition.HasUnreadColumns);
-            Assert.Single(table.ReadAllRows());
+            Assert.Single(table.Rows);
             Assert.Throws<NotSupportedException>(() => table.Insert(new Row { [table.Columns[0].Name] = 1 }));
             var refused = Assert.Throws<NotSupportedException>(() => new RowEncoder(db.File.Format, table.Definition).Encode(new Row()));
             Assert.Contains("first page", refused.Message);
@@ -193,7 +195,7 @@ public sealed class RowLayoutTests : IDisposable
     [Fact]
     public void A_Decimal_with_more_digits_than_its_column_holds_is_refused_before_anything_is_written()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
             new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build(),
@@ -206,7 +208,7 @@ public sealed class RowLayoutTests : IDisposable
         Assert.Throws<ArgumentOutOfRangeException>(() => table.Validate(new Row { ["Id"] = 2, ["N"] = -1000m }));
 
         Assert.Equal(written, db.File.WriteCount);   // not the long value either
-        Assert.Equal(999.99m, table.ReadAllRows().Single()["N"]);
+        Assert.Equal(999.99m, table.Rows.Single()["N"]);
     }
 
     // ── Overflow rows ────────────────────────────────────────────────────────
@@ -223,8 +225,8 @@ public sealed class RowLayoutTests : IDisposable
             var table = db.GetTable("Table1");
             moved = OverflowSlots(db, table);
             Assert.True(moved > 0, "the file has no overflow row");
-            Assert.Equal(table.RowCount, table.ReadAllRows().Count);     // none passed over
-            Assert.Equal(table.RowCount, table.NewCursor().Count());
+            Assert.Equal(table.RowCount, table.Rows.Count());     // none passed over
+            Assert.Equal(table.RowCount, table.CreateCursor().Count());
         }
 
         // The first of them rewritten and the rest deleted, as any row is: the others are as they were, the indexes
@@ -293,14 +295,14 @@ public sealed class RowLayoutTests : IDisposable
     [Fact]
     public void A_scan_of_a_table_with_no_overflow_row_reads_each_of_its_pages_once()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build() });
         for (int i = 0; i < 5_000; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = "row " + i });
         int pages = UsageMap.GetOwnedPages(db.File.ReadPage(table.Definition.UmapPageNumber), table.Definition.OwnedPagesRow, db.File.Format, db.File).Count;
 
         long before = db.File.ReadCount;
-        Assert.Equal(5_000, table.ReadAllRows().Count);
+        Assert.Equal(5_000, table.Rows.Count());
         long read = db.File.ReadCount - before;
 
         Assert.True(read <= pages + 2, $"{read} pages were read to scan {pages}");
@@ -309,7 +311,7 @@ public sealed class RowLayoutTests : IDisposable
     [Fact]
     public void A_deleted_row_is_marked_as_Access_marks_one()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
         table.Insert(new Row { ["Id"] = 1 });
         table.Insert(new Row { ["Id"] = 2 });
@@ -322,7 +324,7 @@ public sealed class RowLayoutTests : IDisposable
         Assert.Equal(JetFormat.DeletedRowFlags, Slot(0) & JetFormat.DeletedRowFlags);   // deleted
         Assert.Equal(JetFormat.DeletedRowFlags, Slot(1) & JetFormat.DeletedRowFlags);   // rewritten elsewhere
         Assert.Equal(0, Slot(2) & JetFormat.DeletedRowFlags);
-        Assert.Equal(3, table.ReadAllRows().Single()["Id"]);
+        Assert.Equal(3, table.Rows.Single()["Id"]);
     }
 
     // ── Long values ──────────────────────────────────────────────────────────
@@ -365,7 +367,7 @@ public sealed class RowLayoutTests : IDisposable
         // Access compares the last four bytes of a chain's reference with four bytes of the chain's first page, and
         // does not read the value when they differ. A page Access stamped, emptied by a delete and taken for a new
         // chain, keeps its stamp: the reference must have it, where it had zeros.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var (table, blob) = BlobTable(db);
         table.Insert(new Row { ["Id"] = 1, ["Blob"] = Bytes(9_000, 1) });
         byte[] first = Reference(db, table, blob, 1);
@@ -381,13 +383,13 @@ public sealed class RowLayoutTests : IDisposable
         byte[] second = Reference(db, table, blob, 2);
         Assert.Equal(page, ByteUtil.Get3ByteInt(second, 5));      // the emptied page, taken again
         Assert.Equal(0x0A5D6365, ByteUtil.GetInt(second, 8));
-        Assert.Equal(Bytes(9_000, 2), table.ReadAllRows().Single()["Blob"]);
+        Assert.Equal(Bytes(9_000, 2), table.Rows.Single()["Blob"]);
     }
 
     [Fact]
     public void An_update_of_another_column_leaves_a_long_value_where_it_is()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var (table, blob) = BlobTable(db);
         table.Insert(new Row { ["Id"] = 1, ["Name"] = "one", ["Blob"] = Bytes(50_000, 1) });
         byte[] reference = Reference(db, table, blob, 1);
@@ -401,13 +403,13 @@ public sealed class RowLayoutTests : IDisposable
         Assert.Equal(reference, Reference(db, table, blob, 1));   // the same reference, to the same pages
         Assert.Equal(pages, UsageMap.GetOwnedPages(db.File.ReadPage(lval.OwnedPage), lval.OwnedRow, db.File.Format, db.File));
         Assert.All(pages.Zip(contents, (p, was) => (p, was)), x => Assert.Equal(x.was, db.File.ReadPage(x.p)));
-        var row = table.ReadAllRows().Single();
+        var row = table.Rows.Single();
         Assert.Equal("renamed", row["Name"]);
         Assert.Equal(Bytes(50_000, 1), row["Blob"]);
 
         // And a change of the long value itself frees the old one and writes the new.
         table.UpdateByPrimaryKey(1, new Row { ["Blob"] = Bytes(100, 2) });
-        Assert.Equal(Bytes(100, 2), table.ReadAllRows().Single()["Blob"]);
+        Assert.Equal(Bytes(100, 2), table.Rows.Single()["Blob"]);
         Assert.NotEqual(reference, Reference(db, table, blob, 1));
     }
 
@@ -419,7 +421,7 @@ public sealed class RowLayoutTests : IDisposable
         // Releases before this marked a deleted row with 0x8000 alone, which is also the mark of a moved row's
         // values. Such a slot is only ever read by following a pointer to it, and nothing points at a deleted row:
         // it is passed over, as it always was.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var (table, _) = BlobTable(db);
         for (int i = 1; i <= 6; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = "row " + i, ["Blob"] = Bytes(100 * i, i) });
@@ -440,12 +442,12 @@ public sealed class RowLayoutTests : IDisposable
             db.File.WritePage(page, bytes);
         }
 
-        Assert.Equal(new[] { 1, 3, 4, 6 }, table.ReadAllRows().Select(r => (int)r["Id"]!));
-        Assert.Equal(new[] { 1, 3, 4, 6 }, table.NewCursor().Select(r => (int)r["Id"]!));
-        Assert.Null(table.NewIndexCursor().FindRowByPrimaryKey(2));
+        Assert.Equal(new[] { 1, 3, 4, 6 }, table.Rows.Select(r => (int)r["Id"]!));
+        Assert.Equal(new[] { 1, 3, 4, 6 }, table.CreateCursor().Select(r => (int)r["Id"]!));
+        Assert.Null(table.FindRowByPrimaryKey(2));
         table.Insert(new Row { ["Id"] = 2, ["Name"] = "again" });   // its key is free
         table.UpdateByPrimaryKey(3, new Row { ["Name"] = "three" });
-        Assert.Equal(new[] { 1, 2, 3, 4, 6 }, table.ReadAllRows().Select(r => (int)r["Id"]!).OrderBy(i => i));
+        Assert.Equal(new[] { 1, 2, 3, 4, 6 }, table.Rows.Select(r => (int)r["Id"]!).OrderBy(i => i));
     }
 
     [Fact]
@@ -460,7 +462,7 @@ public sealed class RowLayoutTests : IDisposable
         ByteUtil.Put3ByteInt(page, start + 1, JetFormat.PageSystemCatalog + 1);   // some page that is not the table's
         db.File.WritePage(RowPointer.Page(pointer), page);
 
-        var damaged = Assert.Throws<InvalidDataException>(() => table.ReadAllRows());
+        var damaged = Assert.Throws<InvalidDataException>(() => table.Rows.ToList());
         Assert.Contains("not a page of its table", damaged.Message);
     }
 
@@ -469,7 +471,7 @@ public sealed class RowLayoutTests : IDisposable
     {
         // The size was checked only as the new row was written, after the old one was marked deleted and its long
         // values freed: the update threw and the row was gone (qcatco/exportmdb.interop#56).
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var columns = new List<Column> { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build() };
             for (int i = 0; i < 20; i++)
@@ -486,7 +488,7 @@ public sealed class RowLayoutTests : IDisposable
             var table = db.GetTable("T");
             var tooLarge = Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(1, new Row { ["T7"] = new string('\u03B1', 255), ["T8"] = new string('\u03B2', 255) }));
             Assert.Contains("too large", tooLarge.Message);
-            Assert.Equal(new string('n', 9_000), table.NewIndexCursor().FindRowByPrimaryKey(1)!["Notes"]);
+            Assert.Equal(new string('n', 9_000), table.FindRowByPrimaryKey(1)!["Notes"]);
         }
         Assert.Equal(before, File.ReadAllBytes(_path));
     }
@@ -497,7 +499,7 @@ public sealed class RowLayoutTests : IDisposable
         // Releases before ExportMdb.Interop 2.1.2 kept up to 1,024 bytes of a long value in the row, where Access
         // keeps 64 and shows #Error for more (qcatco/exportmdb.interop#29). An update of another column wrote the
         // value again, which put it right; keeping an unchanged value's reference must not keep that.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var (table, blob) = BlobTable(db);
         table.Insert(new Row { ["Id"] = 1, ["Name"] = "short", ["Blob"] = Bytes(30, 1) });
         table.Insert(new Row { ["Id"] = 2, ["Name"] = "overlong", ["Blob"] = Bytes(30, 2) });
@@ -557,7 +559,7 @@ public sealed class RowLayoutTests : IDisposable
             string path = Path.Combine(Path.GetTempPath(), $"layout_{Guid.NewGuid():N}.mdb");
             try
             {
-                using var db = Database.Create(path, JetVersion.Jet4);
+                using var db = Database.Create(path, FileFormat.Access2000);
                 db.ShareLongValuePages = share;
                 var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build() });
                 long early = 0, late = 0;

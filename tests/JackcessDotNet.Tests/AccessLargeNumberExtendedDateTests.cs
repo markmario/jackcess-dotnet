@@ -53,7 +53,7 @@ public sealed class AccessLargeNumberExtendedDateTests : IDisposable
         var table = db.GetTable(name);
         Assert.Equal(numberIsVariable, table.Columns.Single(c => c.Name == "N").IsVariableLength);
 
-        var rows = table.ReadAllRows().OrderBy(r => (int)r["Id"]!).ToList();
+        var rows = table.Rows.OrderBy(r => (int)r["Id"]!).ToList();
         Assert.Equal(Numbers.Length, rows.Count);
         for (int i = 0; i < rows.Count; i++)
         {
@@ -88,12 +88,12 @@ public sealed class AccessLargeNumberExtendedDateTests : IDisposable
         for (int i = 0; i < Numbers.Length; i++)
         {
             if (Numbers[i] is { } number)
-                Assert.Equal(i + 1, table.NewIndexCursor("NAsc").FindRow("N", number)!["Id"]);
+                Assert.Equal(i + 1, table.CreateIndexCursor("NAsc").FindRow("N", number)!["Id"]);
             if (Date(Dates[i]) is { } date)
-                Assert.Equal(i + 1, table.NewIndexCursor("DDesc").FindRow("D", date)!["Id"]);
+                Assert.Equal(i + 1, table.CreateIndexCursor("DDesc").FindRow("D", date)!["Id"]);
         }
-        Assert.Null(table.NewIndexCursor("NAsc").FindRow("N", 2L));
-        Assert.Null(table.NewIndexCursor("DAsc").FindRow("D", new DateTime(2020, 1, 2, 3, 4, 5).AddTicks(1234569)));
+        Assert.Null(table.CreateIndexCursor("NAsc").FindRow("N", 2L));
+        Assert.Null(table.CreateIndexCursor("DAsc").FindRow("D", new DateTime(2020, 1, 2, 3, 4, 5).AddTicks(1234569)));
     }
 
     // The corpus's file: nine rows, the dates Access shows for them in the text column beside.
@@ -108,7 +108,7 @@ public sealed class AccessLargeNumberExtendedDateTests : IDisposable
         };
 
         using var db = Database.Open(TestCorpus.File("V2019", "extDateV2019.accdb") ?? throw new FileNotFoundException("extDateV2019.accdb"));
-        var rows = db.GetTable("Table1").ReadAllRows().OrderBy(r => (int)r["ID"]!).ToList();
+        var rows = db.GetTable("Table1").Rows.OrderBy(r => (int)r["ID"]!).ToList();
         Assert.Equal(expected.Select(Date), rows.Select(r => (DateTime?)Value(r, "DateExt")));
 
         // Its two indexes on the column, one descending, hold the rows under this library's keys.

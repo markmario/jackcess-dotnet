@@ -41,7 +41,7 @@ public sealed class AddIndexTests : IDisposable
 
     private Database CreateWithRows(int rows)
     {
-        var db = Database.Create(_path, JetVersion.Jet4);
+        var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Rows", Columns(), primaryKey: "Id");
         foreach (int i in Shuffled(rows)) table.Insert(RowOf(i));
         return db;
@@ -69,7 +69,7 @@ public sealed class AddIndexTests : IDisposable
         var read = reopened.GetTable("Rows");
         Assert.Equal("Grp ASC, Seq DESC", string.Join(", ", read.Indexes.Single(ix => ix.Name == "ByGroupAndSeq").Columns));
         Assert.True(read.Indexes.Single(ix => ix.Name == "ByGroupAndSeq").IgnoresNulls);
-        Assert.Equal(1_234, read.NewIndexCursor("ByCode").FindRow("Code", "code 001234")?["Id"]);
+        Assert.Equal(1_234, read.CreateIndexCursor("ByCode").FindRow("Code", "code 001234")?["Id"]);
         Assert.Equal(5, IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Rows", expectedRows: 5_000));
     }
 
@@ -121,6 +121,8 @@ public sealed class AddIndexTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
+            // The rows added below name no row of the tables Table1 refers to: this is about the indexes.
+            db.EnforceForeignKeys = false;
             var table = db.GetTable("Table1");
             int trees = IndexChecks.AssertEveryIndexHoldsTheRows(db, "Table1", expectedRows: 4);
             table.AddIndex(new IndexDefinition("byData", "data"));
@@ -136,7 +138,7 @@ public sealed class AddIndexTests : IDisposable
         // Access keeps a table's indexes in the order of their names; the new ones are where it would put them.
         Assert.Equal(new[] { "byData", "id", "PrimaryKey", "Table2Table1", "Table3Table1", "Zed" }, read.Indexes.Select(ix => ix.Name));
         Assert.Equal(Enumerable.Range(0, 6), read.Indexes.Select(ix => ix.IndexNumber).OrderBy(n => n));
-        Assert.Equal(107, read.NewIndexCursor("byData").FindRow("data", "row 7")?["id"]);
+        Assert.Equal(107, read.CreateIndexCursor("byData").FindRow("data", "row 7")?["id"]);
         IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Table1", expectedRows: 504);
     }
 

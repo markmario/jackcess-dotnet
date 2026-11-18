@@ -34,16 +34,16 @@ public sealed class PkIndexRoundTripTests : IDisposable
     [Fact]
     public void FindByPk_ReturnsRowInsertedViaInsert()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         for (int i = 1; i <= 10; i++)
             t.Insert(new Row { ["Id"] = i, ["Title"] = $"T{i}", ["Body"] = $"body {i}" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
         for (int i = 1; i <= 10; i++)
         {
-            var r = c.FindRowByPrimaryKey(i);
+            var r = c.Table.FindRowByPrimaryKey(i);
             Assert.NotNull(r);
             Assert.Equal($"T{i}", r!["Title"]);
         }
@@ -52,28 +52,28 @@ public sealed class PkIndexRoundTripTests : IDisposable
     [Fact]
     public void FindByPk_MissingKey_ReturnsNull()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "A" });
         t.Insert(new Row { ["Id"] = 3, ["Title"] = "C" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
-        Assert.Null(c.FindRowByPrimaryKey(2));   // never inserted
-        Assert.Null(c.FindRowByPrimaryKey(99));  // way out of range
+        Assert.Null(c.Table.FindRowByPrimaryKey(2));   // never inserted
+        Assert.Null(c.Table.FindRowByPrimaryKey(99));  // way out of range
     }
 
     [Fact]
     public void FindByPk_AfterUpdate_ReturnsUpdatedRow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "Original", ["Body"] = "v1" });
 
         t.UpdateByPrimaryKey(1, new Row { ["Title"] = "Revised", ["Body"] = "v2" });
 
-        var c = t.NewIndexCursor();
-        var r = c.FindRowByPrimaryKey(1);
+        var c = t.CreateIndexCursor();
+        var r = c.Table.FindRowByPrimaryKey(1);
 
         Assert.NotNull(r);
         Assert.Equal("Revised", r!["Title"]);
@@ -83,16 +83,16 @@ public sealed class PkIndexRoundTripTests : IDisposable
     [Fact]
     public void FindByPk_AfterDelete_ReturnsNull()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "Keep" });
         t.Insert(new Row { ["Id"] = 2, ["Title"] = "Delete" });
 
         t.DeleteRow("Id", 2);
 
-        var c = t.NewIndexCursor();
-        Assert.Null   (c.FindRowByPrimaryKey(2));
-        Assert.NotNull(c.FindRowByPrimaryKey(1));
+        var c = t.CreateIndexCursor();
+        Assert.Null   (c.Table.FindRowByPrimaryKey(2));
+        Assert.NotNull(c.Table.FindRowByPrimaryKey(1));
     }
 
     [Fact]
@@ -101,15 +101,15 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // After N updates of the same row, the PK index leaf holds N+1 entries
         // all keyed to the same PK (1 original + N from updates). Lookup must
         // still return the single live row — verifies the verify-the-hit filter.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "v0" });
 
         for (int i = 1; i <= 5; i++)
             t.UpdateByPrimaryKey(1, new Row { ["Title"] = $"v{i}" });
 
-        var c = t.NewIndexCursor();
-        var r = c.FindRowByPrimaryKey(1);
+        var c = t.CreateIndexCursor();
+        var r = c.Table.FindRowByPrimaryKey(1);
 
         Assert.NotNull(r);
         Assert.Equal("v5", r!["Title"]);
@@ -121,14 +121,14 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // Stale entry for the deleted row sits in the leaf. A subsequent insert
         // with the same PK appends a fresh entry. Lookup must skip the stale one
         // and return the new row.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 42, ["Title"] = "First" });
         t.DeleteRow("Id", 42);
         t.Insert(new Row { ["Id"] = 42, ["Title"] = "Second" });
 
-        var c = t.NewIndexCursor();
-        var r = c.FindRowByPrimaryKey(42);
+        var c = t.CreateIndexCursor();
+        var r = c.Table.FindRowByPrimaryKey(42);
 
         Assert.NotNull(r);
         Assert.Equal("Second", r!["Title"]);
@@ -137,13 +137,13 @@ public sealed class PkIndexRoundTripTests : IDisposable
     [Fact]
     public void FindByPk_TableWithoutPrimaryKey_FindRowByPrimaryKeyThrows()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols());   // no primaryKey
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "A" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
-        Assert.Throws<InvalidOperationException>(() => c.FindRowByPrimaryKey(1));
+        Assert.Throws<InvalidOperationException>(() => c.Table.FindRowByPrimaryKey(1));
     }
 
     [Fact]
@@ -151,12 +151,12 @@ public sealed class PkIndexRoundTripTests : IDisposable
     {
         // Calling FindRow against a non-PK column should still work via scan,
         // even when the PK index is present.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "First"  });
         t.Insert(new Row { ["Id"] = 2, ["Title"] = "Second" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
         var r = c.FindRow("Title", "Second");
 
         Assert.NotNull(r);
@@ -168,15 +168,15 @@ public sealed class PkIndexRoundTripTests : IDisposable
     {
         // 200 rows of small payloads to fit comfortably in the single-leaf
         // (entry size 8 bytes × 200 = 1600 bytes, well under 4076 of leaf space).
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         for (int i = 1; i <= 200; i++)
             t.Insert(new Row { ["Id"] = i, ["Title"] = $"T{i}" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
         foreach (int probe in new[] { 1, 17, 99, 100, 150, 200 })
         {
-            var r = c.FindRowByPrimaryKey(probe);
+            var r = c.Table.FindRowByPrimaryKey(probe);
             Assert.NotNull(r);
             Assert.Equal($"T{probe}", r!["Title"]);
         }
@@ -188,7 +188,7 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // After Step D, IndexWriter writes Access-format leaves (entry mask at byte 27+,
         // entries at byte 480+). Verify by reopening and looking up keys via
         // IndexReader — the disk-format walker, not our IndexWriter scan.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
             for (int i = 1; i <= 10; i++)
@@ -249,7 +249,7 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // via a real index column block + slot + name. After Dispose + reopen,
         // Database.GetTable should reattach PrimaryKeyColumnName/IndexPage from the
         // on-disk metadata so FindRowByPrimaryKey works without rebuilding state.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
             for (int i = 1; i <= 10; i++)
@@ -269,10 +269,10 @@ public sealed class PkIndexRoundTripTests : IDisposable
         Assert.Equal("Id", pkIx.Columns[0].Column.Name);
 
         // Lookups via the persisted index work end-to-end.
-        var c = table.NewIndexCursor();
+        var c = table.CreateIndexCursor();
         foreach (int probe in new[] { 1, 4, 7, 10 })
         {
-            var r = c.FindRowByPrimaryKey(probe);
+            var r = c.Table.FindRowByPrimaryKey(probe);
             Assert.NotNull(r);
             Assert.Equal($"T{probe}", r!["Title"]);
         }
@@ -284,7 +284,7 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // Roughly 800 rows of (Id, Title="Tn") at ~9 bytes/key + 4-byte trailer = 13 bytes/entry.
         // The leaf can hold ~280 such entries before splitting, so this exercises both
         // (a) the leaf-split path and (b) the leaf-to-node-root promotion.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
             for (int i = 1; i <= 800; i++)
@@ -320,16 +320,16 @@ public sealed class PkIndexRoundTripTests : IDisposable
         // 2000 PK rows with 8-byte entries = 16000 bytes of index entries.
         // A single leaf only holds ~4076/8 ≈ 509 entries, so this exercises
         // the linked-leaf path (3+ leaves chained via next-pointer).
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Articles", ArticlesCols(), primaryKey: "Id");
         for (int i = 1; i <= 2000; i++)
             t.Insert(new Row { ["Id"] = i, ["Title"] = $"T{i}" });
 
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
         // Probe values that fall into different leaves of the chain.
         foreach (int probe in new[] { 1, 100, 500, 600, 1000, 1500, 1999, 2000 })
         {
-            var r = c.FindRowByPrimaryKey(probe);
+            var r = c.Table.FindRowByPrimaryKey(probe);
             Assert.NotNull(r);
             Assert.Equal($"T{probe}", r!["Title"]);
         }

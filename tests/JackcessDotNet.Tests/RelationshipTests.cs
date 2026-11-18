@@ -19,7 +19,7 @@ public sealed class RelationshipTests
         string path = Path.Combine(Path.GetTempPath(), $"rel_{Guid.NewGuid():N}.mdb");
         try
         {
-            using var db = Database.Create(path, JetVersion.Jet4);
+            using var db = Database.Create(path, FileFormat.Access2000);
             Assert.Empty(db.GetRelationships());
         }
         finally

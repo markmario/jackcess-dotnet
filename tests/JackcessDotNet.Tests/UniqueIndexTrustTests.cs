@@ -35,7 +35,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     private List<string> Rows(string table)
     {
         using var db = OpenVerifying();
-        return db.GetTable(table).ReadAllRows()
+        return db.GetTable(table).Rows.ToList()
             .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
@@ -59,7 +59,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     /// </summary>
     private void Pairs()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var pairs = db.CreateTable("Pairs", new[] { Long("Id"), Long("A"), Text("B"), Text("Name") }, new[] { "Id" },
                                    new[] { new IndexDefinition("OnePair", "A", "B") { IsUnique = true } });
         pairs.Insert(new Row { ["Id"] = 1, ["A"] = 1, ["B"] = "x", ["Name"] = "one" });
@@ -109,7 +109,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     /// <summary>A table of <see cref="Many"/> rows, some 600 pages of them, with the indexes <paramref name="indexes"/>.</summary>
     private void Filled(string[]? primaryKey, params IndexDefinition[] indexes)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[] { Long("Id"), Long("Code"), Text("Name", 100) }, primaryKey, indexes);
         for (int i = 0; i < Many; i++)
             table.Insert(new Row { ["Id"] = i, ["Code"] = Many - i, ["Name"] = new string('n', 100) });
@@ -185,6 +185,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
         Filled(primaryKey: null, new IndexDefinition("OneCode", "Code") { IsUnique = true });
 
         using var db = OpenVerifying();
+        db.EnforceForeignKeys = false;   // the relationships, read once by the first change, are not what is counted
         long reads = ReadsOf(db, () => db.GetTable("T").Insert(new Row { ["Id"] = Many + 1, ["Name"] = "no code" }));
         Assert.True(reads <= InsertReads, $"the insert read {reads} pages");
     }
@@ -193,8 +194,9 @@ public sealed class UniqueIndexTrustTests : IDisposable
     [Fact]
     public void filling_a_new_table_never_reads_it()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.VerifyIndexes = true;
+        db.EnforceForeignKeys = false;   // the relationships, read once by the first change, are not what is counted
         var table = db.CreateTable("T", new[] { Long("Id"), Long("Code"), Text("Name", 100) }, new[] { "Id" },
                                    new[] { new IndexDefinition("OneCode", "Code") { IsUnique = true } });
         for (int i = 0; i < 2_000; i++)

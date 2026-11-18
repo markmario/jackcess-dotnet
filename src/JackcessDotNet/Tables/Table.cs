@@ -3,9 +3,9 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Represents an open user table and exposes row-insertion operations.
-/// Instances are created by <see cref="Database.CreateTable"/> or
-/// <see cref="Database.GetTable"/>.
+/// A table of an open database: its columns and indexes, its rows to read, and the operations that insert,
+/// update and delete them. Got from <see cref="Database.GetTable"/> or <see cref="Database.CreateTable"/>; a
+/// table is one object for as long as its database is open.
 /// </summary>
 public sealed class Table
 {
@@ -65,7 +65,9 @@ public sealed class Table
 
     // ── Public properties ─────────────────────────────────────────────────────
 
+    /// <summary>The table's name, as the database's catalog spells it.</summary>
     public string                Name    => _definition.Name;
+    /// <summary>The table's columns, in the order of their positions in the table.</summary>
     public IReadOnlyList<Column> Columns => _definition.Columns;
     /// <summary>Indexes defined on this table (read from the on-disk TDEF).</summary>
     public IReadOnlyList<Index>  Indexes => _definition.Indexes;
@@ -156,16 +158,102 @@ public sealed class Table
         }
     }
 
-    // ── Cursor factories ──────────────────────────────────────────────────────
+    // ── Reading ───────────────────────────────────────────────────────────────
 
-    /// <summary>Creates a sequential table-scan cursor (Jackcess-shape API).</summary>
-    public Cursor      NewCursor()                               => NewCursorInternal();
+    /// <summary>
+    /// The table's rows, in the order they are stored, which for a table only added to is the order they were
+    /// inserted in. Deleted rows are passed, and Memo and OLE values are read whole.
+    /// <para>
+    /// The rows are read as they are enumerated, a page at a time, so a table of any size can be gone through
+    /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
+    /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
+    /// are those of the pages as they were listed, and of each page as it was when it was reached: take the
+    /// list first.
+    /// </para>
+    /// </summary>
+    public IEnumerable<Row> Rows
+    {
+        get
+        {
+            var definition = _definition;
+            var format     = _file.Format;
+            var lvalReader = definition.LvalColumnUmapPages.Count > 0
+                ? new LvalReader(_file)
+                : null;
+            var decoder = new RowDecoder(format, definition.Columns, lvalReader);
 
-    /// <summary>Creates an index cursor that supports FindRow / FindRowByPrimaryKey.</summary>
-    public IndexCursor NewIndexCursor(string? indexName = null)  => NewIndexCursorInternal(indexName);
+            byte[] umapPage  = _file.ReadPage(definition.UmapPageNumber);
+            var    ownedList = UsageMap.GetOwnedPages(umapPage, definition.OwnedPagesRow, format, _file);
 
-    internal Cursor      NewCursorInternal()                       => new Cursor(this, _file, _definition);
-    internal IndexCursor NewIndexCursorInternal(string? indexName) => new IndexCursor(this, _file, _definition, indexName);
+            // Each page is read once, and its rows given from that reading.
+            foreach (int pageNum in ownedList)
+            {
+                byte[] dp       = _file.ReadPage(pageNum);
+                int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
+
+                for (int r = 0; r < rowCount; r++)
+                {
+                    // Deleted rows are passed; an overflow row is read where its pointer leads.
+                    if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+
+                    var row = new Row();
+                    foreach (var col in definition.Columns)
+                    {
+                        object? val = decoder.Decode(rowBytes, col);
+                        if (val is not null)
+                            row[col.Name] = val;
+                    }
+                    yield return row;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Creates a cursor over the table's rows in the order they are stored, which can move both ways. For a
+    /// plain read of every row, <see cref="Rows"/>.
+    /// </summary>
+    public Cursor CreateCursor() => new Cursor(this, _file, _definition);
+
+    /// <summary>
+    /// Creates a cursor that finds rows through the table's primary key (<see cref="IndexCursor.FindRow"/>,
+    /// <see cref="IndexCursor.FindRowByEntry"/>).
+    /// </summary>
+    public IndexCursor CreateIndexCursor() => new IndexCursor(this, _file, _definition, indexName: null);
+
+    /// <summary>Creates a cursor that finds rows through the index named <paramref name="indexName"/>.</summary>
+    public IndexCursor CreateIndexCursor(string indexName)
+        => new IndexCursor(this, _file, _definition, indexName ?? throw new ArgumentNullException(nameof(indexName)));
+
+    /// <summary>
+    /// The row whose primary key is <paramref name="primaryKey"/>, or null when the table has none: one value for
+    /// a key of one column, and for a key of several a value for each, in the key's order. The row is found
+    /// through the primary key's index when its keys are ones this library makes, and otherwise by reading the
+    /// table.
+    /// </summary>
+    /// <exception cref="ArgumentException">The number of values is not the number of columns in the primary key.</exception>
+    /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
+    public Row? FindRowByPrimaryKey(params object?[] primaryKey)
+    {
+        if (primaryKey is null) throw new ArgumentNullException(nameof(primaryKey));
+
+        var definition = _definition;
+        var keyColumns = definition.EffectivePrimaryKeyColumns;
+        if (keyColumns.Count == 0)
+            throw new InvalidOperationException(
+                $"Table '{definition.Name}' has no primary key. Use an index cursor's FindRowByEntry for another " +
+                "index, or its FindRow(column, value) to look in one column.");
+        if (primaryKey.Length != keyColumns.Count)
+            throw new ArgumentException(
+                $"The primary key of '{definition.Name}' has {keyColumns.Count} column(s) " +
+                $"({string.Join(", ", keyColumns)}); {primaryKey.Length} value(s) were given.", nameof(primaryKey));
+
+        if (keyColumns.Count == 1)
+            return new IndexCursor(this, _file, definition, indexName: null).FindRow(keyColumns[0], primaryKey[0]);
+
+        string? keyIndex = definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)?.Name;
+        return new IndexCursor(this, _file, definition, keyIndex).FindRowByEntry(primaryKey);
+    }
 
     // ── Row operations ────────────────────────────────────────────────────────
 
@@ -521,7 +609,7 @@ public sealed class Table
             .OfType<Column>()
             .ToList();
 
-        // The rows in the order ReadAllRows returns them, which RowIndex counts in.
+        // The rows in the order Rows gives them, which RowIndex counts in.
         int rowIndex = -1;
         foreach (int pageNum in UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, format, _file))
         {
@@ -617,43 +705,4 @@ public sealed class Table
 
     private Database Owner()
         => _owningDb ?? throw new InvalidOperationException($"Table '{Name}' was not opened from a database, so it cannot be changed.");
-
-    /// <summary>
-    /// Reads and decodes every non-deleted row in the table and returns them in
-    /// insertion order.  Follows LVAL page chains for Memo/OLE columns.
-    /// </summary>
-    public IReadOnlyList<Row> ReadAllRows()
-    {
-        var format     = _file.Format;
-        var lvalReader = _definition.LvalColumnUmapPages.Count > 0
-            ? new LvalReader(_file)
-            : null;
-        var decoder = new RowDecoder(format, _definition.Columns, lvalReader);
-
-        byte[] umapPage  = _file.ReadPage(_definition.UmapPageNumber);
-        var    ownedList = UsageMap.GetOwnedPages(umapPage, _definition.OwnedPagesRow, format, _file);
-
-        var result = new List<Row>();
-        foreach (int pageNum in ownedList)
-        {
-            byte[] dp       = _file.ReadPage(pageNum);
-            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
-
-            for (int r = 0; r < rowCount; r++)
-            {
-                // Deleted rows are passed; an overflow row is read where its pointer leads.
-                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
-
-                var row = new Row();
-                foreach (var col in _definition.Columns)
-                {
-                    object? val = decoder.Decode(rowBytes, col);
-                    if (val is not null)
-                        row[col.Name] = val;
-                }
-                result.Add(row);
-            }
-        }
-        return result;
-    }
 }

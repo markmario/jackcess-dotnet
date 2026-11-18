@@ -18,10 +18,12 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
     [Fact]
-    public void EnforceForeignKeys_DefaultsToFalse()
+    public void EnforceForeignKeys_DefaultsToTrue()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
-        Assert.False(db.EnforceForeignKeys);
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            Assert.True(db.EnforceForeignKeys);
+        using (var db = Database.Open(_path))
+            Assert.True(db.EnforceForeignKeys);
     }
 
     [Fact]
@@ -30,7 +32,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         // A pristine .mdb created by us has no MSysRelationships rows, so
         // even with enforcement enabled there's nothing to validate. This
         // test confirms the no-relationship case is silently OK.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.EnforceForeignKeys = true;
 
         var t = db.CreateTable("Things", new[]
@@ -40,7 +42,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         }, primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Name"] = "A" });
 
-        Assert.Single(t.ReadAllRows());
+        Assert.Single(t.Rows);
     }
 
     [Fact]
@@ -103,7 +105,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         var childTable  = db.GetTable(rel.ToTable);
 
         // Get a known-good parent PK value.
-        object? validParentValue = parentTable.NewCursor()
+        object? validParentValue = parentTable.CreateCursor()
             .Take(1).FirstOrDefault()?.GetValueOrDefault(parentCol);
         if (validParentValue is null) return;
 
@@ -181,7 +183,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         // has a relationship via a custom MSysRelationships row — but since
         // we don't write MSysRelationships from this library yet, this test
         // just confirms that EnforceForeignKeys with no rels is a no-op.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.EnforceForeignKeys = true;
 
         var t = db.CreateTable("X", new[]
@@ -191,7 +193,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         }, primaryKey: "Id");
 
         t.Insert(new Row { ["Id"] = 1, ["Ref"] = null });
-        Assert.Single(t.ReadAllRows());
+        Assert.Single(t.Rows);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

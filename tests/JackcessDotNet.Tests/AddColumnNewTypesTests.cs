@@ -20,7 +20,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
 
     private static Column Col(string name, DataType type) => new ColumnBuilder(name, type).Build();
 
-    private string CreateWithRows(string fileName, JetVersion version)
+    private string CreateWithRows(string fileName, FileFormat version)
     {
         string path = Path.Combine(_dir, fileName);
         using var db = Database.Create(path, version);
@@ -41,7 +41,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
     [InlineData(DataType.ExtendedDateTime)]
     public void Neither_is_added_to_a_table_of_an_mdb_and_nothing_is_changed(DataType type)
     {
-        string path = CreateWithRows("old.mdb", JetVersion.Jet4);
+        string path = CreateWithRows("old.mdb", FileFormat.Access2000);
         byte[] before = File.ReadAllBytes(path);
 
         using (var db = Database.Open(path))
@@ -57,7 +57,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
     [Fact]
     public void A_large_number_column_added_makes_the_file_Access_2016_s_and_holds_its_values()
     {
-        string path = CreateWithRows("large.accdb", JetVersion.Jet12);
+        string path = CreateWithRows("large.accdb", FileFormat.Access2007);
         Assert.True(VersionOf(path) < DatabaseHeader.Version2016);
 
         using (var db = Database.Open(path))
@@ -70,7 +70,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
 
         Assert.Equal(DatabaseHeader.Version2016, VersionOf(path));
         using var again = Database.Open(path);
-        var rows = again.GetTable("Things").ReadAllRows();
+        var rows = again.GetTable("Things").Rows.ToList();
         Assert.Equal(5, rows.Count);
         Assert.All(rows.Take(3), row => Assert.False(row.TryGetValue("Big", out var value) && value is not null));
         Assert.Equal(long.MaxValue, rows[3]["Big"]);
@@ -80,7 +80,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
     [Fact]
     public void An_extended_date_column_added_makes_the_file_Access_2019_s_and_holds_its_values_to_the_tick()
     {
-        string path = CreateWithRows("dates.accdb", JetVersion.Jet14);
+        string path = CreateWithRows("dates.accdb", FileFormat.Access2010);
         Assert.True(VersionOf(path) < DatabaseHeader.Version2019);
         var when = new DateTime(2026, 11, 18, 9, 30, 0).AddTicks(1234567);
 
@@ -93,7 +93,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
 
         Assert.Equal(DatabaseHeader.Version2019, VersionOf(path));
         using var again = Database.Open(path);
-        var rows = again.GetTable("Things").ReadAllRows();
+        var rows = again.GetTable("Things").Rows.ToList();
         Assert.Equal(4, rows.Count);
         Assert.Equal(when, rows[3]["Seen"]);
     }
@@ -105,7 +105,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
     public void A_table_with_a_newer_column_whose_creation_fails_leaves_the_file_s_version_as_it_was(int writesBeforeFailure)
     {
         // The header is the last thing written: a creation stopped at any earlier write has not touched it.
-        string path = CreateWithRows("fails.accdb", JetVersion.Jet12);
+        string path = CreateWithRows("fails.accdb", FileFormat.Access2007);
         byte version = VersionOf(path);
 
         using (var db = Database.Open(path))
@@ -117,13 +117,13 @@ public sealed class AddColumnNewTypesTests : IDisposable
 
         Assert.Equal(version, VersionOf(path));
         using var again = Database.Open(path);
-        Assert.DoesNotContain("Newer", again.ListTables());
+        Assert.DoesNotContain("Newer", again.GetTableNames());
     }
 
     [Fact]
     public void A_column_of_an_older_type_leaves_the_file_s_version_as_it_was()
     {
-        string path = CreateWithRows("plain.accdb", JetVersion.Jet12);
+        string path = CreateWithRows("plain.accdb", FileFormat.Access2007);
         byte version = VersionOf(path);
 
         using (var db = Database.Open(path))

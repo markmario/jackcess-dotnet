@@ -59,7 +59,7 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
     [Fact]
     public void Deleted_rows_take_their_entries_out_of_the_primary_key()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Keyed(db, 2000);
         int pagesBefore = JetPages.TreePages(db.File, JetPages.IndexBlocks(db.File, TdefOf(db)).Single().Root).Count;
 
@@ -68,16 +68,16 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
 
         AssertKeyHoldsTheRows(db, 400);
         Assert.True(JetPages.TreePages(db.File, JetPages.IndexBlocks(db.File, TdefOf(db)).Single().Root).Count < pagesBefore);
-        var cursor = db.GetTable("Keyed").NewIndexCursor();
-        Assert.Equal("v200", cursor.FindRowByPrimaryKey(200)?["Txt"]);
-        Assert.Null(cursor.FindRowByPrimaryKey(1000));
-        Assert.Equal("v1801", cursor.FindRowByPrimaryKey(1801)?["Txt"]);
+        var cursor = db.GetTable("Keyed").CreateIndexCursor();
+        Assert.Equal("v200", cursor.Table.FindRowByPrimaryKey(200)?["Txt"]);
+        Assert.Null(cursor.Table.FindRowByPrimaryKey(1000));
+        Assert.Equal("v1801", cursor.Table.FindRowByPrimaryKey(1801)?["Txt"]);
     }
 
     [Fact]
     public void Emptying_the_last_leaf_hands_its_place_to_the_leaf_before()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Keyed(db, 2000);
 
         for (int key = 1001; key <= 2000; key++)   // the top: the tail empties
@@ -87,13 +87,13 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
         for (int key = 2001; key <= 2100; key++)    // keys after the old tail's go in at the end again
             table.Insert(new Row { ["Id"] = key, ["Txt"] = $"v{key}" });
         AssertKeyHoldsTheRows(db, 1100);
-        Assert.Equal("v2050", db.GetTable("Keyed").NewIndexCursor().FindRowByPrimaryKey(2050)?["Txt"]);
+        Assert.Equal("v2050", db.GetTable("Keyed").FindRowByPrimaryKey(2050)?["Txt"]);
     }
 
     [Fact]
     public void Deleting_every_row_empties_the_primary_key_and_it_fills_again()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Keyed(db, 1500);
         for (int key = 1; key <= 1500; key++)
             table.DeleteRow("Id", key);
@@ -109,12 +109,12 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
     [Fact]
     public void An_updated_row_moves_its_primary_key_entry()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Keyed(db, 10);
 
         table.UpdateByPrimaryKey(3, new Row { ["Txt"] = "updated" });
 
         AssertKeyHoldsTheRows(db, 10);
-        Assert.Equal("updated", db.GetTable("Keyed").NewIndexCursor().FindRowByPrimaryKey(3)?["Txt"]);
+        Assert.Equal("updated", db.GetTable("Keyed").FindRowByPrimaryKey(3)?["Txt"]);
     }
 }

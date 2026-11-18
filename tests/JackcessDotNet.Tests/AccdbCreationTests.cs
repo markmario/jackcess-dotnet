@@ -29,11 +29,11 @@ public sealed class AccdbCreationTests : IDisposable
     // Each format, the two version bytes its header has, and whether its text sorts in General.
     public static IEnumerable<object[]> Formats() => new[]
     {
-        new object[] { JetVersion.Jet4,  (byte)0x01, (byte)0x00, false },
-        new object[] { JetVersion.Jet12, (byte)0x02, (byte)0x00, false },
-        new object[] { JetVersion.Jet14, (byte)0x03, (byte)0x01, true },
-        new object[] { JetVersion.Jet16, (byte)0x05, (byte)0x00, true },
-        new object[] { JetVersion.Jet17, (byte)0x06, (byte)0x00, true },
+        new object[] { FileFormat.Access2000,  (byte)0x01, (byte)0x00, false },
+        new object[] { FileFormat.Access2007, (byte)0x02, (byte)0x00, false },
+        new object[] { FileFormat.Access2010, (byte)0x03, (byte)0x01, true },
+        new object[] { FileFormat.Access2016, (byte)0x05, (byte)0x00, true },
+        new object[] { FileFormat.Access2019, (byte)0x06, (byte)0x00, true },
     };
 
     private static Column[] People() => new[]
@@ -56,23 +56,23 @@ public sealed class AccdbCreationTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Formats))]
-    public void A_created_file_is_of_the_format_asked_for(JetVersion version, byte code, byte after, bool general)
+    public void A_created_file_is_of_the_format_asked_for(FileFormat version, byte code, byte after, bool general)
     {
-        string path = NewPath(version == JetVersion.Jet4 ? ".mdb" : ".accdb");
+        string path = NewPath(version == FileFormat.Access2000 ? ".mdb" : ".accdb");
         using (var db = Database.Create(path, version))
         {
             Assert.Equal(version, db.File.Format.Version);
-            Assert.Empty(db.ListTables());
+            Assert.Empty(db.GetTableNames());
         }
 
         byte[] head = File.ReadAllBytes(path).AsSpan(0, 0x18).ToArray();
-        Assert.Equal(version == JetVersion.Jet4 ? "Standard Jet DB" : "Standard ACE DB", System.Text.Encoding.ASCII.GetString(head, 4, 15));
+        Assert.Equal(version == FileFormat.Access2000 ? "Standard Jet DB" : "Standard ACE DB", System.Text.Encoding.ASCII.GetString(head, 4, 15));
         Assert.Equal(new[] { code, after }, new[] { head[0x14], head[0x15] });
 
         // Opened again, with no version named and with the wrong one, it is the format its header says.
         using (var db = Database.Open(path))
             Assert.Equal(version, db.File.Format.Version);
-        using (var db = Database.Open(path, JetVersion.Jet4))
+        using (var db = Database.Open(path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }))
         {
             Assert.Equal(version, db.File.Format.Version);
             var catalogName = db.GetTable("MSysObjects").Columns.Single(c => c.Name == "Name");
@@ -82,7 +82,7 @@ public sealed class AccdbCreationTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Formats))]
-    public void Tables_made_in_a_created_file_keep_their_rows_and_indexes_when_it_is_opened_again(JetVersion version, byte code, byte after, bool general)
+    public void Tables_made_in_a_created_file_keep_their_rows_and_indexes_when_it_is_opened_again(FileFormat version, byte code, byte after, bool general)
     {
         string path = NewPath();
         using (var db = Database.Create(path, version))
@@ -97,11 +97,11 @@ public sealed class AccdbCreationTests : IDisposable
 
         using (var db = Database.Open(path))
         {
-            Assert.Equal(new[] { "Other", "People" }, db.ListTables().OrderBy(n => n));
+            Assert.Equal(new[] { "Other", "People" }, db.GetTableNames().OrderBy(n => n));
             var table = db.GetTable("People");
             Assert.Equal(general, table.Columns.Single(c => c.Name == "Name").SortOrder.IsGeneral);
 
-            var rows = table.ReadAllRows();
+            var rows = table.Rows.ToList();
             Assert.Equal(1500, rows.Count);
             foreach (var row in rows)
             {
@@ -110,7 +110,7 @@ public sealed class AccdbCreationTests : IDisposable
                 Assert.Equal(expected["Born"], row["Born"]);
                 Assert.Equal(expected["Notes"], row.TryGetValue("Notes", out var notes) ? notes : null);
             }
-            Assert.Equal(Person(777)["Name"], table.NewIndexCursor().FindRowByPrimaryKey(777)!["Name"]);
+            Assert.Equal(Person(777)["Name"], table.FindRowByPrimaryKey(777)!["Name"]);
             Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "People", expectedRows: 1500));
 
             // And it is added to, changed and deleted from as any file is.
@@ -122,8 +122,8 @@ public sealed class AccdbCreationTests : IDisposable
 
         using (var db = Database.Open(path))
         {
-            Assert.Equal(1500, db.GetTable("People").ReadAllRows().Count);
-            Assert.Equal("changed", db.GetTable("People").NewIndexCursor().FindRowByPrimaryKey(10)!["Name"]);
+            Assert.Equal(1500, db.GetTable("People").Rows.Count());
+            Assert.Equal("changed", db.GetTable("People").FindRowByPrimaryKey(10)!["Name"]);
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "People", expectedRows: 1500);
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "Other", expectedRows: 1);
         }
@@ -134,28 +134,28 @@ public sealed class AccdbCreationTests : IDisposable
     public void A_created_file_replaces_whatever_was_at_the_path()
     {
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
             db.CreateTable("Old", new[] { new ColumnBuilder("Id", DataType.Long).Build() });
 
-        using (var db = new DatabaseBuilder().WithFile(path).WithVersion(JetVersion.Jet14).Create())
+        using (var db = Database.Create(path, FileFormat.Access2010))
         {
-            Assert.Equal(JetVersion.Jet14, db.File.Format.Version);
-            Assert.Empty(db.ListTables());
+            Assert.Equal(FileFormat.Access2010, db.File.Format.Version);
+            Assert.Empty(db.GetTableNames());
         }
     }
 
     // A version byte is one Jackcess gives a format to: 5 is Access 2016's and 6 Access 2019's. 5 used to be read
     // as the last format known, and 4, which no file has, as Access 2016's.
     [Theory]
-    [InlineData(0x00, JetVersion.Jet3)]
-    [InlineData(0x01, JetVersion.Jet4)]
-    [InlineData(0x02, JetVersion.Jet12)]
-    [InlineData(0x03, JetVersion.Jet14)]
-    [InlineData(0x04, JetVersion.Jet16)]
-    [InlineData(0x05, JetVersion.Jet16)]
-    [InlineData(0x06, JetVersion.Jet17)]
-    [InlineData(0x07, JetVersion.Jet17)]
-    public void A_version_byte_names_the_format_Jackcess_names(byte code, JetVersion version)
+    [InlineData(0x00, FileFormat.Access97)]
+    [InlineData(0x01, FileFormat.Access2000)]
+    [InlineData(0x02, FileFormat.Access2007)]
+    [InlineData(0x03, FileFormat.Access2010)]
+    [InlineData(0x04, FileFormat.Access2016)]
+    [InlineData(0x05, FileFormat.Access2016)]
+    [InlineData(0x06, FileFormat.Access2019)]
+    [InlineData(0x07, FileFormat.Access2019)]
+    public void A_version_byte_names_the_format_Jackcess_names(byte code, FileFormat version)
     {
         Assert.Equal(version, JetFormat.ForVersionCode(code).Version);
     }
@@ -164,6 +164,6 @@ public sealed class AccdbCreationTests : IDisposable
     public void The_corpus_s_extended_date_file_is_an_Access_2019_one()
     {
         using var db = Database.Open(TestCorpus.File("V2019", "extDateV2019.accdb") ?? throw new FileNotFoundException("extDateV2019.accdb"));
-        Assert.Equal(JetVersion.Jet17, db.File.Format.Version);
+        Assert.Equal(FileFormat.Access2019, db.File.Format.Version);
     }
 }

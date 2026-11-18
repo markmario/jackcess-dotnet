@@ -57,7 +57,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     [Fact]
     public void a_value_in_the_earlier_byte_order_is_listed_with_the_number_it_was_meant_to_be()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var prices = Prices(db);
             prices.Insert(new Row { ["Id"] = 1, ["Price"] = 1.23m, ["Quantity"] = 5m });
@@ -85,7 +85,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         Assert.Equal(-12.34m, found[1].ValueInEarlierByteOrder);
 
         // Listing changes nothing: the rows read as they did, and the value listed is the value read.
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Equal(new object?[] { 1.23m, 16_777_216.00m, -35_234_775.04m }, rows.Select(row => row["Price"]));
         Assert.All(found, f => Assert.Equal(f.Value, rows[f.RowIndex]["Price"]));
 
@@ -97,7 +97,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     [Fact]
     public void a_row_of_a_table_without_a_primary_key_is_told_by_its_place_among_the_rows()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var prices = Prices(db, keyed: false);
             prices.Insert(new Row { ["Id"] = 1, ["Price"] = 1.23m });
@@ -110,14 +110,14 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
 
         Assert.Empty(found.PrimaryKey);
         Assert.Equal(1, found.RowIndex);
-        Assert.Equal(2, read.GetTable("Prices").ReadAllRows()[found.RowIndex]["Id"]);
+        Assert.Equal(2, read.GetTable("Prices").Rows.ToList()[found.RowIndex]["Id"]);
         Assert.Equal(9.99m, found.ValueInEarlierByteOrder);
     }
 
     [Fact]
     public void values_this_library_writes_are_not_listed()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var prices = Prices(db);
             prices.Insert(new Row { ["Id"] = 1, ["Price"] = 999.99m, ["Quantity"] = 999_999_999_999_999_999m });
@@ -138,7 +138,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     [Fact]
     public void a_value_in_the_earlier_byte_order_that_reads_within_its_precision_is_not_listed()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var prices = Prices(db);
             prices.Insert(new Row { ["Id"] = 1, ["Price"] = 111.11m, ["Quantity"] = 123_456_789m });
@@ -149,7 +149,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         using var read = Database.Open(_path);
         Assert.Empty(read.FindDecimalsBeyondPrecision());
 
-        var row = Assert.Single(read.GetTable("Prices").ReadAllRows());
+        var row = Assert.Single(read.GetTable("Prices").Rows.ToList());
         Assert.Equal(655.36m, row["Price"]);
         Assert.Equal(16_777_216m, row["Quantity"]);
     }
@@ -163,7 +163,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     [Fact]
     public void a_value_whose_number_runs_past_96_bits_is_listed_with_the_low_96_bits_a_read_gives()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             Prices(db).Insert(new Row { ["Id"] = 1, ["Price"] = 111.11m });
         StoreInEarlierByteOrder(111.11m, 5, 2, BigInteger.Pow(2, 100), negative: false);
 
@@ -174,7 +174,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         Assert.True(found.IsCut);
         Assert.Equal(0.00m, found.Value);
         Assert.Null(found.ValueInEarlierByteOrder);
-        Assert.Equal(found.Value, read.GetTable("Prices").ReadAllRows()[0]["Price"]);
+        Assert.Equal(found.Value, read.GetTable("Prices").Rows.ToList()[0]["Price"]);
         Assert.Equal("Prices.Price, row 0 (Id=1): reads 0.00 (the low 96 bits of a longer number), more than a decimal holds in the earlier byte order",
                      found.ToString());
     }
@@ -197,14 +197,14 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
             catch (Exception e) when (e is NotSupportedException or InvalidDataException or InvalidOperationException) { continue; }   // not one this library opens
             using (db)
             {
-                foreach (string name in db.ListTables())
+                foreach (string name in db.GetTableNames())
                 {
                     var table = db.GetTable(name);
                     var decimals = table.Columns.Where(c => c.DataType == DataType.Numeric && !c.IsCalculated).ToList();
                     if (decimals.Count == 0) continue;
 
                     seen.Add($"{Path.GetFileName(file)}:{name}");
-                    values += table.ReadAllRows().Sum(row => decimals.Count(c => row.TryGetValue(c.Name, out var value) && value is not null));
+                    values += table.Rows.Sum(row => decimals.Count(c => row.TryGetValue(c.Name, out var value) && value is not null));
                     listed.AddRange(table.FindDecimalsBeyondPrecision().Select(f => $"{Path.GetFileName(file)}: {f}"));
                 }
             }

@@ -22,7 +22,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
         ColumnBuilder cb = new ColumnBuilder("V", dt);
         configure?.Invoke(cb);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("T", new[]
             {
@@ -33,7 +33,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var rows = reopen.GetTable("T").ReadAllRows();
+        var rows = reopen.GetTable("T").Rows.ToList();
         Assert.Single(rows);
         return rows[0];
     }
@@ -172,7 +172,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
     [Fact] public void Memo_Null_StoresAsNull()
     {
         // Null memo: not inserted as a value; row should report null on read.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("T", new[]
             {
@@ -182,7 +182,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
             t.Insert(new Row { ["Id"] = 1 });   // no V
         }
         using var reopen = Database.Open(_path);
-        var rows = reopen.GetTable("T").ReadAllRows();
+        var rows = reopen.GetTable("T").Rows.ToList();
         Assert.False(rows[0].ContainsKey("V"),
             "Memo column with no value should not appear in the read row (null filtered out).");
     }

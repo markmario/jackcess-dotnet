@@ -9,9 +9,25 @@ internal sealed class PageFile : IDisposable
     private readonly string _path;
     private readonly bool _readOnly;
 
+    private bool _disposed;
+
     public JetFormat Format => _format;
-    public long Length => _stream.Length;
-    public int PageCount => (int)(_stream.Length / _format.PageSize);
+    public long Length { get { ThrowIfDisposed(); return _stream.Length; } }
+    public int PageCount { get { ThrowIfDisposed(); return (int)(_stream.Length / _format.PageSize); } }
+
+    /// <summary>
+    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read.
+    /// </summary>
+    internal bool IsReadOnly => _readOnly;
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw Closed(_path);
+    }
+
+    /// <summary>What anything that goes to a file throws once the database has been closed.</summary>
+    internal static ObjectDisposedException Closed(string path)
+        => new(nameof(Database), $"The database '{path}' has been closed.");
 
     /// <summary>Pages read since the file was opened: what tests measure an operation's cost in.</summary>
     internal long ReadCount { get; private set; }
@@ -162,6 +178,7 @@ internal sealed class PageFile : IDisposable
 
     public byte[] ReadPage(int pageNumber)
     {
+        ThrowIfDisposed();
         if (pageNumber < 0)
             throw new ArgumentOutOfRangeException(nameof(pageNumber));
 
@@ -195,6 +212,7 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal byte[] ReadKeptPage(int pageNumber)
     {
+        ThrowIfDisposed();
         if (!_kept.TryGetValue(pageNumber, out var page))
         {
             page = ReadPage(pageNumber);
@@ -205,6 +223,7 @@ internal sealed class PageFile : IDisposable
 
     public void WritePage(int pageNumber, byte[] data)
     {
+        ThrowIfDisposed();
         if (pageNumber < 0)
             throw new ArgumentOutOfRangeException(nameof(pageNumber));
         if (data is null)
@@ -312,6 +331,7 @@ internal sealed class PageFile : IDisposable
 
     public void ReplaceWith(Stream source)
     {
+        ThrowIfDisposed();
         if (source is null)
             throw new ArgumentNullException(nameof(source));
         EnsureWritable();
@@ -327,5 +347,8 @@ internal sealed class PageFile : IDisposable
     public string Path => _path;
 
     public void Dispose()
-        => _stream.Dispose();
+    {
+        _disposed = true;
+        _stream.Dispose();
+    }
 }

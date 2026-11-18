@@ -13,7 +13,7 @@ public sealed class JetFormatTests
     public void Jet3_CoreSizes()
     {
         var f = JetFormat.Jet3;
-        Assert.Equal(JetVersion.Jet3, f.Version);
+        Assert.Equal(FileFormat.Access97, f.Version);
         Assert.Equal(2048, f.PageSize);
         Assert.False(f.HasPageChecksum);
         Assert.Equal(2012, f.MaxRowSize);
@@ -67,7 +67,7 @@ public sealed class JetFormatTests
     public void Jet4_CoreSizes()
     {
         var f = JetFormat.Jet4;
-        Assert.Equal(JetVersion.Jet4, f.Version);
+        Assert.Equal(FileFormat.Access2000, f.Version);
         Assert.Equal(4096, f.PageSize);
         Assert.True(f.HasPageChecksum);
         Assert.Equal(4060, f.MaxRowSize);
@@ -109,18 +109,18 @@ public sealed class JetFormatTests
     }
 
     [Theory]
-    [InlineData(JetVersion.Jet12)]
-    [InlineData(JetVersion.Jet14)]
-    [InlineData(JetVersion.Jet16)]
-    [InlineData(JetVersion.Jet17)]
-    public void Jet12Through17_ShareJet4Layout(JetVersion ver)
+    [InlineData(FileFormat.Access2007)]
+    [InlineData(FileFormat.Access2010)]
+    [InlineData(FileFormat.Access2016)]
+    [InlineData(FileFormat.Access2019)]
+    public void Jet12Through17_ShareJet4Layout(FileFormat ver)
     {
         JetFormat f = ver switch
         {
-            JetVersion.Jet12 => JetFormat.Jet12,
-            JetVersion.Jet14 => JetFormat.Jet14,
-            JetVersion.Jet16 => JetFormat.Jet16,
-            JetVersion.Jet17 => JetFormat.Jet17,
+            FileFormat.Access2007 => JetFormat.Jet12,
+            FileFormat.Access2010 => JetFormat.Jet14,
+            FileFormat.Access2016 => JetFormat.Jet16,
+            FileFormat.Access2019 => JetFormat.Jet17,
             _ => throw new ArgumentOutOfRangeException(nameof(ver)),
         };
         Assert.Equal(ver, f.Version);

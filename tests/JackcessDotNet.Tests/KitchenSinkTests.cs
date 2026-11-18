@@ -35,7 +35,7 @@ public sealed class KitchenSinkTests : IDisposable
         var marker = Guid.NewGuid();
         var when   = new DateTime(2024, 1, 2, 3, 4, 5);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Things", columns, primaryKey: "Id");
             t.Insert(new Row
@@ -54,7 +54,7 @@ public sealed class KitchenSinkTests : IDisposable
 
         using var reopen = Database.Open(_path);
         var t2 = reopen.GetTable("Things");
-        var rows = t2.ReadAllRows();
+        var rows = t2.Rows.ToList();
         Assert.Single(rows);
         var r = rows[0];
 
@@ -76,7 +76,7 @@ public sealed class KitchenSinkTests : IDisposable
     [Fact]
     public void TwoTables_IndependentLookups_AfterReopen()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var customers = db.CreateTable("Customers", new[]
             {
@@ -102,11 +102,11 @@ public sealed class KitchenSinkTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        Assert.Contains("Customers", reopen.ListTables());
-        Assert.Contains("Orders",    reopen.ListTables());
+        Assert.Contains("Customers", reopen.GetTableNames());
+        Assert.Contains("Orders",    reopen.GetTableNames());
 
-        var custRows  = reopen.GetTable("Customers").ReadAllRows();
-        var orderRows = reopen.GetTable("Orders").ReadAllRows();
+        var custRows  = reopen.GetTable("Customers").Rows.ToList();
+        var orderRows = reopen.GetTable("Orders").Rows.ToList();
         Assert.Equal(5,  custRows.Count);
         Assert.Equal(11, orderRows.Count);
     }
@@ -118,8 +118,7 @@ public sealed class KitchenSinkTests : IDisposable
         string viaBuilders = Path.ChangeExtension(_path, ".builder.mdb");
         try
         {
-            using (var db = new DatabaseBuilder()
-                   .WithFile(viaBuilders).WithVersion(JetVersion.Jet4).Create())
+            using (var db = Database.Create(viaBuilders, FileFormat.Access2000))
             {
                 new TableBuilder("Items")
                     .AddColumn("Id",    DataType.Long)
@@ -128,7 +127,7 @@ public sealed class KitchenSinkTests : IDisposable
                     .ToTable(db);
             }
 
-            using (var db = Database.Create(_path, JetVersion.Jet4))
+            using (var db = Database.Create(_path, FileFormat.Access2000))
             {
                 db.CreateTable("Items", new[]
                 {
@@ -160,7 +159,7 @@ public sealed class KitchenSinkTests : IDisposable
     [Fact]
     public void UpdateDelete_BothPaths_LeaveTableConsistent()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Things", new[]
         {
             new ColumnBuilder("Id",    DataType.Long).Build(),
@@ -173,21 +172,21 @@ public sealed class KitchenSinkTests : IDisposable
         t.UpdateByPrimaryKey(3, new Row { ["Title"] = "Updated" });
         t.DeleteRow("Id", 4);
 
-        var rows = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var rows = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal(4, rows.Count);
         Assert.Equal("Updated", rows.Single(r => Convert.ToInt32(r["Id"]) == 3)["Title"]);
         Assert.DoesNotContain(rows, r => Convert.ToInt32(r["Id"]) == 4);
 
         // Cursor sees the consistent state.
-        var c = t.NewIndexCursor();
-        Assert.Equal("Updated", c.FindRowByPrimaryKey(3)!["Title"]);
-        Assert.Null(c.FindRowByPrimaryKey(4));
+        var c = t.CreateIndexCursor();
+        Assert.Equal("Updated", c.Table.FindRowByPrimaryKey(3)!["Title"]);
+        Assert.Null(c.Table.FindRowByPrimaryKey(4));
     }
 
     [Fact]
     public void Database_OpenAfterFullPipeline_HasIndexAndDataConsistent()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Demo", new[]
             {
@@ -200,7 +199,7 @@ public sealed class KitchenSinkTests : IDisposable
 
         using var reopen = Database.Open(_path);
         var t2 = reopen.GetTable("Demo");
-        Assert.Equal(100, t2.ReadAllRows().Count);
+        Assert.Equal(100, t2.Rows.Count());
 
         var pkIx = t2.Indexes.First(ix => ix.IsPrimaryKey);
         Assert.Equal("Id", pkIx.Columns[0].Column.Name);

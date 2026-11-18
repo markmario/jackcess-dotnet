@@ -99,13 +99,13 @@ public sealed class LegacyLongKeyTests : IDisposable
     {
         using var db = OpenFixture();
         var coded = db.GetTable("Coded");
-        Assert.Equal(21, coded.NewIndexCursor().FindRowByPrimaryKey(Long255)?["N"]);
-        Assert.Equal(22, coded.NewIndexCursor().FindRowByPrimaryKey(Long254e)?["N"]);
-        Assert.Equal(23, coded.NewIndexCursor().FindRowByPrimaryKey(CutAlike1)?["N"]);
-        Assert.Equal(24, coded.NewIndexCursor().FindRowByPrimaryKey(CutAlike2)?["N"]);
-        Assert.Equal(25, coded.NewIndexCursor().FindRowByPrimaryKey(LongAe)?["N"]);
-        Assert.Equal(7, coded.NewIndexCursor().FindRowByPrimaryKey("short 07")?["N"]);
-        Assert.Equal(5, db.GetTable("Paired").NewIndexCursor().FindRowByEntry(PairA(5), PairB(5))?["N"]);
+        Assert.Equal(21, coded.FindRowByPrimaryKey(Long255)?["N"]);
+        Assert.Equal(22, coded.FindRowByPrimaryKey(Long254e)?["N"]);
+        Assert.Equal(23, coded.FindRowByPrimaryKey(CutAlike1)?["N"]);
+        Assert.Equal(24, coded.FindRowByPrimaryKey(CutAlike2)?["N"]);
+        Assert.Equal(25, coded.FindRowByPrimaryKey(LongAe)?["N"]);
+        Assert.Equal(7, coded.FindRowByPrimaryKey("short 07")?["N"]);
+        Assert.Equal(5, db.GetTable("Paired").CreateIndexCursor().FindRowByEntry(PairA(5), PairB(5))?["N"]);
     }
 
     // A deleted row's whole entry goes with it: the index holds the rows left and nothing else. A delete that
@@ -135,8 +135,8 @@ public sealed class LegacyLongKeyTests : IDisposable
         coded.DeleteRow("Code", CutAlike1);
         var kinds = StoredAs(db, "Coded", coded.Indexes.Single().Name);
         Assert.Equal((20, 4), (Count(kinds, "short"), Count(kinds, "whole")));
-        Assert.Equal(24, coded.NewIndexCursor().FindRowByPrimaryKey(CutAlike2)?["N"]);
-        Assert.Null(coded.NewIndexCursor().FindRowByPrimaryKey(CutAlike1));
+        Assert.Equal(24, coded.FindRowByPrimaryKey(CutAlike2)?["N"]);
+        Assert.Null(coded.FindRowByPrimaryKey(CutAlike1));
     }
 
     // An updated row moves: its whole entry goes and it gains one entry, under the cut key when the key is still
@@ -153,8 +153,8 @@ public sealed class LegacyLongKeyTests : IDisposable
         coded.UpdateByPrimaryKey(LongAe, new Row { ["Code"] = new string('ü', 255) });   // the key, to another long one
         var kinds = StoredAs(db, "Coded", indexName);
         Assert.Equal((21, 2, 2), (Count(kinds, "short"), Count(kinds, "whole"), Count(kinds, "cut")));
-        Assert.Equal(220, coded.NewIndexCursor().FindRowByPrimaryKey(Long254e)?["N"]);
-        Assert.Equal(25, coded.NewIndexCursor().FindRowByPrimaryKey(new string('ü', 255))?["N"]);
+        Assert.Equal(220, coded.FindRowByPrimaryKey(Long254e)?["N"]);
+        Assert.Equal(25, coded.FindRowByPrimaryKey(new string('ü', 255))?["N"]);
 
         // (A row of Paired cannot be updated: the library updates by a primary key of one column. Its two-column
         // key is moved in Whole_keys_..._are_replaced_by_cut_ones_on_update.)
@@ -196,7 +196,7 @@ public sealed class LegacyLongKeyTests : IDisposable
         string path = Path.Combine(Path.GetTempPath(), $"legacy_{Guid.NewGuid():N}{(general ? ".accdb" : ".mdb")}");
         _paths.Add(path);
         if (general) File.Copy(TestCorpus.File("V2010", "common1V2010.accdb") ?? throw new FileNotFoundException("common1V2010.accdb"), path);
-        else Database.Create(path, JetVersion.Jet4).Dispose();
+        else Database.Create(path, FileFormat.Access2000).Dispose();
         return Database.Open(path);
     }
 
@@ -353,7 +353,7 @@ public sealed class LegacyLongKeyTests : IDisposable
     private static string PrimaryKeyOf(Database db, string table) => db.GetTable(table).Indexes.Single(ix => ix.IsPrimaryKey).Name;
 
     private static List<string> ChildCodes(Database db)
-        => db.GetTable("Child").ReadAllRows().OrderBy(r => (int)r["Id"]!).Select(r => $"{r["Id"]}:{((string)r["Code"]!).Length}").ToList();
+        => db.GetTable("Child").Rows.OrderBy(r => (int)r["Id"]!).Select(r => $"{r["Id"]}:{((string)r["Code"]!).Length}").ToList();
 
     // The enforcer finds the children of a parent through the index on the foreign key, and the parent of a child
     // through its key: entries held whole are found there like cut ones. Without a cascade the parent is
@@ -396,7 +396,7 @@ public sealed class LegacyLongKeyTests : IDisposable
         db.GetTable("Parent").UpdateByPrimaryKey(LongCode(1), new Row { ["Code"] = renamed });
 
         Assert.Equal(new[] { $"1:{renamed.Length}", $"2:{renamed.Length}", $"3:{renamed.Length}", "4:5" }, ChildCodes(db));
-        Assert.All(db.GetTable("Child").ReadAllRows().Where(r => (int)r["Id"]! <= 3), r => Assert.Equal(renamed, r["Code"]));
+        Assert.All(db.GetTable("Child").Rows.Where(r => (int)r["Id"]! <= 3), r => Assert.Equal(renamed, r["Code"]));
         // Nothing whole is left in the child's index; the parent keeps the one whole key of the row not touched.
         var child = StoredAs(db, "Child", "ChildCode");
         Assert.Equal((0, toAnotherLongKey ? 3 : 0), (Count(child, "whole"), Count(child, "cut")));

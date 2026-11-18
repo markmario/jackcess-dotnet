@@ -9,7 +9,7 @@ namespace JackcessDotNet;
 ///
 /// Usage:
 /// <code>
-///   using var db = Database.Create("MyFile.mdb", JetVersion.Jet4);
+///   using var db = Database.Create("MyFile.mdb");
 ///   var table = db.CreateTable("Customers", new[]
 ///   {
 ///       new ColumnBuilder("Id",   DataType.Long ).AutoNumber().Build(),
@@ -18,6 +18,16 @@ namespace JackcessDotNet;
 ///   var row = new Row { ["Name"] = "Alice" };
 ///   table.Insert(row);          // row["Id"] is now 1
 /// </code>
+/// <para>
+/// A <see cref="Database"/>, and everything got from it - its tables, their cursors and rows - is for one thread
+/// at a time. A file has one writer: a database does not see what another handle on the file writes while it
+/// is open.
+/// </para>
+/// <para>
+/// <see cref="Dispose"/> closes the file. After it, <see cref="Path"/>, <see cref="FileFormat"/> and
+/// <see cref="IsReadOnly"/> still answer, and every other member - and every table and cursor got from the
+/// database, when it goes to the file - throws <see cref="ObjectDisposedException"/>.
+/// </para>
 /// </summary>
 public sealed class Database : IDisposable
 {
@@ -29,6 +39,14 @@ public sealed class Database : IDisposable
     private readonly SystemCatalog _catalog;
     private ForeignKeyEnforcer? _foreignKeys;
 
+    // The tables handed out, by the page of their definition: a table is one object while the database is open,
+    // so what is set on it (Table.AllowAutoNumberInsert) is set for everyone who asks for the table.
+    private readonly Dictionary<int, Table> _tables = new();
+
+    private bool _enforceForeignKeys = true;
+    private bool _allowAutoNumberInsert;
+    private bool _disposed;
+
     private Database(PageFile file)
     {
         _file      = file;
@@ -36,10 +54,34 @@ public sealed class Database : IDisposable
         _catalog   = new SystemCatalog(file);
     }
 
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw PageFile.Closed(_file.Path);
+    }
+
+    /// <summary>The file's path, as it was given to <see cref="Create(string)"/> or <see cref="Open(string)"/>.</summary>
+    public string Path => _file.Path;
+
     /// <summary>
-    /// When true, the relationships in <c>MSysRelationships</c> that have referential integrity are kept, as
+    /// The format the file is in, as its own header says. A file made as <see cref="FileFormat.Access2007"/> or
+    /// <see cref="FileFormat.Access2010"/> becomes <see cref="FileFormat.Access2016"/> or
+    /// <see cref="FileFormat.Access2019"/> when a table of it is given a Large Number or a Date/Time Extended
+    /// column; this is the format the file had when it was opened or created.
+    /// </summary>
+    public FileFormat FileFormat => _file.Format.Version;
+
+    /// <summary>
+    /// Whether the file is only read: an Access 97 file (<see cref="FileFormat.Access97"/>). Every change to such
+    /// a database is refused with <see cref="NotSupportedException"/> before anything is written.
+    /// </summary>
+    public bool IsReadOnly => _file.IsReadOnly;
+
+    /// <summary>
+    /// Whether the relationships in <c>MSysRelationships</c> that have referential integrity are kept, as
     /// Access keeps them, by <see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/> and
-    /// <see cref="Table.DeleteRow"/>. Default <c>false</c>: nothing is checked and nothing cascades.
+    /// <see cref="Table.DeleteRow"/>. Default <c>true</c>, as in Jackcess; Access itself always keeps them. When
+    /// <c>false</c> nothing is checked and nothing cascades, and a file can be left with rows Access takes to
+    /// be impossible: a row that refers to no parent, or a parent deleted from under its children.
     /// <para>
     /// A row that would refer to no parent row is refused: on insert, and when an update changes its foreign key.
     /// A foreign key whose columns are all null refers to nothing and is allowed. Changing a parent's key, or
@@ -95,7 +137,18 @@ public sealed class Database : IDisposable
     /// write as Access does is refused with <see cref="NotSupportedException"/>.
     /// </para>
     /// </summary>
-    public bool EnforceForeignKeys { get; set; }
+    public bool EnforceForeignKeys
+    {
+        get { ThrowIfDisposed(); return _enforceForeignKeys; }
+        set
+        {
+            ThrowIfDisposed();
+            _enforceForeignKeys = value;
+            // The relationships are read again by whatever next keeps them: they are as the file now has them
+            // from the moment enforcement is switched.
+            _foreignKeys = null;
+        }
+    }
 
     /// <summary>
     /// Whether an index is checked against its table before it is believed. Default <c>false</c>: an index is
@@ -143,8 +196,8 @@ public sealed class Database : IDisposable
     /// </summary>
     public bool VerifyIndexes
     {
-        get => _file.VerifyIndexes;
-        set => _file.VerifyIndexes = value;
+        get { ThrowIfDisposed(); return _file.VerifyIndexes; }
+        set { ThrowIfDisposed(); _file.VerifyIndexes = value; }
     }
 
     /// <summary>
@@ -163,8 +216,8 @@ public sealed class Database : IDisposable
     /// </summary>
     public bool ShareLongValuePages
     {
-        get => _file.ShareLongValuePages;
-        set => _file.ShareLongValuePages = value;
+        get { ThrowIfDisposed(); return _file.ShareLongValuePages; }
+        set { ThrowIfDisposed(); _file.ShareLongValuePages = value; }
     }
 
     /// <summary>
@@ -177,16 +230,28 @@ public sealed class Database : IDisposable
     /// Turn it on with care: nothing checks that a value supplied this way is not already in the table.
     /// </para>
     /// </summary>
-    public bool AllowAutoNumberInsert { get; set; }
+    public bool AllowAutoNumberInsert
+    {
+        get { ThrowIfDisposed(); return _allowAutoNumberInsert; }
+        set { ThrowIfDisposed(); _allowAutoNumberInsert = value; }
+    }
 
     // ── Factory methods ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a new blank database at <paramref name="path"/>, in the format of <paramref name="version"/>, and
-    /// returns it open and ready for use: an .mdb for <see cref="JetVersion.Jet4"/> (Access 2000-2003), an .accdb
-    /// for <see cref="JetVersion.Jet12"/> (Access 2007), <see cref="JetVersion.Jet14"/> (Access 2010),
-    /// <see cref="JetVersion.Jet16"/> (Access 2016) and <see cref="JetVersion.Jet17"/> (Access 2019) - the formats
-    /// Jackcess creates. The file's name is the caller's: no extension is added or asked for.
+    /// Creates a new blank Access 2000-2003 database (an .mdb, <see cref="FileFormat.Access2000"/>) at
+    /// <paramref name="path"/> and returns it open and ready for use. That is the format Jackcess creates when
+    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another.
+    /// </summary>
+    public static Database Create(string path) => Create(path, FileFormat.Access2000);
+
+    /// <summary>
+    /// Creates a new blank database at <paramref name="path"/>, in <paramref name="format"/>, and returns it open
+    /// and ready for use: an .mdb for <see cref="FileFormat.Access2000"/> (Access 2000-2003), an .accdb for
+    /// <see cref="FileFormat.Access2007"/>, <see cref="FileFormat.Access2010"/>,
+    /// <see cref="FileFormat.Access2016"/> and <see cref="FileFormat.Access2019"/> - the formats Jackcess creates.
+    /// The file's name is the caller's: no extension is added or asked for. A file already at
+    /// <paramref name="path"/> is replaced.
     /// <para>
     /// The new file is a copy of an empty database Access's own engine made (<see cref="DatabaseHeader"/>). Tables
     /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
@@ -194,41 +259,58 @@ public sealed class Database : IDisposable
     /// </para>
     /// </summary>
     /// <exception cref="NotSupportedException">
-    /// <paramref name="version"/> is <see cref="JetVersion.Jet3"/>: Access 97 files are read, and neither created
+    /// <paramref name="format"/> is <see cref="FileFormat.Access97"/>: Access 97 files are read, and neither created
     /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
     /// it was.
     /// </exception>
-    public static Database Create(string path, JetVersion version)
+    public static Database Create(string path, FileFormat format)
     {
-        var format = JetFormat.For(version);
-        if (format.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
-        var file   = new PageFile(path, format, FileMode.Create);
-        var db     = new Database(file);
+        var jetFormat = JetFormat.For(format);
+        if (jetFormat.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
+        var file = new PageFile(path, jetFormat, FileMode.Create);
+        var db   = new Database(file);
 
-        DatabaseHeader.Create(format).WriteTo(file);
+        DatabaseHeader.Create(jetFormat).WriteTo(file);
 
         return db;
     }
 
     /// <summary>
-    /// Opens an existing .mdb / .accdb file using <paramref name="password"/> to
-    /// decrypt password-protected pages.
-    ///
-    /// For Jet4 (.mdb), the RC4-based MSISAM codec is used — see
-    /// <see cref="JetCryptCodecHandler"/> for caveats around verification.
-    /// For ACE 12+ (.accdb) the Office Crypto codec is used: <b>Agile
-    /// Encryption</b> (Office 2010+, MS-OFFCRYPTO §2.3.4.10–13) and <b>ECMA
-    /// Standard Encryption</b> (Office 2007, §2.3.4.5–9). RC4 CryptoAPI and
-    /// extensible-provider variants still throw with a clear error — see
-    /// <see cref="OfficeCryptCodecHandler"/>.
+    /// Opens an existing .mdb / .accdb file with what <paramref name="options"/> says about it: the password of
+    /// an encrypted file (<see cref="DatabaseOpenOptions.Password"/>), and the format to read a file as when its
+    /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>). With neither set this is
+    /// <see cref="Open(string)"/>.
+    /// <para>
+    /// With a password, an Access 97 or 2000-2003 file (.mdb) is read through the RC4-based Jet codec - see
+    /// <see cref="JetCryptCodecHandler"/> for caveats around verification - and an .accdb through the Office
+    /// Crypto codec: <b>Agile Encryption</b> (Office 2010+, MS-OFFCRYPTO §2.3.4.10–13) and <b>ECMA Standard
+    /// Encryption</b> (Office 2007, §2.3.4.5–9). RC4 CryptoAPI and extensible-provider variants still throw with
+    /// a clear error - see <see cref="OfficeCryptCodecHandler"/>. A file that is not encrypted is opened as it
+    /// is, and the password is not looked at.
+    /// </para>
+    /// <para>
+    /// An Access 97 file is opened for reading only, whatever the options say (<see cref="IsReadOnly"/>).
+    /// </para>
     /// </summary>
     /// <exception cref="InvalidCredentialException">
     /// The password is not the file's, or the file is encrypted in a way the password cannot be checked against.
     /// </exception>
-    public static Database Open(string path, string password)
+    /// <exception cref="InvalidDataException">
+    /// The file is not an Access database - it is too short, or has no signature - and no
+    /// <see cref="DatabaseOpenOptions.FallbackFormat"/> says what to read it as.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is encrypted, or damaged, and no password was given.</exception>
+    public static Database Open(string path, DatabaseOpenOptions options)
     {
-        if (string.IsNullOrEmpty(password)) return Open(path);
+        if (options is null) throw new ArgumentNullException(nameof(options));
 
+        if (options.Password is { Length: > 0 } password)
+            return OpenWithPassword(path, password, options.FallbackFormat);
+        return options.FallbackFormat is { } fallback ? OpenAs(path, fallback) : Open(path);
+    }
+
+    private static Database OpenWithPassword(string path, string password, FileFormat? fallback)
+    {
         // Sniff version + signature first.
         Span<byte> head = stackalloc byte[0x15];
         using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -237,15 +319,17 @@ public sealed class Database : IDisposable
             if (read < 0x15)
                 throw new InvalidDataException($"File '{path}' is too short to be an Access database.");
         }
-        if (!StartsWithSignature(head, "Standard Jet DB")
-         && !StartsWithSignature(head, "Standard ACE DB"))
-            throw new InvalidDataException(
+
+        FileFormat format;
+        if (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB"))
+            format = JetFormat.ForVersionCode(head[0x14]).Version;
+        else
+            format = fallback ?? throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database.");
 
-        JetVersion version = JetFormat.ForVersionCode(head[0x14]).Version;
-        return version is JetVersion.Jet3 or JetVersion.Jet4
-            ? OpenWithJetCrypt   (path, version, password)
-            : OpenWithOfficeCrypt(path, version, password);
+        return format is FileFormat.Access97 or FileFormat.Access2000
+            ? OpenWithJetCrypt   (path, format, password)
+            : OpenWithOfficeCrypt(path, format, password);
     }
 
     /// <summary>
@@ -255,7 +339,7 @@ public sealed class Database : IDisposable
     /// (which itself verifies the password) and a decrypt-on-read database is
     /// returned.
     /// </summary>
-    private static Database OpenWithOfficeCrypt(string path, JetVersion version, string password)
+    private static Database OpenWithOfficeCrypt(string path, FileFormat version, string password)
     {
         var file = new PageFile(path, JetFormat.For(version), FileMode.Open);
         try
@@ -289,9 +373,9 @@ public sealed class Database : IDisposable
     /// with the password as the master-key seed. Unencrypted files ignore the
     /// password (no codec is installed).
     /// </summary>
-    private static Database OpenWithJetCrypt(string path, JetVersion version, string password)
+    private static Database OpenWithJetCrypt(string path, FileFormat version, string password)
     {
-        JetFormat format = version == JetVersion.Jet3 ? JetFormat.Jet3 : JetFormat.Jet4;
+        JetFormat format = version == FileFormat.Access97 ? JetFormat.Jet3 : JetFormat.Jet4;
         var file = new PageFile(path, format, FileMode.Open);
         try
         {
@@ -326,21 +410,15 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Opens an existing .mdb / .accdb file. An Access 97 file (<see cref="JetVersion.Jet3"/>) is opened for
-    /// reading only, as Jackcess opens one: its tables and rows are read, and every change to it - a row
-    /// inserted, updated or deleted, a table created or imported - is refused with
-    /// <see cref="NotSupportedException"/> before anything is written.
-    /// <para>
-    /// The file's own header says what format it is in, as Jackcess takes it, and that is the format it is
-    /// opened in: <paramref name="version"/> is used only for a file whose header does not say - one without the
-    /// signature of an Access database. So an Access 97 file is read as one, and is read-only, whatever
-    /// <paramref name="version"/> is given, and a Jet4 file opened as <see cref="JetVersion.Jet3"/> is the Jet4
+    /// Opens a file in the format its own header says it is in, as Jackcess takes it, and in
+    /// <paramref name="fallback"/> only when the header does not say - a file without the signature of an Access
+    /// database. So an Access 97 file is read as one, and is read-only, whatever <paramref name="fallback"/> is,
+    /// and an Access 2000 file opened with a fallback of <see cref="FileFormat.Access97"/> is the Access 2000
     /// file it is, read and written as any other.
-    /// </para>
     /// </summary>
-    public static Database Open(string path, JetVersion version)
+    private static Database OpenAs(string path, FileFormat fallback)
     {
-        JetFormat format = PageFile.FormatOf(path) ?? JetFormat.For(version);
+        JetFormat format = PageFile.FormatOf(path) ?? JetFormat.For(fallback);
         var file = new PageFile(path, format, FileMode.Open);
         try
         {
@@ -361,8 +439,7 @@ public sealed class Database : IDisposable
     /// against a key-derived stream and will start with anything else.
     ///
     /// We raise a clear error rather than letting downstream parsers fail with
-    /// cryptic messages. Once an <see cref="ICodecHandler"/> implementation lands
-    /// (RC4/Office Crypto), this check should install the codec instead of throwing.
+    /// cryptic messages.
     /// </summary>
     private static void ThrowIfEncrypted(PageFile file, string path)
     {
@@ -374,16 +451,22 @@ public sealed class Database : IDisposable
             throw new NotSupportedException(
                 $"File '{path}' appears to be encrypted or corrupt — the system catalog " +
                 $"page (page 2) does not start with the TableDef header (0x02 0x01). " +
-                $"If it is password-protected, open it via Database.Open(path, password).");
+                $"If it is password-protected, open it with a DatabaseOpenOptions that has its Password.");
     }
 
     /// <summary>
-    /// Opens an existing Access database file, auto-detecting the Jet format
-    /// version from the byte at file offset 0x14 (<see cref="JetFormat.ForVersionCode"/>):
-    ///   0x00 = Jet3 (Access 97), which is opened for reading only
-    ///   0x01 = Jet4 (Access 2000-2003)
-    ///   0x02 and later = the .accdb formats, Access 2007 to Access 2019
+    /// Opens an existing .mdb / .accdb file, in the format its header names (the byte at offset 0x14): Access 97,
+    /// Access 2000-2003, or one of the .accdb formats, Access 2007 to Access 2019.
+    /// <para>
+    /// An Access 97 file is opened for reading only, as Jackcess opens one (<see cref="IsReadOnly"/>): its tables
+    /// and rows are read, and every change to it - a row inserted, updated or deleted, a table created or
+    /// imported - is refused with <see cref="NotSupportedException"/> before anything is written.
+    /// </para>
     /// </summary>
+    /// <exception cref="InvalidDataException">The file is not an Access database: it is too short, or has no signature.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is encrypted, or damaged: open an encrypted one with <see cref="Open(string, DatabaseOpenOptions)"/>.
+    /// </exception>
     public static Database Open(string path)
     {
         Span<byte> head = stackalloc byte[0x15];
@@ -405,7 +488,7 @@ public sealed class Database : IDisposable
             throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database (missing 'Standard Jet/ACE DB' signature).");
 
-        return Open(path, JetFormat.ForVersionCode(head[0x14]).Version);
+        return OpenAs(path, JetFormat.ForVersionCode(head[0x14]).Version);
     }
 
     // ── Foreign keys ─────────────────────────────────────────────────────────
@@ -416,7 +499,7 @@ public sealed class Database : IDisposable
     /// </summary>
     internal ForeignKeyEnforcer? ForeignKeysFor(Table table)
     {
-        if (!EnforceForeignKeys) return null;
+        if (!_enforceForeignKeys) return null;
         _foreignKeys ??= new ForeignKeyEnforcer(this);
         return _foreignKeys.Involves(table) ? _foreignKeys : null;
     }
@@ -436,10 +519,25 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Returns the names of all user tables in the database (skips MSys* system tables).
+    /// The names of the database's own tables - not its system tables (<see cref="GetSystemTableNames"/>) - as
+    /// the catalog spells them and in the order it lists them. The catalog is read each time.
     /// </summary>
-    public IReadOnlyList<string> ListTables(bool includeSystem = false)
-        => _catalog.GetTableNames(includeSystem);
+    public IReadOnlyList<string> GetTableNames()
+    {
+        ThrowIfDisposed();
+        return _catalog.GetTableNames(includeSystem: false);
+    }
+
+    /// <summary>
+    /// The names of the database's system tables - <c>MSysObjects</c>, <c>MSysRelationships</c> and the others
+    /// Access keeps for itself - as the catalog spells them and in the order it lists them. Each can be opened
+    /// with <see cref="GetTable"/>. The catalog is read each time.
+    /// </summary>
+    public IReadOnlyList<string> GetSystemTableNames()
+    {
+        ThrowIfDisposed();
+        return _catalog.GetSystemTableNames();
+    }
 
     /// <summary>
     /// Lists the Decimal (Numeric) values in the database's tables - not its system tables - that read with more
@@ -447,7 +545,7 @@ public sealed class Database : IDisposable
     /// table, where what it finds, and what it cannot, is described. Nothing is changed.
     /// </summary>
     public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
-        => ListTables().SelectMany(name => GetTable(name).FindDecimalsBeyondPrecision());
+        => GetTableNames().SelectMany(name => GetTable(name).FindDecimalsBeyondPrecision());
 
     /// <summary>
     /// Reads MSysRelationships and returns the schema's foreign-key / join
@@ -462,7 +560,7 @@ public sealed class Database : IDisposable
         // may not.
         if (!TryGetTable("MSysRelationships", out var t))
             return Array.Empty<Relationship>();
-        return BuildRelationships(t.NewCursor().ToList());
+        return BuildRelationships(t.Rows.ToList());
     }
 
     private static IReadOnlyList<Relationship> BuildRelationships(IReadOnlyList<Row> rows)
@@ -568,6 +666,7 @@ public sealed class Database : IDisposable
                                   IReadOnlyList<string>? pkColumns,
                                   IReadOnlyList<IndexDefinition> secondary)
     {
+        ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
         if (columns is null || columns.Count == 0)
@@ -670,7 +769,9 @@ public sealed class Database : IDisposable
         // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
         if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
 
-        return new Table(_file, _allocator, tableDef, owningDb: this);
+        var table = new Table(_file, _allocator, tableDef, owningDb: this);
+        _tables[tdefPage] = table;
+        return table;
     }
 
     // A table's index maps follow its owned-pages and free-space maps on its usage-map page.
@@ -689,10 +790,10 @@ public sealed class Database : IDisposable
         var newest = columns.Where(c => c.DataType is DataType.BigInt or DataType.ExtendedDateTime)
                             .OrderByDescending(c => c.DataType).FirstOrDefault();
         if (newest is null) return null;
-        if (format.Version is JetVersion.Jet3 or JetVersion.Jet4)
+        if (format.Version is FileFormat.Access97 or FileFormat.Access2000)
             throw new NotSupportedException(
                 $"{whatWasNotDone}: its column '{newest.Name}' is a {newest.DataType}, which an .mdb file " +
-                "(Access 2000-2003) does not have. Create the database as an .accdb, JetVersion.Jet12 or later.");
+                "(Access 2000-2003) does not have. Create the database as an .accdb, FileFormat.Access2007 or later.");
         return newest.DataType == DataType.ExtendedDateTime ? DatabaseHeader.Version2019 : DatabaseHeader.Version2016;
     }
 
@@ -786,32 +887,45 @@ public sealed class Database : IDisposable
                                               usedPagesUmapRow: maps[i].Row)).ToList();
 
     /// <summary>
-    /// Opens an existing user table by name (scans MSysObjects).
+    /// The table named <paramref name="name"/>, whatever the case of its letters: one of the database's own
+    /// tables or a system table. The catalog is read to find it. A table is one <see cref="Table"/> for as long
+    /// as the database is open - asked for again, by any spelling, or returned by <see cref="CreateTable"/>, it is
+    /// the same object - so what is set on it (<see cref="Table.AllowAutoNumberInsert"/>) holds for every caller,
+    /// and its <see cref="Table.Name"/> is the name as the catalog spells it.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The database has no table of that name.</exception>
+    /// <exception cref="ArgumentException">
+    /// The database has no table of that name (<see cref="TryGetTable"/> asks without throwing), or
+    /// <paramref name="name"/> is empty.
+    /// </exception>
     public Table GetTable(string name)
         => TryGetTable(name, out var table)
             ? table
-            : throw new InvalidOperationException($"Table '{name}' was not found in this database.");
+            : throw new ArgumentException($"Table '{name}' was not found in this database.", nameof(name));
 
     /// <summary>
-    /// Opens an existing table by name when the database has one: what <see cref="GetTable"/> does, for a caller
-    /// asking whether the table is there.
+    /// The table named <paramref name="name"/> when the database has one: what <see cref="GetTable"/> does, for a
+    /// caller asking whether the table is there.
     /// </summary>
     /// <returns>Whether the database has a table of that name; <paramref name="table"/> is it.</returns>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty.</exception>
     public bool TryGetTable(string name, [NotNullWhen(true)] out Table? table)
     {
+        ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
 
-        int tdefPageNum = _catalog.FindTableTdefPage(name);
+        int tdefPageNum = _catalog.FindTable(name, out string? listedName);
         if (tdefPageNum < 0)
         {
             table = null;
             return false;
         }
 
-        table = new Table(_file, _allocator, ReadDefinition(_file, name, tdefPageNum), owningDb: this);
+        if (!_tables.TryGetValue(tdefPageNum, out table))
+        {
+            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum), owningDb: this);
+            _tables[tdefPageNum] = table;
+        }
         return true;
     }
 
@@ -843,7 +957,7 @@ public sealed class Database : IDisposable
             tableDef.LvalColumnUmapPages[kvp.Key] = kvp.Value;
 
         // Reattach in-memory PK config from the on-disk metadata so that
-        // IndexCursor.FindRowByPrimaryKey works across open/close boundaries.
+        // Table.FindRowByPrimaryKey works across open/close boundaries.
         var pkIndex = info.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey);
         if (pkIndex is not null && pkIndex.Columns.Count > 0)
         {
@@ -906,7 +1020,19 @@ public sealed class Database : IDisposable
     /// or a table's definition runs, or would run, over more than one page. Nothing is changed.
     /// </exception>
     public Relationship CreateRelationship(RelationshipDefinition definition)
-        => SchemaChange.CreateRelationship(this, _file, definition ?? throw new ArgumentNullException(nameof(definition)));
+    {
+        ThrowIfDisposed();
+        return SchemaChange.CreateRelationship(this, _file, definition ?? throw new ArgumentNullException(nameof(definition)));
+    }
 
-    public void Dispose() => _file.Dispose();
+    /// <summary>
+    /// Closes the file. Everything written is in the file already: nothing is held back until now. A second call
+    /// does nothing.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _file.Dispose();
+    }
 }

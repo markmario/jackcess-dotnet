@@ -40,7 +40,7 @@ public sealed class ReviewFindingsTests : IDisposable
     [InlineData(70_000)]
     public void A_row_on_a_page_past_32767_is_indexed_and_found_by_its_primary_key(int padTo)
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Keyed", Columns(), primaryKey: "Id");
             db.File.WritePage(padTo, new byte[db.File.Format.PageSize]);   // the next page allocated is padTo + 1
@@ -54,7 +54,7 @@ public sealed class ReviewFindingsTests : IDisposable
             int pointer = reader.FindRowPointers(7).Single();
             Assert.Equal(padTo + 1, RowPointer.Page(pointer));   // what the leaf entry on disk says - what ACE reads
             Assert.Equal(0, RowPointer.Row(pointer));
-            Assert.Equal("far out", table.NewIndexCursor().FindRowByPrimaryKey(7)?["Name"]);
+            Assert.Equal("far out", table.FindRowByPrimaryKey(7)?["Name"]);
         }
     }
 
@@ -62,7 +62,7 @@ public sealed class ReviewFindingsTests : IDisposable
     public void An_update_refused_for_text_longer_than_its_column_leaves_the_row_as_it_was()
     {
         var body = new string('ж', 1_500);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("People", new[]
             {
@@ -84,11 +84,11 @@ public sealed class ReviewFindingsTests : IDisposable
 
     private static void AssertRowOneAsItWas(Table table, string body)
     {
-        var rows = table.ReadAllRows().OrderBy(r => (int)r["Id"]!).ToList();
+        var rows = table.Rows.OrderBy(r => (int)r["Id"]!).ToList();
         Assert.Equal(2, rows.Count);
         Assert.Equal("abc", rows[0]["Name"]);
         Assert.Equal(body, rows[0]["Body"]);
-        var found = table.NewIndexCursor().FindRowByPrimaryKey(1);
+        var found = table.FindRowByPrimaryKey(1);
         Assert.NotNull(found);
         Assert.Equal("abc", found["Name"]);
     }
@@ -97,19 +97,19 @@ public sealed class ReviewFindingsTests : IDisposable
     public void Long_values_share_the_column_s_last_page_while_it_has_room()
     {
         // 750 Cyrillic characters do not compress: 1,500 bytes, kept on long-value pages, two to a page.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Notes", Columns());
         for (int i = 0; i < 3; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = "n", ["Body"] = new string((char)('а' + i), 750) });
 
         Assert.Equal(2, LvalPages(db, table, "Body").Count);
-        Assert.Equal(new string('в', 750), table.ReadAllRows()[2]["Body"]);
+        Assert.Equal(new string('в', 750), table.Rows.ToList()[2]["Body"]);
     }
 
     [Fact]
     public void Space_freed_in_one_long_value_column_is_not_used_by_another()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Notes", new[]
         {
             new ColumnBuilder("Id", DataType.Long).Build(),
@@ -123,7 +123,7 @@ public sealed class ReviewFindingsTests : IDisposable
 
         Assert.NotEmpty(LvalPages(db, table, "B"));
         Assert.Empty(LvalPages(db, table, "A").Intersect(LvalPages(db, table, "B")));
-        Assert.Equal(new string('ж', 1_000), table.ReadAllRows().Single()["B"]);
+        Assert.Equal(new string('ж', 1_000), table.Rows.Single()["B"]);
     }
 
     private static IReadOnlyList<Column> BlobColumns() => new[]
@@ -149,7 +149,7 @@ public sealed class ReviewFindingsTests : IDisposable
         try
         {
             T result;
-            using (var db = Database.Create(path, JetVersion.Jet4))
+            using (var db = Database.Create(path, FileFormat.Access2000))
                 result = scenario(db);
             using (var db = Database.Open(path))
                 afterReopening(db);
@@ -164,7 +164,7 @@ public sealed class ReviewFindingsTests : IDisposable
     /// <summary>The values <see cref="ReadsForInserts"/> wrote, read back: a value written to the wrong place shows.</summary>
     private static void AssertInsertedValues(Table table, int count)
     {
-        var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+        var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
         for (int i = 0; i < count; i++)
             Assert.Equal(Bytes(3_000, 100 + i), rows[100 + i]["Blob"]);
     }
@@ -199,8 +199,8 @@ public sealed class ReviewFindingsTests : IDisposable
         }, reopened =>
         {
             AssertInsertedValues(reopened.GetTable("B"), 3);
-            Assert.Equal(Bytes(3_000, 2), reopened.GetTable("B").ReadAllRows().Single(r => (int)r["Id"]! == 1)["Blob"]);
-            Assert.Equal(deleteFromA ? 0 : 1, reopened.GetTable("A").ReadAllRows().Count);
+            Assert.Equal(Bytes(3_000, 2), reopened.GetTable("B").Rows.Single(r => (int)r["Id"]! == 1)["Blob"]);
+            Assert.Equal(deleteFromA ? 0 : 1, reopened.GetTable("A").Rows.Count());
         });
 
         Assert.Equal(InsertsIntoB(deleteFromA: false), InsertsIntoB(deleteFromA: true));
@@ -223,7 +223,7 @@ public sealed class ReviewFindingsTests : IDisposable
         {
             var table = reopened.GetTable("T");
             AssertInsertedValues(table, 5);
-            Assert.Equal(deleteIt ? 5 : 6, table.ReadAllRows().Count);
+            Assert.Equal(deleteIt ? 5 : 6, table.Rows.Count());
         });
 
         var kept = InsertsAfterABigValue(deleteIt: false);
@@ -238,7 +238,7 @@ public sealed class ReviewFindingsTests : IDisposable
     [Fact]
     public void A_row_never_goes_onto_another_table_s_page_listed_in_its_map()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var mine = db.CreateTable("Mine", Columns());
         var other = db.CreateTable("Other", Columns());
         mine.Insert(new Row { ["Id"] = 1, ["Name"] = "mine" });
@@ -248,13 +248,13 @@ public sealed class ReviewFindingsTests : IDisposable
 
         mine.Insert(new Row { ["Id"] = 2, ["Name"] = "mine too" });
 
-        Assert.Equal(new[] { "other" }, other.ReadAllRows().Select(r => (string)r["Name"]!).ToArray());
+        Assert.Equal(new[] { "other" }, other.Rows.Select(r => (string)r["Name"]!).ToArray());
     }
 
     [Fact]
     public void A_long_value_never_goes_onto_a_page_that_is_not_a_long_value_page()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var mine = db.CreateTable("Mine", Columns());
         var other = db.CreateTable("Other", Columns());
         other.Insert(new Row { ["Id"] = 1, ["Name"] = "other" });
@@ -264,7 +264,7 @@ public sealed class ReviewFindingsTests : IDisposable
 
         mine.Insert(new Row { ["Id"] = 1, ["Name"] = "mine", ["Body"] = new string('ж', 1_000) });
 
-        Assert.Equal(new[] { "other" }, other.ReadAllRows().Select(r => (string)r["Name"]!).ToArray());
-        Assert.Equal(new string('ж', 1_000), mine.ReadAllRows().Single()["Body"]);
+        Assert.Equal(new[] { "other" }, other.Rows.Select(r => (string)r["Name"]!).ToArray());
+        Assert.Equal(new string('ж', 1_000), mine.Rows.Single()["Body"]);
     }
 }

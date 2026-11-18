@@ -76,7 +76,7 @@ public sealed class PropertyMapTests
         string path = Path.Combine(Path.GetTempPath(), $"prop_{Guid.NewGuid():N}.mdb");
         try
         {
-            using var db = Database.Create(path, JetVersion.Jet4);
+            using var db = Database.Create(path, FileFormat.Access2000);
             var t = db.CreateTable("Foo", new[] { new ColumnBuilder("X", DataType.Long).Build() });
             Assert.True(t.Properties.IsEmpty);
         }
@@ -96,7 +96,7 @@ public sealed class PropertyMapTests
         if (!File.Exists(path)) return;
 
         using var db = Database.Open(path);
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
             if (t.Properties.IsEmpty) continue;

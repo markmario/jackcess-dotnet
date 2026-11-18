@@ -141,7 +141,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void The_catalog_indexes_keep_Access_rules_as_they_split()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         for (int i = 0; i < 400; i++)
             db.CreateTable($"Table {i:D4} with a longer name", OneColumn());
 
@@ -159,13 +159,13 @@ public sealed class AccessCatalogTests : IDisposable
             }
         }
         Assert.True(splits >= 2, $"{splits} catalog indexes split");
-        Assert.Equal(400, db.ListTables().Count);
+        Assert.Equal(400, db.GetTableNames().Count);
     }
 
     [Fact]
     public void A_primary_key_keeps_Access_rules_through_its_splits()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Keyed", new[]
         {
             new ColumnBuilder("Id", DataType.Long).Build(),
@@ -186,15 +186,15 @@ public sealed class AccessCatalogTests : IDisposable
         Assert.Subset(UsageMap.GetOwnedPages(file.ReadPage(block.UmapPage), block.UmapRow, file.Format, file).ToHashSet(),
                       tree.Select(p => p.Number).ToHashSet());
 
-        var cursor = db.GetTable("Keyed").NewIndexCursor();
+        var cursor = db.GetTable("Keyed").CreateIndexCursor();
         foreach (int key in keys.Where((_, i) => i % 50 == 0))
-            Assert.Equal($"v{key}", cursor.FindRowByPrimaryKey(key)?["Txt"]);
+            Assert.Equal($"v{key}", cursor.Table.FindRowByPrimaryKey(key)?["Txt"]);
     }
 
     [Fact]
     public void A_two_column_key_has_a_flag_for_each_column()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Pair", new[]
         {
             new ColumnBuilder("A", DataType.Long).Build(),
@@ -210,7 +210,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void A_GUID_key_is_written_as_Access_writes_one()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Guids", new[] { new ColumnBuilder("G", DataType.Guid).Build() }, primaryKey: "G");
         table.Insert(new Row { ["G"] = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10") });
 
@@ -224,7 +224,7 @@ public sealed class AccessCatalogTests : IDisposable
     public void Pages_the_engine_adds_leave_the_free_page_map()
     {
         string path = NewPath();
-        using var db = Database.Create(path, JetVersion.Jet4);
+        using var db = Database.Create(path, FileFormat.Access2000);
         var file = db.File;
         int blankEnd = file.PageCount;
 
@@ -244,7 +244,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void Past_its_inline_window_the_free_page_map_becomes_a_reference_map()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var file = db.File;
         int blankEnd = file.PageCount;
         var table = db.CreateTable("Big", new[]
@@ -265,7 +265,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void A_tables_usage_maps_are_on_a_data_page_that_no_table_owns()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Mapped", OneColumn());
 
         var file = db.File;
@@ -278,7 +278,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void A_table_name_is_written_uncompressed_as_MSysObjects_keeps_names()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Plain Name", OneColumn());
 
         var file = db.File;
@@ -292,7 +292,7 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void The_engines_text_and_memo_columns_allow_unicode_compression()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Texts", new[]
         {
             new ColumnBuilder("Id", DataType.Long).Build(),
@@ -306,7 +306,7 @@ public sealed class AccessCatalogTests : IDisposable
         int columnDefs = 63 + ByteUtil.GetInt(tdef, 51) * 12;
         var compressed = Enumerable.Range(0, 3).Select(i => (tdef[columnDefs + i * 25 + 16] & 0x01) != 0).ToArray();
         Assert.Equal(new[] { false, true, true }, compressed);
-        var row = db.GetTable("Texts").ReadAllRows().Single();
+        var row = db.GetTable("Texts").Rows.Single();
         Assert.Equal("café", row["Txt"]);
         Assert.Equal("naïve", row["Notes"]);
     }
@@ -314,20 +314,20 @@ public sealed class AccessCatalogTests : IDisposable
     [Fact]
     public void A_second_table_of_the_same_name_is_refused()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Once", OneColumn());
 
         Assert.Throws<InvalidOperationException>(() => db.CreateTable("ONCE", OneColumn()));
-        Assert.Single(db.ListTables());
+        Assert.Single(db.GetTableNames());
     }
 
     [Fact]
     public void A_primary_key_on_a_column_whose_keys_are_not_written_is_refused()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
 
         Assert.Throws<NotSupportedException>(() =>
             db.CreateTable("Decimals", new[] { new ColumnBuilder("D", DataType.Numeric).Build() }, primaryKey: "D"));
-        Assert.Empty(db.ListTables());
+        Assert.Empty(db.GetTableNames());
     }
 }

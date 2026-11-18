@@ -13,36 +13,9 @@ public sealed class BuilderTests : IDisposable
     }
 
     [Fact]
-    public void DatabaseBuilder_Create_FluentlyBuildsDatabase()
-    {
-        using var db = new DatabaseBuilder()
-            .WithFile(_path)
-            .WithVersion(JetVersion.Jet4)
-            .Create();
-
-        Assert.True(File.Exists(_path));
-    }
-
-    [Fact]
-    public void DatabaseBuilder_Create_WithoutFile_Throws()
-    {
-        Assert.Throws<InvalidOperationException>(() => new DatabaseBuilder().Create());
-    }
-
-    [Fact]
-    public void DatabaseBuilder_Open_StaticShortcut_Works()
-    {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
-            db.CreateTable("Foo", new[] { new ColumnBuilder("X", DataType.Long).Build() });
-
-        using var reopen = DatabaseBuilder.Open(_path);
-        Assert.Contains("Foo", reopen.ListTables());
-    }
-
-    [Fact]
     public void TableBuilder_AddColumn_BuildsTableWithCorrectSchema()
     {
-        using var db = new DatabaseBuilder().WithFile(_path).Create();
+        using var db = Database.Create(_path);
 
         var t = new TableBuilder("Customers")
             .AddColumn(new ColumnBuilder("Id",   DataType.Long).Build())
@@ -58,7 +31,7 @@ public sealed class BuilderTests : IDisposable
     [Fact]
     public void TableBuilder_AddColumnByName_WithInlineConfigure()
     {
-        using var db = new DatabaseBuilder().WithFile(_path).Create();
+        using var db = Database.Create(_path);
 
         var t = new TableBuilder("Items")
             .AddColumn("Id",    DataType.Long)
@@ -72,7 +45,7 @@ public sealed class BuilderTests : IDisposable
     [Fact]
     public void TableBuilder_WithPrimaryKey_PropagatesToTableDefinition()
     {
-        using var db = new DatabaseBuilder().WithFile(_path).Create();
+        using var db = Database.Create(_path);
 
         var t = new TableBuilder("Articles")
             .AddColumn("Id",    DataType.Long)
@@ -83,7 +56,7 @@ public sealed class BuilderTests : IDisposable
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "A" });
         t.Insert(new Row { ["Id"] = 2, ["Title"] = "B" });
 
-        var r = t.NewIndexCursor().FindRowByPrimaryKey(2);
+        var r = t.FindRowByPrimaryKey(2);
         Assert.NotNull(r);
         Assert.Equal("B", r!["Title"]);
     }
@@ -91,7 +64,7 @@ public sealed class BuilderTests : IDisposable
     [Fact]
     public void TableBuilder_ToTable_WithoutColumns_Throws()
     {
-        using var db = new DatabaseBuilder().WithFile(_path).Create();
+        using var db = Database.Create(_path);
         Assert.Throws<InvalidOperationException>(
             () => new TableBuilder("Empty").ToTable(db));
     }

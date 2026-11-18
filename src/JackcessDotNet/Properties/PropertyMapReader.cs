@@ -141,7 +141,7 @@ internal static class PropertyMapReader
     private static string DecodeName(byte[] buf, int pos, int len, JetFormat format)
     {
         // Property names use the database charset (cp1252 for Jet3, UTF-16LE for Jet4+).
-        return format.Version == JetVersion.Jet3
+        return format.Version == FileFormat.Access97
             ? format.TextEncoding.GetString(buf, pos, len)
             : Encoding.Unicode.GetString(buf, pos, len);
     }
@@ -160,10 +160,10 @@ internal static class PropertyMapReader
             DataType.Double        => ByteUtil.GetDouble(buf, pos),
             DataType.ShortDateTime => TryFromOADate(ByteUtil.GetDouble(buf, pos)),
             DataType.Guid          => new Guid(buf.Slice(pos, pos + Math.Min(16, len))),
-            DataType.Text          => format.Version == JetVersion.Jet3
+            DataType.Text          => format.Version == FileFormat.Access97
                                           ? format.TextEncoding.GetString(buf, pos, len)
                                           : Encoding.Unicode.GetString(buf, pos, len),
-            DataType.Memo          => format.Version == JetVersion.Jet3
+            DataType.Memo          => format.Version == FileFormat.Access97
                                           ? format.TextEncoding.GetString(buf, pos, len)
                                           : Encoding.Unicode.GetString(buf, pos, len),
             DataType.Binary        => buf.Slice(pos, pos + len),

@@ -29,7 +29,7 @@ public sealed class CreateRelationshipTests : IDisposable
     /// </summary>
     private Database ParentAndChild(params IndexDefinition[] childIndexes)
     {
-        var db = Database.Create(_path, JetVersion.Jet4);
+        var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Code"), Text("Name") }, new[] { "K" },
                                     new[] { new IndexDefinition("ByCode", "Code") { IsUnique = true } });
         var child = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Code"), Text("Name") }, new[] { "Id" }, childIndexes);
@@ -154,7 +154,7 @@ public sealed class CreateRelationshipTests : IDisposable
         parent.UpdateByPrimaryKey(3, new Row { ["K"] = 30 });
         parent.DeleteRow("K", 1);
 
-        var rows = child.ReadAllRows();
+        var rows = child.Rows.ToList();
         Assert.Equal(9, rows.Count(r => Equals(r.GetValueOrDefault("K"), 30)));   // 8 children of 3, and row 101
         Assert.DoesNotContain(rows, r => Equals(r.GetValueOrDefault("K"), 3) || Equals(r.GetValueOrDefault("K"), 1));
         Assert.Equal(44 - 8, rows.Count);
@@ -207,7 +207,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [Fact]
     public void A_relationship_between_columns_that_are_each_unique_is_one_to_one_and_its_index_is_unique()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.CreateTable("One", new[] { Long("Id"), Text("Name") }, primaryKey: "Id");
         var other = db.CreateTable("Other", new[] { Long("Id"), Long("One"), Long("Also") }, new[] { "Id" }, new[]
         {
@@ -266,7 +266,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [Fact]
     public void A_relationship_of_two_columns_is_recorded_a_row_for_each_and_indexed_on_both()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var region = db.CreateTable("Region", new[] { Long("Id"), Text("Country", 2), Long("Code") }, new[] { "Id" },
                                     new[] { new IndexDefinition("ByCountryAndCode", "Country", "Code") { IsUnique = true } });
         var city = db.CreateTable("City", new[] { Long("Id"), Text("Country", 2), Long("Code") }, primaryKey: "Id");
@@ -281,7 +281,7 @@ public sealed class CreateRelationshipTests : IDisposable
         };
         db.CreateRelationship(definition);
 
-        var rows = db.GetTable("MSysRelationships").ReadAllRows();
+        var rows = db.GetTable("MSysRelationships").Rows.ToList();
         Assert.Equal(new[] { "0/2 Country>Country", "1/2 Code>Code" },
                      rows.Select(r => $"{r["icolumn"]}/{r["ccolumn"]} {r["szReferencedColumn"]}>{r["szColumn"]}"));
         Assert.All(rows, r => Assert.Equal(0x2000, r["grbit"]));
@@ -293,14 +293,14 @@ public sealed class CreateRelationshipTests : IDisposable
         db.EnforceForeignKeys = true;
         Assert.Throws<ConstraintViolationException>(() => city.Insert(new Row { ["Id"] = 3, ["Country"] = "AU", ["Code"] = 2 }));
         region.DeleteRow("Id", 2);
-        Assert.False(city.NewIndexCursor().FindRowByPrimaryKey(2)!.ContainsKey("Country"));
+        Assert.False(city.FindRowByPrimaryKey(2)!.ContainsKey("Country"));
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "City", expectedRows: 2));
     }
 
     [Fact]
     public void A_table_can_be_related_to_itself()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var staff = db.CreateTable("Staff", new[] { Long("Id"), Long("Manager"), Text("Name") }, primaryKey: "Id");
         staff.Insert(new Row { ["Id"] = 1, ["Name"] = "the top" });
         staff.Insert(new Row { ["Id"] = 2, ["Manager"] = 1 });
@@ -337,8 +337,8 @@ public sealed class CreateRelationshipTests : IDisposable
         using (var db = Database.Open(_path))
         {
             var table1 = db.GetTable("Table1");
-            int third = (int)db.GetTable("Table3").ReadAllRows()[0]["id"]!;
-            foreach (var row in table1.ReadAllRows())
+            int third = (int)db.GetTable("Table3").Rows.ToList()[0]["id"]!;
+            foreach (var row in table1.Rows.ToList())
                 table1.UpdateByPrimaryKey(row["id"]!, new Row { ["otherfk3"] = third });   // every row refers to Table3's row 1...
             int highest = JetPages.Rows(db.File, JetFormat.PageSystemCatalog).Select(r => r.Values["Id"]).OfType<int>().Where(id => id < 0).Max();
 
@@ -358,11 +358,11 @@ public sealed class CreateRelationshipTests : IDisposable
 
         using var reopened = Database.Open(_path);
         reopened.EnforceForeignKeys = true;
-        var referring = reopened.GetTable("Table1").ReadAllRows();
+        var referring = reopened.GetTable("Table1").Rows.ToList();
         Assert.Throws<ConstraintViolationException>(() => reopened.GetTable("Table1").UpdateByPrimaryKey(referring[0]["id"]!, new Row { ["otherfk3"] = 999 }));
         // Table3's row is referred to by the relationship Access made as well, which cascades its key too.
         reopened.GetTable("Table3").UpdateByPrimaryKey(referring[0]["otherfk3"]!, new Row { ["id"] = 77 });
-        Assert.All(reopened.GetTable("Table1").ReadAllRows(), row => Assert.Equal(77, row["otherfk3"]));
+        Assert.All(reopened.GetTable("Table1").Rows.ToList(), row => Assert.Equal(77, row["otherfk3"]));
         IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Table1", expectedRows: 4);
     }
 
@@ -380,7 +380,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [InlineData(" leading")]
     public void A_relationship_with_a_name_Access_does_not_allow_is_refused_and_nothing_changes(string name)
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var staff = db.CreateTable("Staff", new[] { Long("Id"), Long("Manager"), Text("Name") }, primaryKey: "Id");
             staff.Insert(new Row { ["Id"] = 1 });
@@ -400,7 +400,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [Fact]
     public void A_relationship_between_tables_whose_names_make_no_valid_name_needs_a_name()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("Par.ent", new[] { Long("K") }, primaryKey: "K");
             db.CreateTable("Child", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
@@ -433,7 +433,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [Fact]
     public void The_name_made_for_the_referenced_side_passes_over_an_index_that_has_it()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, new[] { "K" }, new[] { new IndexDefinition(".rC", "Name") });
         db.CreateTable("Child", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
 
@@ -515,7 +515,7 @@ public sealed class CreateRelationshipTests : IDisposable
     [Fact]
     public void A_relationship_on_a_column_no_index_can_be_made_on_is_refused_and_nothing_changes()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var amount = new ColumnBuilder("Amount", DataType.Numeric).Build();
             db.CreateTable("Price", new[] { Long("Id"), amount }, primaryKey: "Id");

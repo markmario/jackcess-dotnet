@@ -17,7 +17,7 @@ public sealed class CursorEdgeCaseTests : IDisposable
 
     private (Database, Table) NewEmptyTable()
     {
-        var db = Database.Create(_path, JetVersion.Jet4);
+        var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("People", new[]
         {
             new ColumnBuilder("Id",   DataType.Long).Build(),
@@ -27,73 +27,81 @@ public sealed class CursorEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void EmptyTable_GetNextRow_Null()
+    public void EmptyTable_MoveNext_False()
     {
         using var db = NewEmptyTable().Item1;
-        var c = db.GetTable("People").NewCursor();
-        Assert.Null(c.GetNextRow());
+        var c = db.GetTable("People").CreateCursor();
+        Assert.False(c.MoveNext());
     }
 
     [Fact]
     public void EmptyTable_Enumeration_YieldsNothing()
     {
         using var db = NewEmptyTable().Item1;
-        var c = db.GetTable("People").NewCursor();
+        var c = db.GetTable("People").CreateCursor();
         Assert.Empty(c);
     }
 
     [Fact]
-    public void GetCurrentRow_BeforeIteration_IsNull()
+    public void Current_BeforeIteration_IsNull()
     {
         using var db = NewEmptyTable().Item1;
-        var c = db.GetTable("People").NewCursor();
-        Assert.Null(c.GetCurrentRow());
+        var c = db.GetTable("People").CreateCursor();
+        Assert.Null(c.Current);
     }
 
     [Fact]
-    public void GetCurrentRow_AfterGetNext_ReturnsLatest()
+    public void Current_AfterMoveNext_IsTheRowMovedTo()
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
         t.Insert(new Row { ["Id"] = 1, ["Name"] = "A" });
         t.Insert(new Row { ["Id"] = 2, ["Name"] = "B" });
 
-        var c = t.NewCursor();
-        var first = c.GetNextRow();
-        Assert.Equal(first, c.GetCurrentRow());
+        var c = t.CreateCursor();
+        Assert.True(c.MoveNext());
+        var first = c.Current;
+        Assert.Equal(1, first!["Id"]);
+        Assert.Same(first, c.Current);
 
-        var second = c.GetNextRow();
-        Assert.Equal(second, c.GetCurrentRow());
+        Assert.True(c.MoveNext());
+        var second = c.Current;
+        Assert.Equal(2, second!["Id"]);
+        Assert.Same(second, c.Current);
         Assert.NotEqual(first, second);
     }
 
     [Fact]
-    public void GetCurrentRow_AfterIterationEnds_IsNull()
+    public void Current_AfterIterationEnds_IsNull()
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
         t.Insert(new Row { ["Id"] = 1, ["Name"] = "A" });
 
-        var c = t.NewCursor();
-        Assert.NotNull(c.GetNextRow());
-        Assert.Null(c.GetNextRow());
-        Assert.Null(c.GetCurrentRow());
+        var c = t.CreateCursor();
+        Assert.True(c.MoveNext());
+        Assert.False(c.MoveNext());
+        Assert.Null(c.Current);
     }
 
     [Fact]
-    public void AfterLast_ThenGetPreviousRow_WalksBackward()
+    public void MoveAfterLast_ThenMovePrevious_WalksBackward()
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
         for (int i = 1; i <= 3; i++)
             t.Insert(new Row { ["Id"] = i, ["Name"] = $"P{i}" });
 
-        var c = t.NewCursor();
-        c.AfterLast();
-        var r3 = c.GetPreviousRow();
-        var r2 = c.GetPreviousRow();
-        var r1 = c.GetPreviousRow();
-        var nada = c.GetPreviousRow();
+        var c = t.CreateCursor();
+        c.MoveAfterLast();
+        Assert.True(c.MovePrevious());
+        var r3 = c.Current;
+        Assert.True(c.MovePrevious());
+        var r2 = c.Current;
+        Assert.True(c.MovePrevious());
+        var r1 = c.Current;
+        Assert.False(c.MovePrevious());
+        var nada = c.Current;
 
         Assert.Equal(3, Convert.ToInt32(r3!["Id"]));
         Assert.Equal(2, Convert.ToInt32(r2!["Id"]));
@@ -109,7 +117,7 @@ public sealed class CursorEdgeCaseTests : IDisposable
         for (int i = 1; i <= 3; i++)
             t.Insert(new Row { ["Id"] = i, ["Name"] = $"P{i}" });
 
-        var c = t.NewCursor();
+        var c = t.CreateCursor();
         Assert.Equal(3, c.Count());
         // Foreach again — should re-iterate from the start.
         Assert.Equal(3, c.Count());
@@ -130,7 +138,7 @@ public sealed class CursorEdgeCaseTests : IDisposable
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
         Assert.Null(c.FindRow("Name", "Nobody"));
     }
 
@@ -139,6 +147,6 @@ public sealed class CursorEdgeCaseTests : IDisposable
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
-        Assert.Throws<ArgumentException>(() => t.NewIndexCursor().FindRowByEntry());
+        Assert.Throws<ArgumentException>(() => t.CreateIndexCursor().FindRowByEntry());
     }
 }

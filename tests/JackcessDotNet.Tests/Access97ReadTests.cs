@@ -72,7 +72,7 @@ public sealed class Access97ReadTests
     public void The_fixture_has_rows_of_every_length_about_each_256_bytes()
     {
         using var db = OpenFixture();
-        Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+        Assert.Equal(FileFormat.Access97, db.File.Format.Version);
 
         var lengths = new List<int>();
         var table = db.GetTable("LongRows");
@@ -100,7 +100,7 @@ public sealed class Access97ReadTests
 
         using var db = OpenFixture();
         var table = db.GetTable("LongRows");
-        var read = table.ReadAllRows().ToDictionary(row => (int)row["Id"]!);
+        var read = table.Rows.ToDictionary(row => (int)row["Id"]!);
 
         Assert.Equal(expected.Count, read.Count);
         Assert.Equal(expected.Count, table.RowCount);
@@ -115,7 +115,7 @@ public sealed class Access97ReadTests
 
         using var db = OpenFixture();
         int count = 0;
-        foreach (var row in db.GetTable("LongRows").NewCursor())
+        foreach (var row in db.GetTable("LongRows").CreateCursor())
         {
             AssertRowIs(expected[(int)row["Id"]!], row);
             count++;
@@ -127,10 +127,10 @@ public sealed class Access97ReadTests
     public void A_row_longer_than_256_bytes_is_found_by_its_primary_key_with_its_values()
     {
         using var db = OpenFixture();
-        var cursor = db.GetTable("LongRows").NewIndexCursor();
+        var cursor = db.GetTable("LongRows").CreateIndexCursor();
         foreach (var expected in RowsAsJetReadThem())
         {
-            var found = cursor.FindRowByPrimaryKey(expected.Id);
+            var found = cursor.Table.FindRowByPrimaryKey(expected.Id);
             Assert.NotNull(found);
             AssertRowIs(expected, found!);
         }
@@ -184,10 +184,10 @@ public sealed class Access97ReadTests
         using var db = OpenFixture();
         var table  = db.GetTable("Keys");
         var index  = table.Indexes.Single(ix => ix.IsPrimaryKey);
-        var byScan = table.ReadAllRows().ToDictionary(row => (int)row["Id"]!);
+        var byScan = table.Rows.ToDictionary(row => (int)row["Id"]!);
         Assert.Equal(KeysRows, byScan.Count);
 
-        var cursor = table.NewIndexCursor();
+        var cursor = table.CreateIndexCursor();
         var reader = new IndexReader(db.File, index);
         var writer = new IndexWriter(db.File, new PageAllocator(db.File));
         for (int id = 1; id <= KeysRows; id++)
@@ -196,12 +196,12 @@ public sealed class Access97ReadTests
             Assert.Equal(id, RowAt(table, Assert.Single(reader.FindRowPointers(id)))["Id"]);
             Assert.Equal(id, RowAt(table, Assert.Single(writer.EnumerateRowPointersForKey(table.Definition, id)))["Id"]);
 
-            var found = cursor.FindRowByPrimaryKey(id);
+            var found = cursor.Table.FindRowByPrimaryKey(id);
             Assert.NotNull(found);
             Assert.Equal(KeysOf(id), Enumerable.Range(1, 10).Select(j => found!["K" + j]));
             Assert.Equal(byScan[id].OrderBy(v => v.Key), found!.OrderBy(v => v.Key));
         }
-        Assert.Null(cursor.FindRowByPrimaryKey(KeysRows + 1));
+        Assert.Null(cursor.Table.FindRowByPrimaryKey(KeysRows + 1));
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public sealed class Access97ReadTests
         var index = table.Indexes.Single(ix => ix.Name == "ByAll");
         Assert.Equal(2, db.File.ReadPage(index.RootPageNumber)[JetFormat.Jet3.OffsetIndexLevel]);
 
-        var cursor = table.NewIndexCursor("ByAll");
+        var cursor = table.CreateIndexCursor("ByAll");
         var reader = new IndexReader(db.File, index);
         var writer = new IndexWriter(db.File, new PageAllocator(db.File));
         Assert.True(reader.CanResolveKey);
@@ -337,10 +337,10 @@ public sealed class Access97ReadTests
     public void Every_index_of_an_Access_97_file_leads_to_every_row_of_its_table(string file)
     {
         using var db = Database.Open(PathOf(file));
-        Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+        Assert.Equal(FileFormat.Access97, db.File.Format.Version);
 
         int indexes = 0, deep = 0, lookups = 0;
-        foreach (string name in db.ListTables(includeSystem: true))
+        foreach (string name in db.GetTableNames().Concat(db.GetSystemTableNames()))
         {
             var table = db.GetTable(name);
             if (table.Definition.HasUnreadIndexes) continue;
@@ -386,10 +386,10 @@ public sealed class Access97ReadTests
         using var db = Database.Open(PathOf(file));
 
         int lookups = 0;
-        foreach (string name in db.ListTables())
+        foreach (string name in db.GetTableNames())
         {
             var table = db.GetTable(name);
-            var rows  = table.ReadAllRows();
+            var rows  = table.Rows.ToList();
             foreach (var index in table.Indexes)
             {
                 if (index.RootPageNumber <= 0 || !index.Columns.All(c => c.Column.DataType is DataType.Byte or DataType.Int or DataType.Long)) continue;

@@ -31,7 +31,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Create_WritesFile()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         Assert.True(File.Exists(_path));
         Assert.True(new FileInfo(_path).Length > 0);
     }
@@ -39,7 +39,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void CreateTable_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("People", PeopleColumns());
         Assert.Equal("People", table.Name);
         Assert.Equal(3, table.Columns.Count);
@@ -48,7 +48,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_SingleRow_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("People", PeopleColumns());
 
         table.Insert(new Row
@@ -62,7 +62,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_MultipleRows_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("People", PeopleColumns());
 
         for (int i = 1; i <= 10; i++)
@@ -73,13 +73,13 @@ public sealed class SmokeTests : IDisposable
     public void GetTable_AfterReopenDb_ReturnsCorrectColumns()
     {
         // Create and close
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("People", PeopleColumns());
         }
 
         // Re-open and look up
-        using var db2   = Database.Open(_path, JetVersion.Jet4);
+        using var db2   = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
         var       table = db2.GetTable("People");
 
         Assert.Equal("People", table.Name);
@@ -92,15 +92,15 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void GetTable_UnknownName_Throws()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("DoesNotExist"));
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        Assert.Throws<ArgumentException>(() => db.GetTable("DoesNotExist"));
     }
 
     [Fact]
     public void Insert_ThenGetTable_CanInsertMore()
     {
         // First session: create + 5 rows
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Items", new[]
             {
@@ -112,7 +112,7 @@ public sealed class SmokeTests : IDisposable
         }
 
         // Second session: open + 5 more rows
-        using var db2 = Database.Open(_path, JetVersion.Jet4);
+        using var db2 = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
         var t2 = db2.GetTable("Items");
         for (int i = 6; i <= 10; i++)
             t2.Insert(new Row { ["Id"] = i, ["Label"] = $"Item {i}" });
@@ -121,7 +121,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void CreateMultipleTables_AllRegisteredInCatalog()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
 
         db.CreateTable("Alpha", new[] { new ColumnBuilder("X", DataType.Long).Build() });
         db.CreateTable("Beta",  new[] { new ColumnBuilder("Y", DataType.Text).MaxLength(20).Build() });
@@ -145,7 +145,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void CreateTable_WithMemoColumn_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
         Assert.Equal(3, table.Columns.Count);
         Assert.Contains(table.Columns, c => c.Name == "Body" && c.DataType == DataType.Memo);
@@ -154,7 +154,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_MemoColumn_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
         table.Insert(new Row
         {
@@ -167,10 +167,10 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void GetTable_WithMemoColumn_ReturnsCorrectSchema()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("Articles", ArticleColumns());
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
         var table = db2.GetTable("Articles");
 
         Assert.Equal(3, table.Columns.Count);
@@ -180,7 +180,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_LargeMemoValue_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
         string longText = new string('A', 1500);   // 1500 chars = 3000 UTF-16 bytes inline
         table.Insert(new Row { ["Id"] = 1, ["Title"] = "Long", ["Body"] = longText });
@@ -189,7 +189,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_NullMemoValue_DoesNotThrow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
         table.Insert(new Row { ["Id"] = 2, ["Title"] = "No body" });
     }
@@ -201,14 +201,14 @@ public sealed class SmokeTests : IDisposable
     {
         const string body = "Hello, world!";
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticleColumns());
             t.Insert(new Row { ["Id"] = 1, ["Title"] = "Test", ["Body"] = body });
         }
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
-        var       rows = db2.GetTable("Articles").ReadAllRows();
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
+        var       rows = db2.GetTable("Articles").Rows.ToList();
 
         Assert.Single(rows);
         Assert.Equal(body, rows[0]["Body"]);
@@ -220,14 +220,14 @@ public sealed class SmokeTests : IDisposable
         // 2000 chars × 2 bytes (UTF-16LE) = 4000 bytes < chunkDataCapacity (4076) → one LVAL chunk
         string body = new string('A', 2000);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticleColumns());
             t.Insert(new Row { ["Id"] = 1, ["Title"] = "Big", ["Body"] = body });
         }
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
-        var       rows = db2.GetTable("Articles").ReadAllRows();
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
+        var       rows = db2.GetTable("Articles").Rows.ToList();
 
         Assert.Single(rows);
         Assert.Equal(body, rows[0]["Body"]);
@@ -239,14 +239,14 @@ public sealed class SmokeTests : IDisposable
         // 3000 chars × 2 bytes = 6000 bytes > 4076 → requires 2 LVAL chunks
         string body = new string('Z', 3000);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticleColumns());
             t.Insert(new Row { ["Id"] = 1, ["Title"] = "Multi", ["Body"] = body });
         }
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
-        var       rows = db2.GetTable("Articles").ReadAllRows();
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
+        var       rows = db2.GetTable("Articles").Rows.ToList();
 
         Assert.Single(rows);
         Assert.Equal(body, rows[0]["Body"]);
@@ -258,14 +258,14 @@ public sealed class SmokeTests : IDisposable
         // 10 000 chars × 2 bytes = 20 000 bytes → ceil(20000/4076) = 5 LVAL chunks
         string body = new string('X', 10_000);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticleColumns());
             t.Insert(new Row { ["Id"] = 1, ["Title"] = "Many", ["Body"] = body });
         }
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
-        var       rows = db2.GetTable("Articles").ReadAllRows();
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
+        var       rows = db2.GetTable("Articles").Rows.ToList();
 
         Assert.Single(rows);
         Assert.Equal(body, rows[0]["Body"]);
@@ -276,14 +276,14 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void DeleteRow_RowIsGone()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("People", PeopleColumns());
         for (int i = 1; i <= 3; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = $"Person{i}", ["Age"] = (short)(20 + i) });
 
         table.DeleteRow("Id", 2);
 
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Equal(2, rows.Count);
         Assert.All(rows, r => Assert.NotEqual(2, Convert.ToInt32(r["Id"])));
     }
@@ -291,7 +291,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void DeleteRow_AllRows_TableIsEmpty()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("People", PeopleColumns());
         for (int i = 1; i <= 3; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = $"P{i}", ["Age"] = (short)i });
@@ -300,20 +300,20 @@ public sealed class SmokeTests : IDisposable
         table.DeleteRow("Id", 2);
         table.DeleteRow("Id", 3);
 
-        Assert.Empty(table.ReadAllRows());
+        Assert.Empty(table.Rows);
     }
 
     [Fact]
     public void DeleteRow_WithMemo_RowIsGone()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
         table.Insert(new Row { ["Id"] = 1, ["Title"] = "Keep",   ["Body"] = "stay" });
         table.Insert(new Row { ["Id"] = 2, ["Title"] = "Delete", ["Body"] = "gone" });
 
         table.DeleteRow("Id", 2);
 
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Single(rows);
         Assert.Equal("stay", rows[0]["Body"]);
     }
@@ -324,7 +324,7 @@ public sealed class SmokeTests : IDisposable
         // Large enough to need multiple LVAL chunks (10 000 chars × 2 bytes = 20 000 bytes → 5 chunks).
         string bigText = new string('G', 10_000);
 
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns());
 
         table.Insert(new Row { ["Id"] = 1, ["Title"] = "First", ["Body"] = bigText });
@@ -342,7 +342,7 @@ public sealed class SmokeTests : IDisposable
             $"File grew by {sizeAfterSecond - sizeAfterFirst} bytes — LVAL space was not reclaimed.");
 
         // Verify the second row round-trips correctly.
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Single(rows);
         Assert.Equal(bigText, rows[0]["Body"]);
     }
@@ -353,7 +353,7 @@ public sealed class SmokeTests : IDisposable
         string body1 = new string('A', 8_000);   // ~16 000 bytes → 4 LVAL chunks
         string body2 = new string('B', 8_000);
 
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Articles", ArticleColumns(), primaryKey: "Id");
 
         table.Insert(new Row { ["Id"] = 1, ["Title"] = "T", ["Body"] = body1 });
@@ -367,7 +367,7 @@ public sealed class SmokeTests : IDisposable
             $"File grew by {sizeAfterUpdate - sizeAfterFirst} bytes after update — old LVAL was not freed.");
 
         // Verify the updated value round-trips correctly.
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Single(rows);
         Assert.Equal(body2, rows[0]["Body"]);
     }
@@ -375,7 +375,7 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void Insert_MultipleRows_WithMemo_RoundTrip()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Articles", ArticleColumns());
             for (int i = 1; i <= 5; i++)
@@ -387,8 +387,8 @@ public sealed class SmokeTests : IDisposable
                 });
         }
 
-        using var db2  = Database.Open(_path, JetVersion.Jet4);
-        var       rows = db2.GetTable("Articles").ReadAllRows();
+        using var db2  = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 });
+        var       rows = db2.GetTable("Articles").Rows.ToList();
 
         Assert.Equal(5, rows.Count);
         for (int i = 1; i <= 5; i++)

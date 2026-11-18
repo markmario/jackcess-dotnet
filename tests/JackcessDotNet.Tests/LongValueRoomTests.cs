@@ -48,7 +48,7 @@ public sealed class LongValueRoomTests : IDisposable
     public void An_insert_looks_at_no_more_pages_for_room_in_a_table_of_50_000_rows_than_in_one_of_1_000(string workload)
     {
         const int Rows = 50_000, Window = 1_000;
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Notes(db);
         var notes = db.File.FreedLvalPages;
 
@@ -99,7 +99,7 @@ public sealed class LongValueRoomTests : IDisposable
         // ACE, writing notes of these lengths, lists a page in the column's free-space map when it is left with
         // 264 bytes or more, and not with 258 or fewer; a page that holds a chunk of a chain it never lists. A new
         // page used to go into the map before anything was written to it, and stay with 64 bytes.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Notes(db);
         for (int i = 1; i <= 600; i++)
             table.Insert(new Row { ["Id"] = i, ["Notes"] = new string((char)('a' + i % 26), Length("mixed", i)) });
@@ -142,7 +142,7 @@ public sealed class LongValueRoomTests : IDisposable
         string other = _path + ".sessions";
         try
         {
-            using (var db = Database.Create(_path, JetVersion.Jet4))
+            using (var db = Database.Create(_path, FileFormat.Access2000))
                 Notes(db);
             File.Copy(_path, other);   // the same empty table: a new file has a date of its own
 
@@ -205,7 +205,7 @@ public sealed class LongValueRoomTests : IDisposable
         // The earlier placement put the last chunks of two chains on one page, and listed it as having room. With
         // one chain deleted the page has more, and a value put there would be lost when Access freed the other
         // chain: it gives back every page of a chain it frees.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.ShareLongValuePages = true;
             var made = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Blob", DataType.Ole).Build() }, primaryKey: "Id");
@@ -229,9 +229,9 @@ public sealed class LongValueRoomTests : IDisposable
             for (int i = 10; i < 60; i++)
                 Assert.Empty(PagesOf(db, table, blob, i).Intersect(first));
             Assert.DoesNotContain(shared, Maps(db, table, "Blob").Free);
-            Assert.Equal(Bytes(5_000, 1), table.NewIndexCursor().FindRowByPrimaryKey(1)!["Blob"]);
+            Assert.Equal(Bytes(5_000, 1), table.FindRowByPrimaryKey(1)!["Blob"]);
             for (int i = 10; i < 60; i++)
-                Assert.Equal(Bytes(300 + i, i), table.NewIndexCursor().FindRowByPrimaryKey(i)!["Blob"]);
+                Assert.Equal(Bytes(300 + i, i), table.FindRowByPrimaryKey(i)!["Blob"]);
         }
     }
 }

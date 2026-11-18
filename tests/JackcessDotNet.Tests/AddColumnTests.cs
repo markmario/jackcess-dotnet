@@ -39,7 +39,7 @@ public sealed class AddColumnTests : IDisposable
 
     private Database CreateWithRows(int rows)
     {
-        var db = Database.Create(_path, JetVersion.Jet4);
+        var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Things", new[]
         {
             Col("Id", DataType.Long),
@@ -53,7 +53,7 @@ public sealed class AddColumnTests : IDisposable
 
     private static void AssertOldRowsReadTheNewColumnsAsNull(Table table, int upTo)
     {
-        foreach (var row in table.ReadAllRows().Where(r => (int)r["Id"]! <= upTo))
+        foreach (var row in table.Rows.Where(r => (int)r["Id"]! <= upTo))
         {
             Assert.Equal($"name {row["Id"]}", row["Name"]);
             Assert.Equal($"note {row["Id"]}", row["Note"]);
@@ -94,7 +94,7 @@ public sealed class AddColumnTests : IDisposable
         var read = reopened.GetTable("Things");
         Assert.Equal(12, read.Columns.Count);
         AssertOldRowsReadTheNewColumnsAsNull(read, 50);
-        var last = read.NewIndexCursor().FindRowByPrimaryKey(51)!;
+        var last = read.FindRowByPrimaryKey(51)!;
         foreach (var (column, value) in NewColumns()) Assert.Equal(value, last[column.Name]);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Things", expectedRows: 51));
     }
@@ -111,7 +111,7 @@ public sealed class AddColumnTests : IDisposable
         table.UpdateByPrimaryKey(7, changes);
         table.DeleteRow("Id", 8);
 
-        var updated = table.NewIndexCursor().FindRowByPrimaryKey(7)!;
+        var updated = table.FindRowByPrimaryKey(7)!;
         Assert.Equal("name 7", updated["Name"]);
         Assert.Equal("note 7", updated["Note"]);
         foreach (var (column, value) in NewColumns()) Assert.Equal(value, updated[column.Name]);
@@ -129,8 +129,8 @@ public sealed class AddColumnTests : IDisposable
         Assert.Contains("Whole", earlier.Columns.Select(c => c.Name));
         earlier.Insert(new Row { ["Id"] = 4, ["Name"] = "four", ["Whole"] = 44 });
 
-        Assert.Equal(44, db.GetTable("Things").NewIndexCursor().FindRowByPrimaryKey(4)!["Whole"]);
-        Assert.False(db.GetTable("Things").NewIndexCursor().FindRowByPrimaryKey(3)!.ContainsKey("Whole"));
+        Assert.Equal(44, db.GetTable("Things").FindRowByPrimaryKey(4)!["Whole"]);
+        Assert.False(db.GetTable("Things").FindRowByPrimaryKey(3)!.ContainsKey("Whole"));
     }
 
     // indexV2003.mdb's Table1: five columns, the primary key, an index and two relationships' indexes, four rows.
@@ -146,8 +146,10 @@ public sealed class AddColumnTests : IDisposable
         List<Row> before;
         using (var db = Database.Open(_path))
         {
+            // The rows added below name no row of the tables Table1 refers to: this is about the columns.
+            db.EnforceForeignKeys = false;
             var table = db.GetTable("Table1");
-            before = table.ReadAllRows().ToList();
+            before = table.Rows.ToList();
             foreach (var (column, _) in NewColumns()) table.AddColumn(column);
 
             var row = new Row { ["id"] = 900, ["otherfk1"] = 1, ["otherfk2"] = 1, ["data"] = "after", ["otherfk3"] = 3 };
@@ -159,7 +161,7 @@ public sealed class AddColumnTests : IDisposable
         var read = reopened.GetTable("Table1");
         Assert.Equal(5 + NewColumns().Length, read.Columns.Count);
         Assert.Equal(4, read.Indexes.Count);   // the indexes Access gave it, all read
-        var rows = read.ReadAllRows();
+        var rows = read.Rows.ToList();
         Assert.Equal(before.Count + 1, rows.Count);
         foreach (var was in before)
         {
@@ -183,7 +185,7 @@ public sealed class AddColumnTests : IDisposable
 
         using var db = Database.Open(_path);
         var table = db.GetTable("Table1");
-        var before = table.ReadAllRows().ToList();
+        var before = table.Rows.ToList();
         Assert.Equal(new[] { 0, 2, 3, 5 }, table.Columns.Select(c => c.ColumnNumber));
 
         var whole = table.AddColumn(Col("Whole", DataType.Long));
@@ -194,7 +196,7 @@ public sealed class AddColumnTests : IDisposable
 
         table.Insert(new Row { ["id"] = 77, ["id2"] = 78, ["data"] = "d", ["data2"] = "d2", ["Whole"] = 79, ["Words"] = "w" });
 
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         foreach (var was in before)
         {
             var now = rows.Single(r => Equals(r["id"], was["id"]));
@@ -209,7 +211,7 @@ public sealed class AddColumnTests : IDisposable
     [Fact]
     public void An_AutoNumber_column_is_added_to_a_table_with_no_rows_and_numbers_the_rows_that_follow()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Empty", new[] { new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build() });
         table.AddColumn(new ColumnBuilder("Id", DataType.Long).AutoNumber().Build());
 
@@ -293,8 +295,8 @@ public sealed class AddColumnTests : IDisposable
         var read = reopened.GetTable("Things");
         Assert.Equal(3 + added, read.Columns.Count);
         Assert.Null(read.InsertRefusal);
-        Assert.Equal(66, read.NewIndexCursor().FindRowByPrimaryKey(6)![read.Columns[^1].Name]);
-        Assert.Equal(6, read.ReadAllRows().Count);
+        Assert.Equal(66, read.FindRowByPrimaryKey(6)![read.Columns[^1].Name]);
+        Assert.Equal(6, read.Rows.Count());
     }
 
     [Fact]

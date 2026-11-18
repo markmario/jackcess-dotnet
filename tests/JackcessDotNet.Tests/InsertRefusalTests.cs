@@ -62,7 +62,7 @@ public sealed class InsertRefusalTests : IDisposable
     [Fact]
     public void A_table_that_takes_rows_has_no_refusal_and_asking_changes_nothing()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
                 ColumnBuilder.AutoNumber("Id").Build(),
@@ -81,7 +81,7 @@ public sealed class InsertRefusalTests : IDisposable
             var table = db.GetTable("T");
             table.Insert(new Row { ["Name"] = "one", ["When"] = new DateTime(2026, 9, 14), ["Notes"] = "n" });
             Assert.Null(table.InsertRefusal);
-            Assert.Equal("one", table.NewIndexCursor("ByName").FindRow("Name", "one")!["Name"]);
+            Assert.Equal("one", table.CreateIndexCursor("ByName").FindRow("Name", "one")!["Name"]);
         }
     }
 
@@ -102,7 +102,7 @@ public sealed class InsertRefusalTests : IDisposable
     [Fact]
     public void A_table_with_a_text_index_in_another_language_s_order_says_what_insert_throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("Coded", new[]
             {
@@ -125,7 +125,7 @@ public sealed class InsertRefusalTests : IDisposable
     [Fact]
     public void A_table_with_an_AutoNumber_the_engine_does_not_generate_says_what_insert_throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("T", new[]
             {
@@ -144,7 +144,7 @@ public sealed class InsertRefusalTests : IDisposable
     [Fact]
     public void A_table_whose_definition_puts_two_columns_in_one_place_says_what_insert_throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build(), new ColumnBuilder("B", DataType.Long).Build() }, primaryKey: "A")
               .Insert(new Row { ["A"] = 1, ["B"] = 2 });
 
@@ -157,7 +157,7 @@ public sealed class InsertRefusalTests : IDisposable
     [Fact]
     public void A_table_whose_columns_were_not_all_read_says_what_insert_throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build() }).Insert(new Row { ["A"] = 1 });
 
         AssertRefuses("T", "runs past its first page", table => table.Definition.HasUnreadColumns = true);

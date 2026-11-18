@@ -30,14 +30,14 @@ public sealed class OfficeCryptTests
         // db2013-enc.accdb seeds a "Customers" table (not "Table1" — that's the
         // Standard 2007 fixture). Match the upstream Java test names so we can
         // cross-check assertions against the reference port.
-        using var db = Database.Open(path, "1234");
-        var tables = db.ListTables();
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "1234" });
+        var tables = db.GetTableNames();
         Assert.Contains("Customers", tables);
 
         // Upstream seeds 7 rows with columns ID + Field1; we just confirm we
         // can decrypt + parse a TDEF + read rows without crashing.
         var t = db.GetTable("Customers");
-        var rows = t.ReadAllRows();
+        var rows = t.Rows.ToList();
         Assert.NotNull(rows);
         Assert.NotEmpty(rows);
     }
@@ -49,7 +49,7 @@ public sealed class OfficeCryptTests
         if (!File.Exists(path)) return;
 
         Assert.Throws<InvalidCredentialException>(
-            () => Database.Open(path, "definitely-not-1234"));
+            () => Database.Open(path, new DatabaseOpenOptions { Password = "definitely-not-1234" }));
     }
 
     [Fact]
@@ -73,8 +73,8 @@ public sealed class OfficeCryptTests
         string? path = TestCorpus.Files("*.accdb", "V2007", "V2010", "V2019").FirstOrDefault();
         if (path is null) return;
 
-        using var db = Database.Open(path, "this-password-is-ignored");
-        Assert.NotEmpty(db.ListTables(includeSystem: true));
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "this-password-is-ignored" });
+        Assert.NotEmpty(db.GetTableNames().Concat(db.GetSystemTableNames()));
     }
 
     [Theory]
@@ -85,9 +85,9 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, fixtureName);
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "Test123");
-        Assert.Contains("Table1", db.ListTables());
-        var rows = db.GetTable("Table1").ReadAllRows();
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
+        Assert.Contains("Table1", db.GetTableNames());
+        var rows = db.GetTable("Table1").Rows.ToList();
         Assert.NotNull(rows);   // tolerant of empty/seeded content; just must not crash
     }
 
@@ -99,7 +99,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, fixtureName);
         if (!File.Exists(path)) return;
 
-        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, "definitely-wrong"));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = "definitely-wrong" }));
     }
 
     // ── Write / round-trip tests ─────────────────────────────────────────────
@@ -129,12 +129,12 @@ public sealed class OfficeCryptTests
         {
             string tableName;
             int initialCount;
-            using (var db = Database.Open(tmp, password))
+            using (var db = Database.Open(tmp, new DatabaseOpenOptions { Password = password }))
             {
-                tableName = db.ListTables().FirstOrDefault()
+                tableName = db.GetTableNames().FirstOrDefault()
                     ?? throw new InvalidOperationException("Fixture has no user tables.");
                 var t = db.GetTable(tableName);
-                initialCount = t.ReadAllRows().Count;
+                initialCount = t.Rows.Count();
 
                 var row = new Row();
                 foreach (var col in t.Columns)
@@ -145,8 +145,8 @@ public sealed class OfficeCryptTests
                 t.Insert(row);
             }
 
-            using var reopen = Database.Open(tmp, password);
-            int newCount = reopen.GetTable(tableName).ReadAllRows().Count;
+            using var reopen = Database.Open(tmp, new DatabaseOpenOptions { Password = password });
+            int newCount = reopen.GetTable(tableName).Rows.Count();
             Assert.Equal(initialCount + 1, newCount);
         }
         finally
@@ -247,8 +247,8 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "password");
-        Assert.NotEmpty(db.ListTables());
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "password" });
+        Assert.NotEmpty(db.GetTableNames());
     }
 
     [Fact]
@@ -257,7 +257,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
         if (!File.Exists(path)) return;
 
-        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, "wrong"));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = "wrong" }));
     }
 
     // ── Scheme reporting per encryption variant ─────────────────────────────
@@ -290,8 +290,8 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "1234");
-        var rows = db.GetTable("Customers").ReadAllRows()
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "1234" });
+        var rows = db.GetTable("Customers").Rows.ToList()
                      .OrderBy(r => Convert.ToInt32(r["ID"])).ToList();
         Assert.Equal(7, rows.Count);
 
@@ -310,8 +310,8 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db2007-enc.accdb");
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "Test123");
-        var rows = db.GetTable("Table1").ReadAllRows();
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
+        var rows = db.GetTable("Table1").Rows.ToList();
         var row  = rows.Single();
         Assert.Equal(1,     Convert.ToInt32(row["ID"]));
         Assert.Equal("foo", row["Field1"]);
@@ -326,8 +326,8 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db2007-oldenc.accdb");
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "Test123");
-        var row = db.GetTable("Table1").ReadAllRows().Single();
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
+        var row = db.GetTable("Table1").Rows.Single();
         Assert.Equal(1,     Convert.ToInt32(row["ID"]));
         Assert.Equal("foo", row["Field1"]);
     }
@@ -340,7 +340,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
         if (!File.Exists(path)) return;
 
-        using var db = Database.Open(path, "password");
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "password" });
         var t = db.GetTable("Table_One");
         Assert.Contains(t.Columns, c => c.Name.Equals("ID", StringComparison.OrdinalIgnoreCase));
     }
@@ -358,16 +358,16 @@ public sealed class OfficeCryptTests
         try
         {
             int initialCount;
-            using (var db = Database.Open(tmp, "1234"))
+            using (var db = Database.Open(tmp, new DatabaseOpenOptions { Password = "1234" }))
             {
                 var t = db.GetTable("Customers");
-                initialCount = t.ReadAllRows().Count;
+                initialCount = t.Rows.Count();
                 for (int i = 0; i < 50; i++)
                     t.Insert(new Row { ["ID"] = 100 + i, ["Field1"] = $"bulk-{i}" });
             }
 
-            using var reopen = Database.Open(tmp, "1234");
-            var rows = reopen.GetTable("Customers").ReadAllRows();
+            using var reopen = Database.Open(tmp, new DatabaseOpenOptions { Password = "1234" });
+            var rows = reopen.GetTable("Customers").Rows.ToList();
             Assert.Equal(initialCount + 50, rows.Count);
             Assert.Equal(50, rows.Count(r => (r.GetValueOrDefault("Field1") as string)?.StartsWith("bulk-") == true));
         }

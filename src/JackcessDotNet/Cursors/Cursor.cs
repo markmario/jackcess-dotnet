@@ -9,10 +9,17 @@ namespace JackcessDotNet;
 ///
 /// State machine:
 ///   position = (pageIndex into ownedPages, rowIndex into that page).
-///   BeforeFirst → pageIndex = -1 (so the next call to GetNextRow returns the first row).
-///   AfterLast   → pageIndex = ownedPages.Count (so the next call to GetPreviousRow returns the last row).
+///   MoveBeforeFirst → pageIndex = -1 (so the next MoveNext moves to the first row).
+///   MoveAfterLast   → pageIndex = ownedPages.Count (so the next MovePrevious moves to the last row).
 ///
-/// Cursors are forward/backward seekable; they're not thread-safe (one per consumer).
+/// <code>
+///   var cursor = table.CreateCursor();
+///   while (cursor.MoveNext())
+///       Use(cursor.Current!);
+/// </code>
+/// A cursor moves forwards and backwards. It holds no handle and needs no disposing; like the
+/// <see cref="Database"/> it reads, it is for one thread at a time. It lists the table's pages when it is
+/// created: rows on pages the table gains afterwards are not visited.
 /// </summary>
 public class Cursor : IEnumerable<Row>
 {
@@ -44,22 +51,28 @@ public class Cursor : IEnumerable<Row>
         var lvalReader = _definition.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null;
         _decoder = new RowDecoder(format, _definition.Columns, lvalReader);
 
-        BeforeFirst();
+        MoveBeforeFirst();
     }
 
     /// <summary>The table this cursor iterates.</summary>
     public Table Table => _table;
 
-    /// <summary>Repositions the cursor before the first row (next GetNextRow yields row #0).</summary>
-    public void BeforeFirst()
+    /// <summary>
+    /// Puts the cursor before the first row, where a new cursor is: the next <see cref="MoveNext"/> moves to the
+    /// first row. Jackcess's <c>beforeFirst</c>.
+    /// </summary>
+    public void MoveBeforeFirst()
     {
         _pageIndex  = -1;
         _rowIndex   = -1;
         _currentRow = null;
     }
 
-    /// <summary>Repositions the cursor after the last row (next GetPreviousRow yields the final row).</summary>
-    public void AfterLast()
+    /// <summary>
+    /// Puts the cursor after the last row: the next <see cref="MovePrevious"/> moves to the last row. Jackcess's
+    /// <c>afterLast</c>.
+    /// </summary>
+    public void MoveAfterLast()
     {
         _pageIndex  = _ownedPages.Count;
         _rowIndex   = 0;
@@ -82,14 +95,27 @@ public class Cursor : IEnumerable<Row>
     /// <summary>The current row's pointer (<see cref="RowPointer"/>); meaningful only while there is a current row.</summary>
     internal int CurrentRowPointer => RowPointer.Pack(_ownedPages[_pageIndex], _rowIndex);
 
-    /// <summary>Returns the row at the current position, or null if positioned at a boundary.</summary>
-    public Row? GetCurrentRow() => _currentRow;
+    /// <summary>
+    /// The row the cursor is on, or null when it is on none: before the first row, after the last, or after a
+    /// move that found no row.
+    /// </summary>
+    public Row? Current => _currentRow;
 
     /// <summary>
-    /// Advances to the next live (non-deleted) row and returns it.
-    /// Returns null when there are no more rows.
+    /// Moves to the next row, passing deleted ones, and says whether there was one: <see cref="Current"/> is then
+    /// that row. When there are no more rows the cursor is left after the last row and <see cref="Current"/> is
+    /// null.
     /// </summary>
-    public Row? GetNextRow()
+    public bool MoveNext() => NextRow() is not null;
+
+    /// <summary>
+    /// Moves to the previous row, passing deleted ones, and says whether there was one: <see cref="Current"/> is
+    /// then that row. At the beginning the cursor is left before the first row and <see cref="Current"/> is null.
+    /// </summary>
+    public bool MovePrevious() => PreviousRow() is not null;
+
+    /// <summary>Moves to the next live row and returns it, or null when there are no more rows.</summary>
+    internal Row? NextRow()
     {
         // Re-anchor onto the next slot, skipping deleted/overflow rows transparently.
         int curPageIdx = _pageIndex;
@@ -125,10 +151,8 @@ public class Cursor : IEnumerable<Row>
         return null;
     }
 
-    /// <summary>
-    /// Steps to the previous live row and returns it. Returns null at the beginning.
-    /// </summary>
-    public Row? GetPreviousRow()
+    /// <summary>Moves to the previous live row and returns it, or null at the beginning.</summary>
+    internal Row? PreviousRow()
     {
         int curPageIdx = _pageIndex;
         int curRowIdx  = _rowIndex - 1;
@@ -166,7 +190,7 @@ public class Cursor : IEnumerable<Row>
             }
         }
 
-        BeforeFirst();
+        MoveBeforeFirst();
         return null;
     }
 
@@ -200,10 +224,14 @@ public class Cursor : IEnumerable<Row>
 
     // ── IEnumerable ───────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The table's rows from the first: the cursor is put before the first row, then moved through them all.
+    /// Enumerating moves the cursor itself, so one cursor is enumerated by one loop at a time.
+    /// </summary>
     public IEnumerator<Row> GetEnumerator()
     {
-        BeforeFirst();
-        while (GetNextRow() is { } r) yield return r;
+        MoveBeforeFirst();
+        while (NextRow() is { } r) yield return r;
     }
 
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();

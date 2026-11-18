@@ -74,7 +74,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// <summary>Parent(K, Name) and Child(Id, K, Name), Child.K referring to Parent.K: parents 1, 2, 3; children of 1 and 2.</summary>
     private void ParentAndChild(int flags)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var child  = Create(db, "Child", new[] { Long("Id"), Long("K"), Text("Name") }, "Id", On("K"));
         Relate(db, "ParentChild", "Parent", "Child", flags, ("K", "K"));
@@ -95,7 +95,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
 
     /// <summary>A table's rows as text, in a fixed order: "Id=10, K=1, Name=c10".</summary>
     private static List<string> Rows(Database db, string table)
-        => db.GetTable(table).ReadAllRows()
+        => db.GetTable(table).Rows.ToList()
             .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
@@ -127,7 +127,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
             change(db);
 
         using var read = Database.Open(_path);
-        foreach (string table in read.ListTables())
+        foreach (string table in read.GetTableNames())
             IndexChecks.AssertEveryIndexHoldsTheRows(read, table);
     }
 
@@ -153,12 +153,12 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         Enforcing(db => db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["K"] = 7 }));
 
         using var read = Database.Open(_path);
-        var parent = read.GetTable("Parent").NewIndexCursor();
-        Assert.Equal("p1", parent.FindRowByPrimaryKey(7)?["Name"]);
-        Assert.Null(parent.FindRowByPrimaryKey(1));
+        var parent = read.GetTable("Parent").CreateIndexCursor();
+        Assert.Equal("p1", parent.Table.FindRowByPrimaryKey(7)?["Name"]);
+        Assert.Null(parent.Table.FindRowByPrimaryKey(1));
         // The children moved when they were rewritten: their key entries moved with them.
-        Assert.Equal(7, read.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(10)?["K"]);
-        Assert.Equal(7, read.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(11)?["K"]);
+        Assert.Equal(7, read.GetTable("Child").FindRowByPrimaryKey(10)?["K"]);
+        Assert.Equal(7, read.GetTable("Child").FindRowByPrimaryKey(11)?["K"]);
     }
 
     [Fact]
@@ -231,8 +231,8 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         Assert.Equal(new[] { "Id=20, K=2, Name=c20", "Id=30, Name=orphan by choice" }, Rows("Child"));
 
         using var read = Database.Open(_path);
-        Assert.Null(read.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(10));
-        Assert.NotNull(read.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(20));
+        Assert.Null(read.GetTable("Child").FindRowByPrimaryKey(10));
+        Assert.NotNull(read.GetTable("Child").FindRowByPrimaryKey(20));
     }
 
     [Fact]
@@ -252,7 +252,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [Fact]
     public void DeleteParent_WithCascadeNull_IsRefusedWhenTheColumnIsInThePrimaryKey()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var child  = db.CreateTable("Child", new[] { Long("K"), Long("N"), Text("Name") }, new[] { "K", "N" });
@@ -343,7 +343,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
 
     private void ParentAndNumberedChild()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var child  = Create(db, "Child", new[] { new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(), Long("K"), Text("Name") }, "Id", On("K"));
         Relate(db, "ParentChild", "Parent", "Child", CascadeUpdates, ("K", "K"));
@@ -405,7 +405,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     {
         // The foreign key is the child's AutoNumber. Access will not make such a relationship cascade updates, and
         // refuses the cascade-to-null of one that reaches a row: "Field cannot be updated".
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var child  = Create(db, "Child", new[] { Long("Id"), new ColumnBuilder("K", DataType.Long).AutoNumber().Build(), Text("Name") }, "Id", On("K"));
@@ -428,7 +428,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [Fact]
     public void ACascade_IsRefusedWhenItWouldMakeADuplicateInAUniqueIndexOfTheChild()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             // One child a parent: K is unique in Child.
@@ -454,7 +454,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         // Head(Id, Next): each row's Next refers to a Head, uniquely. Deleting 1 cascades to 2, the row that refers
         // to it, and to 3 in turn - rows whose keys in the unique index are still in the file while the change is
         // worked out, and are no other row's by the time it is done.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var head = db.CreateTable("Head", new[] { Long("Id"), Long("Next") }, new[] { "Id" },
                 new[] { new IndexDefinition("NextIsUnique", "Next") { IsUnique = true } });
@@ -490,7 +490,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         (long Reads, int ChildPages) ReadsOfOneCascadeDelete(int parents)
         {
             if (File.Exists(_path)) File.Delete(_path);
-            using (var db = Database.Create(_path, JetVersion.Jet4))
+            using (var db = Database.Create(_path, FileFormat.Access2000))
             {
                 var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
                 var child  = Create(db, "Child", new[] { Long("Id"), Long("K"), Text("Name", 100) }, "Id", On("K"));
@@ -536,7 +536,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     private void Keyed(DataType type, int flags, params object?[] values)
     {
         Column Key() => type == DataType.Text ? Text("K") : new ColumnBuilder("K", type).Build();
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = Create(db, "Parent", new[] { Long("Id"), Key() }, "Id", On("K"));
         var child  = Create(db, "Child", new[] { Long("Id"), Key() }, "Id", On("K"));
         Relate(db, "ParentChild", "Parent", "Child", flags, ("K", "K"));
@@ -550,7 +550,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     private object? KeyOfChild(int id)
     {
         using var db = Database.Open(_path);
-        return db.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(id)?.GetValueOrDefault("K");
+        return db.GetTable("Child").FindRowByPrimaryKey(id)?.GetValueOrDefault("K");
     }
 
     [Fact]
@@ -630,7 +630,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     public void ARowACascadeRewrites_KeepsTheDatesItDidNotChange()
     {
         var odd = new DateTime(2009, 7, 6, 2, 57, 46).AddTicks(5_678);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var dated   = Create(db, "Dated", new[] { Long("Id"), new ColumnBuilder("K", DataType.ShortDateTime).Build() }, "Id", On("K"));
             var counted = db.CreateTable("Counted", new[] { Long("N") }, primaryKey: "N");
@@ -755,7 +755,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     private int[] ChildIds()
     {
         using var db = Database.Open(_path);
-        return db.GetTable("Child").ReadAllRows().Select(row => Convert.ToInt32(row["Id"])).OrderBy(id => id).ToArray();
+        return db.GetTable("Child").Rows.Select(row => Convert.ToInt32(row["Id"])).OrderBy(id => id).ToArray();
     }
 
     // ── Enforcement off, and relationships that are not enforced ─────────────
@@ -767,6 +767,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
+            db.EnforceForeignKeys = false;
             db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["Name"] = "still 1" });
             db.GetTable("Parent").DeleteRow("K", 2);
             db.GetTable("Child").UpdateByPrimaryKey(10, new Row { ["K"] = 99 });
@@ -802,7 +803,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// <summary>Region(Id, Country, Code, Name) and City(Id, Country, Code, Name), City (Country, Code) referring to Region's.</summary>
     private void RegionsAndCities(int flags)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var region = Create(db, "Region", new[] { Long("Id"), Text("Country", 2), Long("Code"), Text("Name") }, "Id", On("Country", "Code"));
         var city   = Create(db, "City",   new[] { Long("Id"), Text("Country", 2), Long("Code"), Text("Name") }, "Id", On("Country", "Code"));
         Relate(db, "RegionCity", "Region", "City", flags, ("Country", "Country"), ("Code", "Code"));
@@ -888,7 +889,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// </summary>
     private void CustomersOrdersLines(int customerOrder, int orderLine, int orderNote)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var customer = db.CreateTable("Customer", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var order    = Create(db, "Order", new[] { Long("K"), Long("Customer"), Text("Name") }, "K", On("Customer"));
         var line     = Create(db, "Line", new[] { Long("Id"), Long("Order"), Text("Name") }, "Id", On("Order"));
@@ -955,8 +956,8 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         Assert.Equal(new[] { "Name=n100, Order=150", "Name=n200, Order=200" }, Rows("OrderNote"));
 
         using var read = Database.Open(_path);
-        Assert.Equal("n100", read.GetTable("OrderNote").NewIndexCursor().FindRowByPrimaryKey(150)?["Name"]);
-        Assert.Null(read.GetTable("OrderNote").NewIndexCursor().FindRowByPrimaryKey(100));
+        Assert.Equal("n100", read.GetTable("OrderNote").FindRowByPrimaryKey(150)?["Name"]);
+        Assert.Null(read.GetTable("OrderNote").FindRowByPrimaryKey(100));
     }
 
     /// <summary>
@@ -964,7 +965,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// </summary>
     private void RootMiddleLeaf(int rootMiddle, int middleLeaf)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var root   = db.CreateTable("Root", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var middle = db.CreateTable("Middle", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var leaf   = Create(db, "Leaf", new[] { Long("Id"), Long("K"), Text("Name") }, "Id", On("K"));
@@ -1004,7 +1005,10 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     {
         RootMiddleLeaf(CascadeUpdates, CascadeUpdates);
         using (var db = Database.Open(_path))
+        {
+            db.EnforceForeignKeys = false;
             db.GetTable("Middle").Insert(new Row { ["K"] = 5, ["Name"] = "in the way" });   // no Root 5: enforcement is off
+        }
 
         string message = Refused(db => db.GetTable("Root").UpdateByPrimaryKey(1, new Row { ["K"] = 5 }));
 
@@ -1014,7 +1018,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [Fact]
     public void ACascade_IsRefusedWhenItLeavesTheRowWithoutAParentInAnotherRelationship()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var first  = db.CreateTable("First", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var second = db.CreateTable("Second", new[] { Long("K"), Text("Name") }, primaryKey: "K");
@@ -1044,7 +1048,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [InlineData(false)]
     public void RelationshipsAreTakenInTheOrderTheyWereMade(bool yFirst)
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var x = db.CreateTable("X", new[] { Long("Id") }, primaryKey: "Id");
             var y = Create(db, "Y", new[] { Long("Id"), Long("X"), Long("Z") }, "Id", On("X"), On("Z"));
@@ -1074,7 +1078,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [Fact]
     public void ACycleOfCascadeDeletes_Ends()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var a = Create(db, "A", new[] { Long("Id"), Long("B") }, "Id", On("B"));
             var b = Create(db, "B", new[] { Long("Id"), Long("A") }, "Id", On("A"));
@@ -1097,7 +1101,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// <summary>Staff(Id, Boss, Name), Boss referring to Staff.Id: 1 is her own boss, 2 and 3 report to 1, 4 to 2, 5 to no one.</summary>
     private void Staff(int flags)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var staff = Create(db, "Staff", new[] { Long("Id"), Long("Boss"), Text("Name") }, "Id", On("Boss"));
         Relate(db, "StaffStaff", "Staff", "Staff", flags, ("Id", "Boss"));
         staff.Insert(new Row { ["Id"] = 1, ["Boss"] = 1, ["Name"] = "top" });
@@ -1178,7 +1182,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     [Fact]
     public void SelfReference_OfTwoColumns_AKeyNullInPartRefersToAKeyNullInTheSamePart()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             Create(db, "Part", new[] { Long("Id"), Long("A"), Long("B"), Long("ParentA"), Long("ParentB") }, "Id", On("A", "B"), On("ParentA", "ParentB"));
             Relate(db, "PartPart", "Part", "Part", 0, ("A", "ParentA"), ("B", "ParentB"));
@@ -1202,7 +1206,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     public void SelfReference_ALongChainOfCascades_DoesNotRunOutOfStack()
     {
         const int Length = 20_000;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var link = Create(db, "Link", new[] { Long("Id"), Long("Previous") }, "Id", On("Previous"));
             Relate(db, "LinkLink", "Link", "Link", CascadeDeletes, ("Id", "Previous"));
@@ -1221,7 +1225,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
 
     private void TextParentAndChild(int flags, int childChars = 10)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Text("K", 10), Text("Name") }, primaryKey: "K");
         var child  = Create(db, "Child", new[] { Long("Id"), Text("K", childChars) }, "Id", On("K"));
         Relate(db, "ParentChild", "Parent", "Child", flags, ("K", "K"));
@@ -1273,7 +1277,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
             return db.File.ReadCount - before;
         }
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Key(), Text("Name", 200) }, primaryKey: "K");
             Create(db, "Child", new[] { Long("Id"), Key() }, "Id", On("K"));
@@ -1337,18 +1341,18 @@ public abstract class ForeignKeyCascadeTests : IDisposable
             {
                 // What a cascade writes: rows deleted and rewritten, keys moved, pages added - and no Commit.
                 var pointers = new List<int>();
-                var cursor = child.NewCursor();
-                while (cursor.GetNextRow() is not null) pointers.Add(cursor.CurrentRowPointer);
+                var cursor = child.CreateCursor();
+                while (cursor.MoveNext()) pointers.Add(cursor.CurrentRowPointer);
                 child.DeleteRowAt(pointers[0]);
                 child.RewriteRowAt(pointers[1], new Row { ["K"] = 3, ["Name"] = new string('x', 20) });
                 for (int i = 0; i < 500; i++)
                     child.Insert(new Row { ["Id"] = 1000 + i, ["K"] = 1, ["Name"] = "added" });
-                Assert.Equal(503, child.ReadAllRows().Count);
+                Assert.Equal(503, child.Rows.Count());
             }
 
             // The same Database goes on working with what the file now holds.
-            Assert.Equal(4, child.ReadAllRows().Count);
-            Assert.Equal("c10", child.NewIndexCursor().FindRowByPrimaryKey(10)?["Name"]);
+            Assert.Equal(4, child.Rows.Count());
+            Assert.Equal("c10", child.FindRowByPrimaryKey(10)?["Name"]);
         }
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "the file is not as it was");
 
@@ -1379,7 +1383,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         const string Greek = "αβγδεζηθικλμνξοπρστυφχψω";   // not compressible: two bytes a character
         string Filler(int chars) => string.Concat(Enumerable.Repeat(Greek, chars / Greek.Length + 1)).Substring(0, chars);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Text("K", 20), Text("Name") }, primaryKey: "K");
             var columns = new List<Column> { Long("Id"), Text("K", 20) };
@@ -1417,9 +1421,9 @@ public abstract class ForeignKeyCascadeTests : IDisposable
             Assert.True(db.File.WriteCount - written >= 4, $"only {db.File.WriteCount - written} pages were written before the failure");
 
             // The same Database goes on with what the file holds: nothing of the cascade.
-            Assert.Equal("p", db.GetTable("Parent").NewIndexCursor().FindRowByPrimaryKey("a")?["Name"]);
-            Assert.Equal("a", db.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(1)?["K"]);
-            Assert.Equal("a", db.GetTable("Child").NewIndexCursor().FindRowByPrimaryKey(2)?["K"]);
+            Assert.Equal("p", db.GetTable("Parent").FindRowByPrimaryKey("a")?["Name"]);
+            Assert.Equal("a", db.GetTable("Child").FindRowByPrimaryKey(1)?["K"]);
+            Assert.Equal("a", db.GetTable("Child").FindRowByPrimaryKey(2)?["K"]);
         }
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "the file is not as it was");
     }

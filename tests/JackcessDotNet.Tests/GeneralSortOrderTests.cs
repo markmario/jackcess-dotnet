@@ -32,7 +32,7 @@ public sealed class GeneralSortOrderTests : IDisposable
     {
         string path = Path.Combine(Path.GetTempPath(), $"legacy_{Guid.NewGuid():N}.mdb");
         _paths.Add(path);
-        Database.Create(path, JetVersion.Jet4).Dispose();
+        Database.Create(path, FileFormat.Access2000).Dispose();
         return path;
     }
 
@@ -79,12 +79,12 @@ public sealed class GeneralSortOrderTests : IDisposable
                 JetPages.LeafEntries(db.File, root).Select(e => e.Hex));
 
             for (int i = 0; i < codes.Count; i += 37)
-                Assert.Equal(i, table.NewIndexCursor().FindRowByPrimaryKey(codes[i])?["N"]);
+                Assert.Equal(i, table.FindRowByPrimaryKey(codes[i])?["N"]);
 
             table.DeleteRow("Code", codes[5]);
             table.UpdateByPrimaryKey(codes[6], new Row { ["N"] = -6 });
-            Assert.Null(table.NewIndexCursor().FindRowByPrimaryKey(codes[5]));
-            Assert.Equal(-6, table.NewIndexCursor().FindRowByPrimaryKey(codes[6])?["N"]);
+            Assert.Null(table.FindRowByPrimaryKey(codes[5]));
+            Assert.Equal(-6, table.FindRowByPrimaryKey(codes[6])?["N"]);
             Assert.Empty(JetPages.RuleBreaks(db.File, JetPages.IndexBlocks(db.File, tdef)[0].Root, tdef));
         }
     }
@@ -113,7 +113,7 @@ public sealed class GeneralSortOrderTests : IDisposable
             Assert.All(entries, e => Assert.True(e.Key.Length <= IndexKeys.MaxKeyLength));
             Assert.Contains(entries, e => e.Key.Length == IndexKeys.MaxKeyLength);
             for (int i = 0; i < codes.Length; i++)
-                Assert.Equal(i, table.NewIndexCursor().FindRowByPrimaryKey(codes[i])?["N"]);
+                Assert.Equal(i, table.FindRowByPrimaryKey(codes[i])?["N"]);
         }
     }
 
@@ -141,8 +141,8 @@ public sealed class GeneralSortOrderTests : IDisposable
             Assert.Throws<NotSupportedException>(() => db.CreateTable("データ", CodeAndNumber()));
 
             // Looked for, such a value is no key to search by: the table is scanned, and it is not there.
-            Assert.Null(table.NewIndexCursor().FindRowByPrimaryKey("データ"));
-            Assert.Equal(1, table.NewIndexCursor().FindRowByPrimaryKey("テスト")?["N"]);
+            Assert.Null(table.FindRowByPrimaryKey("データ"));
+            Assert.Equal(1, table.FindRowByPrimaryKey("テスト")?["N"]);
         }
         Assert.Equal(before, File.ReadAllBytes(path));
     }
@@ -194,7 +194,7 @@ public sealed class GeneralSortOrderTests : IDisposable
             var order = general ? SortOrder.General : SortOrder.GeneralLegacy;
             Assert.All(table.Columns.Where(c => c.DataType is DataType.Text or DataType.Memo), c => Assert.Equal(order, c.SortOrder));
             Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 600 - 86));
-            Assert.Equal(9, table.NewIndexCursor("ByCode").FindRow("Code", $"{Words[9]} 0009")?["Id"]);
+            Assert.Equal(9, table.CreateIndexCursor("ByCode").FindRow("Code", $"{Words[9]} 0009")?["Id"]);
             Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 9000, ["Code"] = $"{Words[2].ToUpperInvariant()} 0002" }));   // unique, whatever the case
         }
     }
@@ -223,7 +223,7 @@ public sealed class GeneralSortOrderTests : IDisposable
         table.UpdateByPrimaryKey(1, new Row { ["Free"] = "コンピューター" });
         table.Insert(new Row { ["Id"] = 2, ["Code"] = "two", ["Free"] = "ー" });
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
-        Assert.Equal("コンピューター", table.NewIndexCursor().FindRowByPrimaryKey(1)?["Free"]);
+        Assert.Equal("コンピューター", table.FindRowByPrimaryKey(1)?["Free"]);
     }
 
     // Two values of 255 characters that differ only where their keys are cut, and whose digests are the same:
@@ -248,7 +248,7 @@ public sealed class GeneralSortOrderTests : IDisposable
 
         table.Insert(new Row { ["Id"] = 2, ["Code"] = "other", ["Family"] = second });   // ByName is not unique
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
-        Assert.Equal(2, table.NewIndexCursor("ByName").FindRow("Family", second)?["Id"]);   // scanned for: the key is cut
+        Assert.Equal(2, table.CreateIndexCursor("ByName").FindRow("Family", second)?["Id"]);   // scanned for: the key is cut
     }
 
     // A table made from the columns of a table in another database, which sorts otherwise: the new table has
@@ -299,7 +299,7 @@ public sealed class GeneralSortOrderTests : IDisposable
         Assert.Equal(sourceOrder, byCode.Columns[0].Column.SortOrder);
         foreach (int i in new[] { 0, 5, 41, 60, 79 })
             Assert.NotEmpty(new IndexReader(source.File, byCode).FindRowPointers($"{Words[i % Words.Length]} {i:D3}"));
-        Assert.Equal(60, table.NewIndexCursor("ByCode").FindRow("Code", $"{Words[60 % Words.Length]} 060")?["Id"]);
+        Assert.Equal(60, table.CreateIndexCursor("ByCode").FindRow("Code", $"{Words[60 % Words.Length]} 060")?["Id"]);
     }
 
     // A column that is no key takes any text: only keys are made of it.
@@ -317,6 +317,6 @@ public sealed class GeneralSortOrderTests : IDisposable
             table.Insert(new Row { ["Id"] = 1, ["Note"] = "データ" });
         }
         using (var db = Database.Open(path))
-            Assert.Equal("データ", db.GetTable("Notes").NewIndexCursor().FindRowByPrimaryKey(1)?["Note"]);
+            Assert.Equal("データ", db.GetTable("Notes").FindRowByPrimaryKey(1)?["Note"]);
     }
 }

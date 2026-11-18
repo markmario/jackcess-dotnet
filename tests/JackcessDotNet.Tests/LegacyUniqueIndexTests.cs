@@ -42,14 +42,14 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     private List<string> Codes()
     {
         using var db = OpenVerifying();
-        return db.GetTable("Codes").ReadAllRows().OrderBy(row => (int)row["Id"]!).Select(row => $"{row["Id"]} has {row["Code"]}").ToList();
+        return db.GetTable("Codes").Rows.OrderBy(row => (int)row["Id"]!).Select(row => $"{row["Id"]} has {row["Code"]}").ToList();
     }
 
     /// <summary>Renamed's rows as "Id Name", in table order.</summary>
     private List<string> Renamed()
     {
         using var db = OpenVerifying();
-        return db.GetTable("Renamed").ReadAllRows().Select(row => $"{row["Id"]} {row["Name"]}").ToList();
+        return db.GetTable("Renamed").Rows.Select(row => $"{row["Id"]} {row["Name"]}").ToList();
     }
 
     /// <summary>
@@ -62,9 +62,9 @@ public sealed class LegacyUniqueIndexTests : IDisposable
         var opened  = db.GetTable(table);
         var tree    = opened.Indexes.First(ix => ix.Name == index);
         var entries = new IndexWriter(db.File, new PageAllocator(db.File)).RowPointersForKey(tree.RootPageNumber, IndexKeys.Encode(tree.Columns, new object?[] { value }));
-        var cursor  = opened.NewCursor();
+        var cursor  = opened.CreateCursor();
         var ids     = new Dictionary<int, int>();
-        while (cursor.GetNextRow() is { } row) ids[cursor.CurrentRowPointer] = (int)row["Id"]!;
+        while (cursor.MoveNext()) ids[cursor.CurrentRowPointer] = (int)cursor.Current!["Id"]!;
         return entries.Select(pointer => ids.TryGetValue(pointer, out int id) ? id.ToString() : "no row").ToList();
     }
 

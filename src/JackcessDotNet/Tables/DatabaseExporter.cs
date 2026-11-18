@@ -10,7 +10,7 @@ namespace JackcessDotNet;
 /// or an <c>IEnumerable&lt;T&gt;</c> of POCO instances. Counterpart to
 /// <see cref="DatabaseImporter"/>.
 ///
-/// <para>Type mapping (Jet → CLR) mirrors what <see cref="Table.ReadAllRows"/>
+/// <para>Type mapping (Jet → CLR) mirrors what <see cref="Table.Rows"/>
 /// already produces — Boolean→bool, Int→short, Long→int, Money/Numeric→decimal,
 /// ShortDateTime→DateTime, Text/Memo→string, Binary/OLE→byte[], Guid→Guid.</para>
 ///
@@ -49,7 +49,7 @@ public static class DatabaseExporter
         if (db is null) throw new ArgumentNullException(nameof(db));
 
         var ds = new DataSet();
-        foreach (var name in db.ListTables(includeSystem))
+        foreach (var name in db.Catalog.GetTableNames(includeSystem))
             ds.Tables.Add(BuildDataTable(db.GetTable(name)));
         return ds;
     }
@@ -60,7 +60,7 @@ public static class DatabaseExporter
 
         // Columns first — order matches the on-disk TDEF.
         // AllowDBNull stays true even when the Access column is marked Required:
-        // ReadAllRows skips null values from the dict, so a row missing the key
+        // Rows skips null values from the dict, so a row missing the key
         // would otherwise be rejected by the DataTable on Add. The exported
         // DataTable is a data view, not a schema mirror.
         foreach (var col in table.Columns)
@@ -75,8 +75,8 @@ public static class DatabaseExporter
         // Materialise rows first so we can decide whether the PK is safe to set:
         // assigning DataTable.PrimaryKey flips the column's AllowDBNull back to
         // false, which then rejects rows whose PK value is missing (e.g. some
-        // MSysObjects rows that come back with a null Id from ReadAllRows).
-        var sourceRows = table.ReadAllRows();
+        // MSysObjects rows that come back with a null Id from Rows).
+        var sourceRows = table.Rows.ToList();
 
         // Single-column PK round-trip — multi-column PKs are skipped (DataTable
         // supports them, but Jet only round-trips one PK per table cleanly).
@@ -125,7 +125,7 @@ public static class DatabaseExporter
     {
         var bindings = BuildPropertyBindings<T>(table);
 
-        foreach (var row in table.NewCursor())
+        foreach (var row in table.Rows)
         {
             var instance = new T();
             foreach (var (colName, prop) in bindings)

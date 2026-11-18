@@ -34,7 +34,7 @@ public sealed class TrustedIndexTests : IDisposable
     private List<string> Rows(string table, params string[] columns)
     {
         using var db = Database.Open(_path);
-        return db.GetTable(table).ReadAllRows()
+        return db.GetTable(table).Rows.ToList()
             .OrderBy(row => (int)row[columns[0]]!)
             .Select(row => string.Join(" ", columns.Select(c => row.TryGetValue(c, out var value) ? value : "none")))
             .ToList();
@@ -58,7 +58,7 @@ public sealed class TrustedIndexTests : IDisposable
     [Fact]
     public void the_option_is_off_unless_it_is_set()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             Assert.False(db.VerifyIndexes);
         using (var db = Database.Open(_path))
         {
@@ -72,7 +72,7 @@ public sealed class TrustedIndexTests : IDisposable
     public void the_first_insert_of_a_session_reads_no_more_pages_than_the_ones_after_it()
     {
         const int Many = 20_000;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("T", new[] { Long("Id"), Long("Code"), Text("Name", 100) }, new[] { "Id" },
                                        new[] { new IndexDefinition("OneCode", "Code") { IsUnique = true } });
@@ -82,6 +82,9 @@ public sealed class TrustedIndexTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
+            // The first change of a session that enforces foreign keys also reads the relationships, once: that
+            // is not what is counted here.
+            db.EnforceForeignKeys = false;
             Assert.True(PagesOf(db, "T") > 500, $"the table is only {PagesOf(db, "T")} pages");
             var table = db.GetTable("T");
             Row RowOf(int id) => new() { ["Id"] = id, ["Code"] = id, ["Name"] = "added" };
@@ -102,7 +105,7 @@ public sealed class TrustedIndexTests : IDisposable
     public void the_first_change_that_keeps_a_relationship_reads_no_more_pages_than_the_ones_after_it()
     {
         const int Parents = 2_000, ChildrenEach = 5;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var child  = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name", 100) }, new[] { "Id" },

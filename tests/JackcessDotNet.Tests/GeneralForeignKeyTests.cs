@@ -38,7 +38,7 @@ public sealed class GeneralForeignKeyTests : IDisposable
         string path = Path.Combine(Path.GetTempPath(), $"gfk_{Guid.NewGuid():N}{(general ? ".accdb" : ".mdb")}");
         _paths.Add(path);
         if (general) File.Copy(TestCorpus.File("V2010", "common1V2010.accdb") ?? throw new FileNotFoundException("common1V2010.accdb"), path);
-        else Database.Create(path, JetVersion.Jet4).Dispose();
+        else Database.Create(path, FileFormat.Access2000).Dispose();
 
         using var db = Database.Open(path);
         var parent = db.CreateTable("Parent", new[] { Text("Code"), Text("Name") }, primaryKey: "Code");
@@ -71,7 +71,7 @@ public sealed class GeneralForeignKeyTests : IDisposable
     }
 
     private static List<string> Codes(Database db, string table)
-        => db.GetTable(table).ReadAllRows().Select(r => r.TryGetValue("Code", out var code) ? (string?)code ?? "(null)" : "(null)")
+        => db.GetTable(table).Rows.Select(r => r.TryGetValue("Code", out var code) ? (string?)code ?? "(null)" : "(null)")
             .OrderBy(c => c, StringComparer.Ordinal).ToList();
 
     private static void AssertIndexesHoldTheRows(Database db)

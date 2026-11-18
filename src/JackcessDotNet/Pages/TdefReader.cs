@@ -105,9 +105,9 @@ internal static class TdefReader
             col.VarLenTableIndex = isVariable ? varIndex : (short)-1;
             col.HasStoredPlace   = true;
             // Jet4's extended flags follow the flags byte: bits 6 and 7 mark a calculated column.
-            col.IsCalculated     = format.Version != JetVersion.Jet3 && (page[p + format.OffsetColumnFlags + 1] & 0xC0) != 0;
+            col.IsCalculated     = format.Version != FileFormat.Access97 && (page[p + format.OffsetColumnFlags + 1] & 0xC0) != 0;
             // Jet4's extended flags follow the flags byte; bit 0 is "Unicode Compression".
-            col.IsCompressedUnicode = format.Version != JetVersion.Jet3
+            col.IsCompressedUnicode = format.Version != FileFormat.Access97
                 && (page[p + format.OffsetColumnFlags + 1] & 0x01) != 0;
             if (dataType is DataType.Text or DataType.Memo)
                 col.SortOrder = SortOrder.Read(page, p + format.OffsetColumnSortOrder, format);

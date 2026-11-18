@@ -206,7 +206,7 @@ public sealed class AccessInteropRegressionTests : IDisposable
     private Row RoundTripMemoRow(string? value)
     {
         if (File.Exists(_path)) File.Delete(_path);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("T", new[]
             {
@@ -216,7 +216,7 @@ public sealed class AccessInteropRegressionTests : IDisposable
             t.Insert(new Row { ["Id"] = 1, ["M"] = value });
         }
         using var reopen = Database.Open(_path);
-        return reopen.GetTable("T").ReadAllRows()[0];
+        return reopen.GetTable("T").Rows.ToList()[0];
     }
 
     /// <summary>

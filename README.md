@@ -35,7 +35,7 @@ Reference the project from source. QCAT's ExportMdb.Interop takes this repositor
 references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own.
 
 ```
-git submodule add https://github.com/qcatco/jackcess-dotnet.git ext/jackcess-dotnet
+git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-dotnet
 ```
 
 ```xml
@@ -64,8 +64,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
   enforced. Access answers through them after the engine adds, changes or deletes rows.
 - **An insert fills AutoNumber columns from the table's own counter**, as Access does.
-- **Foreign keys can be enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
-  off by default).
+- **Foreign keys are enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
+  on by default).
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
@@ -129,16 +129,24 @@ using JackcessDotNet;
 // Open an existing .mdb / .accdb (auto-detects version)
 using var db = Database.Open("Northwind.mdb");
 
-foreach (var name in db.ListTables())
+foreach (var name in db.GetTableNames())
     Console.WriteLine(name);
 
 var customers = db.GetTable("Customers");
-foreach (var row in customers.NewCursor())
+foreach (var row in customers.Rows)             // read as they are enumerated
     Console.WriteLine($"{row["CustomerID"]}  {row["CompanyName"]}");
 
-// Create a new database, define a schema, insert rows.
-// JetVersion.Jet4 is an .mdb; Jet12, Jet14, Jet16 and Jet17 are .accdb (Access 2007, 2010, 2016, 2019).
-using var fresh = Database.Create("MyData.mdb", JetVersion.Jet4);
+Row? alfki = customers.FindRowByPrimaryKey("ALFKI");
+
+// A cursor moves both ways.
+var cursor = customers.CreateCursor();
+while (cursor.MoveNext())
+    Console.WriteLine(cursor.Current!["CompanyName"]);
+
+// Create a new database, define a schema, insert rows. With no format it is an Access 2000-2003 .mdb;
+// FileFormat.Access2007, Access2010, Access2016 and Access2019 are .accdb.
+using var fresh = Database.Create("MyData.mdb");
+using var accdb = Database.Create("MyData.accdb", FileFormat.Access2010);
 var people = fresh.CreateTable("People", new[]
 {
     new ColumnBuilder("Id",   DataType.Long).Build(),
@@ -151,12 +159,12 @@ people.Insert(new Row { ["Id"] = 1, ["Name"] = "Alice" });
 
 ```csharp
 // Jet RC4 (.mdb, Access 97 / 2000–2003)
-using var db = Database.Open("Confidential.mdb", "passw0rd");
+using var db = Database.Open("Confidential.mdb", new DatabaseOpenOptions { Password = "passw0rd" });
 
 // .accdb encryption — Agile (Office 2010+), ECMA Standard (Office 2007),
 // RC4 CryptoAPI (Office 2002–2003), or Non-Standard AES — all auto-detected
 // from the EncryptionInfo header.
-using var db = Database.Open("Confidential.accdb", "passw0rd");
+using var db = Database.Open("Confidential.accdb", new DatabaseOpenOptions { Password = "passw0rd" });
 ```
 
 Wrong passwords throw `InvalidCredentialException` before any data page is
@@ -176,11 +184,11 @@ db.CreateTable("Orders", new[]
 Up to 10 columns per composite key (Jet's hard limit). The single-column
 `primaryKey:` overload still works for the common case.
 
-## Foreign-key enforcement (opt-in)
+## Foreign-key enforcement
 
 ```csharp
 using var db = Database.Open("Northwind.mdb");
-db.EnforceForeignKeys = true;                  // default: false
+// db.EnforceForeignKeys is true unless it is set false, as in Jackcess; Access always enforces.
 
 // The relationships in MSysRelationships that have referential integrity are kept.
 orders.Insert(new Row { ["CustomerID"] = "INVALID", ... });
@@ -393,7 +401,7 @@ materialising the whole table.
 | Read Jet 3 (Access 97) / Jet 4 (Access 2000–2003) | ✅      |
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4)                   | ✅      |
-| Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `JetVersion.Jet12`, `Jet14`, `Jet16`, `Jet17` |
+| Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `FileFormat.Access2007`, `Access2010`, `Access2016`, `Access2019` |
 | Large Number (`BigInt`) and Date/Time Extended (`ExtendedDateTime`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
@@ -407,14 +415,14 @@ materialising the whole table.
 | Password-protected `.accdb` (Non-Standard AES, compat mode 0) | ✅ Read + write |
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
-| Foreign-key enforcement, with cascades (opt-in)   | ✅      |
+| Foreign-key enforcement, with cascades (on by default) | ✅ |
 | Add a column or an index to a table that has rows | ✅ While the definition fits one page; no AutoNumber column for a table with rows; no primary key |
 | Create a relationship, with referential integrity and cascades | ✅ |
 | Drop or rename a column, index, table or relationship | ❌ Not yet |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
-through this library round-trip cleanly through `Database.Open(path, password)`
+through this library round-trip cleanly through `Database.Open` with the password
 but Office Access may flag a stale integrity hash. Matches the upstream
 `jackcess-encrypt` limitation.
 
@@ -560,11 +568,12 @@ An Access 97 (Jet 3) file is read and never written, as in Java Jackcess, whose 
 (`JetFormat.READ_ONLY`; `JetFormat.IsReadOnly` here). `Database.Open` opens one for reading only - a file marked
 read-only, or on a read-only share, opens like any other - and everything that would change it is refused with
 `NotSupportedException` before anything is written: inserting, updating or deleting a row, creating or importing
-a table. `Database.Create(path, JetVersion.Jet3)` is refused the same way, and makes no file. What a file is, is
-what its own header says, as in Jackcess: an Access 97 file opened with `Database.Open(path, JetVersion.Jet4)`
-is still read as an Access 97 file and still read-only, and a Jet 4 file opened as `JetVersion.Jet3` is the Jet 4
-file it is, read and written like any other. The version a caller names is used only for a file whose header
-does not say. No row or table definition is made in Access 97's format either: `RowEncoder` and
+a table. `Database.Create(path, FileFormat.Access97)` is refused the same way, and makes no file. What a file is,
+is what its own header says, as in Jackcess: an Access 97 file opened with a `DatabaseOpenOptions.FallbackFormat`
+of `FileFormat.Access2000` is still read as an Access 97 file and still read-only, and an Access 2000 file opened
+with a fallback of `FileFormat.Access97` is the Access 2000 file it is, read and written like any other. The
+fallback format is used only for a file whose header does not say. `Database.IsReadOnly` says which a database
+is. No row or table definition is made in Access 97's format either: `RowEncoder` and
 `TableDefinition.Serialize` refuse it. Earlier versions
 wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data and its count of
 variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back as null

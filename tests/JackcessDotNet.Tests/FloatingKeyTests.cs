@@ -34,7 +34,7 @@ public sealed class FloatingKeyTests : IDisposable
         : BitConverter.DoubleToInt64Bits((double)value);
 
     private static Dictionary<long, string> Names(Table table)
-        => table.ReadAllRows().ToDictionary(r => Bits(r["K"]!), r => (string)r["Name"]!);
+        => table.Rows.ToDictionary(r => Bits(r["K"]!), r => (string)r["Name"]!);
 
     [Theory]
     [MemberData(nameof(Pairs))]
@@ -45,14 +45,14 @@ public sealed class FloatingKeyTests : IDisposable
         {
             if (File.Exists(_path)) File.Delete(_path);
             object named = byTheSecond ? second : first, other = byTheSecond ? first : second;
-            using var db = Database.Create(_path, JetVersion.Jet4);
+            using var db = Database.Create(_path, FileFormat.Access2000);
             var table = db.CreateTable("T", new[] { new ColumnBuilder("K", type).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
             table.Insert(new Row { ["K"] = first, ["Name"] = "first" });
             table.Insert(new Row { ["K"] = second, ["Name"] = "second" });
             table.Insert(new Row { ["K"] = type == DataType.Float ? 7.5f : 7.5, ["Name"] = "another" });
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 3);
 
-            Assert.Equal(byTheSecond ? "second" : "first", table.NewIndexCursor().FindRowByPrimaryKey(named)!["Name"]);
+            Assert.Equal(byTheSecond ? "second" : "first", table.FindRowByPrimaryKey(named)!["Name"]);
 
             table.UpdateByPrimaryKey(named, new Row { ["Name"] = "changed" });
             var names = Names(table);
@@ -66,21 +66,21 @@ public sealed class FloatingKeyTests : IDisposable
             Assert.Equal(byTheSecond ? "first" : "second", names[Bits(other)]);
             Assert.Equal("another", names[Bits(type == DataType.Float ? 7.5f : (object)7.5)]);
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 2);
-            Assert.Null(table.NewIndexCursor().FindRowByPrimaryKey(named));
-            Assert.NotNull(table.NewIndexCursor().FindRowByPrimaryKey(other));
+            Assert.Null(table.FindRowByPrimaryKey(named));
+            Assert.NotNull(table.FindRowByPrimaryKey(other));
         }
     }
 
     [Fact]
     public void A_key_given_as_another_number_type_still_finds_its_row()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var longs = db.CreateTable("L", new[] { new ColumnBuilder("K", DataType.Long).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
         longs.Insert(new Row { ["K"] = 5, ["Name"] = "five" });
         longs.UpdateByPrimaryKey(5L, new Row { ["Name"] = "by a long" });
         longs.UpdateByPrimaryKey((short)5, new Row { ["Name"] = "by a short" });
         longs.UpdateByPrimaryKey(5.0, new Row { ["Name"] = "by a double" });
-        Assert.Equal("by a double", longs.ReadAllRows().Single()["Name"]);
+        Assert.Equal("by a double", longs.Rows.Single()["Name"]);
 
         var doubles = db.CreateTable("D", new[] { new ColumnBuilder("K", DataType.Double).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
         doubles.Insert(new Row { ["K"] = 2.0, ["Name"] = "two" });
@@ -88,14 +88,14 @@ public sealed class FloatingKeyTests : IDisposable
         doubles.UpdateByPrimaryKey(2, new Row { ["Name"] = "by an int" });
         doubles.UpdateByPrimaryKey(0.5f, new Row { ["Name"] = "by a single" });
         doubles.UpdateByPrimaryKey(0.5m, new Row { ["Name"] = "by a decimal" });
-        Assert.Equal(new[] { "by a decimal", "by an int" }, doubles.ReadAllRows().Select(r => (string)r["Name"]!).OrderBy(n => n));
+        Assert.Equal(new[] { "by a decimal", "by an int" }, doubles.Rows.Select(r => (string)r["Name"]!).OrderBy(n => n));
 
         var money = db.CreateTable("M", new[] { new ColumnBuilder("K", DataType.Money).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
         money.Insert(new Row { ["K"] = 1.25m, ["Name"] = "a" });
         money.Insert(new Row { ["K"] = 1.2501m, ["Name"] = "b" });
         money.UpdateByPrimaryKey(1.2501m, new Row { ["Name"] = "changed" });
         money.UpdateByPrimaryKey(1.250m, new Row { ["Name"] = "and this" });
-        Assert.Equal(new[] { "and this", "changed" }, money.ReadAllRows().OrderBy(r => (decimal)r["K"]!).Select(r => (string)r["Name"]!));
+        Assert.Equal(new[] { "and this", "changed" }, money.Rows.OrderBy(r => (decimal)r["K"]!).Select(r => (string)r["Name"]!));
         foreach (string name in new[] { "L", "D", "M" }) IndexChecks.AssertEveryIndexHoldsTheRows(db, name);
     }
 }

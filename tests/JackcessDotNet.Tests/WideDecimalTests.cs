@@ -45,7 +45,7 @@ public sealed class WideDecimalTests : IDisposable
     [Fact]
     public void a_decimal_with_its_first_word_set_reads_as_the_number_its_other_three_words_make()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("D", new[]
             {
@@ -65,16 +65,18 @@ public sealed class WideDecimalTests : IDisposable
         Store(33_334m, 28, 0, negative: false, 1, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);          // 2^97 - 1: the low 96 bits all set
 
         using var read = Database.Open(_path);
-        var rows = read.GetTable("D").ReadAllRows();
+        var rows = read.GetTable("D").Rows.ToList();
 
         Assert.Equal(new object?[] { 0.00m, 123.45m, -123.45m, 12_345.67m }, rows.Select(row => row["Small"]));
         Assert.Equal(new object?[] { 12_345m, 18_446_744_082_299_486_211m, decimal.MaxValue, 44_445m }, rows.Select(row => row["Big"]));
         Assert.Equal("0.00", ((decimal)rows[0]["Small"]!).ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-        // A cursor reads what ReadAllRows reads.
-        var cursor = read.GetTable("D").NewCursor();
-        Assert.Equal(0.00m, cursor.GetNextRow()!["Small"]);
-        Assert.Equal(123.45m, cursor.GetNextRow()!["Small"]);
+        // A cursor reads what Rows gives.
+        var cursor = read.GetTable("D").CreateCursor();
+        Assert.True(cursor.MoveNext());
+        Assert.Equal(0.00m, cursor.Current!["Small"]);
+        Assert.True(cursor.MoveNext());
+        Assert.Equal(123.45m, cursor.Current!["Small"]);
 
         // Each is listed, with the number a read gives - the three that fit their columns as much as the rest.
         var listed = read.FindDecimalsBeyondPrecision().ToList();
@@ -91,7 +93,7 @@ public sealed class WideDecimalTests : IDisposable
     [Fact]
     public void a_decimal_within_96_bits_reads_whole()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("D", new[] { new ColumnBuilder("Id", DataType.Long).Build(), ColumnBuilder.Numeric("Big", 28, 0).Build() }, "Id");
             table.Insert(new Row { ["Id"] = 1, ["Big"] = 11_112m });
@@ -100,7 +102,7 @@ public sealed class WideDecimalTests : IDisposable
         Store(11_112m, 28, 0, negative: true, 0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
 
         using var read = Database.Open(_path);
-        Assert.Equal(new object?[] { decimal.MinValue, 9_999_999_999_999_999_999_999_999_999m }, read.GetTable("D").ReadAllRows().Select(row => row["Big"]));
+        Assert.Equal(new object?[] { decimal.MinValue, 9_999_999_999_999_999_999_999_999_999m }, read.GetTable("D").Rows.Select(row => row["Big"]));
 
         var found = Assert.Single(read.FindDecimalsBeyondPrecision());   // 29 digits in a column of 28
         Assert.False(found.IsCut);

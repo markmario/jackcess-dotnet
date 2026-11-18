@@ -22,7 +22,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataTable_BasicRoundTrip()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Customers", new[]
             {
@@ -67,7 +67,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataTable_NullValues_BecomeDBNull()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Things", new[]
             {
@@ -90,7 +90,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataSet_ReturnsAllUserTables()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("A", new[] { new ColumnBuilder("X", DataType.Long).Build() })
               .Insert(new Row { ["X"] = 1 });
@@ -111,7 +111,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataSet_SystemTablesExcludedByDefault()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("UserT", new[] { new ColumnBuilder("X", DataType.Long).Build() });
 
         using var reopen = Database.Open(_path);
@@ -134,7 +134,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_BasicRoundTrip()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("CustomerPoco", new[]
             {
@@ -161,7 +161,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_DefaultsToTypeName_WhenTableNameOmitted()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("CustomerPoco", new[]
             {
                 new ColumnBuilder("Id", DataType.Long).Build()
@@ -176,7 +176,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_ExplicitTableName_OverridesTypeName()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("OtherName", new[]
             {
                 new ColumnBuilder("Id", DataType.Long).Build()
@@ -202,7 +202,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_RespectsColumnAndNotMapped_AndExtraPropertyStaysDefault()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Renamed", new[]
             {
@@ -234,7 +234,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_NullableProperties_RoundTrip()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("NullableValuesPoco", new[]
             {
@@ -266,7 +266,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_EnumProperty_ReadFromLongColumn()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("EnumPoco", new[]
             {
@@ -293,7 +293,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToCollection_DateTimeOffsetProperty_GetsUtcDateTime()
     {
         var stored = new DateTime(2024, 7, 4, 12, 0, 0, DateTimeKind.Unspecified);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("DateTimeOffsetPoco", new[]
             {
@@ -312,7 +312,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_IsLazy_AndCanBeStoppedEarly()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("CustomerPoco", new[]
             {
@@ -356,7 +356,7 @@ public sealed class DatabaseExporterTests : IDisposable
         var ts     = new DateTime(2024, 7, 4, 12, 0, 0, DateTimeKind.Unspecified);
         var marker = new Guid("11111111-2222-3333-4444-555555555555");
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("StringEverywherePoco", new[]
             {
@@ -396,7 +396,7 @@ public sealed class DatabaseExporterTests : IDisposable
             new FullRoundTripPoco { Id = 3, Label = "tre", Score = 9.99, When = new DateTime(2024,3,3), Flag = true  },
         };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(original);
 
         using var reopen = Database.Open(_path);
@@ -417,7 +417,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataTable_TableWithoutPK_HasNoDataTablePK()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("NoPK", new[]
             {
@@ -433,7 +433,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataTable_ColumnOrderingMatchesAccessTable()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("Ordered", new[]
             {
@@ -452,7 +452,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToDataSet_IncludeSystem_BringsBackMSysTables()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("U", new[] { new ColumnBuilder("X", DataType.Long).Build() });
 
         using var reopen = Database.Open(_path);
@@ -467,7 +467,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToDataTable_MemoColumn_LandsAsStringWithLargeValue()
     {
         string big = new string('m', 1000);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Memos", new[]
             {
@@ -487,7 +487,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToDataTable_BinaryColumn_LandsAsByteArray()
     {
         var blob = new byte[] { 1, 2, 3, 4, 5 };
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("Blobs", new[]
             {
@@ -516,7 +516,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_WidensIntoLargerPropertyTypes()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("WidenedPoco", new[]
             {
@@ -541,7 +541,7 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_ReadOnlyProperty_IsSkipped()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("ReadOnlyPropertyPoco", new[]
             {
@@ -568,7 +568,7 @@ public sealed class DatabaseExporterTests : IDisposable
     {
         // Synthetic mismatch: column is Text holding a GUID string, property is Guid.
         var g = new Guid("11111111-2222-3333-4444-555555555555");
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("GuidFromStringPoco", new[]
             {
@@ -586,22 +586,22 @@ public sealed class DatabaseExporterTests : IDisposable
     [Fact]
     public void ExportToCollection_TableNotFound_Throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("Real", new[] { new ColumnBuilder("X", DataType.Long).Build() });
 
         using var reopen = Database.Open(_path);
-        Assert.Throws<InvalidOperationException>(
+        Assert.Throws<ArgumentException>(
             () => reopen.ExportToCollection<CustomerPoco>("DoesNotExist").ToList());
     }
 
     [Fact]
     public void ExportToDataTable_TableNotFound_Throws()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("Real", new[] { new ColumnBuilder("X", DataType.Long).Build() });
 
         using var reopen = Database.Open(_path);
-        Assert.Throws<InvalidOperationException>(
+        Assert.Throws<ArgumentException>(
             () => reopen.ExportToDataTable("DoesNotExist"));
     }
 }

@@ -63,7 +63,7 @@ internal sealed class ForeignKeyEnforcer
     internal ForeignKeyEnforcer(Database database)
     {
         _database = database;
-        var tables = new HashSet<string>(database.ListTables(includeSystem: true), StringComparer.OrdinalIgnoreCase);
+        var tables = new HashSet<string>(database.Catalog.GetTableNames(includeSystem: true), StringComparer.OrdinalIgnoreCase);
         // One whose child table is gone has no rows to keep. One whose parent table is gone is kept: nothing can
         // satisfy it, as before.
         _relationships = database.GetRelationships()
@@ -128,7 +128,7 @@ internal sealed class ForeignKeyEnforcer
         if (parent.IndexEntries.RowPointersFor(ParentColumnList(relationship), values) is { } pointers)
             return pointers.Any(pointer => parent.ReadRowAt(pointer, types) is { } row && Matches(row));
 
-        var cursor = parent.NewCursor();
+        var cursor = parent.CreateCursor();
         cursor.ColumnsToRead = types;
         cursor.ValuesAsStored = true;
         return cursor.Any(Matches);
@@ -367,13 +367,13 @@ internal sealed class ForeignKeyEnforcer
             .ToList();
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
-        var parents = parent.NewCursor();
+        var parents = parent.CreateCursor();
         parents.ColumnsToRead  = types;
         parents.ValuesAsStored = true;
         foreach (var row in parents)
             keys.Add(Convert.ToBase64String(KeyOf(types, types.Select(c => row.TryGetValue(c.Name, out var value) ? value : null))));
 
-        var children = child.NewCursor();
+        var children = child.CreateCursor();
         children.ColumnsToRead  = childColumns;
         children.ValuesAsStored = true;
         foreach (var row in children)
@@ -765,10 +765,10 @@ internal sealed class ForeignKeyEnforcer
         private void ReadAll()
         {
             if (_allRead) return;
-            var cursor = Table.NewCursor();
+            var cursor = Table.CreateCursor();
             cursor.ColumnsToRead = _columns;
             cursor.ValuesAsStored = true;
-            while (cursor.GetNextRow() is { } row)
+            while (cursor.NextRow() is { } row)
                 Keep(cursor.CurrentRowPointer, row);
             _allRead = true;
             foreach (var finder in _finders.Values)
@@ -799,9 +799,9 @@ internal sealed class ForeignKeyEnforcer
             if (_allRead) return _read.Values.OrderBy(row => (uint)row.Pointer).FirstOrDefault(Matches);
 
             // Read until it is found, keeping only the one found.
-            var cursor = Table.NewCursor();
+            var cursor = Table.CreateCursor();
             cursor.ColumnsToRead = new[] { asked };
-            while (cursor.GetNextRow() is { } row)
+            while (cursor.NextRow() is { } row)
             {
                 int pointer = cursor.CurrentRowPointer;
                 if (_read.TryGetValue(pointer, out var kept))
