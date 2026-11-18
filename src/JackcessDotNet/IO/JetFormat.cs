@@ -6,6 +6,12 @@ public sealed class JetFormat
 {
     // ── Per-version row-encoding properties ───────────────────────────────────
     public JetVersion Version { get; }
+    /// <summary>
+    /// True for a format this library reads and does not write: Access 97's (Jet3), as in Jackcess, whose
+    /// <c>JetFormat.READ_ONLY</c> this is. A file in it is opened for reading only, and creating one, or changing
+    /// anything in one, is refused with <see cref="NotSupportedException"/>.
+    /// </summary>
+    public bool IsReadOnly { get; }
     public int PageSize { get; }
     public bool HasPageChecksum { get; }
     public Encoding TextEncoding { get; }
@@ -78,6 +84,15 @@ public sealed class JetFormat
     public int OffsetChildTailIndexPage         { get; }
     /// <summary>Byte offset of compressed-prefix-byte-count field (Jet3=20, Jet4=24).</summary>
     public int OffsetIndexCompressedByteCount   { get; }
+    /// <summary>
+    /// Bytes of the compressed-prefix-byte-count field (Jet3=1, Jet4=2). The byte after it is the page's level
+    /// in both, so two bytes read from a Jet3 page take the level for the count's high byte: 256 more on every
+    /// page above the leaves. Jackcess reads two there and has no level for Jet3; the pages Access and Jet 4.0
+    /// write say otherwise - 0 on every leaf, 1 on the pages above them, 2 on the page above those.
+    /// </summary>
+    public int SizeIndexCompressedByteCount     { get; }
+    /// <summary>Byte offset of an index page's level, its height above the leaves (Jet3=21, Jet4=26).</summary>
+    public int OffsetIndexLevel => OffsetIndexCompressedByteCount + SizeIndexCompressedByteCount;
     /// <summary>Byte offset where the entry mask bitmap begins (Jet3=22, Jet4=27).</summary>
     public int OffsetIndexEntryMask             { get; }
     /// <summary>Size of the entry mask bitmap in bytes (Jet3=226, Jet4=453).</summary>
@@ -160,7 +175,8 @@ public sealed class JetFormat
         int SkipBeforeIndexSlot, int SkipAfterIndexSlot,
         // Index page header
         int OffsetPrevIndexPage, int OffsetNextIndexPage, int OffsetChildTailIndexPage,
-        int OffsetIndexCompressedByteCount, int OffsetIndexEntryMask, int SizeIndexEntryMask);
+        int OffsetIndexCompressedByteCount, int OffsetIndexEntryMask, int SizeIndexEntryMask,
+        int SizeIndexCompressedByteCount = 2, bool IsReadOnly = false);
 
     private JetFormat(JetVersion version, FormatSpec s)
     {
@@ -209,6 +225,8 @@ public sealed class JetFormat
         OffsetIndexCompressedByteCount   = s.OffsetIndexCompressedByteCount;
         OffsetIndexEntryMask             = s.OffsetIndexEntryMask;
         SizeIndexEntryMask               = s.SizeIndexEntryMask;
+        SizeIndexCompressedByteCount     = s.SizeIndexCompressedByteCount;
+        IsReadOnly                       = s.IsReadOnly;
     }
 
     public static JetFormat Jet3 { get; } = new(JetVersion.Jet3, new FormatSpec(
@@ -255,7 +273,9 @@ public sealed class JetFormat
         OffsetChildTailIndexPage:        16,
         OffsetIndexCompressedByteCount:  20,
         OffsetIndexEntryMask:            22,
-        SizeIndexEntryMask:              226));
+        SizeIndexEntryMask:              226,
+        SizeIndexCompressedByteCount:    1,
+        IsReadOnly:                      true));
 
     // Jet4 spec extracted so the ACE 12-17 (.accdb) instances can share it.
     // On-disk layout for unencrypted .accdb is identical to Jet4; what differs

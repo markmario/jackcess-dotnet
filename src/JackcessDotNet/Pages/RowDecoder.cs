@@ -14,6 +14,10 @@ namespace JackcessDotNet;
 ///   [..]                variable offsets in REVERSE index order (2 bytes each)
 ///   [..]                variable column count (2 bytes)
 ///   [..]                null mask (ceil(colCount/8) bytes), a bit for each column number
+///
+/// A Jet3 row has one byte where a Jet4 row has two, so an offset there is its low byte only. Between the offsets
+/// and the variable column count such a row has a jump table, a byte for each 256 bytes of its length: the number
+/// of the first variable-length value whose offset is past that many bytes (<see cref="TryLocateByJumpTable"/>).
 /// </summary>
 internal sealed class RowDecoder
 {
@@ -153,17 +157,58 @@ internal sealed class RowDecoder
             : rowBytes[varCountOffset];
 
         if (vi >= storedVarCount) return false;
+        if (sz == 1) return TryLocateByJumpTable(rowBytes, maskOffset, storedVarCount, vi, out start, out length);
 
         // The offset after this one is where the next value starts, or, after the last, the end of the data.
         int varStartOffset = maskOffset - (vi + 2) * sz;
         int varEndOffset   = varStartOffset - sz;
         if (varEndOffset < _format.SizeRowColumnCount) return false;
 
-        start = sz == 2 ? ByteUtil.GetShort(rowBytes, varStartOffset) : rowBytes[varStartOffset];
-        int end = sz == 2 ? ByteUtil.GetShort(rowBytes, varEndOffset) : rowBytes[varEndOffset];
+        start = ByteUtil.GetShort(rowBytes, varStartOffset);
+        int end = ByteUtil.GetShort(rowBytes, varEndOffset);
 
         length = end - start;
         return length >= 0 && start >= 0 && end <= maskOffset;
+    }
+
+    /// <summary>
+    /// Where variable-length value <paramref name="vi"/> is in a Jet3 row, whose offsets are a byte each
+    /// (Jackcess's <c>readJumpTableVarColOffsets</c>). Trailer layout from the end of the row:
+    /// <code>
+    ///   [maskOffset - 1]                        = varCount
+    ///   [maskOffset - 2 - j]                    = jump j, for each 256 bytes of the row's length
+    ///   [maskOffset - 2 - jumps - vi]           = low byte of varOffsets[vi]  (start)
+    ///   [maskOffset - 2 - jumps - varCount]     = low byte of eod
+    /// </code>
+    /// Jump j is the number of the first value whose offset is 256 * (j + 1) or more; the end of the data counts
+    /// as the value after the last. A row of 256 bytes or fewer has no jumps, and its offsets are whole.
+    /// </summary>
+    private bool TryLocateByJumpTable(byte[] rowBytes, int maskOffset, int varCount, int vi, out int start, out int length)
+    {
+        start  = 0;
+        length = 0;
+
+        int jumps       = (rowBytes.Length - 1) / 256;
+        int firstJump   = maskOffset - 2;
+        int firstOffset = firstJump - jumps;
+        int eodOffset   = firstOffset - varCount;
+        if (eodOffset < _format.SizeRowColumnCount) return false;
+
+        // A row has a jump for each 256 bytes of its whole length, the trailer's too: when the values end
+        // short of the last of them, the last jump is a filler and no value's.
+        if (eodOffset / 256 < jumps) jumps--;
+
+        int Offset(int value)
+        {
+            int passed = 0;
+            while (passed < jumps && rowBytes[firstJump - passed] <= value) passed++;
+            return rowBytes[firstOffset - value] + passed * 256;
+        }
+
+        start   = Offset(vi);
+        int end = Offset(vi + 1);
+        length  = end - start;
+        return length >= 0 && end <= maskOffset;
     }
 
     /// <summary>

@@ -3,6 +3,12 @@ namespace JackcessDotNet;
 /// <summary>
 /// Encodes a row's bytes: each value in the place the table's definition gives its column (<see cref="RowLayout"/>),
 /// as Access and Java Jackcess write a row, and as <see cref="RowDecoder"/> reads one.
+/// <para>
+/// Rows are encoded for the formats this library writes, which all lay a row out as Jet4 does. None is encoded for
+/// Access 97's (<see cref="JetFormat.IsReadOnly"/>): an encoder for it is refused with
+/// <see cref="NotSupportedException"/>. This class once had a Jet3 form of a row, with two bytes for the end of
+/// the data and for the count of variable-length columns where Jet3 has one (qcatco/exportmdb.interop#67).
+/// </para>
 /// </summary>
 public sealed class RowEncoder
 {
@@ -12,6 +18,7 @@ public sealed class RowEncoder
     private readonly IReadOnlyDictionary<string, LvalWriter>? _lvalWriters;
     private readonly bool _unreadColumns;
 
+    /// <exception cref="NotSupportedException"><paramref name="format"/> is Access 97's, which is only read.</exception>
     public RowEncoder(JetFormat format, IReadOnlyList<Column> columns)
         : this(format, columns, null) { }
 
@@ -19,7 +26,7 @@ public sealed class RowEncoder
                         IReadOnlyDictionary<string, LvalWriter>? lvalWriters)
     {
         _lvalWriters = lvalWriters;
-        _format = format ?? throw new ArgumentNullException(nameof(format));
+        _format = Written(format);
         _columns = columns ?? throw new ArgumentNullException(nameof(columns));
         _layout = new RowLayout(format, columns);
     }
@@ -36,10 +43,18 @@ public sealed class RowEncoder
                         IReadOnlyDictionary<string, LvalWriter>? lvalWriters = null)
     {
         _lvalWriters = lvalWriters;
-        _format = format ?? throw new ArgumentNullException(nameof(format));
+        _format = Written(format);
         _columns = (table ?? throw new ArgumentNullException(nameof(table))).Columns;
         _layout = new RowLayout(format, table);
         _unreadColumns = table.HasUnreadColumns;
+    }
+
+    /// <summary><paramref name="format"/>, when it is one rows are written in.</summary>
+    private static JetFormat Written(JetFormat format)
+    {
+        if (format is null) throw new ArgumentNullException(nameof(format));
+        if (format.IsReadOnly) throw PageFile.ReadOnlyFormat("no row is encoded for one.");
+        return format;
     }
 
     /// <summary>
@@ -100,21 +115,8 @@ public sealed class RowEncoder
 
         // Column count: every column the table has had, as Access writes it.
         int columnCount = _layout.MaxColumnCount;
-        if (_format.SizeRowColumnCount == 2)
-        {
-            Util.ByteUtil.PutShort(buffer, pos, (short)columnCount);
-            pos += 2;
-        }
-        else if (_format.SizeRowColumnCount == 1)
-        {
-            if (columnCount > 255)
-                throw new InvalidOperationException("Jet3 rows with >255 columns are not supported.");
-            buffer[pos++] = (byte)columnCount;
-        }
-        else
-        {
-            throw new InvalidOperationException("Unsupported row column count size.");
-        }
+        Util.ByteUtil.PutShort(buffer, pos, (short)columnCount);
+        pos += RowColumnCountSize;
 
         var nullMask = new NullMask(columnCount);
 
@@ -156,7 +158,7 @@ public sealed class RowEncoder
         int varColumnCount = _layout.MaxVarColumnCount;
         if (varColumnCount > 0)
         {
-            int trailerSize = nullMask.ByteSize + 4 + varColumnCount * _format.SizeRowVarColOffset;
+            int trailerSize = nullMask.ByteSize + 2 * VarColOffsetSize + varColumnCount * VarColOffsetSize;
             int remaining = maxRowSize - pos - trailerSize;
             if (remaining < 0)
                 throw new InvalidOperationException("Row is too large for format.");
@@ -185,8 +187,6 @@ public sealed class RowEncoder
                     nullMask.MarkNotNull(col.ColumnNumber);
                     int length = varData?.Length ?? LongValueReferenceSize;
 
-                    if (_format.SizeRowVarColOffset == 1 && (offset > 255 || length > 255))
-                        throw new NotSupportedException("Jet3 rows with var offsets >255 are not supported yet.");
                     remaining -= length;
                     if (remaining < 0)
                         throw new InvalidOperationException("Row is too large for format.");
@@ -215,15 +215,8 @@ public sealed class RowEncoder
 
             for (int i = varColumnCount - 1; i >= 0; i--)
             {
-                if (_format.SizeRowVarColOffset == 2)
-                {
-                    Util.ByteUtil.PutShort(buffer, pos, varOffsets[i]);
-                    pos += 2;
-                }
-                else if (_format.SizeRowVarColOffset == 1)
-                {
-                    buffer[pos++] = (byte)varOffsets[i];
-                }
+                Util.ByteUtil.PutShort(buffer, pos, varOffsets[i]);
+                pos += VarColOffsetSize;
             }
 
             Util.ByteUtil.PutShort(buffer, pos, (short)varColumnCount);
@@ -252,6 +245,11 @@ public sealed class RowEncoder
         return prepared.Bytes;
     }
 
+    // Two bytes each in every format rows are written in: the column count that begins a row, and each entry of
+    // its trailer - the end of the data, every variable-length value's offset, and their count.
+    private const int RowColumnCountSize = 2;
+    private const int VarColOffsetSize   = 2;
+
     /// <summary>The bytes a row holds for a long value kept on pages of its own: its reference.</summary>
     private const int LongValueReferenceSize = 12;
 
@@ -269,9 +267,7 @@ public sealed class RowEncoder
         if (col.DataType == DataType.Memo)
         {
             string text = Convert.ToString(value) ?? string.Empty;
-            byte[] textBytes = _format.Version == JetVersion.Jet3
-                ? _format.TextEncoding.GetBytes(text)
-                : EncodeText(col, text);
+            byte[] textBytes = EncodeText(col, text);
             return textBytes.Length > InlineLvalThreshold && writer is not null
                 ? (null, (writer, System.Text.Encoding.Unicode.GetBytes(text)))
                 : (BuildInlineLvRef(textBytes), null);
@@ -343,7 +339,7 @@ public sealed class RowEncoder
             {
                 // Text kept among the fixed-length values (SQL's CHAR): never compressed, and filled to the
                 // column's length with spaces, as Access fills it.
-                var encoding = _format.Version == JetVersion.Jet3 ? _format.TextEncoding : System.Text.Encoding.Unicode;
+                var encoding = System.Text.Encoding.Unicode;
                 byte[] text = encoding.GetBytes(Convert.ToString(value) ?? string.Empty);
                 byte[] space = encoding.GetBytes(" ");
                 Util.ByteUtil.PutBytes(buffer, offset, text, 0, Math.Min(text.Length, size));
@@ -367,8 +363,8 @@ public sealed class RowEncoder
     /// <summary>
     /// Throws when a Text value is longer than its column allows, as Access does, before anything of the row is
     /// written. Written whole, ACE reads such a value cut to the column's length and a typed reader refuses the table.
-    /// A Jet4 Text column's length is in bytes, two to a character; a Jet3 one's is in characters. An update calls it
-    /// before it deletes the row it replaces.
+    /// A Text column's length is in bytes, two to a character. An update calls it before it deletes the row it
+    /// replaces.
     /// </summary>
     internal void Validate(Row row)
     {
@@ -384,7 +380,7 @@ public sealed class RowEncoder
                     $"The Binary column '{col.Name}' holds {col.Length} bytes; {binary.Length} were given.");
             if (col.DataType != DataType.Text || col.Length <= 0) continue;
 
-            int maxChars = _format.Version == JetVersion.Jet3 ? col.Length : col.Length / 2;
+            int maxChars = col.Length / 2;
             string text = Convert.ToString(value) ?? string.Empty;
             if (text.Length > maxChars)
                 throw new ColumnValueTooLongException(col.Name, maxChars, text.Length);
@@ -422,8 +418,6 @@ public sealed class RowEncoder
         switch (col.DataType)
         {
             case DataType.Text:
-                if (_format.Version == JetVersion.Jet3)
-                    return _format.TextEncoding.GetBytes(Convert.ToString(value) ?? string.Empty);
                 return EncodeText(col, Convert.ToString(value) ?? string.Empty);
             case DataType.Binary:
                 return (byte[])value;

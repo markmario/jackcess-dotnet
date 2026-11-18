@@ -82,6 +82,8 @@ Limits to know about:
 - A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
   throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
   asks each before it writes to any.
+- Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
+  creating one, or changing anything in one, is refused with `NotSupportedException`.
 
 ## Building and testing
 
@@ -264,7 +266,8 @@ materialising the whole table.
 | ------------------------------------------------- | ------ |
 | Read Jet 3 (Access 97) / Jet 4 (Access 2000–2003) | ✅      |
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
-| Create new `.mdb` files (Jet 4 / Jet 3)           | ✅      |
+| Create new `.mdb` files (Jet 4)                   | ✅      |
+| Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
@@ -304,7 +307,8 @@ What it does not do, and refuses rather than write a key Access cannot find:
   Such a file is still read; its text indexes are not searched, its tables are
   scanned. ACE 12's keys for Access 97's order are kept in
   `tests/JackcessDotNet.Tests/IndexKeys` for a later port
-  (qcatco/exportmdb.interop#26).
+  (qcatco/exportmdb.interop#26). An Access 97 file is not written to at all:
+  see [Access 97 files are read-only](#access-97-files-are-read-only).
 - **A value in an indexed Text or Memo column, or a table name, with a
   character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
   々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
@@ -384,12 +388,50 @@ have been deleted - and a row Access moved to another page is read where its poi
   free-space map while it has 264 bytes or more free, which is where ACE was seen to list one (it listed none
   with 258 or fewer), and only once a value is on it. The first long value written to a column in a session
   reads the pages its map lists, once.
-- **Not handled for Access 97 files:** a row this library writes with a variable-length column (the end-of-data
-  offset and the count are written in two bytes where Access 97 has one), and rows longer than 256 bytes, which
-  use a jump table. Reading the Access 97 files of the corpus agrees with 32-bit ACE 12 and DAO.
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
 versions of the engine.
+
+## Access 97 files are read-only
+
+An Access 97 (Jet 3) file is read and never written, as in Java Jackcess, whose Jet 3 format is read-only
+(`JetFormat.READ_ONLY`; `JetFormat.IsReadOnly` here). `Database.Open` opens one for reading only - a file marked
+read-only, or on a read-only share, opens like any other - and everything that would change it is refused with
+`NotSupportedException` before anything is written: inserting, updating or deleting a row, creating or importing
+a table. `Database.Create(path, JetVersion.Jet3)` is refused the same way, and makes no file. What a file is, is
+what its own header says, as in Jackcess: an Access 97 file opened with `Database.Open(path, JetVersion.Jet4)`
+is still read as an Access 97 file and still read-only, and a Jet 4 file opened as `JetVersion.Jet3` is the Jet 4
+file it is, read and written like any other. The version a caller names is used only for a file whose header
+does not say. No row or table definition is made in Access 97's format either: `RowEncoder` and
+`TableDefinition.Serialize` refuse it. Earlier versions
+wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data and its count of
+variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back as null
+(qcatco/exportmdb.interop#67).
+
+What is read of one:
+
+- **Rows of any length.** A Jet 3 row gives the offset of each variable-length value in one byte, and a row
+  longer than 256 bytes has a jump table - the number of the first value past each 256 bytes - as Jackcess reads
+  it (`readJumpTableVarColOffsets`). Without it, the values of such a row past its first 256 bytes read as null
+  or from the wrong place.
+- **Indexes of any depth.** A Jet 3 index page has the length of the prefix its entries share in one byte, at
+  offset 20, and the page's level in the next; Jet 4 has two bytes and then the level. Read as two bytes, the
+  prefix of every page above the leaves was 256 too long for each level, and a lookup through such a page could
+  miss its row (qcatco/exportmdb.interop#59). Jackcess reads two bytes there and keeps no level for Jet 3; the
+  pages Access 97 wrote have 0 in the second on every leaf and 1 on every page above the leaves, and those Jet
+  4.0 wrote have 2 on the page above those.
+- **The rows of one key, wherever they are.** An index that is not unique can hold the entries of one key on
+  more leaves than one; a lookup follows them from the leaf the tree leads to into the leaves after it (in a
+  file of any format).
+
+The evidence: the nine Access 97 files of the corpus, which Access 97 wrote, read as 32-bit ACE 12 and DAO read
+them; and `tests/JackcessDotNet.Tests/Assets/access97-jet40.mdb`, a Jet 3 database that Jet 4.0 (32-bit DAO 3.6)
+wrote, with rows either side of 256, 512 and 768 bytes and an index three levels deep, which reads as that
+engine read it back (`tools/access97-fixture.ps1` made it; `Access97ReadTests`). The corpus alone does not show
+all of this: its one row over 256 bytes has no value past them, none of its index pages above the leaves has a
+shared prefix (one has two entries, the rest one), and no index of it is more than two levels deep. ACE 16
+neither makes nor opens an Access 97 file.
+
 ## Type round-trip cheat sheet
 
 | CLR type          | Jet column        | Notes                                  |

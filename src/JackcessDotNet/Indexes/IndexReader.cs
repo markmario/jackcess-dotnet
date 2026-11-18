@@ -20,7 +20,7 @@ namespace JackcessDotNet;
 ///   [OffsetNext]    next-page link  (int)
 ///   [OffsetChildTail] child-tail page link (for nodes — points at a "tail" subtree
 ///                   for keys greater than all entry keys on this page)
-///   [OffsetICBC]    compressed-prefix byte count (ushort)
+///   [OffsetICBC]    compressed-prefix byte count (ushort; one byte in Jet3), then the page's level (byte)
 ///   [OffsetEntryMask] entry-mask bitmap (SizeIndexEntryMask bytes). Bit at cumulative
 ///                   byte-position B = an entry boundary at byte (entriesStart + B).
 ///   [entriesStart]  entries packed sequentially; first entry stored full, subsequent
@@ -80,6 +80,12 @@ internal sealed class IndexReader
             yield return rowPtr;
     }
 
+    /// <summary>
+    /// As <see cref="FindRowPointersForEntry"/>, for a key already made - or read from the index itself, which is
+    /// how a test walks an index whose keys this library does not make.
+    /// </summary>
+    internal IEnumerable<int> FindRowPointersForKey(byte[] key) => DescendAndCollect(_index.RootPageNumber, key);
+
     // ── Tree walk ────────────────────────────────────────────────────────────
 
     private IEnumerable<int> DescendAndCollect(int pageNum, byte[] searchKey)
@@ -88,15 +94,22 @@ internal sealed class IndexReader
         var page = ReadIndexPage(pageNum);
         if (page.IsLeaf)
         {
-            foreach (var entry in page.Entries)
+            // The rows of one key can run on from the leaf the tree leads to into the leaves after it: an index
+            // that is not unique holds as many entries for a key as rows have it.
+            while (true)
             {
-                int cmp = CompareBytes(entry.KeyBytes, searchKey);
-                if (cmp == 0)
-                    yield return RowPointer.Pack(entry.RowPage & RowPointer.MaxPage, entry.RowIndex & 0xFF);
-                else if (cmp > 0)
-                    yield break;   // entries are sorted ASC — no further matches possible
+                foreach (var entry in page.Entries)
+                {
+                    int cmp = CompareBytes(entry.KeyBytes, searchKey);
+                    if (cmp == 0)
+                        yield return RowPointer.Pack(entry.RowPage & RowPointer.MaxPage, entry.RowIndex & 0xFF);
+                    else if (cmp > 0)
+                        yield break;   // entries are sorted ASC — no further matches possible
+                }
+                if (page.NextPage <= 0 || page.NextPage == NoPageSentinel) yield break;
+                page = ReadIndexPage(page.NextPage);
+                if (!page.IsLeaf) yield break;
             }
-            yield break;
         }
 
         // Node page: descend into the FIRST child whose entry.key >= searchKey.
@@ -138,7 +151,7 @@ internal sealed class IndexReader
         int  prev   = ByteUtil.GetInt(buf, _format.OffsetPrevIndexPage);
         int  next   = ByteUtil.GetInt(buf, _format.OffsetNextIndexPage);
         int  child  = ByteUtil.GetInt(buf, _format.OffsetChildTailIndexPage);
-        int  prefixLen   = ByteUtil.GetUShort(buf, _format.OffsetIndexCompressedByteCount);
+        int  prefixLen   = ReadPrefixLength(buf, _format);
         int  maskOffset  = _format.OffsetIndexEntryMask;
         int  maskLength  = _format.SizeIndexEntryMask;
         int  entriesPos  = maskOffset + maskLength;
@@ -216,6 +229,15 @@ internal sealed class IndexReader
 
         return new IndexPage(isLeaf, entries, prev, next, child);
     }
+
+    /// <summary>
+    /// How many leading bytes the entries of an index page share: two bytes of the page in Jet4, one in Jet3,
+    /// where the next byte is the page's level (<see cref="JetFormat.SizeIndexCompressedByteCount"/>).
+    /// </summary>
+    internal static int ReadPrefixLength(byte[] page, JetFormat format)
+        => format.SizeIndexCompressedByteCount == 1
+            ? page[format.OffsetIndexCompressedByteCount]
+            : ByteUtil.GetUShort(page, format.OffsetIndexCompressedByteCount);
 
     private static int CompareBytes(byte[] a, byte[] b)
     {

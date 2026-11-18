@@ -19,10 +19,11 @@ public sealed class DatabaseHeader
         if (file is null)
             throw new ArgumentNullException(nameof(file));
 
+        file.EnsureWritable();
+
         // Use embedded empty database templates from Jackcess.
         string resourceName = _format.Version switch
         {
-            JetVersion.Jet3 => "JackcessDotNet.Resources.empty.mdb",
             JetVersion.Jet4 => "JackcessDotNet.Resources.empty2003.mdb",
             _ => throw new InvalidOperationException($"Unsupported format {_format.Version}.")
         };

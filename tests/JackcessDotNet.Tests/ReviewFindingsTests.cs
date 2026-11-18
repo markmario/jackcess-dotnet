@@ -94,23 +94,6 @@ public sealed class ReviewFindingsTests : IDisposable
     }
 
     [Fact]
-    public void A_Jet3_text_column_counts_its_length_in_characters()
-    {
-        string? source = TestCorpus.File("V1997", "delV1997.mdb");
-        if (source is null) return;   // the corpus is optional locally; CI always has it
-        File.Copy(source, _path);
-        using var db = Database.Open(_path);
-        // A table without indexes: the engine writes no Access 97 text key, so it refuses rows for a table with one.
-        var table = db.ListTables().Select(db.GetTable)
-            .First(t => t.Columns.Any(c => c.DataType == DataType.Text) && t.Indexes.Count == 0 && !t.Definition.HasUnreadIndexes);
-        var col = table.Columns.First(c => c.DataType == DataType.Text);
-
-        table.Insert(new Row { [col.Name] = new string('x', col.Length) });
-
-        Assert.Throws<ColumnValueTooLongException>(() => table.Insert(new Row { [col.Name] = new string('x', col.Length + 1) }));
-    }
-
-    [Fact]
     public void Long_values_share_the_column_s_last_page_while_it_has_room()
     {
         // 750 Cyrillic characters do not compress: 1,500 bytes, kept on long-value pages, two to a page.
