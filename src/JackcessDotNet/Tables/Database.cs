@@ -60,13 +60,15 @@ public sealed class Database : IDisposable
     /// every index of its table, as any other update or delete does, so Access goes on finding it.
     /// </para>
     /// <para>
-    /// An index is trusted to hold every row of its table, as Access trusts it. An entry whose row has gone does no
-    /// harm - each row found is read and compared - but a row with no entry is not found. Versions of this library
-    /// before it kept every index (those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key
-    /// and to no other index: a row one of them inserted into a table Access made is missing from the index on
-    /// its foreign key. Enforcement does not see such a row as a child - its parent can be deleted or re-keyed
-    /// with the row left behind, an orphan, where it should have followed or forbidden the change. Access makes
-    /// the same mistake with the same file, which is already inconsistent to it (qcatco/exportmdb.interop#64).
+    /// An index is searched only once it has been seen to hold every row of its table. Access trusts an index to;
+    /// a file a version of this library before it kept every index wrote to (those in ExportMdb.Interop up to
+    /// 2.1.2) can have rows that are in their table's primary key and in no other index - not in the one on their
+    /// foreign key, so that through it they would not be found as children, and their parent could be deleted or
+    /// re-keyed from under them (qcatco/exportmdb.interop#64). So the first change that looks for rows through an
+    /// index, while the database is open, reads that index and its table once and compares them row by row; the
+    /// changes after it find rows through the index, or, when it does not hold every row, by reading the table as
+    /// for a table with no index. An entry whose row has gone does no harm either way: each row found is read
+    /// and compared.
     /// </para>
     /// <para>
     /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
@@ -131,9 +133,15 @@ public sealed class Database : IDisposable
     /// Creates a new blank .mdb file at <paramref name="path"/> and returns an
     /// open <see cref="Database"/> ready for use.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="version"/> is <see cref="JetVersion.Jet3"/>: Access 97 files are read, and neither created
+    /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
+    /// it was.
+    /// </exception>
     public static Database Create(string path, JetVersion version)
     {
         var format = version == JetVersion.Jet3 ? JetFormat.Jet3 : JetFormat.Jet4;
+        if (format.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
         var file   = new PageFile(path, format, FileMode.Create);
         var db     = new Database(file);
 
@@ -269,11 +277,21 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Opens an existing .mdb / .accdb file.
+    /// Opens an existing .mdb / .accdb file. An Access 97 file (<see cref="JetVersion.Jet3"/>) is opened for
+    /// reading only, as Jackcess opens one: its tables and rows are read, and every change to it - a row
+    /// inserted, updated or deleted, a table created or imported - is refused with
+    /// <see cref="NotSupportedException"/> before anything is written.
+    /// <para>
+    /// The file's own header says what format it is in, as Jackcess takes it, and that is the format it is
+    /// opened in: <paramref name="version"/> is used only for a file whose header does not say - one without the
+    /// signature of an Access database. So an Access 97 file is read as one, and is read-only, whatever
+    /// <paramref name="version"/> is given, and a Jet4 file opened as <see cref="JetVersion.Jet3"/> is the Jet4
+    /// file it is, read and written as any other.
+    /// </para>
     /// </summary>
     public static Database Open(string path, JetVersion version)
     {
-        JetFormat format = version switch
+        JetFormat format = PageFile.FormatOf(path) ?? version switch
         {
             JetVersion.Jet3  => JetFormat.Jet3,
             JetVersion.Jet4  => JetFormat.Jet4,
@@ -322,7 +340,7 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Opens an existing Access database file, auto-detecting the Jet format
     /// version from the byte at file offset 0x14:
-    ///   0x00 = Jet3 (Access 97)
+    ///   0x00 = Jet3 (Access 97), which is opened for reading only
     ///   0x01 = Jet4 (Access 2000-2003)
     ///   0x02+ = .accdb formats (not yet supported)
     /// </summary>
@@ -393,6 +411,14 @@ public sealed class Database : IDisposable
     /// </summary>
     public IReadOnlyList<string> ListTables(bool includeSystem = false)
         => _catalog.GetTableNames(includeSystem);
+
+    /// <summary>
+    /// Lists the Decimal (Numeric) values in the database's tables - not its system tables - that read with more
+    /// digits than their column's precision allows: <see cref="Table.FindDecimalsBeyondPrecision"/> for each
+    /// table, where what it finds, and what it cannot, is described. Nothing is changed.
+    /// </summary>
+    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
+        => ListTables().SelectMany(name => GetTable(name).FindDecimalsBeyondPrecision());
 
     /// <summary>
     /// Reads MSysRelationships and returns the schema's foreign-key / join
@@ -505,7 +531,8 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
-    ///   or Complex column, or text in a sort order other than General - Legacy and General. Nothing is created.
+    ///   or Complex column, or text in a sort order other than General - Legacy and General; or the database is
+    ///   an Access 97 file, which is only read. Nothing is created.
     /// </exception>
     public Table CreateTable(string name, IReadOnlyList<Column> columns,
                              IReadOnlyList<string>? primaryKeyColumns,
@@ -523,6 +550,7 @@ public sealed class Database : IDisposable
             throw new ArgumentException("Table name must not be empty.", nameof(name));
         if (columns is null || columns.Count == 0)
             throw new ArgumentException("At least one column is required.", nameof(columns));
+        _file.EnsureWritable();
 
         var format = _file.Format;
 

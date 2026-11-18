@@ -168,10 +168,8 @@ public sealed class TableDefinition
             throw new InvalidOperationException("Table must have at least one column.");
         if (Columns.Count > 255)
             throw new InvalidOperationException("Tables with more than 255 columns are not supported.");
-        if (format.Version == JetVersion.Jet3)
-            throw new NotSupportedException(
-                "Writing Jet3 (Access 97) tables is not yet supported. " +
-                "Jet3 column headers are 18 bytes with a different field layout than Jet4 (25 bytes).");
+        if (format.IsReadOnly)
+            throw PageFile.ReadOnlyFormat($"no definition of table '{Name}' is made for one.");
 
         // Compute column-name bytes (always UTF-16LE in TDEF)
         byte[][] nameBytes = Columns.Select(c => System.Text.Encoding.Unicode.GetBytes(c.Name)).ToArray();

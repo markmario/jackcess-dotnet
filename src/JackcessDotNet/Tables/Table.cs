@@ -67,11 +67,50 @@ public sealed class Table
     private byte[] ReadDefinitionPage() => _file.ReadPage(_definition.TdefPageNumber);
 
     /// <summary>
+    /// Why the table takes no new row, whatever the row holds, or <c>null</c> when it takes rows: the message of
+    /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate"/> throw for it,
+    /// which they throw by asking this. The table has an index whose keys this library does not write as Access
+    /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
+    /// rows cannot be written by - a calculated column, columns that run past its first page, or two columns in
+    /// one place. Such a table is still read.
+    /// <para>
+    /// A caller about to write to several tables can ask each first, and so write to none when one of them
+    /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
+    /// that takes rows can still refuse a row for what the row holds: <see cref="Validate"/> checks one.
+    /// </para>
+    /// </summary>
+    public string? InsertRefusal
+        => _file.ReadOnlyRefusal
+        ?? _indexes.WhyNotKept()
+        ?? WhyNotNumbered()
+        ?? (_writability ??= new RowEncoder(_file.Format, _definition)).WhyNotWritable();
+
+    // What says whether rows can be written by the table's definition, worked out once.
+    private RowEncoder? _writability;
+
+    /// <summary>The one refusal of a table that takes no row: what <see cref="InsertRefusal"/> answers, thrown.</summary>
+    private void EnsureTakesRows()
+    {
+        if (InsertRefusal is { } why) throw new NotSupportedException(why);
+    }
+
+    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Long and Guid ones are.</summary>
+    private string? WhyNotNumbered()
+        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Long or DataType.Guid)) is { } column
+            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
+              "AutoNumbers are generated. The table is left as it was."
+            : null;
+
+    /// <summary>
     /// Moves the Long auto-number counter up to <paramref name="value"/> when it is behind it, so no row numbered
     /// from now on is given a number up to it. An import calls it with the highest number its rows bring, before
     /// it writes any of them.
     /// </summary>
-    internal void RaiseLastAutoNumber(int value) => _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, value);
+    internal void RaiseLastAutoNumber(int value)
+    {
+        _file.EnsureWritable();
+        _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, value);
+    }
 
     private PropertyMaps? _propertiesCache;
     /// <summary>
@@ -125,13 +164,14 @@ public sealed class Table
     /// the row is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The table has an AutoNumber column that is neither Long nor Guid, or an index whose keys this library does
-    /// not write as Access does. Nothing is written.
+    /// The table takes no row (<see cref="InsertRefusal"/>: among the reasons, that it is a table of an Access 97
+    /// file, which is only read), or the row has a value in an indexed text column that no key is made for.
+    /// Nothing is written, and <paramref name="row"/> is as it was.
     /// </exception>
     public void Insert(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        _indexes.EnsureCanBeKept();
+        EnsureTakesRows();
 
         var given = AutoNumberValuesIn(row);
         int? lastAutoNumber;
@@ -184,16 +224,12 @@ public sealed class Table
     /// <summary>
     /// Puts each AutoNumber column's value in <paramref name="row"/> and returns what the table's Long counter
     /// becomes once the row is written (null when the table has no Long AutoNumber). Nothing is written here.
+    /// Every AutoNumber column is a Long or a Guid: a table with another is refused before this
+    /// (<see cref="EnsureTakesRows"/>).
     /// </summary>
     private int? FillAutoNumbers(Row row)
     {
         if (_autoNumberColumns.Count == 0) return null;
-
-        foreach (var column in _autoNumberColumns)
-            if (column.DataType is not (DataType.Long or DataType.Guid))
-                throw new NotSupportedException(
-                    $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
-                    "AutoNumbers are generated. The table is left as it was.");
 
         bool allowed = AutoNumberInsertAllowed;
         int? last = null;
@@ -233,7 +269,7 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
-    /// column, <see cref="NotSupportedException"/> for a table with an index that cannot be kept,
+    /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="InvalidOperationException"/> for a null a primary key or required index does not take or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
@@ -244,10 +280,8 @@ public sealed class Table
     public void Validate(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        _indexes.EnsureCanBeKept();
-        var encoder = new RowEncoder(_file.Format, _definition);
-        encoder.EnsureWritable();
-        encoder.Validate(row);
+        EnsureTakesRows();
+        new RowEncoder(_file.Format, _definition).Validate(row);
 
         var asWritten = row;
         if (_autoNumberColumns.Count > 0)
@@ -272,8 +306,13 @@ public sealed class Table
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
     /// in a column of the primary key or of an index that requires its values. The row is left as it was.
     /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
+    /// 97 file, which is only read. Nothing is written.
+    /// </exception>
     public void UpdateByPrimaryKey(object primaryKeyValue, Row newValues)
     {
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
 
         // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
@@ -359,13 +398,18 @@ public sealed class Table
     /// </summary>
     internal void RewriteRowAt(int rowPtr, Row changes)
     {
+        _file.EnsureWritable();
         var entries = new EntryMove(_indexes, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
     }
 
     /// <summary>Deletes the row at <paramref name="rowPtr"/>, as <see cref="DeleteRow"/> does the row it finds.</summary>
-    internal void DeleteRowAt(int rowPtr) => RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+    internal void DeleteRowAt(int rowPtr)
+    {
+        _file.EnsureWritable();
+        RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+    }
 
     /// <summary>The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, or null when no row is there.</summary>
     internal Row? ReadRowAt(int rowPtr, IReadOnlyList<Column> columns) => _dataWriter.ReadRowAt(_definition, rowPtr, columns);
@@ -381,8 +425,13 @@ public sealed class Table
     /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
     /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
+    /// 97 file, which is only read. Nothing is deleted.
+    /// </exception>
     public void DeleteRow(string columnName, object value)
     {
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
         if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
         {
@@ -402,6 +451,75 @@ public sealed class Table
 
         // Its index entries go with it: Access counts and finds rows through them.
         _indexes.Remove(_indexes.EntriesFor(values, enforce: false), rowPtr);
+    }
+
+    /// <summary>
+    /// Lists the Decimal (Numeric) values in the table that read with more digits than their column's precision
+    /// allows. Nothing is changed, in the file or in what a read returns: this is a way to look for values a
+    /// version of this library before qcatco/exportmdb.interop#61 wrote.
+    /// <para>
+    /// Those versions wrote a Decimal's sixteen bytes in an order Access does not use, so every value they wrote
+    /// reads as a different number - a 1 as 16,777,216 - in Access and, now, here. Nothing in the file says who
+    /// wrote a value. What can be seen is a value its column could not have been given: Access refuses a number
+    /// with more digits than the column's precision, and so does this library, so one that reads that way was
+    /// almost certainly written in the earlier order, and <see cref="DecimalBeyondPrecision.ValueInEarlierByteOrder"/>
+    /// is what it was meant to be.
+    /// </para>
+    /// <para>
+    /// It finds some such values, not all, and how many depends on the precision. A number under 4,294,967,296
+    /// (before its decimal point is placed) written in the earlier order reads as one of at most ten digits, at
+    /// least eight when it is not a multiple of 256. So in a column of precision 7 or less every such number that
+    /// is not a multiple of 256 is listed; of precision 8 or 9, some are; and of precision 10 or more - 18 is what
+    /// Access and this library give a column by default - none is, and only numbers of ten digits or more can be.
+    /// A table with nothing listed may still hold values written in the earlier order.
+    /// </para>
+    /// <para>
+    /// The table is read as it is asked for, a row at a time. A calculated column is not looked at.
+    /// </para>
+    /// </summary>
+    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
+    {
+        var decimals = _definition.Columns
+            .Where(c => c.DataType == DataType.Numeric && !c.IsCalculated && c.Precision > 0)
+            .ToList();
+        if (decimals.Count == 0) yield break;
+
+        var format  = _file.Format;
+        var decoder = new RowDecoder(format, _definition.Columns);
+        var keys    = _definition.EffectivePrimaryKeyColumns
+            .Select(name => _definition.Columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            .OfType<Column>()
+            .ToList();
+
+        // The rows in the order ReadAllRows returns them, which RowIndex counts in.
+        int rowIndex = -1;
+        foreach (int pageNum in UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, format, _file))
+        {
+            byte[] dp       = _file.ReadPage(pageNum);
+            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
+            for (int r = 0; r < rowCount; r++)
+            {
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+                rowIndex++;
+
+                foreach (var column in decimals)
+                {
+                    byte[]? stored = decoder.RawFixedValue(rowBytes, column) ?? decoder.RawVariableValue(rowBytes, column);
+                    if (stored is null || stored.Length < NumericCodec.Size) continue;
+
+                    var unscaled = NumericCodec.Unscaled(stored, 0);
+                    if (unscaled < System.Numerics.BigInteger.Pow(10, column.Precision)) continue;
+
+                    var key = new Row();
+                    foreach (var keyColumn in keys)
+                        key[keyColumn.Name] = decoder.Decode(rowBytes, keyColumn);
+                    bool negative = NumericCodec.IsNegative(stored, 0);
+                    yield return new DecimalBeyondPrecision(Name, column, rowIndex, key,
+                        NumericCodec.Decode(stored, 0, column.Scale),
+                        NumericCodec.ToDecimal(NumericCodec.UnscaledInEarlierByteOrder(stored, 0), negative, column.Scale));
+                }
+            }
+        }
     }
 
     /// <summary>

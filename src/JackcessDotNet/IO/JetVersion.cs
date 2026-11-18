@@ -6,7 +6,7 @@ namespace JackcessDotNet;
 /// </summary>
 public enum JetVersion
 {
-    /// <summary>Jet 3 — Access 97 (.mdb, page size 2048).</summary>
+    /// <summary>Jet 3 — Access 97 (.mdb, page size 2048). Read only: such a file is neither created nor written.</summary>
     Jet3,
     /// <summary>Jet 4 — Access 2000/2002/2003 (.mdb, page size 4096).</summary>
     Jet4,

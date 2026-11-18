@@ -20,6 +20,10 @@ namespace JackcessDotNet;
 /// Two logical indexes on the same columns can share one tree (Access gives a relationship's index the tree of an
 /// index already on its columns); a tree is changed once however many indexes name it. An index that ignores
 /// nulls holds no entry for a row whose index columns are all null.
+///
+/// Rows are found through an index, for the relationships <see cref="ForeignKeyEnforcer"/> keeps, only once the
+/// index has been seen to hold every row (<see cref="HoldsEveryRow"/>): a file an earlier version of this library
+/// wrote to can have rows its indexes do not hold.
 /// </summary>
 internal sealed class TableIndexes
 {
@@ -41,6 +45,7 @@ internal sealed class TableIndexes
         public Tree(int tdefPage, IReadOnlyList<Index> sharing)
         {
             var first = sharing[0];
+            Number          = first.IndexDataNumber;
             Name            = string.Join("/", sharing.Select(ix => ix.Name));
             Columns         = first.Columns;
             Target          = IndexWriter.Target.For(tdefPage, first);
@@ -50,6 +55,8 @@ internal sealed class TableIndexes
             IgnoresNulls    = first.IgnoresNulls;
         }
 
+        /// <summary>The tree's block among the definition's index blocks: what tells it from the table's other trees.</summary>
+        public int                        Number       { get; }
         public string                     Name         { get; }
         public IReadOnlyList<IndexColumn> Columns      { get; }
         public IndexWriter.Target         Target       { get; }
@@ -88,7 +95,7 @@ internal sealed class TableIndexes
         internal bool   IsCut   { get; }
     }
 
-    private IReadOnlyList<Tree> Trees => _trees ??= _table.Indexes
+    internal IReadOnlyList<Tree> Trees => _trees ??= _table.Indexes
         .GroupBy(ix => ix.IndexDataNumber)
         .Select(g => new Tree(_table.TdefPageNumber, g.ToList()))
         .ToList();
@@ -100,21 +107,28 @@ internal sealed class TableIndexes
     /// </summary>
     public void EnsureCanBeKept()
     {
+        if (WhyNotKept() is { } why) throw new NotSupportedException(why);
+    }
+
+    /// <summary>
+    /// What <see cref="EnsureCanBeKept"/> refuses the table with, or null when every index can be kept. It is
+    /// worked out from the table's definition as it was read: nothing of the file is read or changed.
+    /// </summary>
+    public string? WhyNotKept()
+    {
         if (_table.HasUnreadIndexes)
-            throw new NotSupportedException(
-                $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which runs over " +
-                "more than one page or names an index column or block it has not. The table is left as it was.");
+            return $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which runs over " +
+                   "more than one page or names an index column or block it has not. The table is left as it was.";
         foreach (var tree in Trees)
         {
             if (tree.Columns.Count == 0 || tree.Target.RootPage <= 0)
-                throw new NotSupportedException(
-                    $"{_table.Name}'s {Describe(tree)} cannot be kept: its definition gives it no column or no page. " +
-                    "The table is left as it was.");
+                return $"{_table.Name}'s {Describe(tree)} cannot be kept: its definition gives it no column or no page. " +
+                       "The table is left as it was.";
             foreach (var column in tree.Columns)
                 if (!IndexKeys.CanEncode(column.Column))
-                    throw new NotSupportedException(
-                        $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(column.Column)}. The table is left as it was.");
+                    return $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(column.Column)}. The table is left as it was.";
         }
+        return null;
     }
 
     /// <summary>
@@ -127,17 +141,7 @@ internal sealed class TableIndexes
         var entries = new List<Entry>(Trees.Count);
         foreach (var tree in Trees)
         {
-            var values = new object?[tree.Columns.Count];
-            int nulls = 0;
-            for (int i = 0; i < values.Length; i++)
-            {
-                var column = tree.Columns[i].Column;
-                // The row's values as the row encoder reads them (RowValues): DBNull is no value, and a Yes/No
-                // column holds no null - whatever it is given stands for Yes or No.
-                values[i] = row.TryGetValue(column.Name, out var value) && !RowValues.IsNull(value) ? value : null;
-                if (column.DataType == DataType.Boolean) values[i] = RowValues.ToBoolean(values[i]);
-                else if (values[i] is null) nulls++;
-            }
+            var values = ValuesIn(tree, row, out int nulls);
 
             if (enforce && nulls > 0 && tree.RefusesNulls)
             {
@@ -162,6 +166,23 @@ internal sealed class TableIndexes
             entries.Add(new Entry(tree, key, nulls > 0, values, isCut));
         }
         return entries;
+    }
+
+    /// <summary><paramref name="row"/>'s values for the tree's columns, in their order, and how many of them are null.</summary>
+    private static object?[] ValuesIn(Tree tree, Row row, out int nulls)
+    {
+        var values = new object?[tree.Columns.Count];
+        nulls = 0;
+        for (int i = 0; i < values.Length; i++)
+        {
+            var column = tree.Columns[i].Column;
+            // The row's values as the row encoder reads them (RowValues): DBNull is no value, and a Yes/No
+            // column holds no null - whatever it is given stands for Yes or No.
+            values[i] = row.TryGetValue(column.Name, out var value) && !RowValues.IsNull(value) ? value : null;
+            if (column.DataType == DataType.Boolean) values[i] = RowValues.ToBoolean(values[i]);
+            else if (values[i] is null) nulls++;
+        }
+        return values;
     }
 
     /// <summary>
@@ -204,17 +225,11 @@ internal sealed class TableIndexes
     /// The row pointers an index on exactly <paramref name="columns"/>, in that order, holds for
     /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
     /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
-    /// this library does not make, one that holds no entry for a key that is all null, or a value this
-    /// library makes no key for (<see cref="IndexKeys.CanEncode(Column, object?)"/>). Each pointer is an
+    /// this library does not make, one that holds no entry for a key that is all null, a value this library
+    /// makes no key for (<see cref="IndexKeys.CanEncode(Column, object?)"/>), or one that does not hold every
+    /// row (<see cref="HoldsEveryRow"/>). Each pointer is an
     /// entry, not yet a row: the row it points at is the caller's to read and compare, as an index's text key
     /// finds 'ABC' for 'abc' and an entry may outlive its row in a file an older version of this library wrote.
-    /// <para>
-    /// That covers an entry too many. An entry too few it cannot: the index is trusted to hold every row, as Access
-    /// trusts it. Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2)
-    /// added a row to its table's primary key and to no other index, so a row one of them inserted into a table
-    /// Access made is in none of that table's other indexes, and is not found here
-    /// (qcatco/exportmdb.interop#64).
-    /// </para>
     /// </summary>
     internal IEnumerable<int>? RowPointersFor(IReadOnlyList<string> columns, IReadOnlyList<object?> values)
     {
@@ -247,9 +262,89 @@ internal sealed class TableIndexes
         return RowPointersFor(entry);
     }
 
-    /// <summary>The row pointers <paramref name="entry"/>'s index holds under its key: the rows a unique index compares it with.</summary>
-    internal IEnumerable<int> RowPointersFor(Entry entry)
-        => StoredUnder(new IndexWriter(_file, _allocator), entry).Select(stored => stored.RowPointer);
+    /// <summary>
+    /// The row pointers <paramref name="entry"/>'s index holds under its key - the rows a unique index compares it
+    /// with - or null when the index does not hold every row (<see cref="HoldsEveryRow"/>).
+    /// </summary>
+    internal IEnumerable<int>? RowPointersFor(Entry entry)
+        => HoldsEveryRow(entry.Tree)
+            ? StoredUnder(new IndexWriter(_file, _allocator), entry).Select(stored => stored.RowPointer)
+            : null;
+
+    // ── Whether an index holds every row ─────────────────────────────────────
+
+    /// <summary>
+    /// Whether <paramref name="tree"/> has an entry for every row of the table that a search of it could be for:
+    /// what makes "the index has no such row" mean that the table has none. Access takes that on trust. Here it
+    /// is seen once for each index, the first time rows are looked for through it, and remembered while the
+    /// database is open (qcatco/exportmdb.interop#64).
+    /// <para>
+    /// Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
+    /// primary key and no other index. A row one of them inserted has no entry in the others; a row one of them
+    /// updated has, in each, the entry of the row it was, where that was; a row one of them deleted left its
+    /// entries behind. An entry too many does no harm - whoever follows it reads the row - but a row with no
+    /// entry is not found, and a count does not show it: after such an update an index has as many entries as the
+    /// table has rows. Nor does an index Access alone has written always have exactly one entry a row. So each
+    /// row is looked at: the table is read once, for the index's columns, and every row's key must be in the
+    /// index, pointing at that row.
+    /// </para>
+    /// <para>
+    /// A row needs no entry when a search could not be for it: its columns all null in an index that ignores
+    /// nulls, or a value this library makes no key for -
+    /// <see cref="RowPointersFor(IReadOnlyList{string}, IReadOnlyList{object?})"/> answers neither through the
+    /// index. What this library writes afterwards keeps the index as it found it, a complete one complete: every
+    /// row it inserts or rewrites gains its entries. An index found wanting is not looked at again, though the
+    /// rows that were missing may since have been rewritten.
+    /// </para>
+    /// </summary>
+    internal bool HoldsEveryRow(Tree tree)
+    {
+        var known = _file.IndexesChecked;
+        var which = (_table.TdefPageNumber, tree.Number);
+        if (!known.TryGetValue(which, out bool holdsEveryRow))
+            known[which] = holdsEveryRow = FindsEveryRow(tree);
+        return holdsEveryRow;
+    }
+
+    private bool FindsEveryRow(Tree tree)
+    {
+        // The key each row should be under, by where the row is: every page of the table read once, and of each
+        // row only the index's columns, as its keys are made of them (RowDecoder.DecodeForKey)...
+        var format  = _file.Format;
+        var decoder = new RowDecoder(format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
+        var unfound = new Dictionary<int, byte[]>();
+        var row     = new Row();
+        foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
+        {
+            byte[] page = _file.ReadPage(pageNumber);
+            int rowCount = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+            for (int r = 0; r < rowCount; r++)
+            {
+                if (DataRows.Read(_file, page, r) is not { } rowBytes) continue;
+
+                row.Clear();
+                foreach (var column in tree.Columns)
+                    if (decoder.DecodeForKey(rowBytes, column.Column) is { } value)
+                        row[column.Column.Name] = value;
+                var values = ValuesIn(tree, row, out int nulls);
+                if (nulls == values.Length && tree.IgnoresNulls) continue;
+                if (!tree.Columns.Select((c, i) => IndexKeys.CanEncode(c.Column, values[i])).All(can => can)) continue;
+                unfound[RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
+            }
+        }
+
+        // ...and the index's entries, from first to last: each takes out the row it is the entry of. A long key
+        // may be there whole, as earlier versions wrote it (StoredUnder); it is the row's when, cut, it is.
+        var entries = new IndexWriter(_file, _allocator).EntriesWithPrefix(tree.Target.RootPage, Array.Empty<byte>());
+        foreach (var (key, pointer) in entries)
+        {
+            if (unfound.Count == 0) break;
+            if (unfound.TryGetValue(pointer, out byte[]? expected)
+                && (key.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(key) : key).AsSpan().SequenceEqual(expected))
+                unfound.Remove(pointer);
+        }
+        return unfound.Count == 0;
+    }
 
     /// <summary>
     /// The entries the tree holds for <paramref name="entry"/>'s key, each with the key it is stored under. For a

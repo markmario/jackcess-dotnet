@@ -80,7 +80,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\\empty.mdb" />
     <EmbeddedResource Include="Resources\\empty2003.mdb" />
     <EmbeddedResource Include="Resources\\index_codes_genleg.txt" />
     <EmbeddedResource Include="Resources\\index_codes_ext_genleg.txt" />
