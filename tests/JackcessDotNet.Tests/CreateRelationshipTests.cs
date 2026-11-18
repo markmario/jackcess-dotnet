@@ -188,24 +188,40 @@ public sealed class CreateRelationshipTests : IDisposable
     }
 
     [Fact]
-    public void A_relationship_between_columns_that_are_each_unique_is_one_to_one_and_its_index_is_not_unique()
+    public void A_relationship_between_columns_that_are_each_unique_is_one_to_one_and_its_index_is_unique()
     {
         using var db = Database.Create(_path, JetVersion.Jet4);
         db.CreateTable("One", new[] { Long("Id"), Text("Name") }, primaryKey: "Id");
-        var other = db.CreateTable("Other", new[] { Long("Id"), Text("Name") }, primaryKey: "Id");
+        var other = db.CreateTable("Other", new[] { Long("Id"), Long("One"), Long("Also") }, new[] { "Id" }, new[]
+        {
+            new IndexDefinition("UniqueOne", "One") { IsUnique = true },
+            new IndexDefinition("UniqueAlso", "Also") { IsUnique = true, IgnoreNulls = true },
+        });
         for (int i = 1; i <= 3; i++) db.GetTable("One").Insert(new Row { ["Id"] = i });
-        other.Insert(new Row { ["Id"] = 2 });
+        other.Insert(new Row { ["Id"] = 2, ["One"] = 3, ["Also"] = 1 });
 
-        var relationship = db.CreateRelationship(new RelationshipDefinition("One", "Id", "Other", "Id") { HasReferentialIntegrity = true });
+        var relationship = db.CreateRelationship(new RelationshipDefinition("One", "Id", "Other", "One") { HasReferentialIntegrity = true });
 
         Assert.Equal("OneOther", relationship.Name);   // no name given: the tables' names, as Access's window names one
         Assert.True(relationship.IsOneToOne);
         Assert.Equal(0x1, relationship.Flags);
-        // Access gives the foreign key a plain index of its own, beside the unique one on the same column.
+        // As Access makes it with that flag: the foreign key's index is unique, and shares the tree of the index
+        // that is unique and nothing more.
         var foreignKey = other.Indexes.Single(ix => ix.Name == "OneOther");
-        Assert.False(foreignKey.IsUnique);
-        Assert.NotEqual(other.Indexes.Single(ix => ix.IsPrimaryKey).RootPageNumber, foreignKey.RootPageNumber);
-        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Other", expectedRows: 1));
+        Assert.True(foreignKey.IsUnique);
+        Assert.Equal(other.Indexes.Single(ix => ix.Name == "UniqueOne").RootPageNumber, foreignKey.RootPageNumber);
+
+        // An index that is unique and ignores nulls is not shared: the foreign key gets a unique tree of its own.
+        var also = db.CreateRelationship(new RelationshipDefinition("One", "Id", "Other", "Also") { Name = "AlsoOne", HasReferentialIntegrity = true });
+        Assert.True(also.IsOneToOne);
+        var alsoKey = other.Indexes.Single(ix => ix.Name == "AlsoOne");
+        Assert.True(alsoKey.IsUnique && !alsoKey.IgnoresNulls);
+        Assert.NotEqual(other.Indexes.Single(ix => ix.Name == "UniqueAlso").RootPageNumber, alsoKey.RootPageNumber);
+        Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Other", expectedRows: 1));
+
+        db.EnforceForeignKeys = true;
+        Assert.Throws<InvalidOperationException>(() => other.Insert(new Row { ["Id"] = 3, ["One"] = 3, ["Also"] = 2 }));   // One is unique
+        other.Insert(new Row { ["Id"] = 4, ["One"] = 2, ["Also"] = 2 });
     }
 
     [Fact]

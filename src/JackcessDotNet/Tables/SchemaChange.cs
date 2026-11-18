@@ -390,9 +390,10 @@ internal static class SchemaChange
         if (definition.JoinType == RelationshipJoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
         if (definition.JoinType == RelationshipJoinType.RightOuter) flags |= RightOuterJoinFlag;
         // One to one when each side's columns have a unique index of their own, as Access's Relationships window
-        // and Jackcess mark it. The flag describes the relationship; what keeps it one to one is the index.
-        if (UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null)
-            flags |= OneToOneFlag;
+        // and Jackcess mark it. To Access the mark is more than a description: the foreign key's index is then a
+        // unique one (below).
+        bool oneToOne = UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null;
+        if (oneToOne) flags |= OneToOneFlag;
 
         Table relationships;
         try { relationships = db.GetTable(RelationshipsTable); }
@@ -458,7 +459,9 @@ internal static class SchemaChange
             // On the referenced table, an index Access names .rB, .rC... that shares the tree of the unique index
             // on those columns; on the referring table, an index with the relationship's name on the foreign key,
             // which shares the tree of a plain index on exactly those columns when there is one and otherwise is
-            // built - Access shares no unique, required or null-ignoring index's tree for it.
+            // built - Access shares no unique, required or null-ignoring index's tree for it. In a one-to-one
+            // relationship Access makes that index unique instead, and it shares the tree of an index that is
+            // unique and nothing more (Jackcess gives it a plain one, which Access itself never writes there).
             var ascending = TableDefinition.AscendingColumnFlag;
             byte plain  = TableDefinition.UnknownIndexFlag;
             byte unique = (byte)(TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag);
@@ -468,8 +471,9 @@ internal static class SchemaChange
                            fromColumns.Select(c => new IndexColumn(c, ascending)).ToList(), unique, TdefEditor.IndexTypeForeignKey,
                            shares: existing => (existing.Flags | ignored) == (unique | ignored));
             secondary = Plan(file, child.Definition, name,
-                             toColumns.Select(c => new IndexColumn(c, ascending)).ToList(), plain, TdefEditor.IndexTypeForeignKey,
-                             shares: existing => existing.Flags == plain,
+                             toColumns.Select(c => new IndexColumn(c, ascending)).ToList(), oneToOne ? unique : plain,
+                             TdefEditor.IndexTypeForeignKey,
+                             shares: existing => existing.Flags == (oneToOne ? unique : plain),
                              alsoAdded: sameTable ? primary.DefinitionBytes : 0, alsoIndexes: sameTable ? 1 : 0);
         }
 
