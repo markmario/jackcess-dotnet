@@ -159,7 +159,7 @@ using var db = Database.Open("Confidential.mdb", "passw0rd");
 using var db = Database.Open("Confidential.accdb", "passw0rd");
 ```
 
-Wrong passwords throw `UnauthorizedAccessException` before any data page is
+Wrong passwords throw `InvalidCredentialException` before any data page is
 parsed — no cryptic "page X corrupt" errors.
 
 ## Composite (multi-column) primary keys
@@ -184,7 +184,7 @@ db.EnforceForeignKeys = true;                  // default: false
 
 // The relationships in MSysRelationships that have referential integrity are kept.
 orders.Insert(new Row { ["CustomerID"] = "INVALID", ... });
-//   throws InvalidOperationException: "Foreign-key violation in relationship 'CustomersOrders'..."
+//   throws ConstraintViolationException: "Foreign-key violation in relationship 'CustomersOrders'..."
 
 customers.UpdateByPrimaryKey("ALFKI", new Row { ["CustomerID"] = "ALFKA" });
 //   cascade update: the customer's orders take the new key - or, without it, refused while it has orders
@@ -199,6 +199,11 @@ the cascades a relationship asks for, as Access does. A foreign key whose column
 A refused change leaves the file untouched: everything is checked, cascades included, before anything is written,
 and a change that fails while being written is taken back. With the property off, nothing is checked and nothing
 cascades.
+
+A change the data does not allow - a row that would refer to no parent, a duplicate in a primary key or a unique
+index, a null in a key - throws `ConstraintViolationException`, with or without the property. It derives from
+`InvalidOperationException`, which is what these threw before it, so a handler for that still catches one.
+`Database.TryGetTable` asks for a table without an exception when there is none.
 
 What it costs: rows are found through the tables' indexes. Access gives every relationship an index on its
 foreign key, so an insert reads about a dozen pages to find its parent, and an update or delete reads the rows it

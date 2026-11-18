@@ -149,7 +149,7 @@ internal sealed class TableIndexes
             if (enforce && nulls > 0 && tree.RefusesNulls)
             {
                 var missing = tree.Columns.Where((_, i) => values[i] is null).Select(c => c.Column.Name);
-                throw new InvalidOperationException(
+                throw new ConstraintViolationException(
                     $"{_table.Name}'s {Describe(tree)} does not take a null: the row has none for {string.Join(", ", missing)}. " +
                     "The table is left as it was.");
             }
@@ -229,10 +229,10 @@ internal sealed class TableIndexes
             foreach (var (_, holder) in StoredUnder(writer, entry))
             {
                 if (holder == replacedRowPointer || !IsLiveRow(holder)) continue;
-                throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
+                throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             }
             if (notHeld.AnotherHas(entry.Key, replacedRowPointer))
-                throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
+                throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
         }
         return forEntry ? writer : null;
     }

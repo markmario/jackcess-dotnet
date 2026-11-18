@@ -131,7 +131,7 @@ public sealed class IncompleteIndexTests : IDisposable
         byte[] before = File.ReadAllBytes(_path);
         string message;
         using (var db = OpenEnforcing())
-            message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
+            message = Assert.Throws<ConstraintViolationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         return message;
     }

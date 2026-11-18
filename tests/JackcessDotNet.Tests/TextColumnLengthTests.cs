@@ -30,7 +30,7 @@ public sealed class TextColumnLengthTests : IDisposable
 
         var ex = Assert.Throws<ColumnValueTooLongException>(() => table.Insert(new Row { ["Id"] = 2, ["Date"] = "14-Sept-2026" }));
 
-        Assert.Equal("Date", ex.Column);
+        Assert.Equal("Date", ex.ColumnName);
         Assert.Equal(11, ex.MaxLength);
         Assert.Equal(12, ex.Length);
         Assert.Contains("Date", ex.Message);
@@ -50,7 +50,7 @@ public sealed class TextColumnLengthTests : IDisposable
         table.Validate(new Row { ["Date"] = "14-Sep-2026" });
         var ex = Assert.Throws<ColumnValueTooLongException>(() => table.Validate(new Row { ["Date"] = "14-Sept-2026" }));
 
-        Assert.Equal("Date", ex.Column);
+        Assert.Equal("Date", ex.ColumnName);
         Assert.Empty(table.ReadAllRows());
     }
 

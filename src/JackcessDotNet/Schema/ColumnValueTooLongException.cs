@@ -6,16 +6,16 @@ namespace JackcessDotNet;
 /// </summary>
 public sealed class ColumnValueTooLongException : ArgumentException
 {
-    public ColumnValueTooLongException(string column, int maxLength, int length)
-        : base($"Column '{column}' holds at most {maxLength} characters; the value has {length}.")
+    public ColumnValueTooLongException(string columnName, int maxLength, int length)
+        : base($"Column '{columnName}' holds at most {maxLength} characters; the value has {length}.")
     {
-        Column = column;
+        ColumnName = columnName;
         MaxLength = maxLength;
         Length = length;
     }
 
     /// <summary>The column's name.</summary>
-    public string Column { get; }
+    public string ColumnName { get; }
 
     /// <summary>The most characters the column holds.</summary>
     public int MaxLength { get; }

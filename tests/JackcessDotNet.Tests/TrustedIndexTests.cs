@@ -91,7 +91,7 @@ public sealed class TrustedIndexTests : IDisposable
 
             Assert.True(first <= later + 1, $"the first insert read {first} pages and those after it at most {later}");
             Assert.True(ReadsOf(db, () => table.Validate(RowOf(Many + 100))) <= later);
-            Assert.Throws<InvalidOperationException>(() => table.Insert(RowOf(Many + 7)));   // a duplicate the index holds
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(RowOf(Many + 7)));   // a duplicate the index holds
         }
 
         using var read = Database.Open(_path);
@@ -157,8 +157,8 @@ public sealed class TrustedIndexTests : IDisposable
             codes.Insert(new Row { ["Id"] = 5, ["Code"] = 250, ["Name"] = "c5" });
             renamed.Insert(new Row { ["Id"] = 7, ["Name"] = "r7" });
 
-            Assert.Throws<InvalidOperationException>(() => renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "r2" }));
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 8, ["Code"] = 100, ["Name"] = "c8" }));
+            Assert.Throws<ConstraintViolationException>(() => renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "r2" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 8, ["Code"] = 100, ["Name"] = "c8" }));
         }
 
         Assert.Equal(new[] { "1 100", "2 250", "3 300", "4 300", "5 250" }, Rows("Codes", "Id", "Code"));

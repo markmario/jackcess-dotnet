@@ -336,7 +336,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         Assert.Equal("changed", rows.Single(r => (int)r["id"]! == accessRow)["data"]);
         Assert.Equal("row 3", rows.Single(r => (int)r["id"]! == 5003)["data"]);
         Assert.DoesNotContain(rows, r => (int)r["id"]! == 1003);
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(1001, new Row { ["id"] = accessRow }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(1001, new Row { ["id"] = accessRow }));
     }
 
     [Theory]
@@ -371,7 +371,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         var taken = table.ReadAllRows().First(r => r["data"] is not null)["data"]!;
         var before = IndexChecks.AllPages(db);
 
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["name"] = "a new name", ["data"] = taken }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["name"] = "a new name", ["data"] = taken }));
 
         Assert.Contains("duplicate", refused.Message);
         IndexChecks.AssertUnchanged(before, db);

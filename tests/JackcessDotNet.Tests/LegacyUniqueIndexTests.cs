@@ -74,7 +74,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
         byte[] before = File.ReadAllBytes(_path);
         string message;
         using (var db = OpenVerifying())
-            message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
+            message = Assert.Throws<ConstraintViolationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         Assert.Contains("duplicate", message);
         return message;
@@ -182,15 +182,15 @@ public sealed class LegacyUniqueIndexTests : IDisposable
         using (var db = OpenVerifying())
         {
             var codes = db.GetTable("Codes");
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
 
             codes.UpdateByPrimaryKey(3, new Row { ["Code"] = 301 });
             codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" });
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 5, ["Code"] = 301, ["Name"] = "c5" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 5, ["Code"] = 301, ["Name"] = "c5" }));
 
             codes.DeleteRow("Id", 2);
             codes.Insert(new Row { ["Id"] = 5, ["Code"] = 250, ["Name"] = "c5" });
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 6, ["Code"] = 250, ["Name"] = "c6" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 6, ["Code"] = 250, ["Name"] = "c6" }));
         }
 
         Assert.Equal(new[] { "1 has 100", "3 has 301", "4 has 300", "5 has 250" }, Codes());
@@ -207,12 +207,12 @@ public sealed class LegacyUniqueIndexTests : IDisposable
         using (var db = OpenVerifying())
         {
             var codes = db.GetTable("Codes");
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
 
             using (db.File.BeginUndo())
                 codes.DeleteRow("Id", 3);   // never committed
 
-            Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
+            Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
         }
 
         Assert.Equal(new[] { "1 has 100", "2 has 250", "3 has 300" }, Codes());

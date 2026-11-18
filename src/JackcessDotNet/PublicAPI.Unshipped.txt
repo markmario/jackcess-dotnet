@@ -39,10 +39,13 @@ JackcessDotNet.ColumnBuilder.WithMaxChars(int maxChars) -> JackcessDotNet.Column
 JackcessDotNet.ColumnBuilder.WithNumericScale(byte precision, byte scale) -> JackcessDotNet.ColumnBuilder!
 JackcessDotNet.ColumnBuilder.WithRequired(bool required = true) -> JackcessDotNet.ColumnBuilder!
 JackcessDotNet.ColumnValueTooLongException
-JackcessDotNet.ColumnValueTooLongException.Column.get -> string!
-JackcessDotNet.ColumnValueTooLongException.ColumnValueTooLongException(string! column, int maxLength, int length) -> void
+JackcessDotNet.ColumnValueTooLongException.ColumnName.get -> string!
+JackcessDotNet.ColumnValueTooLongException.ColumnValueTooLongException(string! columnName, int maxLength, int length) -> void
 JackcessDotNet.ColumnValueTooLongException.Length.get -> int
 JackcessDotNet.ColumnValueTooLongException.MaxLength.get -> int
+JackcessDotNet.ConstraintViolationException
+JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message) -> void
+JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.Cursor
 JackcessDotNet.Cursor.AfterLast() -> void
 JackcessDotNet.Cursor.BeforeFirst() -> void
@@ -97,6 +100,7 @@ static JackcessDotNet.Database.Open(string! path, JackcessDotNet.JetVersion vers
 static JackcessDotNet.Database.Open(string! path, string! password) -> JackcessDotNet.Database!
 JackcessDotNet.Database.ShareLongValuePages.get -> bool
 JackcessDotNet.Database.ShareLongValuePages.set -> void
+JackcessDotNet.Database.TryGetTable(string! name, out JackcessDotNet.Table? table) -> bool
 JackcessDotNet.Database.VerifyIndexes.get -> bool
 JackcessDotNet.Database.VerifyIndexes.set -> void
 JackcessDotNet.DatabaseBuilder

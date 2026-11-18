@@ -145,7 +145,7 @@ public sealed class CreateRelationshipTests : IDisposable
             Name = "ParentChild", HasReferentialIntegrity = true, CascadeUpdates = true, CascadeDeletes = true,
         });
 
-        var refused = Assert.Throws<InvalidOperationException>(() => child.Insert(new Row { ["Id"] = 100, ["K"] = 99 }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["Id"] = 100, ["K"] = 99 }));
         Assert.Contains("ParentChild", refused.Message);
         child.Insert(new Row { ["Id"] = 101, ["K"] = 3 });
         child.Insert(new Row { ["Id"] = 102 });   // refers to nothing
@@ -237,7 +237,7 @@ public sealed class CreateRelationshipTests : IDisposable
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Other", expectedRows: 1));
 
         db.EnforceForeignKeys = true;
-        Assert.Throws<InvalidOperationException>(() => other.Insert(new Row { ["Id"] = 3, ["One"] = 3, ["Also"] = 2 }));   // One is unique
+        Assert.Throws<ConstraintViolationException>(() => other.Insert(new Row { ["Id"] = 3, ["One"] = 3, ["Also"] = 2 }));   // One is unique
         other.Insert(new Row { ["Id"] = 4, ["One"] = 2, ["Also"] = 2 });
     }
 
@@ -291,7 +291,7 @@ public sealed class CreateRelationshipTests : IDisposable
         Assert.Equal(new Slot("RegionCity", 1, 1, 2, 2, IndexChecks.TdefOf(db, "Region"), 0, 2, 2), Slots(db, "City").Single(s => s.Name == "RegionCity"));
 
         db.EnforceForeignKeys = true;
-        Assert.Throws<InvalidOperationException>(() => city.Insert(new Row { ["Id"] = 3, ["Country"] = "AU", ["Code"] = 2 }));
+        Assert.Throws<ConstraintViolationException>(() => city.Insert(new Row { ["Id"] = 3, ["Country"] = "AU", ["Code"] = 2 }));
         region.DeleteRow("Id", 2);
         Assert.False(city.NewIndexCursor().FindRowByPrimaryKey(2)!.ContainsKey("Country"));
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "City", expectedRows: 2));
@@ -320,8 +320,8 @@ public sealed class CreateRelationshipTests : IDisposable
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Staff", expectedRows: 3));
 
         db.EnforceForeignKeys = true;
-        Assert.Throws<InvalidOperationException>(() => staff.Insert(new Row { ["Id"] = 4, ["Manager"] = 9 }));
-        Assert.Throws<InvalidOperationException>(() => staff.DeleteRow("Id", 1));
+        Assert.Throws<ConstraintViolationException>(() => staff.Insert(new Row { ["Id"] = 4, ["Manager"] = 9 }));
+        Assert.Throws<ConstraintViolationException>(() => staff.DeleteRow("Id", 1));
     }
 
     // indexV2003.mdb's Table1 refers to Table2 and Table3 already; its otherfk3 refers to nothing yet.
@@ -359,7 +359,7 @@ public sealed class CreateRelationshipTests : IDisposable
         using var reopened = Database.Open(_path);
         reopened.EnforceForeignKeys = true;
         var referring = reopened.GetTable("Table1").ReadAllRows();
-        Assert.Throws<InvalidOperationException>(() => reopened.GetTable("Table1").UpdateByPrimaryKey(referring[0]["id"]!, new Row { ["otherfk3"] = 999 }));
+        Assert.Throws<ConstraintViolationException>(() => reopened.GetTable("Table1").UpdateByPrimaryKey(referring[0]["id"]!, new Row { ["otherfk3"] = 999 }));
         // Table3's row is referred to by the relationship Access made as well, which cascades its key too.
         reopened.GetTable("Table3").UpdateByPrimaryKey(referring[0]["otherfk3"]!, new Row { ["id"] = 77 });
         Assert.All(reopened.GetTable("Table1").ReadAllRows(), row => Assert.Equal(77, row["otherfk3"]));
@@ -466,7 +466,7 @@ public sealed class CreateRelationshipTests : IDisposable
         using (var db = ParentAndChild())
             db.GetTable("Child").Insert(new Row { ["Id"] = 77, ["K"] = 99, ["Name"] = "an orphan" });
 
-        AssertRefusedAndUnchanged<InvalidOperationException>(ByK(), "existing data");
+        AssertRefusedAndUnchanged<ConstraintViolationException>(ByK(), "existing data");
 
         // Without referential integrity the same relationship is made: nothing is asked of the rows.
         using var again = Database.Open(_path);

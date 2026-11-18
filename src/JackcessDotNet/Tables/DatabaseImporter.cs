@@ -381,7 +381,7 @@ public static class DatabaseImporter
     /// looked for here. A column that is not a key may repeat a number, as it may in Access.
     /// </para>
     /// </summary>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="ConstraintViolationException">
     /// A row would be a duplicate in the primary key or another unique index, of a row of the table or - in the
     /// primary key - of another row of the batch.
     /// </exception>
@@ -399,7 +399,7 @@ public static class DatabaseImporter
             var seen = new HashSet<int>();
             foreach (int number in supplied)
                 if (!seen.Add(number))
-                    throw new InvalidOperationException(
+                    throw new ConstraintViolationException(
                         $"Two rows to import would be duplicates in {target.Name}'s primary key, which is unique: " +
                         $"both hold {number} for {identity.Name}. The table is left as it was.");
         }

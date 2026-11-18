@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Authentication;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -47,7 +48,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
         if (!File.Exists(path)) return;
 
-        Assert.Throws<UnauthorizedAccessException>(
+        Assert.Throws<InvalidCredentialException>(
             () => Database.Open(path, "definitely-not-1234"));
     }
 
@@ -98,7 +99,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, fixtureName);
         if (!File.Exists(path)) return;
 
-        Assert.Throws<UnauthorizedAccessException>(() => Database.Open(path, "definitely-wrong"));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, "definitely-wrong"));
     }
 
     // ── Write / round-trip tests ─────────────────────────────────────────────
@@ -256,7 +257,7 @@ public sealed class OfficeCryptTests
         string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
         if (!File.Exists(path)) return;
 
-        Assert.Throws<UnauthorizedAccessException>(() => Database.Open(path, "wrong"));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, "wrong"));
     }
 
     // ── Scheme reporting per encryption variant ─────────────────────────────

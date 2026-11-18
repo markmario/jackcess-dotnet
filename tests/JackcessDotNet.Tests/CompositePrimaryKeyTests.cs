@@ -176,7 +176,7 @@ public sealed class CompositePrimaryKeyTests : IDisposable
             new ColumnBuilder("B", DataType.Long).Build(),
         }, primaryKeyColumns: new[] { "A", "B" });
 
-        var refused = Assert.Throws<InvalidOperationException>(() => t.Insert(new Row { ["A"] = 1, ["B"] = null }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => t.Insert(new Row { ["A"] = 1, ["B"] = null }));
         Assert.Contains("primary key does not take a null", refused.Message);
         Assert.Empty(t.ReadAllRows());
     }

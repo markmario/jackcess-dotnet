@@ -86,7 +86,7 @@ public sealed class AddIndexTests : IDisposable
         for (int i = 2; i <= 900; i += 4) earlier.DeleteRow("Id", i);
 
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Rows", expectedRows: 675));
-        var refused = Assert.Throws<InvalidOperationException>(() => earlier.Insert(new Row { ["Id"] = 5_000, ["Code"] = "CHANGED 5" }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => earlier.Insert(new Row { ["Id"] = 5_000, ["Code"] = "CHANGED 5" }));
         Assert.Contains("ByCode", refused.Message);
     }
 
@@ -164,7 +164,7 @@ public sealed class AddIndexTests : IDisposable
         using (var db = CreateWithRows(400))
             db.GetTable("Rows").UpdateByPrimaryKey(399, new Row { ["Code"] = "CODE 000007" });   // the same key as row 7's, in another case
 
-        AssertRefusedAndUnchanged<InvalidOperationException>(
+        AssertRefusedAndUnchanged<ConstraintViolationException>(
             table => table.AddIndex(new IndexDefinition("ByCode", "Code") { IsUnique = true }), "unique");
     }
 
@@ -182,7 +182,7 @@ public sealed class AddIndexTests : IDisposable
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Rows", expectedRows: 400));
 
         // And it is unique for the rows that have both.
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 401, ["Grp"] = 2, ["Seq"] = (short)2 }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 401, ["Grp"] = 2, ["Seq"] = (short)2 }));
         Assert.Contains("UniqueWithNulls", refused.Message);
         table.Insert(new Row { ["Id"] = 402, ["Grp"] = 1, ["Seq"] = null });
     }
@@ -191,7 +191,7 @@ public sealed class AddIndexTests : IDisposable
     public void An_index_that_requires_its_values_is_refused_when_a_row_has_a_null_and_nothing_changes()
     {
         CreateWithRows(40).Dispose();
-        AssertRefusedAndUnchanged<InvalidOperationException>(
+        AssertRefusedAndUnchanged<ConstraintViolationException>(
             table => table.AddIndex(new IndexDefinition("ByGroup", "Grp") { IsRequired = true }), "requires");
     }
 

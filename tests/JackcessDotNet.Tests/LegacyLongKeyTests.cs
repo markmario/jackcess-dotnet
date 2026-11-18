@@ -160,7 +160,7 @@ public sealed class LegacyLongKeyTests : IDisposable
         // key is moved in Whole_keys_..._are_replaced_by_cut_ones_on_update.)
         // Rows 23 and 24 are cut to one entry, which a unique key holds once: an earlier release took both, and
         // neither can be written again while the other is there - rewritten, it would be the other's duplicate.
-        Assert.Throws<InvalidOperationException>(() => coded.UpdateByPrimaryKey(CutAlike1, new Row { ["N"] = 230 }));
+        Assert.Throws<ConstraintViolationException>(() => coded.UpdateByPrimaryKey(CutAlike1, new Row { ["N"] = 230 }));
         coded.DeleteRow("Code", CutAlike2);
         coded.UpdateByPrimaryKey(CutAlike1, new Row { ["N"] = 230 });
         Assert.Equal(1, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Coded", expectedRows: 24));   // every long key left is cut
@@ -177,11 +177,11 @@ public sealed class LegacyLongKeyTests : IDisposable
         coded.DeleteRow("Code", CutAlike2);   // leaves the first of the pair, whole
         var before = IndexChecks.AllPages(db);
 
-        Assert.Throws<InvalidOperationException>(() => coded.Insert(new Row { ["Code"] = Long255, ["N"] = 99 }));
-        Assert.Throws<InvalidOperationException>(() => coded.Insert(new Row { ["Code"] = Long255.ToUpperInvariant(), ["N"] = 99 }));
-        Assert.Throws<InvalidOperationException>(() => coded.Insert(new Row { ["Code"] = CutAlike2, ["N"] = 99 }));   // one entry with the first, to Access
-        Assert.Throws<InvalidOperationException>(() => coded.UpdateByPrimaryKey("short 01", new Row { ["Code"] = Long254e }));
-        Assert.Throws<InvalidOperationException>(() => paired.Insert(new Row { ["A"] = PairA(4), ["B"] = PairB(4), ["N"] = 99 }));
+        Assert.Throws<ConstraintViolationException>(() => coded.Insert(new Row { ["Code"] = Long255, ["N"] = 99 }));
+        Assert.Throws<ConstraintViolationException>(() => coded.Insert(new Row { ["Code"] = Long255.ToUpperInvariant(), ["N"] = 99 }));
+        Assert.Throws<ConstraintViolationException>(() => coded.Insert(new Row { ["Code"] = CutAlike2, ["N"] = 99 }));   // one entry with the first, to Access
+        Assert.Throws<ConstraintViolationException>(() => coded.UpdateByPrimaryKey("short 01", new Row { ["Code"] = Long254e }));
+        Assert.Throws<ConstraintViolationException>(() => paired.Insert(new Row { ["A"] = PairA(4), ["B"] = PairB(4), ["N"] = 99 }));
         IndexChecks.AssertUnchanged(before, db);
 
         coded.Insert(new Row { ["Code"] = new string('é', 254) + "x", ["N"] = 99 });   // a long key no row has
@@ -290,8 +290,8 @@ public sealed class LegacyLongKeyTests : IDisposable
         using var db = NewDatabase(general);
         var table = CreateWithWholeKeys(db);
         var before = IndexChecks.AllPages(db);
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 50, ["Code"] = LongCode(7) }));
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(15, new Row { ["Code"] = LongCode(7).ToUpperInvariant() }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 50, ["Code"] = LongCode(7) }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(15, new Row { ["Code"] = LongCode(7).ToUpperInvariant() }));
         IndexChecks.AssertUnchanged(before, db);
 
         // An index that is not unique holds the same value twice: one whole, one cut.
@@ -370,13 +370,13 @@ public sealed class LegacyLongKeyTests : IDisposable
         db.EnforceForeignKeys = true;
         var before = IndexChecks.AllPages(db);
 
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Parent").DeleteRow("Code", LongCode(1)));
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Parent").UpdateByPrimaryKey(LongCode(1), new Row { ["Code"] = "renamed" }));
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Child").Insert(new Row { ["Id"] = 9, ["Code"] = LongCode(3) }));   // no such parent
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Parent").DeleteRow("Code", LongCode(1)));
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Parent").UpdateByPrimaryKey(LongCode(1), new Row { ["Code"] = "renamed" }));
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Child").Insert(new Row { ["Id"] = 9, ["Code"] = LongCode(3) }));   // no such parent
         IndexChecks.AssertUnchanged(before, db);
 
         db.GetTable("Child").Insert(new Row { ["Id"] = 9, ["Code"] = LongCode(2) });   // a parent whose entry is whole is found
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Parent").DeleteRow("Code", LongCode(2)));   // and it has a child now
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Parent").DeleteRow("Code", LongCode(2)));   // and it has a child now
     }
 
     // A cascade update finds the children under their whole keys and moves them: every row that named the

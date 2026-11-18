@@ -46,7 +46,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
         byte[] before = File.ReadAllBytes(_path);
         string message;
         using (var db = OpenVerifying())
-            message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
+            message = Assert.Throws<ConstraintViolationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         return message;
     }
@@ -154,7 +154,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
                 Assert.True(reads <= InsertReads, $"insert {i} of the session read {reads} pages");
             }
             Assert.True(ReadsOf(db, () => db.GetTable("T").Validate(RowOf(Many + 100))) <= InsertReads);
-            Assert.Throws<InvalidOperationException>(() => db.GetTable("T").Insert(RowOf(Many + 7)));
+            Assert.Throws<ConstraintViolationException>(() => db.GetTable("T").Insert(RowOf(Many + 7)));
         }
 
         using var read = OpenVerifying();

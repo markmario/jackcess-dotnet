@@ -412,7 +412,7 @@ public sealed class AutoNumberTests : IDisposable
         table.Insert(new Row { ["Txt"] = "two" });
         table.AllowAutoNumberInsert = true;
 
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(1, new Row { ["Id"] = 2, ["Txt"] = "x" }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(1, new Row { ["Id"] = 2, ["Txt"] = "x" }));
 
         Assert.Equal(new[] { 1, 2 }, Ids(table));
         var cursor = table.NewIndexCursor();
@@ -533,7 +533,7 @@ public sealed class AutoNumberTests : IDisposable
         var table = db.ImportTable(People(0, 0));
         long length = new FileInfo(_path).Length;
 
-        var refused = Assert.Throws<InvalidOperationException>(() => db.ImportTable(People(0, 9, 2),
+        var refused = Assert.Throws<ConstraintViolationException>(() => db.ImportTable(People(0, 9, 2),
             options: new ImportOptions { AppendIfExists = true, KeepIdentity = true }));
 
         Assert.Contains("another row holds 2 for Id", refused.Message);   // the refusal an insert of the row would be
@@ -549,7 +549,7 @@ public sealed class AutoNumberTests : IDisposable
     {
         using var db = Database.Create(_path, JetVersion.Jet4);
 
-        Assert.Throws<InvalidOperationException>(() => db.ImportTable(People(4, 0, 4)));
+        Assert.Throws<ConstraintViolationException>(() => db.ImportTable(People(4, 0, 4)));
 
         Assert.Empty(db.GetTable("Person").ReadAllRows());
     }

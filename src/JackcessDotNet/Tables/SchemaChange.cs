@@ -248,7 +248,7 @@ internal static class SchemaChange
                 }
 
                 if (nulls > 0 && require)
-                    throw new InvalidOperationException(
+                    throw new ConstraintViolationException(
                         $"Index '{planned.Name}' requires a value in each of its columns, and a row of '{table.Name}' has none for " +
                         $"{string.Join(", ", columns.Where((_, i) => values[i] is null).Select(c => c.Column.Name))}. Nothing was changed.");
                 if (nulls == values.Length && ignore) continue;
@@ -275,7 +275,7 @@ internal static class SchemaChange
             // A key longer than an entry holds is cut (IndexKeys.Encode), and two values cut to the same entry
             // are duplicates to a unique index, in Access as here.
             else if (unique && !entries[i].HasNull && !entries[i - 1].HasNull)
-                throw new InvalidOperationException(
+                throw new ConstraintViolationException(
                     $"Index '{planned.Name}' is unique, and two rows of '{table.Name}' hold " +
                     $"{string.Join(", ", columns.Select((c, n) => $"{Shown(entries[i].Values[n])} for {c.Column.Name}"))}. Nothing was changed.");
         }
@@ -401,12 +401,8 @@ internal static class SchemaChange
         bool oneToOne = UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null;
         if (oneToOne) flags |= OneToOneFlag;
 
-        Table relationships;
-        try { relationships = db.GetTable(RelationshipsTable); }
-        catch (InvalidOperationException)
-        {
+        if (!db.TryGetTable(RelationshipsTable, out var relationships))
             throw new NotSupportedException($"The database has no {RelationshipsTable} table to hold a relationship. Nothing was changed.");
-        }
         if (relationships.InsertRefusal is { } refusal) throw new NotSupportedException(refusal);
 
         // The name: the one asked for, which must be free, or one made of the tables' names and made free.
@@ -462,7 +458,7 @@ internal static class SchemaChange
             EnsureReadWhole(child.Definition);
 
             if (ForeignKeyEnforcer.FirstOrphan(relationship, parent, child) is { } orphan)
-                throw new InvalidOperationException(
+                throw new ConstraintViolationException(
                     $"Relationship '{name}' cannot have referential integrity: existing data in '{toName}' violates it - {orphan}. Nothing was changed.");
 
             // On the referenced table, an index Access names .rB, .rC... that shares the tree of the unique index

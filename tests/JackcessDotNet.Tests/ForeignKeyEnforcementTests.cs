@@ -74,7 +74,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         bad[childCol] = SentinelForType(childTable.Columns.First(c =>
             c.Name.Equals(childCol, StringComparison.OrdinalIgnoreCase)).DataType);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => childTable.Insert(bad));
+        var ex = Assert.Throws<ConstraintViolationException>(() => childTable.Insert(bad));
         Assert.Contains("Foreign-key violation", ex.Message);
         Assert.Contains(rel.Name, ex.Message);
     }
@@ -158,7 +158,7 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
             c.Name.Equals(childCol, StringComparison.OrdinalIgnoreCase)).DataType);
 
         db.EnforceForeignKeys = true;
-        Assert.Throws<InvalidOperationException>(() => childTable.Insert(bad));
+        Assert.Throws<ConstraintViolationException>(() => childTable.Insert(bad));
 
         db.EnforceForeignKeys = false;
         // Now the same row goes through (or fails for non-FK reasons).
