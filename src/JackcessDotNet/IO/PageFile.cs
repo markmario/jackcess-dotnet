@@ -47,12 +47,39 @@ public sealed class PageFile : IDisposable
     /// (read-only access avoids contending with other readers for write locks
     /// on corpus files mounted from read-only filesystems or git checkouts).
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="format"/> is one this library only reads (<see cref="JetFormat.IsReadOnly"/>: Access 97's)
+    /// and <paramref name="mode"/> would create or empty the file. Nothing is created or changed.
+    /// </exception>
     public PageFile(string path, JetFormat format, FileMode mode, FileAccess access)
     {
         _path   = path   ?? throw new ArgumentNullException(nameof(path));
         _format = format ?? throw new ArgumentNullException(nameof(format));
+
+        // A file in a format that is only read is never held by a handle that could write to it: whatever is
+        // asked of it later, not a byte of it changes.
+        if (format.IsReadOnly)
+        {
+            if (mode != FileMode.Open) throw ReadOnlyFormat($"'{path}' was not created.");
+            access = FileAccess.Read;
+        }
         _stream = new FileStream(path, mode, access, FileShare.ReadWrite);
     }
+
+    /// <summary>
+    /// Refuses a change to a file in a format this library only reads (<see cref="JetFormat.IsReadOnly"/>). Every
+    /// operation that writes calls it before it does anything else, so a refused one leaves the file, and what
+    /// the caller gave it, as they were.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one.</exception>
+    internal void EnsureWritable()
+    {
+        if (_format.IsReadOnly) throw ReadOnlyFormat($"'{_path}' was not changed.");
+    }
+
+    /// <summary>What refuses a write to, or the creation of, a file in a format that is only read.</summary>
+    internal static NotSupportedException ReadOnlyFormat(string whatWasNotDone)
+        => new("Access 97 (Jet 3) files are read-only in this library, as they are in Jackcess: " + whatWasNotDone);
 
     public byte[] ReadPage(int pageNumber)
     {
@@ -106,6 +133,7 @@ public sealed class PageFile : IDisposable
         if (data.Length != _format.PageSize)
             throw new ArgumentException(
                 $"Page data must be exactly {_format.PageSize} bytes for {Format.Version}.");
+        EnsureWritable();
 
         byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
@@ -135,6 +163,7 @@ public sealed class PageFile : IDisposable
     /// </summary>
     internal UndoScope BeginUndo()
     {
+        EnsureWritable();
         if (_undo is not null)
             throw new InvalidOperationException("A change to this file is already being kept for undoing; another cannot begin inside it.");
         return _undo = new UndoScope(this);
@@ -200,6 +229,7 @@ public sealed class PageFile : IDisposable
     {
         if (source is null)
             throw new ArgumentNullException(nameof(source));
+        EnsureWritable();
 
         _kept.Clear();
         _stream.Seek(0, SeekOrigin.Begin);

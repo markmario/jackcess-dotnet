@@ -131,9 +131,15 @@ public sealed class Database : IDisposable
     /// Creates a new blank .mdb file at <paramref name="path"/> and returns an
     /// open <see cref="Database"/> ready for use.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="version"/> is <see cref="JetVersion.Jet3"/>: Access 97 files are read, and neither created
+    /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
+    /// it was.
+    /// </exception>
     public static Database Create(string path, JetVersion version)
     {
         var format = version == JetVersion.Jet3 ? JetFormat.Jet3 : JetFormat.Jet4;
+        if (format.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
         var file   = new PageFile(path, format, FileMode.Create);
         var db     = new Database(file);
 
@@ -269,7 +275,10 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Opens an existing .mdb / .accdb file.
+    /// Opens an existing .mdb / .accdb file. An Access 97 file (<see cref="JetVersion.Jet3"/>) is opened for
+    /// reading only, as Jackcess opens one: its tables and rows are read, and every change to it - a row
+    /// inserted, updated or deleted, a table created or imported - is refused with
+    /// <see cref="NotSupportedException"/> before anything is written.
     /// </summary>
     public static Database Open(string path, JetVersion version)
     {
@@ -322,7 +331,7 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Opens an existing Access database file, auto-detecting the Jet format
     /// version from the byte at file offset 0x14:
-    ///   0x00 = Jet3 (Access 97)
+    ///   0x00 = Jet3 (Access 97), which is opened for reading only
     ///   0x01 = Jet4 (Access 2000-2003)
     ///   0x02+ = .accdb formats (not yet supported)
     /// </summary>
@@ -505,7 +514,8 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
-    ///   or Complex column, or text in a sort order other than General - Legacy and General. Nothing is created.
+    ///   or Complex column, or text in a sort order other than General - Legacy and General; or the database is
+    ///   an Access 97 file, which is only read. Nothing is created.
     /// </exception>
     public Table CreateTable(string name, IReadOnlyList<Column> columns,
                              IReadOnlyList<string>? primaryKeyColumns,
@@ -523,6 +533,7 @@ public sealed class Database : IDisposable
             throw new ArgumentException("Table name must not be empty.", nameof(name));
         if (columns is null || columns.Count == 0)
             throw new ArgumentException("At least one column is required.", nameof(columns));
+        _file.EnsureWritable();
 
         var format = _file.Format;
 

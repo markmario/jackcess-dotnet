@@ -6,6 +6,12 @@ public sealed class JetFormat
 {
     // ── Per-version row-encoding properties ───────────────────────────────────
     public JetVersion Version { get; }
+    /// <summary>
+    /// True for a format this library reads and does not write: Access 97's (Jet3), as in Jackcess, whose
+    /// <c>JetFormat.READ_ONLY</c> this is. A file in it is opened for reading only, and creating one, or changing
+    /// anything in one, is refused with <see cref="NotSupportedException"/>.
+    /// </summary>
+    public bool IsReadOnly { get; }
     public int PageSize { get; }
     public bool HasPageChecksum { get; }
     public Encoding TextEncoding { get; }
@@ -170,7 +176,7 @@ public sealed class JetFormat
         // Index page header
         int OffsetPrevIndexPage, int OffsetNextIndexPage, int OffsetChildTailIndexPage,
         int OffsetIndexCompressedByteCount, int OffsetIndexEntryMask, int SizeIndexEntryMask,
-        int SizeIndexCompressedByteCount = 2);
+        int SizeIndexCompressedByteCount = 2, bool IsReadOnly = false);
 
     private JetFormat(JetVersion version, FormatSpec s)
     {
@@ -220,6 +226,7 @@ public sealed class JetFormat
         OffsetIndexEntryMask             = s.OffsetIndexEntryMask;
         SizeIndexEntryMask               = s.SizeIndexEntryMask;
         SizeIndexCompressedByteCount     = s.SizeIndexCompressedByteCount;
+        IsReadOnly                       = s.IsReadOnly;
     }
 
     public static JetFormat Jet3 { get; } = new(JetVersion.Jet3, new FormatSpec(
@@ -267,7 +274,8 @@ public sealed class JetFormat
         OffsetIndexCompressedByteCount:  20,
         OffsetIndexEntryMask:            22,
         SizeIndexEntryMask:              226,
-        SizeIndexCompressedByteCount:    1));
+        SizeIndexCompressedByteCount:    1,
+        IsReadOnly:                      true));
 
     // Jet4 spec extracted so the ACE 12-17 (.accdb) instances can share it.
     // On-disk layout for unencrypted .accdb is identical to Jet4; what differs

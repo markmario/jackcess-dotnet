@@ -71,7 +71,11 @@ public sealed class Table
     /// from now on is given a number up to it. An import calls it with the highest number its rows bring, before
     /// it writes any of them.
     /// </summary>
-    internal void RaiseLastAutoNumber(int value) => _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, value);
+    internal void RaiseLastAutoNumber(int value)
+    {
+        _file.EnsureWritable();
+        _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, value);
+    }
 
     private PropertyMaps? _propertiesCache;
     /// <summary>
@@ -126,11 +130,13 @@ public sealed class Table
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an AutoNumber column that is neither Long nor Guid, or an index whose keys this library does
-    /// not write as Access does. Nothing is written.
+    /// not write as Access does; or it is a table of an Access 97 file, which is only read. Nothing is written,
+    /// and <paramref name="row"/> is as it was.
     /// </exception>
     public void Insert(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
 
         var given = AutoNumberValuesIn(row);
@@ -233,7 +239,8 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
-    /// column, <see cref="NotSupportedException"/> for a table with an index that cannot be kept,
+    /// column, <see cref="NotSupportedException"/> for a table with an index that cannot be kept or a table of
+    /// an Access 97 file,
     /// <see cref="InvalidOperationException"/> for a null a primary key or required index does not take or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
@@ -244,6 +251,7 @@ public sealed class Table
     public void Validate(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
         var encoder = new RowEncoder(_file.Format, _definition);
         encoder.EnsureWritable();
@@ -272,8 +280,13 @@ public sealed class Table
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
     /// in a column of the primary key or of an index that requires its values. The row is left as it was.
     /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
+    /// 97 file, which is only read. Nothing is written.
+    /// </exception>
     public void UpdateByPrimaryKey(object primaryKeyValue, Row newValues)
     {
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
 
         // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
@@ -359,13 +372,18 @@ public sealed class Table
     /// </summary>
     internal void RewriteRowAt(int rowPtr, Row changes)
     {
+        _file.EnsureWritable();
         var entries = new EntryMove(_indexes, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
     }
 
     /// <summary>Deletes the row at <paramref name="rowPtr"/>, as <see cref="DeleteRow"/> does the row it finds.</summary>
-    internal void DeleteRowAt(int rowPtr) => RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+    internal void DeleteRowAt(int rowPtr)
+    {
+        _file.EnsureWritable();
+        RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+    }
 
     /// <summary>The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, or null when no row is there.</summary>
     internal Row? ReadRowAt(int rowPtr, IReadOnlyList<Column> columns) => _dataWriter.ReadRowAt(_definition, rowPtr, columns);
@@ -381,8 +399,13 @@ public sealed class Table
     /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
     /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
+    /// 97 file, which is only read. Nothing is deleted.
+    /// </exception>
     public void DeleteRow(string columnName, object value)
     {
+        _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
         if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
         {
