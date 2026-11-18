@@ -247,6 +247,61 @@ from end to end and held in memory until the change is written: some 200 bytes a
 for a table of 300,000 rows. A change that would rewrite a row of a table Access has deleted a column from is
 refused (`NotSupportedException`): rows of such a table are not yet written correctly.
 
+## Changing a table, and creating a relationship
+
+A table that already has rows - one Access made or one this library made - can be given a column or an index,
+and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do
+([qcatco/exportmdb.interop#37](https://github.com/qcatco/exportmdb.interop/issues/37)):
+
+```csharp
+using var db = Database.Open("Shop.mdb");
+var orders = db.GetTable("Orders");
+
+orders.AddColumn(new ColumnBuilder("Shipped", DataType.ShortDateTime).Build());
+orders.AddIndex(new IndexDefinition("ByCustomerAndDate", "CustomerId", "Placed") { IsUnique = true });
+
+db.CreateRelationship(new RelationshipDefinition("Customers", "Id", "Orders", "CustomerId")
+{
+    HasReferentialIntegrity = true,
+    CascadeDeletes = true,
+});
+```
+
+Each change is all or nothing: what can refuse it is found before anything is written, and what is written is
+taken back if writing it fails, so a refused change leaves the file byte for byte as it was. Access is the referee
+of what is written (ExportMdb.Interop's `SchemaChangesInAccessTests`): beside the same index made by ACE, or the
+same relationship made by DAO, in a twin file, DAO lists the same thing and the two definitions hold the same
+index slots.
+
+- **A column** goes after the table's other columns. The rows already there are not rewritten: each reads the
+  new column as null - a Yes/No column as No - as Access shows them. So an AutoNumber column is added only to a
+  table with no rows (Access would number the rows there are), and a complex or calculated column is not added.
+- **An index** is built over the rows already there and kept on every write after. It is refused for what an
+  insert would be: two rows with one key in a unique index (rows with a null in it aside), a null in an index
+  that requires its values, a column whose keys this library does not write (Decimal, Binary, OLE, Complex, text
+  in another sort order), a value no key is made for. An index like one the table has shares its tree. A
+  primary key cannot be added to a table that has none.
+- **A relationship** is a row of `MSysRelationships` for each pair of columns and an entry in the catalog. With
+  referential integrity it also has the two indexes Access keeps for one: on the referenced table one named
+  `.rB`, `.rC`... that shares the tree of the unique index on the referenced columns - there must be one - and
+  on the referring table one with the relationship's name on the foreign key, which shares the tree of a plain
+  index on exactly those columns or is built. It is refused when a row already there refers to no parent, when
+  the matched columns differ in type, and when its name is a relationship's or an index's of the referring
+  table. `EnforceForeignKeys` keeps it from then on.
+- **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
+  Relationships window and Jackcess mark it, and its foreign key's index is then unique, as Access makes it
+  (Jackcess gives it a plain one).
+- **Where Access and Jackcess differ, Access is followed**: a name that is taken is refused, not changed; a
+  cycle of cascading relationships is allowed; a table's index slots stay in the order of their names; a new
+  index's block carries the counts Access puts there.
+- **A table's definition stays on one page**, which is all this library reads of one. A column or an index that
+  would take it further is refused, and a table whose definition already runs over pages is not changed: no
+  table is left that the library could then not write rows to. (Jackcess writes definitions of several pages.)
+- **Usage maps.** A new index's pages, and a new Memo or OLE column's, are listed in usage maps on a page of
+  their own - 4 KB each - as for a table this library creates; Access finds room on the table's usage-map page
+  first.
+- Nothing is dropped or renamed: no column, index or relationship.
+
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
 Skip the schema boilerplate — the importer infers columns from the source type:
@@ -300,6 +355,9 @@ materialising the whole table.
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
 | Foreign-key enforcement, with cascades (opt-in)   | ✅      |
+| Add a column or an index to a table that has rows | ✅ While the definition fits one page; no AutoNumber column for a table with rows; no primary key |
+| Create a relationship, with referential integrity and cascades | ✅ |
+| Drop or rename a column, index, table or relationship | ❌ Not yet |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
