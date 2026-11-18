@@ -162,7 +162,8 @@ public sealed class Table
 
     /// <summary>
     /// The table's rows, in the order they are stored, which for a table only added to is the order they were
-    /// inserted in. Deleted rows are passed, and Memo and OLE values are read whole.
+    /// inserted in. Deleted rows are passed, and Memo and OLE values are read whole. Each row has an entry for
+    /// every column of the table, in the table's column order: <c>null</c> for a column with no value.
     /// <para>
     /// The rows are read as they are enumerated, a page at a time, so a table of any size can be gone through
     /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
@@ -196,13 +197,10 @@ public sealed class Table
                     // Deleted rows are passed; an overflow row is read where its pointer leads.
                     if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
 
-                    var row = new Row();
+                    // Every column has its entry, in the table's order: null for a column with no value.
+                    var row = new Row(definition.Columns.Count);
                     foreach (var col in definition.Columns)
-                    {
-                        object? val = decoder.Decode(rowBytes, col);
-                        if (val is not null)
-                            row[col.Name] = val;
-                    }
+                        row[col.Name] = decoder.Decode(rowBytes, col);
                     yield return row;
                 }
             }

@@ -97,7 +97,8 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// The row the cursor is on, or null when it is on none: before the first row, after the last, or after a
-    /// move that found no row.
+    /// move that found no row. The row has an entry for every column of the table, in the table's column order:
+    /// <c>null</c> for a column with no value.
     /// </summary>
     public Row? Current => _currentRow;
 
@@ -213,12 +214,11 @@ public class Cursor : IEnumerable<Row>
     {
         if (DataRows.Read(_file, page, rowIndex) is not { } rowBytes) return null;
 
-        var row = new Row();
-        foreach (var col in ColumnsToRead ?? _definition.Columns)
-        {
-            object? val = ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col);
-            if (val is not null) row[col.Name] = val;
-        }
+        // Every column read has its entry, in the table's order: null for a column with no value.
+        var columns = ColumnsToRead ?? _definition.Columns;
+        var row = new Row(columns.Count);
+        foreach (var col in columns)
+            row[col.Name] = ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col);
         return row;
     }
 

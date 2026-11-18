@@ -183,7 +183,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
         }
         using var reopen = Database.Open(_path);
         var rows = reopen.GetTable("T").Rows.ToList();
-        Assert.False(rows[0].ContainsKey("V"),
-            "Memo column with no value should not appear in the read row (null filtered out).");
+        Assert.True(rows[0].ContainsKey("V"), "The read row has an entry for every column.");
+        Assert.Null(rows[0]["V"]);
     }
 }

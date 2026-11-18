@@ -22,9 +22,10 @@ public sealed class RowLayoutTests : IDisposable
     private void CopyOf(string version, string file)
         => File.Copy(TestCorpus.File(version, file) ?? throw new FileNotFoundException($"{file} is not in the corpus."), _path, overwrite: true);
 
+    // Each row with the columns it has a value in.
     private static List<string> Rows(Table table)
         => table.Rows.ToList()
-            .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
+            .Select(row => string.Join(", ", row.Where(v => v.Value is not null).OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
 

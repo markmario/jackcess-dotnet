@@ -808,7 +808,7 @@ internal sealed class ForeignKeyEnforcer
                 {
                     if (Matches(kept)) return kept;
                 }
-                else if ((nullMatchesNull || row.ContainsKey(column))
+                else if ((nullMatchesNull || !row.IsNull(column))
                       && DataPageWriter.PrimaryKeysEqual(row.TryGetValue(column, out var stored) ? stored : null, value))
                 {
                     return ReadAt(pointer);

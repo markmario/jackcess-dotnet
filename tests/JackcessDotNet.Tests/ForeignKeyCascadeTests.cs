@@ -93,10 +93,10 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         return db;
     }
 
-    /// <summary>A table's rows as text, in a fixed order: "Id=10, K=1, Name=c10".</summary>
+    /// <summary>A table's rows as text, in a fixed order, each with the columns it has a value in: "Id=10, K=1, Name=c10".</summary>
     private static List<string> Rows(Database db, string table)
         => db.GetTable(table).Rows.ToList()
-            .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
+            .Select(row => string.Join(", ", row.Where(v => v.Value is not null).OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
 

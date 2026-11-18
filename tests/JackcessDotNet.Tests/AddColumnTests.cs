@@ -61,7 +61,7 @@ public sealed class AddColumnTests : IDisposable
             {
                 // A Yes/No column holds no null: a row written before it was added is No, as in Access.
                 if (column.DataType == DataType.Boolean) Assert.Equal(false, row[column.Name]);
-                else Assert.False(row.ContainsKey(column.Name), $"row {row["Id"]} has a value for {column.Name}");
+                else Assert.True(row.ContainsKey(column.Name) && row[column.Name] is null, $"row {row["Id"]} has a value for {column.Name}");
             }
         }
     }
@@ -130,7 +130,7 @@ public sealed class AddColumnTests : IDisposable
         earlier.Insert(new Row { ["Id"] = 4, ["Name"] = "four", ["Whole"] = 44 });
 
         Assert.Equal(44, db.GetTable("Things").FindRowByPrimaryKey(4)!["Whole"]);
-        Assert.False(db.GetTable("Things").FindRowByPrimaryKey(3)!.ContainsKey("Whole"));
+        Assert.Null(db.GetTable("Things").FindRowByPrimaryKey(3)!["Whole"]);
     }
 
     // indexV2003.mdb's Table1: five columns, the primary key, an index and two relationships' indexes, four rows.
@@ -167,7 +167,8 @@ public sealed class AddColumnTests : IDisposable
         {
             var now = rows.Single(r => Equals(r["id"], was["id"]));
             foreach (var pair in was) Assert.Equal(pair.Value, now[pair.Key]);
-            Assert.Equal(was.Count + 1, now.Count);   // what it had, and No for the Yes/No column
+            Assert.Equal(was.Count(v => v.Value is not null) + 1, now.Count(v => v.Value is not null));   // what it had, and No for the Yes/No column
+            Assert.Equal(read.Columns.Count, now.Count);
             Assert.Equal(false, now["Flag"]);
         }
         var added = rows.Single(r => Equals(r["id"], 900));
@@ -200,7 +201,7 @@ public sealed class AddColumnTests : IDisposable
         foreach (var was in before)
         {
             var now = rows.Single(r => Equals(r["id"], was["id"]));
-            Assert.Equal(was.Count, now.Count);
+            Assert.Equal(was.Count(v => v.Value is not null), now.Count(v => v.Value is not null));
             foreach (var pair in was) Assert.Equal(pair.Value, now[pair.Key]);
         }
         var added = rows.Single(r => Equals(r["id"], 77));

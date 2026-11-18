@@ -293,7 +293,7 @@ public sealed class CreateRelationshipTests : IDisposable
         db.EnforceForeignKeys = true;
         Assert.Throws<ConstraintViolationException>(() => city.Insert(new Row { ["Id"] = 3, ["Country"] = "AU", ["Code"] = 2 }));
         region.DeleteRow("Id", 2);
-        Assert.False(city.FindRowByPrimaryKey(2)!.ContainsKey("Country"));
+        Assert.Null(city.FindRowByPrimaryKey(2)!["Country"]);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "City", expectedRows: 2));
     }
 

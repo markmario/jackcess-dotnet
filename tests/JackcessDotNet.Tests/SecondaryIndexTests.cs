@@ -411,10 +411,10 @@ public sealed class SecondaryIndexTests : IDisposable
 
         // Stored as no value...
         var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
-        Assert.Equal(new[] { "Id" }, rows[1].Keys);
+        Assert.Equal(new[] { "Id" }, rows[1].Where(v => v.Value is not null).Select(v => v.Key));
         Assert.Equal("", rows[2]["Code"]);
-        Assert.False(rows[3].ContainsKey("Code"));
-        Assert.False(rows[4].ContainsKey("Code"));
+        Assert.Null(rows[3]["Code"]);
+        Assert.Null(rows[4]["Code"]);
         // ...and keyed as none: the index holds what a scan finds.
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Values", expectedRows: 4));
         var byCode = db.GetTable("Values").Indexes.Single(ix => ix.Name == "ByCode");

@@ -339,7 +339,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
                 .First(t => t.Columns.Any(c => c.DataType == DataType.Text) && t.Indexes.Count == 0 && !t.Definition.HasUnreadIndexes);
             var text = table.Columns.First(c => c.DataType == DataType.Text);
             var rows = table.Rows.ToList();
-            var held = rows.First(row => row.ContainsKey(text.Name));
+            var held = rows.First(row => !row.IsNull(text.Name));
 
             AssertRefused(() => table.Insert(new Row { [text.Name] = "x" }));
             AssertRefused(() => table.UpdateByPrimaryKey(1, new Row { [text.Name] = "x" }));

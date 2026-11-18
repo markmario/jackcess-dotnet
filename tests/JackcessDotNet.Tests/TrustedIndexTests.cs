@@ -36,7 +36,7 @@ public sealed class TrustedIndexTests : IDisposable
         using var db = Database.Open(_path);
         return db.GetTable(table).Rows.ToList()
             .OrderBy(row => (int)row[columns[0]]!)
-            .Select(row => string.Join(" ", columns.Select(c => row.TryGetValue(c, out var value) ? value : "none")))
+            .Select(row => string.Join(" ", columns.Select(c => row[c] ?? "none")))
             .ToList();
     }
 

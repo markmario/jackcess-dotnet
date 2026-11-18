@@ -75,7 +75,7 @@ public sealed class IndexCursor : Cursor
                 try { r = ReadRowAt(pageNum, rowIdx); }
                 catch { continue; }
                 if (r is null) continue;
-                if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+                if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                     return r;
             }
             // fall through
@@ -92,7 +92,7 @@ public sealed class IndexCursor : Cursor
                 int rowIdx  = RowPointer.Row(rowPtr);
                 Row? r = ReadRowAt(pageNum, rowIdx);
                 if (r is null) continue;
-                if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+                if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                     return r;
             }
             return null;
@@ -102,7 +102,7 @@ public sealed class IndexCursor : Cursor
         MoveBeforeFirst();
         while (NextRow() is { } r)
         {
-            if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+            if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                 return r;
         }
         return null;
@@ -183,7 +183,7 @@ public sealed class IndexCursor : Cursor
         for (int i = 0; i < entry.Length && i < _definition.Columns.Count; i++)
         {
             var col = _definition.Columns[i];
-            if (!row.TryGetValue(col.Name, out var stored) || !ValuesEqual(stored, entry[i]))
+            if (!HasValue(row, col.Name, out var stored) || !ValuesEqual(stored, entry[i]))
                 return false;
         }
         return true;
@@ -211,7 +211,7 @@ public sealed class IndexCursor : Cursor
         for (int i = 0; i < ix.Columns.Count; i++)
         {
             string col = ix.Columns[i].Column.Name;
-            if (!row.TryGetValue(col, out var stored) || !ValuesEqual(stored, entry[i]))
+            if (!HasValue(row, col, out var stored) || !ValuesEqual(stored, entry[i]))
                 return false;
         }
         return true;
@@ -238,4 +238,11 @@ public sealed class IndexCursor : Cursor
 
     private static bool ValuesEqual(object? stored, object? requested)
         => DataPageWriter.PrimaryKeysEqual(stored, requested);
+
+    /// <summary>
+    /// The row's value in <paramref name="column"/>, when it has one. A column that is null is never a match,
+    /// whatever is looked for: a null is not found by looking for null.
+    /// </summary>
+    private static bool HasValue(Row row, string column, out object? value)
+        => row.TryGetValue(column, out value) && value is not null;
 }

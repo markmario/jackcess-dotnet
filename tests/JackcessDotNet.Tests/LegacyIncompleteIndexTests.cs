@@ -41,7 +41,7 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
         using var db = Database.Open(_path);
         return db.GetTable(table).Rows.ToList()
             .OrderBy(row => (int)row["Id"]!)
-            .Select(row => $"{row["Id"]} of {(row.TryGetValue("K", out var k) ? k : "none")}")
+            .Select(row => $"{row["Id"]} of {row["K"] ?? "none"}")
             .ToList();
     }
 

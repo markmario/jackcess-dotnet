@@ -241,10 +241,21 @@ JackcessDotNet.RelationshipJoinType.Inner = 0 -> JackcessDotNet.RelationshipJoin
 JackcessDotNet.RelationshipJoinType.LeftOuter = 1 -> JackcessDotNet.RelationshipJoinType
 JackcessDotNet.RelationshipJoinType.RightOuter = 2 -> JackcessDotNet.RelationshipJoinType
 JackcessDotNet.Row
-static JackcessDotNet.Row.FromValues(System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns, params object?[]! values) -> JackcessDotNet.Row!
+JackcessDotNet.Row.Add(string! columnName, object? value) -> void
+JackcessDotNet.Row.Clear() -> void
+JackcessDotNet.Row.ContainsKey(string! columnName) -> bool
+JackcessDotNet.Row.Count.get -> int
+JackcessDotNet.Row.GetEnumerator() -> System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string!, object?>>!
+JackcessDotNet.Row.GetValue<T>(string! columnName) -> T?
+JackcessDotNet.Row.IsNull(string! columnName) -> bool
+JackcessDotNet.Row.Keys.get -> System.Collections.Generic.ICollection<string!>!
+JackcessDotNet.Row.Remove(string! columnName) -> bool
 JackcessDotNet.Row.Row() -> void
 JackcessDotNet.Row.Row(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string!, object?>>! values) -> void
-JackcessDotNet.Row.Set(string! column, object? value) -> JackcessDotNet.Row!
+JackcessDotNet.Row.TryGetValue(string! columnName, out object? value) -> bool
+JackcessDotNet.Row.Values.get -> System.Collections.Generic.ICollection<object?>!
+JackcessDotNet.Row.this[string! columnName].get -> object?
+JackcessDotNet.Row.this[string! columnName].set -> void
 JackcessDotNet.Table
 JackcessDotNet.Table.AddColumn(JackcessDotNet.Column! column) -> JackcessDotNet.Column!
 JackcessDotNet.Table.AddIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.Index!

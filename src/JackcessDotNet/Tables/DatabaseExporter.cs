@@ -60,8 +60,8 @@ public static class DatabaseExporter
 
         // Columns first — order matches the on-disk TDEF.
         // AllowDBNull stays true even when the Access column is marked Required:
-        // Rows skips null values from the dict, so a row missing the key
-        // would otherwise be rejected by the DataTable on Add. The exported
+        // a row read from a file can hold a null there all the same, and would
+        // otherwise be rejected by the DataTable on Add. The exported
         // DataTable is a data view, not a schema mirror.
         foreach (var col in table.Columns)
         {

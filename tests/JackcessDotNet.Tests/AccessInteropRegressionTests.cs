@@ -169,11 +169,12 @@ public sealed class AccessInteropRegressionTests : IDisposable
     }
 
     [Fact]
-    public void NullMemo_IsAbsentFromTheReadRow()
+    public void NullMemo_IsNullInTheReadRow()
     {
-        // A null long value is not written, so the column does not appear in the
-        // row at all - callers must probe rather than index.
-        Assert.False(RoundTripMemoRow(null).ContainsKey("M"));
+        // A null long value is not written, and the row read has the column with no value.
+        var row = RoundTripMemoRow(null);
+        Assert.True(row.ContainsKey("M"));
+        Assert.Null(row["M"]);
     }
 
     // ── 4. LVAL page signature ───────────────────────────────────────────────
