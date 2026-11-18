@@ -31,6 +31,7 @@ public sealed class LongValueRoomTests : IDisposable
         int spread = (int)((uint)(i * 2654435761u) >> 8);
         return workload switch
         {
+            "one length" => 1_500,   // each leaves its page 1,080 bytes no other can use: the case that was slow
             "one piece" => 40 + spread % 1_990,
             "chains"    => 2_100 + spread % 4_000,
             _           => 40 + spread % 6_000,
@@ -40,6 +41,7 @@ public sealed class LongValueRoomTests : IDisposable
     private static string Note(int i, int length) => new((char)(i % 3 == 0 ? 0x3A9 + i % 20 : 'a' + i % 26), length);
 
     [Theory]
+    [InlineData("one length")]
     [InlineData("one piece")]
     [InlineData("chains")]
     [InlineData("mixed")]
@@ -70,10 +72,11 @@ public sealed class LongValueRoomTests : IDisposable
         // is what the page has, so none is looked at and passed over.
         Assert.True(most <= 1, $"one insert looked at {most} pages for room");
         Assert.True(visitedLate <= Window, $"the last {Window} inserts looked at {visitedLate} pages for room (the first {Window}: {visitedEarly})");
-        if (workload == "chains") Assert.Equal(0, visitedLate);
+        if (workload is "chains" or "one length") Assert.Equal(0, visitedLate);
 
-        // Pages read: the same handful, whatever the table holds (a usage map grown to map pages costs one more).
-        Assert.True(readsLate <= readsEarly + 3 * Window,
+        // Pages read: the same handful, whatever the table holds. Each usage map that has grown to map pages of its
+        // own - the table's, the column's two - costs a read more, so four more an insert are allowed, and no more.
+        Assert.True(readsLate <= readsEarly + 4 * Window,
             $"the last {Window} inserts read {readsLate} pages, the first {Window} read {readsEarly}");
 
         // And the time, loosely - the count above is the test; this is what it was failing to hold.
