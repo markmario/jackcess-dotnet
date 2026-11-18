@@ -1449,34 +1449,33 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     }
 
     /// <summary>
-    /// Table1 has had a column deleted, and the row encoder writes a row of such a table with its fixed columns in
-    /// the wrong places (qcatco/exportmdb.interop#55). A cascade would rewrite Table1's rows without the caller
-    /// having asked to touch the table, so until that is fixed it is refused, before anything is written.
+    /// Table1 has had a column deleted: its fixed-length values start at offset 4 and its columns are numbered
+    /// from 1. The row encoder packed and numbered the columns that were left, so a rewritten row read back with
+    /// its values in one another's places, and a cascade into the table was refused
+    /// (qcatco/exportmdb.interop#55). Rows are written by the table's definition now, and the cascade is made.
     /// </summary>
     [Fact]
-    public void Corpus_AChangeThatWouldRewriteARowOfATableWithADeletedColumn_IsRefused()
+    public void Corpus_ACascadeRewritesRowsOfATableWithADeletedColumn()
     {
         CopyOfIndexCorpusFile();
-        byte[] before = File.ReadAllBytes(_path);
-
-        using (var db = OpenEnforcing())
+        using (var db = Database.Open(_path))
         {
-            // Table3 ← Table1 cascades updates: rows 1 and 2 of Table1 would follow 11 to 45.
-            var cascade = Assert.Throws<NotSupportedException>(() => db.GetTable("Table3").UpdateByPrimaryKey(11, new Row { ["id"] = 45 }));
-            Assert.Contains("'Table1'", cascade.Message);
-            Assert.Contains("#55", cascade.Message);
-            // What does not match, by name: the deleted column was number 0, so id is numbered 1 where a row is written with it as 0.
-            Assert.Contains("numbers column id 1", cascade.Message);
-            Assert.Contains("as column 0", cascade.Message);
-
-            // And a row of Table1 changed directly.
-            Assert.Throws<NotSupportedException>(() => db.GetTable("Table1").UpdateByPrimaryKey(1, new Row { ["otherfk2"] = 13 }));
+            var table1 = db.GetTable("Table1");
+            Assert.Equal(1, table1.Columns.Min(c => c.ColumnNumber));
+            Assert.Equal(4, table1.Columns.Where(c => !c.IsVariableLength).Min(c => c.FixedDataOffset));
         }
-        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
+        var expected = Rows("Table1").Select(row => row.Replace("otherfk2=11", "otherfk2=45")).OrderBy(row => row, StringComparer.Ordinal).ToList();
+        Assert.Contains(expected, row => row.Contains("otherfk2=45"));
 
-        // A change that rewrites no row of Table1 is made: nothing refers to Table3's 12, so its key changes alone.
-        Enforcing(db => db.GetTable("Table3").UpdateByPrimaryKey(12, new Row { ["id"] = 46 }));
-        Assert.Contains("data=bar12, id=46", Rows("Table3"));
+        // Table3 ← Table1 cascades updates: the rows of Table1 that refer to 11 follow it to 45.
+        Enforcing(db => db.GetTable("Table3").UpdateByPrimaryKey(11, new Row { ["id"] = 45 }));
+        Assert.Equal(expected, Rows("Table1"));
+
+        // And rows of Table1 changed and added directly.
+        Enforcing(db => db.GetTable("Table1").UpdateByPrimaryKey(0, new Row { ["otherfk2"] = 13, ["data"] = "changed" }));
+        Enforcing(db => db.GetTable("Table1").Insert(new Row { ["id"] = 1000, ["otherfk1"] = 0, ["otherfk2"] = 45, ["data"] = "added", ["otherfk3"] = 0 }));
+        Assert.Contains("data=changed, id=0, otherfk1=0, otherfk2=13, otherfk3=0", Rows("Table1"));
+        Assert.Contains("data=added, id=1000, otherfk1=0, otherfk2=45, otherfk3=0", Rows("Table1"));
     }
 
     [Fact]

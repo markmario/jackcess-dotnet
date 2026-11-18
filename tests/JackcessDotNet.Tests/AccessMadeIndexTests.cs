@@ -432,7 +432,7 @@ public sealed class AccessMadeIndexTests : IDisposable
     // A refusal is of a write. A table with an index the engine cannot keep - or indexes it did not read - is
     // read as it always was: every row, by scan and by cursor, and through an index whose keys it does make.
     [Theory]
-    [InlineData("V2007", "blobV2007.accdb", "Table1", 8)]       // an index on an attachment column
+    [InlineData("V2007", "blobV2007.accdb", "Table1", 11)]      // an index on an attachment column
     [InlineData("V1997", "common1V1997.mdb", "Table1", 2)]      // Access 97 text keys
     [InlineData("V1997", "common1V1997.mdb", "Table2", 0)]      // a definition over several pages: indexes not read
     [InlineData("V1997", "common2V1997.mdb", "MSP_PROJECTS", 1)]
@@ -452,7 +452,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             var all = table.ReadAllRows();
             Assert.Equal(rows, all.Count);
             Assert.Equal(rows, table.NewCursor().Count());
-            Assert.True(table.RowCount >= rows);   // blobV2007 counts 11 rows in its definition and 8 are read, as before this change
+            Assert.Equal(rows, table.RowCount);   // blobV2007: 8 of its 11 were read while rows Access had moved to another page were passed over
             _ = table.Properties;
 
             // Each row is found again by a column of its own, whichever way the cursor looks.

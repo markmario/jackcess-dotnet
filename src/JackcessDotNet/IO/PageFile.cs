@@ -28,6 +28,9 @@ public sealed class PageFile : IDisposable
     /// </summary>
     internal FreedLvalPages FreedLvalPages { get; } = new FreedLvalPages();
 
+    /// <summary>See <see cref="Database.ShareLongValuePages"/>.</summary>
+    internal bool ShareLongValuePages { get; set; }
+
     /// <summary>
     /// Per-page codec applied on every Read/Write. Default is the identity
     /// (<see cref="NullCodecHandler.Instance"/>); <see cref="Database.Open"/> may

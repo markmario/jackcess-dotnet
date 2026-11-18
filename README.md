@@ -273,6 +273,34 @@ three kinds of entry for such a key:
 `tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
 earlier release wrote, made by `tools/legacy-long-keys.ps1`.
 
+## Rows and long values: what to know
+
+Rows are read and written by the table's own definition - where it keeps each column, including after columns
+have been deleted - and a row Access moved to another page is read where its pointer leads.
+
+- **Decimal values written by releases before this read back as different numbers.** A Decimal is stored as
+  four 32-bit words; earlier releases wrote and read sixteen bytes in the other order, so they and Access never
+  agreed (a 1 written by an earlier release is 16,777,216 to Access, and now to this library too). Such a value
+  cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
+  certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
+- **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
+  is written that way.
+- **A calculated column reads as null**, and a table with one is not written to.
+- **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
+  first bit alone; they stay deleted for this library and for Access, which reads, edits and compacts such a
+  table as any other.
+- **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
+  has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
+  replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
+  placement of earlier releases - the last chunk on a page with other values' - which is smaller (a fifth
+  smaller for 5,000-character Memos, nearly half for values just over one page) and reads the same, but is not
+  safe for Access to edit long values in. A file written that way keeps its shared pages when it is added to.
+- **Not handled for Access 97 files:** a row this library writes with a variable-length column (the end-of-data
+  offset and the count are written in two bytes where Access 97 has one), and rows longer than 256 bytes, which
+  use a jump table. Reading the Access 97 files of the corpus agrees with 32-bit ACE 12 and DAO.
+
+`tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
+versions of the engine.
 ## Type round-trip cheat sheet
 
 | CLR type          | Jet column        | Notes                                  |

@@ -3,27 +3,24 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Decodes individual column values from raw row bytes produced by <see cref="RowEncoder"/>.
+/// Decodes individual column values from a row's bytes, each from the place the table's definition gives its
+/// column (<see cref="RowLayout"/>).
 ///
 /// Row binary layout (Jet4 example):
-///   [0..1]              column count (short, SizeRowColumnCount bytes)
-///   [2..fixedEnd]       fixed-length column data, laid out in column-number order
-///   [fixedEnd..eod-1]   variable-length column data, in var-index order
+///   [0..1]              column count (short, SizeRowColumnCount bytes): the table's when the row was written
+///   [2..fixedEnd]       fixed-length values, each at its column's offset
+///   [fixedEnd..eod-1]   variable-length values, in the order of their offsets
 ///   [eod..eod+1]        end-of-data pointer (2 bytes, SizeRowVarColOffset)
-///   [..]                variable offsets in REVERSE var-index order (2 bytes each)
+///   [..]                variable offsets in REVERSE index order (2 bytes each)
 ///   [..]                variable column count (2 bytes)
-///   [..]                null mask (ceil(colCount/8) bytes)
+///   [..]                null mask (ceil(colCount/8) bytes), a bit for each column number
 /// </summary>
 internal sealed class RowDecoder
 {
     private readonly JetFormat              _format;
     private readonly IReadOnlyList<Column>  _columns;
     private readonly LvalReader?            _lvalReader;
-
-    // Precomputed column layout (mirrors RowEncoder)
-    private readonly Dictionary<int, int>   _fixedByteOffset = new();  // colNumber → byte offset in fixed area
-    private readonly Dictionary<int, int>   _varIndex        = new();  // colNumber → 0-based var index
-    private readonly int                    _varCount;
+    private readonly RowLayout              _layout;
 
     public RowDecoder(JetFormat format, IReadOnlyList<Column> columns,
                       LvalReader? lvalReader = null)
@@ -31,33 +28,7 @@ internal sealed class RowDecoder
         _lvalReader = lvalReader;
         _format  = format  ?? throw new ArgumentNullException(nameof(format));
         _columns = columns ?? throw new ArgumentNullException(nameof(columns));
-
-        int fixedOff = 0;
-        int varIdx   = 0;
-        int maxVar   = 0;
-
-        // Enumerate columns in column-number order to build the layout.
-        // Memo/OLE are variable-length (they store an LvRef in the var area), so they
-        // are included in varIndex just like Text/Binary.
-        foreach (var col in columns.OrderBy(c => c.ColumnNumber))
-        {
-            if (col.DataType.IsVariableLength())
-            {
-                // Honour the on-disk var-table index when available so post-deletion
-                // tables decode correctly; otherwise fall back to a tight assignment.
-                int v = col.VarLenTableIndex >= 0 ? col.VarLenTableIndex : varIdx++;
-                _varIndex[col.ColumnNumber] = v;
-                if (v + 1 > maxVar) maxVar = v + 1;
-            }
-            else
-            {
-                // Same logic for fixed-data offsets.
-                int off = col.FixedDataOffset >= 0 ? col.FixedDataOffset : fixedOff;
-                _fixedByteOffset[col.ColumnNumber] = off;
-                fixedOff = off + col.DataType.GetFixedSize();
-            }
-        }
-        _varCount = maxVar > 0 ? maxVar : varIdx;
+        _layout  = new RowLayout(format, columns);
     }
 
     /// <summary>
@@ -75,93 +46,113 @@ internal sealed class RowDecoder
 
     private object? Decode(byte[] rowBytes, Column col, bool datesAsStored)
     {
-        if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount) return null;
+        if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull)) return null;
 
-        int colCount = _format.SizeRowColumnCount == 2
-            ? ByteUtil.GetShort(rowBytes, 0)
-            : rowBytes[0];
-
-        if (col.ColumnNumber >= colCount) return null;
-
-        // ── Null mask ─────────────────────────────────────────────────────────
-        int maskSize   = (colCount + 7) / 8;
-        int maskOffset = rowBytes.Length - maskSize;
-        if (maskOffset < _format.SizeRowColumnCount) return null;
-
-        bool notNull = (rowBytes[maskOffset + col.ColumnNumber / 8]
-                        & (1 << (col.ColumnNumber % 8))) != 0;
+        // A calculated column's value is not read: Access keeps the result in a wrapper of its own, as a type the
+        // column's properties name and not its definition (qcatco/exportmdb.interop#42). It is null here, where it
+        // used to be whatever the wrapper's bytes made as the definition's type.
+        if (col.IsCalculated) return null;
 
         // Boolean: null mask bit IS the value (true/false), never actually null
         if (col.DataType == DataType.Boolean)
             return notNull;
 
         if (!notNull) return null;
+        if (!TryLocate(rowBytes, col, maskOffset, out int start, out int length)) return null;
 
-        int fixedBase = _format.SizeRowColumnCount;
-
-        // ── Fixed-length column ───────────────────────────────────────────────
-        if (!col.DataType.IsVariableLength())
+        switch (col.DataType)
         {
-            if (!_fixedByteOffset.TryGetValue(col.ColumnNumber, out int relOff)) return null;
-            int absOff = fixedBase + relOff;
-            if (absOff + col.Length > maskOffset) return null;
-            if (datesAsStored && col.DataType == DataType.ShortDateTime) return ByteUtil.GetDouble(rowBytes, absOff);
-            return ReadFixed(rowBytes, absOff, col);
+            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format);
+            case DataType.Binary: return rowBytes.Slice(start, start + length);
+            case DataType.Memo:   return DecodeMemoLvRef(rowBytes, start, length);
+            case DataType.Ole:    return DecodeOleLvRef (rowBytes, start, length);
         }
 
-        // ── Variable-length column ────────────────────────────────────────────
-        if (!_varIndex.TryGetValue(col.ColumnNumber, out int vi)) return null;
+        // A type of one size, wherever the row keeps it.
+        int size = col.DataType.GetFixedSize();
+        if (size <= 0 || length < size) return null;
+        if (datesAsStored && col.DataType == DataType.ShortDateTime) return ByteUtil.GetDouble(rowBytes, start);
+        return ReadFixed(rowBytes, start, col);
+    }
+
+    /// <summary>
+    /// The bytes of <paramref name="col"/>'s value as the row holds them among its variable-length values - a long
+    /// value's reference, not what it refers to - or null when the column is null in the row or is not kept there.
+    /// An update writes them back as they are for a column it does not change.
+    /// </summary>
+    public byte[]? RawVariableValue(byte[] rowBytes, Column col)
+    {
+        if (_layout.PlaceOf(col) is not { IsVariable: true }) return null;
+        if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull) || !notNull) return null;
+        return TryLocate(rowBytes, col, maskOffset, out int start, out int length) ? rowBytes.Slice(start, start + length) : null;
+    }
+
+    /// <summary>
+    /// Finds the row's null mask and <paramref name="col"/>'s bit in it. False for a row too short to hold them, or
+    /// written before the column was added to the table: the row's own column count says how many it has.
+    /// </summary>
+    private bool TryReadMask(byte[] rowBytes, Column col, out int maskOffset, out bool notNull)
+    {
+        maskOffset = 0;
+        notNull    = false;
+        if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount) return false;
+
+        int colCount = _format.SizeRowColumnCount == 2
+            ? ByteUtil.GetShort(rowBytes, 0)
+            : rowBytes[0];
+
+        if (col.ColumnNumber < 0 || col.ColumnNumber >= colCount) return false;
+
+        int maskSize = (colCount + 7) / 8;
+        maskOffset   = rowBytes.Length - maskSize;
+        if (maskOffset < _format.SizeRowColumnCount) return false;
+
+        notNull = (rowBytes[maskOffset + col.ColumnNumber / 8] & (1 << (col.ColumnNumber % 8))) != 0;
+        return true;
+    }
+
+    /// <summary>
+    /// Where <paramref name="col"/>'s value is in the row: at its offset among the fixed-length values, for the
+    /// bytes it takes there, or between its offset and the next among the variable-length ones.
+    /// </summary>
+    private bool TryLocate(byte[] rowBytes, Column col, int maskOffset, out int start, out int length)
+    {
+        start  = 0;
+        length = 0;
+        if (_layout.PlaceOf(col) is not { } place) return false;
+
+        if (!place.IsVariable)
+        {
+            start  = _format.SizeRowColumnCount + place.FixedOffset;
+            length = place.FixedSize;
+            return place.FixedOffset >= 0 && start + length <= maskOffset;
+        }
 
         // Trailer layout from the end of the row:
         //   [maskOffset - SizeRowVarColOffset]                = varCount
         //   [maskOffset - (vi+2)*SizeRowVarColOffset]         = varOffsets[vi]  (start)
         //   [maskOffset - (varCount+2)*SizeRowVarColOffset]   = eod
+        int vi = place.VarIndex;
         int sz = _format.SizeRowVarColOffset;
 
         int varCountOffset = maskOffset - sz;
+        if (vi < 0 || varCountOffset < _format.SizeRowColumnCount) return false;
         int storedVarCount = sz == 2
             ? ByteUtil.GetShort(rowBytes, varCountOffset)
             : rowBytes[varCountOffset];
 
-        if (vi >= storedVarCount) return null;
+        if (vi >= storedVarCount) return false;
 
+        // The offset after this one is where the next value starts, or, after the last, the end of the data.
         int varStartOffset = maskOffset - (vi + 2) * sz;
-        if (varStartOffset < 0) return null;
+        int varEndOffset   = varStartOffset - sz;
+        if (varEndOffset < _format.SizeRowColumnCount) return false;
 
-        int varStart = sz == 2
-            ? ByteUtil.GetShort(rowBytes, varStartOffset)
-            : rowBytes[varStartOffset];
+        start = sz == 2 ? ByteUtil.GetShort(rowBytes, varStartOffset) : rowBytes[varStartOffset];
+        int end = sz == 2 ? ByteUtil.GetShort(rowBytes, varEndOffset) : rowBytes[varEndOffset];
 
-        int varEnd;
-        if (vi + 1 < storedVarCount)
-        {
-            // Next var col's start position = end of this col
-            int nextOffset = maskOffset - (vi + 1 + 2) * sz;
-            varEnd = sz == 2
-                ? ByteUtil.GetShort(rowBytes, nextOffset)
-                : rowBytes[nextOffset];
-        }
-        else
-        {
-            // Last var col: end = eod
-            int eodOffset = maskOffset - (storedVarCount + 2) * sz;
-            if (eodOffset < 0) return null;
-            varEnd = sz == 2
-                ? ByteUtil.GetShort(rowBytes, eodOffset)
-                : rowBytes[eodOffset];
-        }
-
-        int varLen = varEnd - varStart;
-        if (varLen < 0 || varStart < 0 || varEnd > maskOffset) return null;
-
-        return col.DataType switch
-        {
-            DataType.Text   => ByteUtil.DecodeText(rowBytes, varStart, varLen, _format),
-            DataType.Binary => rowBytes.Slice(varStart, varEnd),
-            DataType.Memo   => DecodeMemoLvRef(rowBytes, varStart, varLen),
-            DataType.Ole    => DecodeOleLvRef (rowBytes, varStart, varLen),
-            _               => null
-        };
+        length = end - start;
+        return length >= 0 && start >= 0 && end <= maskOffset;
     }
 
     /// <summary>
@@ -171,65 +162,11 @@ internal sealed class RowDecoder
     /// </summary>
     public IEnumerable<(Column column, int lvalPage, int lvalRow, bool chained)> GetOtherPageLvRefs(byte[] rowBytes)
     {
-        if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount)
-            yield break;
-
-        int colCount = _format.SizeRowColumnCount == 2
-            ? ByteUtil.GetShort(rowBytes, 0)
-            : rowBytes[0];
-
-        int maskSize   = (colCount + 7) / 8;
-        int maskOffset = rowBytes.Length - maskSize;
-        if (maskOffset < _format.SizeRowColumnCount) yield break;
-
-        int sz             = _format.SizeRowVarColOffset;
-        int varCountOffset = maskOffset - sz;
-        if (varCountOffset < 0) yield break;
-
-        int storedVarCount = sz == 2
-            ? ByteUtil.GetShort(rowBytes, varCountOffset)
-            : rowBytes[varCountOffset];
-
         foreach (var col in _columns)
         {
             if (!col.DataType.IsLongValue()) continue;
-            if (col.ColumnNumber >= colCount) continue;
-            if (!_varIndex.TryGetValue(col.ColumnNumber, out int vi)) continue;
-            if (vi >= storedVarCount) continue;
-
-            // Check null bit.
-            bool notNull = (rowBytes[maskOffset + col.ColumnNumber / 8]
-                            & (1 << (col.ColumnNumber % 8))) != 0;
-            if (!notNull) continue;
-
-            // Locate the variable-length data for this column.
-            int varStartOffset = maskOffset - (vi + 2) * sz;
-            if (varStartOffset < 0) continue;
-
-            int varStart = sz == 2
-                ? ByteUtil.GetShort(rowBytes, varStartOffset)
-                : rowBytes[varStartOffset];
-
-            int varEnd;
-            if (vi + 1 < storedVarCount)
-            {
-                int nextOffset = maskOffset - (vi + 1 + 2) * sz;
-                if (nextOffset < 0) continue;
-                varEnd = sz == 2
-                    ? ByteUtil.GetShort(rowBytes, nextOffset)
-                    : rowBytes[nextOffset];
-            }
-            else
-            {
-                int eodOffset = maskOffset - (storedVarCount + 2) * sz;
-                if (eodOffset < 0) continue;
-                varEnd = sz == 2
-                    ? ByteUtil.GetShort(rowBytes, eodOffset)
-                    : rowBytes[eodOffset];
-            }
-
-            int varLen = varEnd - varStart;
-            if (varLen < 12 || varStart < 0 || varEnd > maskOffset) continue;
+            if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull) || !notNull) continue;
+            if (!TryLocate(rowBytes, col, maskOffset, out int varStart, out int varLen) || varLen < 12) continue;
 
             // Real Jet LvRef: type in the top two bits of the 32-bit length.
             // Only OTHER_PAGE / OTHER_PAGES refs occupy LVAL pages to free.
@@ -260,9 +197,9 @@ internal sealed class RowDecoder
             DataType.ShortDateTime=> DecodeShortDateTime(row, offset),
             DataType.Money        => Math.Round((decimal)ByteUtil.GetLong(row, offset) / 10000m, 4),
             DataType.Guid         => new Guid(row.Slice(offset, offset + 16)),
-        DataType.Numeric      => DecodeNumeric(row, offset, col),
-        _                     => null
-    };
+            DataType.Numeric      => NumericCodec.Decode(row, offset, col.Scale),
+            _                     => null
+        };
 
     // ── Long-value decoders ───────────────────────────────────────────────────
 
@@ -321,38 +258,4 @@ internal sealed class RowDecoder
         try   { return DateTime.FromOADate(oa); }
         catch { return null; }
     }
-
-    /// <summary>
-    /// Decodes a Jet Numeric column (17 bytes: 1 sign + 16 big-endian magnitude bytes).
-    /// Returns <c>null</c> when the value's magnitude exceeds <see cref="decimal.MaxValue"/>
-    /// after scaling — Jet Numeric can carry 28 digits which can overflow .NET decimal.
-    /// </summary>
-    private static decimal? DecodeNumeric(byte[] row, int offset, Column col)
-    {
-        bool isNegative = row[offset] == 0x80;
-        // Read the 16 big-endian bytes and reverse to little-endian for BigInteger.
-        // The 17th byte (index 16) is 0x00 so BigInteger treats the value as positive.
-        var leBytes = new byte[17];
-        for (int i = 0; i < 16; i++)
-            leBytes[15 - i] = row[offset + 1 + i];
-        var bigInt = new System.Numerics.BigInteger(leBytes);
-
-        // Scale BigInteger BEFORE casting: divides by 10^scale so the result fits in decimal
-        // when the original integer value didn't.
-        System.Numerics.BigInteger divisor = System.Numerics.BigInteger.One;
-        for (int s = 0; s < col.Scale; s++) divisor *= 10;
-        var integerPart    = bigInt / divisor;
-        var fractionalPart = bigInt - integerPart * divisor;
-
-        // If the integer magnitude itself exceeds decimal.MaxValue, the value is too big to fit.
-        if (integerPart > MaxDecimalAsBigInt || integerPart < MinDecimalAsBigInt) return null;
-
-        decimal result = (decimal)integerPart;
-        if (col.Scale > 0 && fractionalPart != 0)
-            result += (decimal)fractionalPart / (decimal)divisor;
-        return isNegative ? -result : result;
-    }
-
-    private static readonly System.Numerics.BigInteger MaxDecimalAsBigInt = new(decimal.MaxValue);
-    private static readonly System.Numerics.BigInteger MinDecimalAsBigInt = new(decimal.MinValue);
 }

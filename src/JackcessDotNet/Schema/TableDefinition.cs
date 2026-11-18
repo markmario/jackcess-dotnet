@@ -99,6 +99,25 @@ public sealed class TableDefinition
     /// </summary>
     internal bool HasUnreadIndexes { get; set; }
 
+    /// <summary>
+    /// The column count a row of this table is written with: one more than the highest column number the table has
+    /// ever had. Access leaves a deleted column's number behind, so it can be more than <see cref="Columns"/> has.
+    /// 0 until the definition is read or written.
+    /// </summary>
+    internal int MaxColumnCount { get; set; }
+
+    /// <summary>
+    /// The number of variable-length offsets a row of this table is written with, a deleted column's among them.
+    /// 0 until the definition is read or written.
+    /// </summary>
+    internal int MaxVarColumnCount { get; set; }
+
+    /// <summary>
+    /// True when the table's columns were not all read: its definition runs past its first page before the column
+    /// names end. Such a table's rows are not written - a row laid out by half the columns is not one Access reads.
+    /// </summary>
+    internal bool HasUnreadColumns { get; set; }
+
     public TableDefinition(string name, IReadOnlyList<Column> columns)
     {
         Name    = name    ?? throw new ArgumentNullException(nameof(name));
@@ -248,17 +267,33 @@ public sealed class TableDefinition
         short fixedOff = 0;
         short varIdx   = 0;
 
+        // A new table's columns are numbered in order and kept where their types usually are: variable-length
+        // values in column order, fixed-length ones one after another, each taking its length. A Yes/No column is
+        // given a byte it never uses (Access gives it none, at offset 0): Access reads and writes rows by the
+        // offsets the definition gives, so it reads these, and tables this library made before are laid out so.
+        // Each column is told its place, as one read from a definition is: rows are written by it (RowLayout).
         for (short i = 0; i < Columns.Count; i++)
         {
-            Columns[i].ColumnNumber = i;
-            if (Columns[i].DataType.IsVariableLength())
-                varIndexes[Columns[i]] = varIdx++;
+            var column = Columns[i];
+            column.ColumnNumber     = i;
+            column.IsVariableLength = column.DataType.IsVariableLength();
+            column.HasStoredPlace   = true;
+            if (column.IsVariableLength)
+            {
+                varIndexes[column] = varIdx;
+                column.VarLenTableIndex = varIdx++;
+                column.FixedDataOffset  = -1;
+            }
             else
             {
-                fixedOffsets[Columns[i]] = fixedOff;
-                fixedOff += (short)Columns[i].Length;
+                fixedOffsets[column] = fixedOff;
+                column.FixedDataOffset  = fixedOff;
+                column.VarLenTableIndex = -1;
+                fixedOff += (short)column.Length;
             }
         }
+        MaxColumnCount    = Columns.Count;
+        MaxVarColumnCount = varIdx;
 
         // ── Column definitions (25 bytes each) ───────────────────────────────
         foreach (var col in Columns)

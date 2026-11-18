@@ -41,20 +41,34 @@ public sealed class DataPageWriter
     /// registers it in the table's owned-pages usage-map.
     /// </summary>
     /// <returns>The row's pointer (<see cref="RowPointer"/>: its page and its row on it).</returns>
-    public int InsertRow(TableDefinition tableDef, Row row) => InsertRow(tableDef, row, datesAsStored: false);
+    public int InsertRow(TableDefinition tableDef, Row row) => InsertRow(tableDef, row, null, datesAsStored: false);
 
     /// <summary>
-    /// As <see cref="InsertRow(TableDefinition, Row)"/>; with <paramref name="datesAsStored"/>, a Date/Time value
-    /// may be the double a row stores (<see cref="RowEncoder.DatesAsStored"/>).
+    /// As <see cref="InsertRow(TableDefinition, Row)"/>, for the row an update writes in place of another:
+    /// <paramref name="keptVariableValues"/> are the old row's own bytes for the variable-length columns the update
+    /// leaves alone, written back as they are (<see cref="RowEncoder.Encode(Row, IReadOnlyDictionary{Column, byte[]})"/>);
+    /// with <paramref name="datesAsStored"/>, a Date/Time value may be the double a row stores
+    /// (<see cref="RowEncoder.DatesAsStored"/>).
     /// </summary>
-    private int InsertRow(TableDefinition tableDef, Row row, bool datesAsStored)
+    internal int InsertRow(TableDefinition tableDef, Row row, IReadOnlyDictionary<Column, byte[]>? keptVariableValues, bool datesAsStored = false)
     {
         if (tableDef is null) throw new ArgumentNullException(nameof(tableDef));
         if (row      is null) throw new ArgumentNullException(nameof(row));
 
         var format = _file.Format;
 
-        // Build per-column LvalWriters for any Memo/OLE columns that have a umap page.
+        var    encoder = new RowEncoder(format, tableDef, LvalWritersFor(tableDef)) { DatesAsStored = datesAsStored };
+        byte[] rowData = encoder.Encode(row, keptVariableValues);
+
+        int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
+        int rowNum     = WriteRowOnPage(dataPage, rowData, tableDef.TdefPageNumber, format);
+
+        return RowPointer.Pack(dataPage, rowNum);
+    }
+
+    // A writer for each Memo/OLE column that has usage maps of its own: where its longer values go.
+    private Dictionary<string, LvalWriter>? LvalWritersFor(TableDefinition tableDef)
+    {
         Dictionary<string, LvalWriter>? lvalWriters = null;
         foreach (var col in tableDef.Columns)
         {
@@ -65,14 +79,7 @@ public sealed class DataPageWriter
                 lvalWriters[col.Name] = new LvalWriter(_file, _allocator, umapRef);
             }
         }
-
-        var    encoder = new RowEncoder(format, tableDef.Columns, lvalWriters) { DatesAsStored = datesAsStored };
-        byte[] rowData = encoder.Encode(row);
-
-        int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
-        int rowNum     = WriteRowOnPage(dataPage, rowData, tableDef.TdefPageNumber, format);
-
-        return RowPointer.Pack(dataPage, rowNum);
+        return lvalWriters;
     }
 
     /// <summary>
@@ -242,22 +249,7 @@ public sealed class DataPageWriter
 
             for (int r = 0; r < rowCount; r++)
             {
-                int    slotOff = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
-                ushort slotVal = ByteUtil.GetUShort(dp, slotOff);
-
-                if ((slotVal & 0x8000) != 0) continue;   // deleted
-                if ((slotVal & 0x4000) != 0) continue;   // overflow pointer
-
-                int rowStart = slotVal & JetFormat.RowOffsetMask;
-                int rowEnd   = (r == 0)
-                    ? format.PageSize
-                    : (ByteUtil.GetUShort(dp, format.OffsetDataRowTable + (r - 1) * JetFormat.SizeRowEntry)
-                       & JetFormat.RowOffsetMask);
-                int rowLen = rowEnd - rowStart;
-                if (rowLen <= 0) continue;
-
-                var rowBytes = new byte[rowLen];
-                Array.Copy(dp, rowStart, rowBytes, 0, rowLen);
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // deleted
 
                 object? pkVal = decoder.Decode(rowBytes, pkCol);
                 if (pkVal is null || !PrimaryKeysEqual(pkVal, primaryKeyValue)) continue;
@@ -316,23 +308,7 @@ public sealed class DataPageWriter
 
             for (int r = 0; r < rowCount; r++)
             {
-                int    slotOff = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
-                ushort slotVal = ByteUtil.GetUShort(dp, slotOff);
-
-                if ((slotVal & 0x8000) != 0) continue;   // already deleted
-                if ((slotVal & 0x4000) != 0) continue;   // overflow pointer
-
-                int rowStart = slotVal & JetFormat.RowOffsetMask;
-                int rowEnd   = (r == 0)
-                    ? format.PageSize
-                    : (ByteUtil.GetUShort(dp,
-                           format.OffsetDataRowTable + (r - 1) * JetFormat.SizeRowEntry)
-                       & JetFormat.RowOffsetMask);
-                int rowLen = rowEnd - rowStart;
-                if (rowLen <= 0) continue;
-
-                var rowBytes = new byte[rowLen];
-                Array.Copy(dp, rowStart, rowBytes, 0, rowLen);
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // already deleted
 
                 object? colVal = decoder.Decode(rowBytes, targetCol);
                 if (!PrimaryKeysEqual(colVal, value)) continue;
@@ -400,19 +376,47 @@ public sealed class DataPageWriter
         // A merged row the new one could not be written as - text longer than its column, a duplicate in
         // a unique index - must not cost the row it replaces, so it is checked before anything is freed
         // or deleted.
-        new RowEncoder(_file.Format, table.Columns).Validate(merged);
+        var check = new RowEncoder(_file.Format, table, LvalWritersFor(table)) { DatesAsStored = keepStoredDates };   // as the new row will be written
+        check.EnsureWritable();
+        check.Validate(merged);
+
+        // A long value the update does not change stays where it is: the new row carries the old row's reference
+        // to it, as Access and Java Jackcess leave it, so it is neither freed nor written again. Only the long
+        // values being replaced are freed, before the row is rewritten. One kept in the row though longer than a
+        // row may keep (releases before ExportMdb.Interop 2.1.2 wrote those, and Access shows #Error for them,
+        // qcatco/exportmdb.interop#29) is not kept as it is: written again, it goes to pages of its own.
+        var kept = new Dictionary<Column, byte[]>();
+        foreach (var col in table.Columns)
+            if (col.DataType.IsLongValue() && !newValues.ContainsKey(col.Name) && merged.ContainsKey(col.Name)
+                && decoder.RawVariableValue(rowBytes, col) is { Length: >= 4 } reference
+                && !IsOverlongInRowValue(reference))
+                kept[col] = reference;
+
+        // A row too large for the format is refused here too, with nothing changed: checked only as the new row
+        // was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
+        check.EnsureFits(merged, kept);
         beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNumber, rowIndex));
 
-        // Free any LVAL chains referenced by the old row before overwriting.
-        FreeRowLvalChains(table, rowBytes, decoder);
+        FreeRowLvalChains(table, rowBytes, decoder, kept);
 
-        // Mark the original slot as deleted (bit 15).
+        // Mark the original slot as deleted, and with it wherever Access had moved the row's values to.
+        var moved = new List<(int Page, int Row)>();
+        DataRows.Read(_file, page, rowIndex, moved);
         int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
-        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | 0x8000u));
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
         _file.WritePage(pageNumber, page);
+        DataRows.MarkDeleted(_file, moved);
 
         // Insert the merged row; the caller moves the row's index entries from the old pointer to the new.
-        return InsertRow(table, merged, datesAsStored: keepStoredDates);
+        return InsertRow(table, merged, kept, datesAsStored: keepStoredDates);
+    }
+
+    // A long value's reference whose value is in the row (THIS_PAGE) and longer than Access keeps one there.
+    private static bool IsOverlongInRowValue(byte[] reference)
+    {
+        int lengthWithFlags = ByteUtil.GetInt(reference, 0);
+        return (lengthWithFlags & unchecked((int)0xC0000000)) == LvalWriter.LvalTypeThisPage
+            && (lengthWithFlags & LvalWriter.LvalLengthMask) > RowEncoder.InlineLvalThreshold;
     }
 
     /// <summary>
@@ -434,10 +438,13 @@ public sealed class DataPageWriter
         // Free any LVAL chains referenced by this row.
         FreeRowLvalChains(table, rowBytes, decoder);
 
-        // Mark the slot as deleted.
+        // Mark the slot as deleted, and with it wherever Access had moved the row's values to.
+        var moved = new List<(int Page, int Row)>();
+        DataRows.Read(_file, page, rowIndex, moved);
         int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
-        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | 0x8000u));
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
         _file.WritePage(pageNumber, page);
+        DataRows.MarkDeleted(_file, moved);
         return values;
     }
 
@@ -476,28 +483,24 @@ public sealed class DataPageWriter
         byte[] page  = _file.ReadPage(pageNum);
         int slotOff  = format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
 
-        bool live = page[0] == JetFormat.PageTypeData
-            && ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) == table.TdefPageNumber
-            && rowIndex < ByteUtil.GetShort(page, format.OffsetDataNumRows)
-            && (ByteUtil.GetUShort(page, slotOff) & 0xC000) == 0;
-        if (!live) return null;
-
-        int rowStart = ByteUtil.GetUShort(page, slotOff) & JetFormat.RowOffsetMask;
-        int rowEnd   = rowIndex == 0
-            ? format.PageSize
-            : ByteUtil.GetUShort(page, slotOff - JetFormat.SizeRowEntry) & JetFormat.RowOffsetMask;
-        return (page, page.Slice(rowStart, rowEnd));
+        // The page is the one the row's slot is on, whose slot a delete or an update marks; the bytes are the
+        // row's own, from wherever an overflow pointer leads.
+        if (page[0] != JetFormat.PageTypeData || ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) != table.TdefPageNumber)
+            return null;
+        return DataRows.Read(_file, page, rowIndex) is { } rowBytes ? (page, rowBytes) : null;
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     // Frees every OTHER_PAGE LVAL chain referenced by the given row bytes. The room each page gains is noted for the
     // column the value was in (its owned-pages map), whose later values may use it.
-    private void FreeRowLvalChains(TableDefinition table, byte[] rowBytes, RowDecoder decoder)
+    private void FreeRowLvalChains(TableDefinition table, byte[] rowBytes, RowDecoder decoder,
+                                   IReadOnlyDictionary<Column, byte[]>? kept = null)
     {
         var lvalFree = new LvalFree(_file);
         foreach (var (column, lvalPage, lvalRow, chained) in decoder.GetOtherPageLvRefs(rowBytes))
         {
+            if (kept is not null && kept.ContainsKey(column)) continue;
             LvalUmapRef? owner = table.LvalColumnUmapPages.TryGetValue(column.Name, out var umap) ? umap : null;
             lvalFree.FreeChain(lvalPage, lvalRow, chained, owner);
         }

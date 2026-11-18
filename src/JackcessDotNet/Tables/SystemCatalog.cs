@@ -568,38 +568,17 @@ public sealed class SystemCatalog
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
+            MaxColumnCount    = info.MaxColumnCount,
+            MaxVarColumnCount = info.MaxVarColumnCount,
+            HasUnreadColumns  = info.HasUnreadColumns,
         };
     }
 
     /// <summary>
     /// Returns the raw bytes of row <paramref name="rowNum"/> from a data page,
-    /// or <c>null</c> if the row is deleted or an overflow pointer.
+    /// or <c>null</c> if the row is deleted; an overflow row's bytes are those its pointer leads to.
     /// </summary>
-    private static byte[]? ReadRowBytes(byte[] page, int rowNum, JetFormat format)
-    {
-        int slotValue = ByteUtil.GetUShort(page,
-            format.OffsetDataRowTable + rowNum * JetFormat.SizeRowEntry);
-
-        if ((slotValue & 0x8000) != 0) return null;   // deleted row
-        if ((slotValue & 0x4000) != 0) return null;   // overflow pointer (not supported)
-
-        int rowStart = slotValue & JetFormat.RowOffsetMask;
-
-        // Row length: distance from this row's start to the previous row's start
-        // (or end of page for row 0, which has the highest slot value = last appended).
-        int rowEnd = (rowNum == 0)
-            ? format.PageSize
-            : (ByteUtil.GetUShort(page,
-                   format.OffsetDataRowTable + (rowNum - 1) * JetFormat.SizeRowEntry)
-               & JetFormat.RowOffsetMask);
-
-        int rowLen = rowEnd - rowStart;
-        if (rowLen <= 0) return null;
-
-        var bytes = new byte[rowLen];
-        Array.Copy(page, rowStart, bytes, 0, rowLen);
-        return bytes;
-    }
+    private byte[]? ReadRowBytes(byte[] page, int rowNum, JetFormat format) => DataRows.Read(_file, page, rowNum);
 
     // ── Obsolete stubs kept for API compat ────────────────────────────────────
 

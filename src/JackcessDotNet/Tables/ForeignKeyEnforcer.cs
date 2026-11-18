@@ -495,50 +495,6 @@ internal sealed class ForeignKeyEnforcer
 
     private static bool IsTable(string name, string other) => string.Equals(name, other, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Why a row of <paramref name="table"/> cannot be rewritten as <see cref="RowEncoder"/> writes rows, or null
-    /// when it can. The encoder numbers the columns from 0 with none missing and packs their fixed-length values in
-    /// that order, by type. A column the definition keeps otherwise (<see cref="Column.IsStoredOtherwise"/>, read
-    /// with the definition) is not where the encoder writes it; and a table whose definition places a column
-    /// elsewhere has every value after it written in the wrong place (qcatco/exportmdb.interop#55). Access leaves
-    /// a deleted column's number and its room in the row behind; and it gives a Yes/No column no room among the
-    /// fixed-length values, where the encoder gives it a byte, so a fixed-length column after one is a byte out.
-    /// The reason names the first column that does not match, and how.
-    /// </summary>
-    private static string? WhyNotRewritten(Table table)
-    {
-        if (table.Columns.FirstOrDefault(c => c.IsStoredOtherwise) is { } otherwise)
-            return $"its column {otherwise.Name} is kept where this library does not write a {otherwise.DataType} value";
-
-        const string NotYet = "; rows laid out so are not yet written correctly (qcatco/exportmdb.interop#55)";
-        short number = 0, fixedOffset = 0, variableIndex = 0;
-        foreach (var column in table.Columns.OrderBy(c => c.ColumnNumber))
-        {
-            if (column.ColumnNumber != number)
-                return $"its definition numbers column {column.Name} {column.ColumnNumber}, where a row is written with it as " +
-                       $"column {number} - as after a column before it has been deleted" + NotYet;
-            number++;
-
-            if (column.DataType.IsVariableLength())
-            {
-                if (column.VarLenTableIndex >= 0 && column.VarLenTableIndex != variableIndex)
-                    return $"its definition makes {column.Name} variable-length value {column.VarLenTableIndex} of a row, where a row " +
-                           $"is written with it as value {variableIndex}" + NotYet;
-                variableIndex++;
-            }
-            else
-            {
-                // A Yes/No column's value is its bit in the row's null mask: where the definition puts it says
-                // nothing. The room a row is written with for it does, to the columns after it.
-                if (column.DataType != DataType.Boolean && column.FixedDataOffset >= 0 && column.FixedDataOffset != fixedOffset)
-                    return $"its definition keeps {column.Name} at byte {column.FixedDataOffset} of a row's fixed-length values, where a " +
-                           $"row is written with it at byte {fixedOffset}" + NotYet;
-                fixedOffset += (short)column.Length;
-            }
-        }
-        return null;
-    }
-
     // ── Messages ─────────────────────────────────────────────────────────────
 
     private static InvalidOperationException Violation(Relationship relationship, string what)
@@ -626,10 +582,10 @@ internal sealed class ForeignKeyEnforcer
             foreach (var (table, rows) in changed)
             {
                 table.IndexEntries.EnsureCanBeKept();
-                if (rows.Any(r => !r.Deleted) && WhyNotRewritten(table) is { } why)
-                    throw new NotSupportedException(
-                        $"The change would rewrite rows of '{table.Name}', and cannot: {why}. Nothing was changed.");
-                var encoder = new RowEncoder(table.File.Format, table.Columns);
+                if (rows.All(r => r.Deleted)) continue;
+                // A definition rows cannot be written by refuses the change here, before anything is written.
+                var encoder = new RowEncoder(table.File.Format, table.Definition);
+                encoder.EnsureWritable();
                 foreach (var row in rows.Where(r => !r.Deleted))
                     encoder.Validate(row.Changes!);
             }
