@@ -17,7 +17,9 @@ namespace JackcessDotNet.Tests;
 /// Access trusts its index: asked for a second row with Code 300 or 250, or a second Renamed 7, in this file, ACE
 /// 12 and ACE 16 add it, and DAO, compacting the file afterwards, cannot build CodeUnique or Renamed's primary key
 /// and leaves the tables without them. Compacted first, ACE refuses all three. They are refused here, with the
-/// file as the earlier release left it.
+/// file as the earlier release left it, by a database opened with <see cref="Database.VerifyIndexes"/> - which
+/// every one here is. <see cref="TrustedIndexTests"/> has the same file without it, where this library adds
+/// them as Access does.
 /// </para>
 /// </summary>
 public sealed class LegacyUniqueIndexTests : IDisposable
@@ -29,17 +31,24 @@ public sealed class LegacyUniqueIndexTests : IDisposable
 
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
+    private Database OpenVerifying()
+    {
+        var db = Database.Open(_path);
+        db.VerifyIndexes = true;
+        return db;
+    }
+
     /// <summary>Codes' rows as "Id has Code", in Id order.</summary>
     private List<string> Codes()
     {
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         return db.GetTable("Codes").ReadAllRows().OrderBy(row => (int)row["Id"]!).Select(row => $"{row["Id"]} has {row["Code"]}").ToList();
     }
 
     /// <summary>Renamed's rows as "Id Name", in table order.</summary>
     private List<string> Renamed()
     {
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         return db.GetTable("Renamed").ReadAllRows().Select(row => $"{row["Id"]} {row["Name"]}").ToList();
     }
 
@@ -49,7 +58,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     /// </summary>
     private List<string> InTheIndex(string table, string index, int value)
     {
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         var opened  = db.GetTable(table);
         var tree    = opened.Indexes.First(ix => ix.Name == index);
         var entries = new IndexWriter(db.File, new PageAllocator(db.File)).RowPointersForKey(tree.RootPageNumber, IndexKeys.Encode(tree.Columns, new object?[] { value }));
@@ -64,7 +73,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     {
         byte[] before = File.ReadAllBytes(_path);
         string message;
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
             message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         Assert.Contains("duplicate", message);
@@ -108,7 +117,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
         RefusedAsADuplicate(db => db.GetTable("Codes").Validate(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
         RefusedAsADuplicate(db => db.GetTable("Codes").Validate(new Row { ["Id"] = 4, ["Code"] = 250, ["Name"] = "c4" }));
 
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         db.GetTable("Codes").Validate(new Row { ["Id"] = 4, ["Code"] = 400, ["Name"] = "c4" });
     }
 
@@ -139,7 +148,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     [Fact]
     public void a_value_a_row_had_before_the_earlier_release_changed_it_is_taken_only_when_its_entry_points_at_no_row()
     {
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
             db.GetTable("Codes").Insert(new Row { ["Id"] = 4, ["Code"] = 200, ["Name"] = "c4" });
 
         Assert.Equal(new[] { "1 has 100", "2 has 250", "3 has 300", "4 has 200" }, Codes());
@@ -152,7 +161,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     [Fact]
     public void a_row_the_index_does_not_hold_is_rewritten_with_the_code_it_has_and_gains_its_entry()
     {
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
         {
             db.GetTable("Codes").UpdateByPrimaryKey(3, new Row { ["Name"] = "renamed" });
             db.GetTable("Codes").UpdateByPrimaryKey(2, new Row { ["Code"] = 250, ["Name"] = "renamed" });
@@ -170,7 +179,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     [Fact]
     public void a_code_is_free_once_the_row_that_had_it_is_changed_or_deleted_in_the_same_session()
     {
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
         {
             var codes = db.GetTable("Codes");
             Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));
@@ -195,7 +204,7 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     [Fact]
     public void a_row_whose_deletion_is_taken_back_is_still_one_the_index_does_not_hold()
     {
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
         {
             var codes = db.GetTable("Codes");
             Assert.Throws<InvalidOperationException>(() => codes.Insert(new Row { ["Id"] = 4, ["Code"] = 300, ["Name"] = "c4" }));

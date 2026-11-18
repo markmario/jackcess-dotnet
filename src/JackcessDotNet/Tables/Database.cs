@@ -60,15 +60,15 @@ public sealed class Database : IDisposable
     /// every index of its table, as any other update or delete does, so Access goes on finding it.
     /// </para>
     /// <para>
-    /// An index is searched only once it has been seen to hold every row of its table. Access trusts an index to;
-    /// a file a version of this library before it kept every index wrote to (those in ExportMdb.Interop up to
-    /// 2.1.2) can have rows that are in their table's primary key and in no other index - not in the one on their
-    /// foreign key, so that through it they would not be found as children, and their parent could be deleted or
-    /// re-keyed from under them (qcatco/exportmdb.interop#64). So the first change that looks for rows through an
-    /// index, while the database is open, reads that index and its table once and compares them row by row; the
-    /// changes after it find rows through the index, or, when it does not hold every row, by reading the table as
-    /// for a table with no index. An entry whose row has gone does no harm either way: each row found is read
-    /// and compared.
+    /// An index is trusted to hold every row of its table, as Access trusts one. A file a version of this library
+    /// before it kept every index wrote to (those in ExportMdb.Interop up to 2.1.2) can have rows that are in
+    /// their table's primary key and in no other index - not in the one on their foreign key, so that through it
+    /// they are not found as children, and their parent is deleted or re-keyed from under them, as Access itself
+    /// does with such a file (qcatco/exportmdb.interop#64). For such a file set <see cref="VerifyIndexes"/> as
+    /// well: the first change that looks for rows through an index, while the database is open, then reads that
+    /// index and its table once and compares them row by row, and the changes after it find rows through the
+    /// index, or, while it does not hold every row, by reading the table as for a table with no index. An entry
+    /// whose row has gone does no harm either way: each row found is read and compared.
     /// </para>
     /// <para>
     /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
@@ -94,6 +94,56 @@ public sealed class Database : IDisposable
     /// </para>
     /// </summary>
     public bool EnforceForeignKeys { get; set; }
+
+    /// <summary>
+    /// Whether an index is checked against its table before it is believed. Default <c>false</c>: an index is
+    /// taken at its word, as Access and Java Jackcess take one - a unique index or primary key that holds no
+    /// entry for a value means no row has it, and, with <see cref="EnforceForeignKeys"/>, an index that holds no
+    /// entry for a key means no row refers to it - and nothing is read but the index.
+    /// <para>
+    /// <b>When to turn it on:</b> for a file that a version of this library before it kept every index wrote
+    /// rows into - any up to the one in ExportMdb.Interop 2.1.2 - in a table Access made with indexes, and that
+    /// has not been compacted in Access since. Those versions kept a table's primary key and no other index: a
+    /// row one of them inserted is in no other index, and a row one of them updated is in each where it was
+    /// before. They kept the primary key under the value a row was found by, so a row whose key they changed is
+    /// in the key under the value it had. Nothing in a file says that one of them wrote to it. With such a file
+    /// and the default, this library does what Access does: it takes a second row with the values of a row a
+    /// unique index does not hold - after which Access cannot compact the file without dropping that index, or
+    /// the primary key - and, enforcing foreign keys, deletes or re-keys a parent from under a child the index
+    /// on its foreign key does not hold. Compacting the file in Access rebuilds its indexes and makes the
+    /// option needless.
+    /// </para>
+    /// <para>
+    /// <b>What it does:</b> the first time a session compares a row with a table's unique indexes
+    /// (<see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/>, <see cref="Table.Validate"/>), or
+    /// looks for rows through an index to keep a relationship, the table is read once and each index's entries
+    /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
+    /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows
+    /// is not searched for a relationship - the table is read instead - until this library has rewritten or
+    /// deleted them. Set it before the first change; an index is looked at once.
+    /// </para>
+    /// <para>
+    /// <b>What it costs:</b> one reading of the table, and of the indexes' leaf pages, for the first such change
+    /// to each table, and memory for a key a row while it is read; nothing after. Measured on a table of
+    /// 1,000,000 rows in 30,304 pages, the file in the operating system's cache: the first insert read 33,644
+    /// pages in half a second and allocated 620 MB in passing with a primary key, and 36,965 pages in 0.8 to
+    /// 0.9 seconds and 990 MB with a unique index as well, where every other insert, and the first without
+    /// the option, reads 8 and 11 pages. A table with no unique index, a row with a null in its unique
+    /// columns, and a table filled in the session that made it cost nothing.
+    /// </para>
+    /// <para>
+    /// <b>What it does not catch:</b> an entry is still believed for what it points at. A value a row had before
+    /// one of those versions changed its primary key is refused as a duplicate, though no row has it; and a row
+    /// added under a value whose only entry points at a row long gone is added beside that entry, where Access
+    /// does not find it through the index until the file is compacted (qcatco/exportmdb.interop#79). Nothing
+    /// here rebuilds an index.
+    /// </para>
+    /// </summary>
+    public bool VerifyIndexes
+    {
+        get => _file.VerifyIndexes;
+        set => _file.VerifyIndexes = value;
+    }
 
     /// <summary>
     /// How a long value (Memo or OLE) too long for one page is put on its pages. <c>false</c>, the default, is

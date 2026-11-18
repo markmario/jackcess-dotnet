@@ -7,9 +7,11 @@ namespace JackcessDotNet.Tests;
 /// <see cref="Database.EnforceForeignKeys"/> over a table whose index does not hold every row
 /// (qcatco/exportmdb.interop#64). Versions of this library before it kept every index added a row to its table's
 /// primary key and to no other index, and rewrote or deleted one leaving its entries elsewhere where they were: a
-/// row they inserted or updated is not found through the index on its foreign key. Enforcement finds rows through an
-/// index only once it has seen, in this session, that the index holds every row; until then, and for an index that
-/// does not, it reads the table.
+/// row they inserted or updated is not found through the index on its foreign key. With
+/// <see cref="Database.VerifyIndexes"/>, which every database here is opened with, enforcement finds rows through
+/// an index only once it has seen, in this session, that the index holds every row; until then, and for an index
+/// that does not, it reads the table. (Without it an index is believed, as Access believes one:
+/// <see cref="TrustedIndexTests"/>.)
 /// <para>
 /// The rows are left out here by a helper in this class, not by the earlier code: a row is written as this version
 /// writes it and its entries are then taken out of every index but the primary key, with the library's own index
@@ -109,6 +111,7 @@ public sealed class IncompleteIndexTests : IDisposable
     {
         var db = Database.Open(_path);
         db.EnforceForeignKeys = true;
+        db.VerifyIndexes = true;
         return db;
     }
 
@@ -375,6 +378,7 @@ public sealed class IncompleteIndexTests : IDisposable
             catch (Exception e) when (e is NotSupportedException or InvalidDataException or InvalidOperationException) { continue; }   // not one this library opens
             using (db)
             {
+                db.VerifyIndexes = true;
                 foreach (string name in db.ListTables(includeSystem: true))
                 {
                     var table = db.GetTable(name);

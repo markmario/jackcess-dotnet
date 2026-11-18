@@ -1,7 +1,8 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// The rows of a table that one of its indexes was seen not to hold (<see cref="TableIndexes.HoldsEveryRow"/>),
+/// The rows of a table that one of its indexes was seen not to hold (<see cref="TableIndexes.HoldsEveryRow"/>,
+/// under <see cref="Database.VerifyIndexes"/>),
 /// each with the key the index should have it under: none, for an index Access alone has written. They are what
 /// the index cannot answer for - a unique index says nothing of a duplicate of one of them
 /// (qcatco/exportmdb.interop#73) - and they are kept while the database is open. A row leaves when this library
@@ -10,6 +11,9 @@ namespace JackcessDotNet;
 /// </summary>
 internal sealed class RowsNotHeld
 {
+    /// <summary>No rows: what an index that is taken at its word lacks (<see cref="Database.VerifyIndexes"/> off).</summary>
+    internal static readonly RowsNotHeld None = new(new Dictionary<int, byte[]>());
+
     private readonly Dictionary<int, byte[]> _keys;
     // How many of the rows have each key: what a duplicate is looked for by.
     private readonly Dictionary<byte[], int> _rowsWith = new(ForeignKeyEnforcer.KeyComparer.Instance);

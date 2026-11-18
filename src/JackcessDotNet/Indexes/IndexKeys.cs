@@ -76,10 +76,21 @@ internal static class IndexKeys
     /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
     internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
-        var key = new List<byte>();
-        for (int i = 0; i < columns.Count; i++)
-            key.AddRange(EncodeColumn(columns[i].Column, columns[i].IsAscending, values[i]));
-        return key.ToArray();
+        // Most keys are of one column: its part is the key.
+        if (columns.Count == 1) return EncodeColumn(columns[0].Column, columns[0].IsAscending, values[0]);
+
+        var parts = new byte[columns.Count][];
+        int length = 0;
+        for (int i = 0; i < parts.Length; i++)
+            length += (parts[i] = EncodeColumn(columns[i].Column, columns[i].IsAscending, values[i])).Length;
+        var key = new byte[length];
+        int at = 0;
+        foreach (byte[] part in parts)
+        {
+            part.CopyTo(key, at);
+            at += part.Length;
+        }
+        return key;
     }
 
     /// <summary>

@@ -4,11 +4,13 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A unique index answers for a duplicate only with the rows it was seen not to hold
-/// (qcatco/exportmdb.interop#73). Versions of this library before it kept every index left rows out of a table's
-/// unique indexes, and a row whose primary key they changed under the wrong value in the key: such an index alone
-/// says "no other row has this" of a value a row has. So the first row a session checks against a table's unique
-/// indexes reads the table once, for all of them, and the rows they do not hold are kept beside them.
+/// With <see cref="Database.VerifyIndexes"/>, which every database here is opened with, a unique index answers
+/// for a duplicate only with the rows it was seen not to hold (qcatco/exportmdb.interop#73). Versions of this
+/// library before it kept every index left rows out of a table's unique indexes, and a row whose primary key
+/// they changed under the wrong value in the key: such an index alone says "no other row has this" of a value a
+/// row has. So the first row a session checks against a table's unique indexes reads the table once, for all of
+/// them, and the rows they do not hold are kept beside them. (Without the option an index is believed and
+/// nothing is read: <see cref="TrustedIndexTests"/>.)
 /// <para>
 /// The rows are left out here by <see cref="IncompleteIndexTests.InsertAsEarlierReleasesDid"/>, not by the earlier
 /// code; <see cref="LegacyUniqueIndexTests"/> has a file the earlier code itself wrote to. And what it costs a
@@ -20,12 +22,19 @@ public sealed class UniqueIndexTrustTests : IDisposable
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"unique_{Guid.NewGuid():N}.mdb");
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
+    private Database OpenVerifying()
+    {
+        var db = Database.Open(_path);
+        db.VerifyIndexes = true;
+        return db;
+    }
+
     private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
     private static Column Text(string name, int chars = 20) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
 
     private List<string> Rows(string table)
     {
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         return db.GetTable(table).ReadAllRows()
             .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
@@ -36,7 +45,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     {
         byte[] before = File.ReadAllBytes(_path);
         string message;
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
             message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         return message;
@@ -80,7 +89,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     {
         Pairs();
 
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
         {
             var pairs = db.GetTable("Pairs");
             pairs.Insert(new Row { ["Id"] = 4, ["A"] = 3, ["B"] = "y" });
@@ -89,7 +98,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
         }
 
         Assert.Equal(5, Rows("Pairs").Count);
-        using var read = Database.Open(_path);
+        using var read = OpenVerifying();
         IndexChecks.AssertEveryIndexHoldsTheRows(read, "Pairs", expectedRows: 5);
     }
 
@@ -130,7 +139,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     {
         Filled(new[] { "Id" }, new IndexDefinition("OneCode", "Code") { IsUnique = true });
 
-        using (var db = Database.Open(_path))
+        using (var db = OpenVerifying())
         {
             int pages = PagesOf(db, "T");
             Assert.True(pages > 500, $"the table is only {pages} pages");
@@ -148,7 +157,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
             Assert.Throws<InvalidOperationException>(() => db.GetTable("T").Insert(RowOf(Many + 7)));
         }
 
-        using var read = Database.Open(_path);
+        using var read = OpenVerifying();
         IndexChecks.AssertEveryIndexHoldsTheRows(read, "T", expectedRows: Many + 40);
     }
 
@@ -161,7 +170,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     {
         Filled(primaryKey: null, new IndexDefinition("ByCode", "Code"));
 
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         var table = db.GetTable("T");
         for (int i = 1; i <= 5; i++)
         {
@@ -175,7 +184,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     {
         Filled(primaryKey: null, new IndexDefinition("OneCode", "Code") { IsUnique = true });
 
-        using var db = Database.Open(_path);
+        using var db = OpenVerifying();
         long reads = ReadsOf(db, () => db.GetTable("T").Insert(new Row { ["Id"] = Many + 1, ["Name"] = "no code" }));
         Assert.True(reads <= InsertReads, $"the insert read {reads} pages");
     }
@@ -185,6 +194,7 @@ public sealed class UniqueIndexTrustTests : IDisposable
     public void filling_a_new_table_never_reads_it()
     {
         using var db = Database.Create(_path, JetVersion.Jet4);
+        db.VerifyIndexes = true;
         var table = db.CreateTable("T", new[] { Long("Id"), Long("Code"), Text("Name", 100) }, new[] { "Id" },
                                    new[] { new IndexDefinition("OneCode", "Code") { IsUnique = true } });
         for (int i = 0; i < 2_000; i++)

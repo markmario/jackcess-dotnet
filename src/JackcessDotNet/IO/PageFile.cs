@@ -30,11 +30,14 @@ public sealed class PageFile : IDisposable
     internal FreedLvalPages FreedLvalPages { get; } = new FreedLvalPages();
 
     /// <summary>
-    /// The indexes looked at in this session, by the table's definition page and the index's block in it, each
-    /// with the rows of its table it does not hold - none, for an index that holds every row
-    /// (<see cref="TableIndexes"/>): an index is looked at once.
+    /// The indexes looked at in this session (<see cref="VerifyIndexes"/>), by the table's definition page and the
+    /// index's block in it, each with the rows of its table it does not hold - none, for an index that holds
+    /// every row (<see cref="TableIndexes"/>): an index is looked at once.
     /// </summary>
     internal Dictionary<(int TdefPage, int Index), RowsNotHeld> IndexesChecked { get; } = new();
+
+    /// <summary>See <see cref="Database.VerifyIndexes"/>.</summary>
+    internal bool VerifyIndexes { get; set; }
 
     /// <summary>See <see cref="Database.ShareLongValuePages"/>.</summary>
     internal bool ShareLongValuePages { get; set; }

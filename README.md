@@ -193,55 +193,60 @@ reaches and the index pages that lead to them - a cascade delete of five rows ab
 has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
 keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
 
-An index is searched only once it has been seen to hold every row
-([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)). Access trusts an index to.
-This library does not, because versions of it before it kept every index (those in ExportMdb.Interop up to 2.1.2)
-kept a table's primary key and no other: a row one of them inserted into an Access-made table is missing from the
-index on its foreign key, and a row one of them updated is in that index where it was before the update. Found
-through the index, such a row is no one's child - its parent can be deleted or re-keyed and the row left an
-orphan, which is what Access itself does with such a file.
+An index is trusted to hold every row of its table, as Access and Java Jackcess trust one
+([qcatco/exportmdb.interop#78](https://github.com/qcatco/exportmdb.interop/issues/78)): rows are found through it,
+and a unique index that has no entry for a value is taken to mean no row has it. Nothing is read to check.
+
+**`Database.VerifyIndexes`: for files an earlier version wrote to.** Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
+primary key and no other index, and kept the primary key under the value a row was *found by*. In a table Access
+made with indexes, a row one of them inserted is in no index but the primary key; a row one of them updated is in
+each other index where it was before the update; and a row whose primary key one of them changed is in the key
+under the value it had. Nothing in a file says that one of them wrote to it - a count of entries does not (after
+such an update an index has an entry for every row, by number), nor does the number an index's definition keeps,
+which is of keys ever added.
+
+With such a file, and by default, this library does what Access does with it
+([#64](https://github.com/qcatco/exportmdb.interop/issues/64),
+[#73](https://github.com/qcatco/exportmdb.interop/issues/73)):
+
+- enforcing foreign keys, a row that is not in the index on its foreign key is no one's child - its parent is
+  deleted or re-keyed and the row left an orphan;
+- a second row with the values of a row a unique index does not hold is added. The next time the file is
+  compacted Access cannot build that index, and leaves the table without it, or without its primary key.
+
+**Set `db.VerifyIndexes = true` for a file one of those versions wrote rows into and that has not been compacted
+in Access since.** Compacting rebuilds the indexes, and the option is then needless. With it set:
 
 - **The first change that looks for rows through an index reads its table once**, while the database is open, and
-  compares the two row by row: every row's key must be in the index, pointing at that row. Counting would not do -
-  after such an update the index has an entry for every row, by number, and in files Access alone wrote an index
-  can have more entries than its table's definition counts rows. Measured on a child table of 1,000,000 rows (30,304 pages) and a
-  parent of 200,000, the first cascade delete read 34,860 pages - both tables and the two indexes it used - in
-  about a second, with the file in the operating system's cache, and the deletes after it 65 pages and a
-  millisecond each; with 300,000 rows it was 10,503 pages and 0.3 seconds. Each row's key is held in memory
-  until its entry is met, so the check needs memory in proportion to the table's rows.
-- **An index that holds every row is searched from then on**, at the cost given above. What this library writes
-  keeps it whole.
-- **An index that does not is not searched** while rows it does not hold remain: its table is read instead, as
-  for a table with no index (below), so a change is slower and its outcome the same. Those rows are kept beside
-  the index while the database is open; a row this library rewrites gains its entries and a row it deletes is
-  gone, and the index is searched once none of them is left. Nothing here rebuilds an index. Compacting the
-  database in Access does: after `DBEngine.CompactDatabase` Access and this library both find every row through
-  the index.
-
-**A unique index is looked at the same way before a row is compared with it**, whether or not foreign keys are
-enforced ([qcatco/exportmdb.interop#73](https://github.com/qcatco/exportmdb.interop/issues/73)). The same earlier
-versions left rows out of a table's unique indexes, and kept its primary key under the value a row was found by,
-so a row whose key they changed is in the key under the value it had. A second row with the values of such a row
-is a duplicate the index knows nothing of. Access adds it - and the next time the file is compacted cannot build
-the index, and leaves the table without it, or without its primary key. This library refuses it: a row is
-compared with what the index holds and with the rows the index was seen not to hold.
-
-- **The first row a session checks against a table's unique indexes reads the table once**, for all of them
-  together, and their leaf pages; `Insert`, `UpdateByPrimaryKey` and `Validate` each check. Measured on a table
-  of 1,000,000 rows (30,304 pages) with the file in the operating system's cache: with a primary key, 33,643
-  pages in 0.7 to 1 second; with a primary key and a unique index, 36,964 pages in 0.9 seconds. Every insert
-  after it read 8 and 11 pages, in 0.1 and 0.2 milliseconds, as before. Memory is needed in proportion to the
-  table's rows while it is read.
+  compares the two row by row: every row's key must be in the index, pointing at that row. For a unique index
+  that is the first `Insert`, `UpdateByPrimaryKey` or `Validate` of a session, which reads the table once for all
+  the table's unique indexes together; for a relationship, the first change that keeps it.
+- **The rows an index does not hold are kept beside it** while the database is open. A row is compared with them
+  as well as with the unique index, so the duplicate is refused - as Access refuses it once the file is
+  compacted. An index that lacks rows is not searched for a relationship: its table is read instead, as for a
+  table with no index (below), so a change is slower and its outcome right. A row this library rewrites gains
+  its entries and a row it deletes is gone, and the index is searched once none of them is left.
+- **What it costs.** Measured on a table of 1,000,000 rows (30,304 pages) with the file in the operating
+  system's cache: with a primary key the first insert read 33,644 pages in half a second and allocated 620 MB in
+  passing; with a primary key and a unique index, 36,965 pages in 0.8 to 0.9 seconds and 990 MB. Every insert
+  after it, and the first without the option, read 8 and 11 pages in 0.1 and 0.2 milliseconds. For a
+  relationship, on a child of 1,000,000 rows and a parent of 200,000, the first cascade delete read 34,860 pages
+  in about a second and the deletes after it 65 pages and a millisecond each. Memory is needed in proportion to
+  the table's rows while it is read.
 - **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
   is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
-- **Nothing in a file says whether an earlier version wrote to it**, so every table with a primary key or a unique
-  index pays for the first row. A count does not show it (above), and the number an index's definition keeps is
-  of keys ever added.
+- **What it does not catch.** An entry is still believed for what it points at: the value a row had before its
+  primary key was changed is refused as a duplicate, though no row has it. And a row added under a value whose
+  only entry points at a row long gone is added beside that entry, where Access does not find it through the
+  index until the file is compacted
+  ([qcatco/exportmdb.interop#79](https://github.com/qcatco/exportmdb.interop/issues/79)). Nothing here rebuilds
+  an index: `DBEngine.CompactDatabase` does.
 
 An entry whose row has gone does no harm either way: each row found is read and compared.
 
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
-earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`.
+earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
+beside it is the same for unique indexes and a primary key, made by `tools/legacy-unique-indexes.ps1`.
 
 Keys are matched as Access matches them - as its indexes hold them:
 

@@ -21,10 +21,12 @@ namespace JackcessDotNet;
 /// index already on its columns); a tree is changed once however many indexes name it. An index that ignores
 /// nulls holds no entry for a row whose index columns are all null.
 ///
-/// Rows are found through an index, for the relationships <see cref="ForeignKeyEnforcer"/> keeps, only once the
-/// index has been seen to hold every row (<see cref="HoldsEveryRow"/>): a file an earlier version of this library
-/// wrote to can have rows its indexes do not hold. A unique index is looked at the same way before a row is
-/// compared with it, and the rows it does not hold are compared too (<see cref="EnsureNoDuplicates"/>).
+/// An index is taken at its word, as Access and Jackcess take one: what it holds are the table's rows. A file an
+/// earlier version of this library wrote to can have rows its indexes do not hold, and for such a file a caller
+/// sets <see cref="Database.VerifyIndexes"/>. Then rows are found through an index, for the relationships
+/// <see cref="ForeignKeyEnforcer"/> keeps, only once the index has been seen to hold every row
+/// (<see cref="HoldsEveryRow"/>), and a unique index is looked at the same way before a row is compared with it,
+/// the rows it does not hold being compared too (<see cref="EnsureNoDuplicates"/>).
 /// </summary>
 internal sealed class TableIndexes
 {
@@ -193,20 +195,24 @@ internal sealed class TableIndexes
     /// for it: it holds the pages it read, which <see cref="Add"/> then reads no second time - so a unique index
     /// costs an insert no more page reads than one that is not.
     /// <para>
-    /// The index is not taken at its word, as Access takes it (qcatco/exportmdb.interop#73): the rows it was
-    /// seen not to hold (<see cref="RowsNotHeldBy"/>) are asked as well, since a second row with the values of
-    /// one of them is a duplicate the index knows nothing of. Access adds such a row, and when the file is next
-    /// compacted cannot build the index, and leaves the table without it. Seeing costs the first row a session
-    /// checks one reading of the table, for all its unique indexes together, and no row after it anything.
+    /// With <see cref="Database.VerifyIndexes"/> the index is not taken at its word
+    /// (qcatco/exportmdb.interop#73): the rows it was seen not to hold (<see cref="RowsNotHeldBy"/>) are asked as
+    /// well, since a second row with the values of one of them is a duplicate the index knows nothing of. Access
+    /// adds such a row, and when the file is next compacted cannot build the index, and leaves the table without
+    /// it. Seeing costs the first row a session checks one reading of the table, for all its unique indexes
+    /// together, and no row after it anything. Without it nothing is read but the index.
     /// </para>
     /// </summary>
     public IndexWriter? EnsureNoDuplicates(IReadOnlyList<Entry> entries, int? replacedRowPointer = null, bool forEntry = false)
     {
-        List<Tree>? unseen = null;
-        foreach (var entry in entries)
-            if (entry.Tree.IsUnique && !entry.HasNull && !_file.IndexesChecked.ContainsKey(Which(entry.Tree)))
-                (unseen ??= new List<Tree>()).Add(entry.Tree);
-        if (unseen is not null) Look(unseen);
+        if (_file.VerifyIndexes)
+        {
+            List<Tree>? unseen = null;
+            foreach (var entry in entries)
+                if (entry.Tree.IsUnique && !entry.HasNull && !_file.IndexesChecked.ContainsKey(Which(entry.Tree)))
+                    (unseen ??= new List<Tree>()).Add(entry.Tree);
+            if (unseen is not null) Look(unseen);
+        }
 
         IndexWriter? writer = null;
         foreach (var entry in entries)
@@ -292,9 +298,10 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Whether <paramref name="tree"/> has an entry for every row of the table that a search of it could be for:
-    /// what makes "the index has no such row" mean that the table has none. Access takes that on trust. Here it
-    /// is seen once for each index, the first time rows are looked for through it, and remembered while the
-    /// database is open (qcatco/exportmdb.interop#64).
+    /// what makes "the index has no such row" mean that the table has none. Access takes that on trust, and
+    /// Jackcess, and so does this library unless <see cref="Database.VerifyIndexes"/> is set. Then it is seen
+    /// once for each index, the first time rows are looked for through it, and remembered while the database is
+    /// open (qcatco/exportmdb.interop#64).
     /// <para>
     /// Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
     /// primary key and no other index. A row one of them inserted has no entry in the others; a row one of them
@@ -319,10 +326,12 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// The rows <paramref name="tree"/> does not hold, as they were seen when the index was first looked at in
-    /// this session and as this library's own changes have left them since.
+    /// this session and as this library's own changes have left them since; none, with nothing read, for an
+    /// index that is taken at its word.
     /// </summary>
     private RowsNotHeld RowsNotHeldBy(Tree tree)
     {
+        if (!_file.VerifyIndexes) return RowsNotHeld.None;
         if (!_file.IndexesChecked.ContainsKey(Which(tree))) Look(new[] { tree });
         return _file.IndexesChecked[Which(tree)];
     }
@@ -337,7 +346,9 @@ internal sealed class TableIndexes
         var format  = _file.Format;
         var decoder = new RowDecoder(format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
         var columns = trees.SelectMany(tree => tree.Columns).Select(c => c.Column).Distinct().ToList();
-        var unfound = trees.Select(_ => new Dictionary<int, byte[]>()).ToList();
+        // Room for every row at once, by the definition's count of them (kept within reason, should it be wrong).
+        int rows    = Math.Min(Math.Max(ByteUtil.GetInt(_file.ReadPage(_table.TdefPageNumber), format.TdefOffsetNumRows), 0), 1 << 24);
+        var unfound = trees.Select(_ => new Dictionary<int, byte[]>(rows)).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
         {
