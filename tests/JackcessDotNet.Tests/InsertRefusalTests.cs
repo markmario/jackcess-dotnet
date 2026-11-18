@@ -89,8 +89,8 @@ public sealed class InsertRefusalTests : IDisposable
     [Theory]
     [InlineData("V2007", "blobV2007.accdb", "Table1", "Complex column, whose keys this library does not write")]   // an index on an attachment column
     [InlineData("V2003", "indexCodesV2003.mdb", "Table7", "Numeric column, whose keys this library does not write")] // a Decimal index
-    [InlineData("V1997", "common1V1997.mdb", "Table1", "this library writes text keys only in")]                   // Access 97 text keys
-    [InlineData("V1997", "common1V1997.mdb", "Table2", "were not all read from its definition")]                   // a definition over several pages
+    [InlineData("V1997", "common1V1997.mdb", "Table1", "Access 97 (Jet 3) files are read-only in this library")]   // an Access 97 file: that before any other reason
+    [InlineData("V2000", "common2V2000.mdb", "MSP_PROJECTS", "were not all read from its definition")]            // a definition over several pages
     [InlineData("V2010", "calcFieldV2010.accdb", "Table1", "is calculated")]
     public void A_table_Access_made_that_takes_no_row_says_what_insert_throws(string version, string file, string table, string because)
     {
