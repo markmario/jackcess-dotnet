@@ -29,6 +29,12 @@ public sealed class PageFile : IDisposable
     /// </summary>
     internal FreedLvalPages FreedLvalPages { get; } = new FreedLvalPages();
 
+    /// <summary>
+    /// The indexes seen in this session to hold, or not to hold, every row of their table, by the table's
+    /// definition page and the index's block in it (<see cref="TableIndexes"/>): an index is looked at once.
+    /// </summary>
+    internal Dictionary<(int TdefPage, int Index), bool> IndexesChecked { get; } = new();
+
     /// <summary>See <see cref="Database.ShareLongValuePages"/>.</summary>
     internal bool ShareLongValuePages { get; set; }
 
@@ -283,6 +289,7 @@ public sealed class PageFile : IDisposable
         EnsureWritable();
 
         _kept.Clear();
+        IndexesChecked.Clear();
         _stream.Seek(0, SeekOrigin.Begin);
         _stream.SetLength(0);
         source.CopyTo(_stream);

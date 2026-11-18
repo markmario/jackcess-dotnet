@@ -193,13 +193,33 @@ reaches and the index pages that lead to them - a cascade delete of five rows ab
 has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
 keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
 
-An index is trusted to hold every row, as Access trusts it. An entry whose row has gone is harmless (each row found
-is read and compared), but a row with no entry is not found. Versions of this library before it kept every index
-(those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key and to no other index, so a row one
-of them inserted into an Access-made table is missing from the index on its foreign key: enforcement does not see
-it as a child, and its parent can be deleted or re-keyed leaving it an orphan. Access makes the same mistake with
-the same file, which is already inconsistent to it
-([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)).
+An index is searched only once it has been seen to hold every row
+([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)). Access trusts an index to.
+This library does not, because versions of it before it kept every index (those in ExportMdb.Interop up to 2.1.2)
+kept a table's primary key and no other: a row one of them inserted into an Access-made table is missing from the
+index on its foreign key, and a row one of them updated is in that index where it was before the update. Found
+through the index, such a row is no one's child - its parent can be deleted or re-keyed and the row left an
+orphan, which is what Access itself does with such a file.
+
+- **The first change that looks for rows through an index reads its table once**, while the database is open, and
+  compares the two row by row: every row's key must be in the index, pointing at that row. Counting would not do -
+  after such an update the index has an entry for every row, by number, and in files Access alone wrote an index
+  can have more entries than its table's definition counts rows. Measured on a child table of 1,000,000 rows (30,304 pages) and a
+  parent of 200,000, the first cascade delete read 34,860 pages - both tables and the two indexes it used - in
+  about a second, with the file in the operating system's cache, and the deletes after it 65 pages and a
+  millisecond each; with 300,000 rows it was 10,503 pages and 0.3 seconds. Each row's key is held in memory
+  until its entry is met, so the check needs memory in proportion to the table's rows.
+- **An index that holds every row is searched from then on**, at the cost given above. What this library writes
+  keeps it whole.
+- **An index that does not is not searched** while the database is open: its table is read instead, as for a
+  table with no index (below), so a change is slower and its outcome the same. A row this library rewrites
+  gains its entries, but nothing here rebuilds an index. Compacting the database in Access does: after
+  `DBEngine.CompactDatabase` Access and this library both find every row through the index.
+
+An entry whose row has gone does no harm either way: each row found is read and compared.
+
+`tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
+earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`.
 
 Keys are matched as Access matches them - as its indexes hold them:
 
@@ -222,10 +242,10 @@ What enforcement does not check:
 - **Relationships without referential integrity**: they only tell Access's query designer how tables join.
 
 Where no index on the columns can be searched (a table made without one on its foreign key, an index whose keys
-this library does not write, a parent key that is null) the table is read from end to end and held in memory until
-the change is written: some 200 bytes a row, about 60 MB and a second for a table of 300,000 rows. A change that
-would rewrite a row of a table Access has deleted a column from is refused (`NotSupportedException`): rows of
-such a table are not yet written correctly.
+this library does not write, an index that does not hold every row, a parent key that is null) the table is read
+from end to end and held in memory until the change is written: some 200 bytes a row, about 60 MB and a second
+for a table of 300,000 rows. A change that would rewrite a row of a table Access has deleted a column from is
+refused (`NotSupportedException`): rows of such a table are not yet written correctly.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
@@ -361,6 +381,31 @@ have been deleted - and a row Access moved to another page is read where its poi
   agreed (a 1 written by an earlier release is 16,777,216 to Access, and now to this library too). Such a value
   cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
   certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
+
+  `Database.FindDecimalsBeyondPrecision()`, and the same on a `Table`, lists the values that read with more digits
+  than their column holds: the table, the column, the row (its primary key, and its place among the table's rows),
+  the value as it reads and the value its bytes make in the earlier order
+  ([qcatco/exportmdb.interop#66](https://github.com/qcatco/exportmdb.interop/issues/66)). It changes nothing - a
+  read returns what it did - and repairs nothing:
+
+  ```csharp
+  foreach (var suspect in db.FindDecimalsBeyondPrecision())
+      Console.WriteLine(suspect);
+  // Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order
+  ```
+
+  It finds some such values, not all: a number written in the earlier order can still read within its column's
+  precision. In a column of precision 7 or less, every number under 4,294,967,296 (before its decimal point is
+  placed) that is not a multiple of 256 is listed; of precision 8 or 9, some; of precision 10 or more - 18 is
+  the default, Access's and this library's - none, and only larger numbers can be. An empty list does not say
+  the file has no such value.
+
+  Neither Access nor Java Jackcess checks a Decimal against its column's precision when it reads one. Jackcess
+  returns the number. In Access, DAO returns it and SQL computes with it (the 1 above is found by
+  `WHERE Price = 16777216`), but the OLE DB provider cannot hand it over - reading the column fails with
+  "Conversion failed because the Decimal data value overflowed the type specified" - and a query that sorts its
+  rows, or writes the value back, is refused: "The decimal field's precision is too small to accept the numeric
+  you attempted to add."
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
 - **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a

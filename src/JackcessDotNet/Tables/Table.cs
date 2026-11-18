@@ -454,6 +454,75 @@ public sealed class Table
     }
 
     /// <summary>
+    /// Lists the Decimal (Numeric) values in the table that read with more digits than their column's precision
+    /// allows. Nothing is changed, in the file or in what a read returns: this is a way to look for values a
+    /// version of this library before qcatco/exportmdb.interop#61 wrote.
+    /// <para>
+    /// Those versions wrote a Decimal's sixteen bytes in an order Access does not use, so every value they wrote
+    /// reads as a different number - a 1 as 16,777,216 - in Access and, now, here. Nothing in the file says who
+    /// wrote a value. What can be seen is a value its column could not have been given: Access refuses a number
+    /// with more digits than the column's precision, and so does this library, so one that reads that way was
+    /// almost certainly written in the earlier order, and <see cref="DecimalBeyondPrecision.ValueInEarlierByteOrder"/>
+    /// is what it was meant to be.
+    /// </para>
+    /// <para>
+    /// It finds some such values, not all, and how many depends on the precision. A number under 4,294,967,296
+    /// (before its decimal point is placed) written in the earlier order reads as one of at most ten digits, at
+    /// least eight when it is not a multiple of 256. So in a column of precision 7 or less every such number that
+    /// is not a multiple of 256 is listed; of precision 8 or 9, some are; and of precision 10 or more - 18 is what
+    /// Access and this library give a column by default - none is, and only numbers of ten digits or more can be.
+    /// A table with nothing listed may still hold values written in the earlier order.
+    /// </para>
+    /// <para>
+    /// The table is read as it is asked for, a row at a time. A calculated column is not looked at.
+    /// </para>
+    /// </summary>
+    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
+    {
+        var decimals = _definition.Columns
+            .Where(c => c.DataType == DataType.Numeric && !c.IsCalculated && c.Precision > 0)
+            .ToList();
+        if (decimals.Count == 0) yield break;
+
+        var format  = _file.Format;
+        var decoder = new RowDecoder(format, _definition.Columns);
+        var keys    = _definition.EffectivePrimaryKeyColumns
+            .Select(name => _definition.Columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            .OfType<Column>()
+            .ToList();
+
+        // The rows in the order ReadAllRows returns them, which RowIndex counts in.
+        int rowIndex = -1;
+        foreach (int pageNum in UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, format, _file))
+        {
+            byte[] dp       = _file.ReadPage(pageNum);
+            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
+            for (int r = 0; r < rowCount; r++)
+            {
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+                rowIndex++;
+
+                foreach (var column in decimals)
+                {
+                    byte[]? stored = decoder.RawFixedValue(rowBytes, column) ?? decoder.RawVariableValue(rowBytes, column);
+                    if (stored is null || stored.Length < NumericCodec.Size) continue;
+
+                    var unscaled = NumericCodec.Unscaled(stored, 0);
+                    if (unscaled < System.Numerics.BigInteger.Pow(10, column.Precision)) continue;
+
+                    var key = new Row();
+                    foreach (var keyColumn in keys)
+                        key[keyColumn.Name] = decoder.Decode(rowBytes, keyColumn);
+                    bool negative = NumericCodec.IsNegative(stored, 0);
+                    yield return new DecimalBeyondPrecision(Name, column, rowIndex, key,
+                        NumericCodec.Decode(stored, 0, column.Scale),
+                        NumericCodec.ToDecimal(NumericCodec.UnscaledInEarlierByteOrder(stored, 0), negative, column.Scale));
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Reads and decodes every non-deleted row in the table and returns them in
     /// insertion order.  Follows LVAL page chains for Memo/OLE columns.
     /// </summary>

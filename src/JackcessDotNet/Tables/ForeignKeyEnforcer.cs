@@ -26,6 +26,14 @@ namespace JackcessDotNet;
 /// - the table is read from end to end, once, and all its rows are held until the change is written.
 /// </para>
 /// <para>
+/// An index is searched only once it has been seen to hold every row of its table
+/// (<see cref="TableIndexes.RowPointersFor(IReadOnlyList{string}, IReadOnlyList{object?})"/>): the first search
+/// through each index, while the database is open, reads its table to see. Versions of this library before it
+/// kept every index left rows out of all but the primary key, and a row that is not in the index on its foreign
+/// key would not be found as a child (qcatco/exportmdb.interop#64). An index that does not hold every row is not
+/// searched: its table is read, as one with no index is.
+/// </para>
+/// <para>
 /// Every value is compared as the row stores it (<see cref="Stored"/>), never as a caller reads or gives it: a
 /// Double or Single by its bits, so 1 and the next Double after it are two keys and so are 0 and -0, as in
 /// Access's indexes; a Date/Time as the double stored, which a <see cref="DateTime"/> does not always hold; a
