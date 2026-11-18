@@ -30,13 +30,34 @@ internal static class ExtendedDateTimeCodec
     private const long DaysInRange  = 3652059;   // DateTime.MaxValue's day, and one more
 
     /// <summary>
-    /// The value at <paramref name="offset"/>; null for bytes that are not such a value - something other than a
-    /// digit where a digit goes, or a day or a time of day past what there is.
+    /// The value at <paramref name="offset"/>; null for 42 bytes that do not say a date: the whole shape is
+    /// looked at, not only the two numbers.
+    /// <para>
+    /// Access reads the bytes as three numbers with colons between them, loosely, and what it made of each form
+    /// here was asked of it (DAO 16.0, the bytes of a value changed in a file it had made). Where it reads the
+    /// date the bytes say, so does this: spaces before or after a number's digits, a plus sign before them, and
+    /// any byte that is not a digit in the last place, where Access writes a zero byte. Where it reads no value,
+    /// this reads null: a colon that is not a colon, a third number that is not a number or has a digit after
+    /// it, a minus sign. And these are null here although Access shows something for them, because what it
+    /// shows is not a date the bytes say:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>a third number other than 7. It is the count of digits of the fraction; Access writes no other, and
+    /// its reading of others is not one rule - three digits, 123, it shows as .0000123 - while eight or nine
+    /// are finer than a <see cref="DateTime"/>;</item>
+    /// <item>a number with something other than a digit in it, which Access reads up to there (a day number
+    /// 73742X is day 73742, in the year 202), and a number with no digit, which it reads as zero;</item>
+    /// <item>a day after 31 December 9999, which it shows as 30 December 1899, and a time of day of a day or
+    /// more, which it shows as 24:00:00.</item>
+    /// </list>
+    /// Jackcess looks at neither colons nor trailer, and takes each byte of the numbers less '0' for a digit.
     /// </summary>
     public static DateTime? Decode(byte[] row, int offset)
     {
-        if (ReadDigits(row, offset) is not { } days || days >= DaysInRange) return null;
-        if (ReadDigits(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay) return null;
+        if (row[offset + Digits] != ':' || row[offset + TrailerAt] != ':' || row[offset + TrailerAt + 1] != '7') return null;
+        if (row[offset + Size - 1] is >= (byte)'0' and <= (byte)'9') return null;
+        if (ReadNumber(row, offset) is not { } days || days >= DaysInRange) return null;
+        if (ReadNumber(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay) return null;
         return new DateTime(days * TimeSpan.TicksPerDay + time, DateTimeKind.Unspecified);
     }
 
@@ -52,12 +73,20 @@ internal static class ExtendedDateTimeCodec
         return bytes;
     }
 
-    private static long? ReadDigits(byte[] row, int offset)
+    // One of the two numbers, in its nineteen bytes: digits - Access fills the field with them - which may have
+    // spaces before and after and a plus sign before. Null for anything else, and for no digit at all.
+    private static long? ReadNumber(byte[] row, int offset)
     {
+        int at = offset, end = offset + Digits;
+        while (at < end && row[at] == ' ') at++;
+        while (end > at && row[end - 1] == ' ') end--;
+        if (at < end && row[at] == '+') at++;
+        if (at == end) return null;
+
         long number = 0;
-        for (int i = 0; i < Digits; i++)
+        for (; at < end; at++)
         {
-            int digit = row[offset + i] - '0';
+            int digit = row[at] - '0';
             if (digit is < 0 or > 9) return null;
             // Nineteen nines are more than a long holds; no value this reads as a date is near it.
             if (number > (long.MaxValue - digit) / 10) return null;

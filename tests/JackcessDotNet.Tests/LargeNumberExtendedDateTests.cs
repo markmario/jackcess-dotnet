@@ -81,6 +81,42 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     public void Bytes_that_are_no_extended_date_are_read_as_null(string stored)
         => Assert.Null(ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
 
+    // The whole shape is looked at: two numbers that are dates were read as one whatever stood between and
+    // after them. What Access makes of each (DAO 16.0, the bytes changed in a file it made) is beside it.
+    [Theory]
+    [InlineData("0000000000000737425 0000000110451234567:7\0")]   // the first colon a space: no value
+    [InlineData("000000000000073742500000000110451234567:7\0")]   // the first colon a digit: no value
+    [InlineData("0000000000000737425:0000000110451234567 7\0")]   // the second colon a space: no value
+    [InlineData("0000000000000737425:0000000110451234567:x\0")]   // no count of digits: no value
+    [InlineData("0000000000000737425:0000000110451234567:71")]    // a count of 71: no value
+    [InlineData("-000000000000000001:0000000110451234567:7\0")]   // a day before the first: no value
+    [InlineData("0000000000000737425:0000000110451234567:3\0")]   // a count of 3: Access shows 30680:53:54.0000567
+    [InlineData("0000000000000737425:0000000000011045123:3\0")]   // a count of 3: Access shows 03:04:05.0000123
+    [InlineData("0000000000000737425:0000000110451234567:9\0")]   // a count of 9: finer than a tick
+    [InlineData("0000000000000737425:00000001104512345X7:7\0")]   // not a digit: Access reads up to it
+    [InlineData("                   :0000000110451234567:7\0")]   // no digit: Access reads day 0
+    public void Bytes_in_another_shape_than_a_date_s_are_read_as_null(string stored)
+    {
+        Assert.Equal(ExtendedDateTimeCodec.Size, stored.Length);
+        Assert.Null(ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
+    }
+
+    // And the forms Access reads the same date from as from its own are read as that date.
+    [Theory]
+    [InlineData("0000000000000737425:0000000110451234567:7\0")]   // as Access writes it
+    [InlineData("0000000000000737425:0000000110451234567:7 ")]    // anything but a digit in the last place
+    [InlineData("0000000000000737425:0000000110451234567:7\t")]
+    [InlineData("0000000000000737425:0000000110451234567:7x")]
+    [InlineData("             737425:0000000110451234567:7\0")]   // spaces before a number
+    [InlineData("0000000000000737425:       110451234567:7\0")]
+    [InlineData("000000000000737425 :000000110451234567 :7\0")]   // and after it
+    [InlineData("+000000000000737425:+000000110451234567:7\0")]   // a plus sign
+    public void The_forms_Access_reads_a_date_from_are_read_as_that_date(string stored)
+    {
+        Assert.Equal(ExtendedDateTimeCodec.Size, stored.Length);
+        Assert.Equal(new DateTime(2020, 1, 2, 3, 4, 5).AddTicks(1234567), ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
+    }
+
     [Fact]
     public void Their_keys_are_the_ones_Access_writes()
     {
