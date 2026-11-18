@@ -68,7 +68,16 @@ internal static class IndexKeys
         return Truncate(EncodeWhole(columns, values));
     }
 
-    private static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+    /// <summary>
+    /// True when the key of <paramref name="values"/> is longer than an entry holds, so that <see cref="Encode"/>
+    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it, or under
+    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it.
+    /// </summary>
+    public static bool IsCut(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+        => EncodeWhole(columns, values).Length > MaxKeyLength;
+
+    /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
+    internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
         var key = new List<byte>();
         for (int i = 0; i < columns.Count; i++)

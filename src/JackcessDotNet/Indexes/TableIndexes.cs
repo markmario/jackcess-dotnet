@@ -62,20 +62,30 @@ internal sealed class TableIndexes
     /// <summary>A row's entry in one tree: its key, and whether a unique index compares it with other rows'.</summary>
     internal readonly struct Entry
     {
-        internal Entry(Tree tree, byte[] key, bool hasNull, IReadOnlyList<object?> values)
+        internal Entry(Tree tree, byte[] key, bool hasNull, IReadOnlyList<object?> values, bool isCut = false)
         {
             Tree    = tree;
             Key     = key;
             HasNull = hasNull;
             Values  = values;
+            IsCut   = isCut;
         }
 
         /// <summary>The row's values for the tree's columns, in their order: what a refusal names.</summary>
         internal IReadOnlyList<object?> Values { get; }
 
         internal Tree   Tree    { get; }
+
+        /// <summary>The key as Access keeps it, and as this library writes it: cut when it is longer than an entry holds.</summary>
         internal byte[] Key     { get; }
         internal bool   HasNull { get; }
+
+        /// <summary>
+        /// Whether <see cref="Key"/> was cut. The tree may then hold the row under that key or under the whole
+        /// one, which versions of this library before the cut, and Jackcess before it, wrote
+        /// (<see cref="TableIndexes.StoredUnder"/>).
+        /// </summary>
+        internal bool   IsCut   { get; }
     }
 
     private IReadOnlyList<Tree> Trees => _trees ??= _table.Indexes
@@ -148,7 +158,8 @@ internal sealed class TableIndexes
             // The key as an entry holds it: one longer than Access keeps is cut, and ends in a digest of the rest
             // (IndexKeys.Truncate), so it is never longer than an index page takes.
             byte[] key = IndexKeys.Encode(tree.Columns, values);
-            entries.Add(new Entry(tree, key, nulls > 0, values));
+            bool isCut = key.Length == IndexKeys.MaxKeyLength && IndexKeys.IsCut(tree.Columns, values);
+            entries.Add(new Entry(tree, key, nulls > 0, values, isCut));
         }
         return entries;
     }
@@ -173,7 +184,7 @@ internal sealed class TableIndexes
                 writer = new IndexWriter(_file, _allocator);
                 if (forEntry) writer.RememberPagesRead();
             }
-            foreach (int holder in writer.RowPointersForKey(tree.Target.RootPage, entry.Key))
+            foreach (var (_, holder) in StoredUnder(writer, entry))
             {
                 if (holder == replacedRowPointer || !IsLiveRow(holder)) continue;
                 throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
@@ -193,8 +204,8 @@ internal sealed class TableIndexes
     /// The row pointers an index on exactly <paramref name="columns"/>, in that order, holds for
     /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
     /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
-    /// this library does not make, one that holds no entry for a key that is all null, or values whose key a
-    /// search cannot be trusted with (<see cref="IndexKeys.CanSearch"/>). Each pointer is an
+    /// this library does not make, one that holds no entry for a key that is all null, or a value this
+    /// library makes no key for (<see cref="IndexKeys.CanEncode(Column, object?)"/>). Each pointer is an
     /// entry, not yet a row: the row it points at is the caller's to read and compare, as an index's text key
     /// finds 'ABC' for 'abc' and an entry may outlive its row in a file an older version of this library wrote.
     /// <para>
@@ -215,25 +226,52 @@ internal sealed class TableIndexes
             && t.Columns.All(c => IndexKeys.CanEncode(c.Column)));
         if (tree is null || (tree.IgnoresNulls && values.All(v => v is null))) return null;
 
-        byte[] key;
+        Entry entry;
         try
         {
-            // A search that misses says there is no such row, so the index is searched only for values whose key
-            // is surely the one an entry has: not one Access keys by its neighbours, nor one whose key is cut
-            // (IndexKeys.CanSearch). The caller reads the table for the others.
-            if (!IndexKeys.CanSearch(tree.Columns, values)) return null;
-            key = IndexKeys.Encode(tree.Columns, values);
+            // A search that misses says there is no such row. A value Access keys by its neighbours has no key
+            // to search by: the caller reads the table for it.
+            for (int i = 0; i < values.Count; i++)
+                if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i])) return null;
+
+            // A key that is cut is looked for under every form an entry of it can have - cut, or whole as
+            // earlier releases wrote it (StoredUnder) - so a row whose entry is whole is not missed.
+            byte[] key = IndexKeys.Encode(tree.Columns, values);
+            bool isCut = key.Length == IndexKeys.MaxKeyLength && IndexKeys.IsCut(tree.Columns, values);
+            entry = new Entry(tree, key, hasNull: false, values, isCut);
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
         {
             return Array.Empty<int>();   // not a value the index's columns can hold: no row has it
         }
-        return new IndexWriter(_file, _allocator).RowPointersForKey(tree.Target.RootPage, key);
+        return RowPointersFor(entry);
     }
 
     /// <summary>The row pointers <paramref name="entry"/>'s index holds under its key: the rows a unique index compares it with.</summary>
     internal IEnumerable<int> RowPointersFor(Entry entry)
-        => new IndexWriter(_file, _allocator).RowPointersForKey(entry.Tree.Target.RootPage, entry.Key);
+        => StoredUnder(new IndexWriter(_file, _allocator), entry).Select(stored => stored.RowPointer);
+
+    /// <summary>
+    /// The entries the tree holds for <paramref name="entry"/>'s key, each with the key it is stored under. For a
+    /// key that was not cut, those under that key. For one that was, a file can hold three kinds of entry, and
+    /// each is one of that key's: Access's, cut at 510 bytes and ended in a digest; this library's, the same
+    /// bytes; and one written whole, by a version of this library before it cut keys or by Jackcess before it
+    /// did. A whole key begins as its cut form does, so all are found among the entries that begin with what
+    /// the cut kept, and a whole one is this key's when cutting it gives this key - whether it is the same
+    /// value's or another's that is cut to the same entry, which Access holds to be the same key.
+    /// </summary>
+    internal static IEnumerable<(byte[] Key, int RowPointer)> StoredUnder(IndexWriter writer, Entry entry)
+    {
+        int root = entry.Tree.Target.RootPage;
+        if (!entry.IsCut)
+            return writer.RowPointersForKey(root, entry.Key).Select(pointer => (entry.Key, pointer));
+
+        byte[] kept = entry.Key.Slice(0, IndexKeys.MaxKeyLength - 2);
+        return writer.EntriesWithPrefix(root, kept).Where(stored =>
+            stored.Key.Length > IndexKeys.MaxKeyLength
+                ? IndexKeys.Truncate(stored.Key).AsSpan().SequenceEqual(entry.Key)
+                : stored.Key.AsSpan().SequenceEqual(entry.Key));
+    }
 
     /// <summary>
     /// Adds <paramref name="entries"/> to their indexes for the row at <paramref name="rowPointer"/>, through
@@ -253,7 +291,20 @@ internal sealed class TableIndexes
         if (entries.Count == 0) return;
         var writer = new IndexWriter(_file, _allocator);
         foreach (var entry in entries)
-            writer.Remove(entry.Tree.Target, entry.Key, rowPointer);
+        {
+            // The entry goes under the key it is stored under: for a key that was cut, the cut key or the whole
+            // one (StoredUnder), whichever holds this row. A row with no entry at all - one an earlier version of
+            // this library wrote without keeping the index - has nothing to take out, and that is no error: the
+            // row is gone and the index holds nothing of it, which is what a delete is for.
+            byte[] storedKey = entry.Key;
+            if (entry.IsCut)
+            {
+                var stored = StoredUnder(writer, entry).Where(s => s.RowPointer == rowPointer).Select(s => s.Key).ToList();
+                if (stored.Count == 0) continue;
+                storedKey = stored[0];
+            }
+            writer.Remove(entry.Tree.Target, storedKey, rowPointer);
+        }
     }
 
     // A value as a refusal shows it: whole when short, its beginning when long.

@@ -243,11 +243,35 @@ What it does not do, and refuses rather than write a key Access cannot find:
   U+06D7, U+FD24, U+FD6F). Any text is fine in a column that is no key, and a
   row Access wrote with such a key is still found: the table is scanned for it.
 
-A key longer than 510 bytes - of one column or of several together - is cut
-there and ended in a two-byte digest, as Access writes it. Two values cut to
-the same entry are duplicates to a unique index, as they are to Access. A lookup of such a value scans the table instead of trusting
-the index, since Jackcess and earlier versions of this library wrote the key
-whole.
+### Keys longer than 510 bytes
+
+Access keeps no index key longer than 510 bytes. It cuts a longer one there
+and ends it in a two-byte digest of the rest - a key of one column, of a Memo
+(its first 255 characters) or of several columns together. A file can hold
+three kinds of entry for such a key:
+
+| Written by | Stored as | Read / lookup | Insert, update | Delete |
+| --- | --- | --- | --- | --- |
+| Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
+| This library, since it cut keys | the same bytes as Access | found | the same | entry removed |
+| This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
+
+- **Lookups** of a value whose key is cut read the table instead of searching
+  the index, so a row is found whichever way its entry is stored.
+- **Writes** always store the cut key. Updating a row whose entry was whole
+  replaces it with a cut one; nothing converts rows that are not written.
+- **Uniqueness** follows Access: two values cut to the same entry are
+  duplicates, whichever way the existing one is stored. A file an earlier
+  release wrote may hold two such rows (their whole keys differed); neither
+  can then be rewritten until the other is deleted.
+- **Deletes and updates** remove the entry the row actually has, cut or whole,
+  matched by its row. A row with no entry at all - earlier releases kept only
+  the primary key - has nothing to remove, and that is not an error.
+- Access itself does not seek a whole key: until such a row is rewritten,
+  Access finds it by a scan but not through the index.
+
+`tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
+earlier release wrote, made by `tools/legacy-long-keys.ps1`.
 
 ## Type round-trip cheat sheet
 

@@ -19,5 +19,7 @@
     <EmbeddedResource Include="IndexKeys\general-legacy-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\general-legacy-more-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-more-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\general-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-ace16.tsv" />
+    <!-- Databases earlier releases of this library wrote: see LegacyLongKeyTests and tools/legacy-long-keys.ps1. -->
+    <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
