@@ -45,6 +45,10 @@ internal static class SchemaChange
             throw new NotSupportedException(
                 $"A column of type {given.DataType}{(given.IsCalculated ? " that is calculated" : "")} is not added: this library does not write one. Nothing was changed.");
 
+        // A Large Number or a Date/Time Extended column makes the file one of Access 2016's format or 2019's, as
+        // it does when a table is created with one, and an .mdb has no such column: refused here, nothing changed.
+        byte? version = Database.FormatVersionFor($"A column was not added to '{table.Name}'", new[] { given }, format);
+
         byte[] page = file.ReadPage(table.TdefPageNumber);
         if (given.IsAutoNumber)
         {
@@ -97,6 +101,7 @@ internal static class SchemaChange
             }
             editor.AddColumn(column, columnId, maps);
             file.WritePage(table.TdefPageNumber, editor.ToPage());
+            if (version is { } newer) DatabaseHeader.RaiseVersion(file, newer);
             undo.Commit();
         }
         Changed(db, file, table.TdefPageNumber);

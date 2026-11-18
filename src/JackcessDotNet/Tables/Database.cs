@@ -596,7 +596,7 @@ public sealed class Database : IDisposable
         // A table with a Large Number or a Date/Time Extended column makes the file one of Access 2016's format
         // or Access 2019's, as it does when Access adds the table: older versions of Access then refuse the file
         // rather than misread it. An .mdb has no such column, and the table is refused here, with no page added.
-        if (FormatVersionFor(name, columns, format) is { } version)
+        if (FormatVersionFor($"Table '{name}' was not created", columns, format) is { } version)
             DatabaseHeader.RaiseVersion(_file, version);
 
         // 1. Allocate the TDEF page (content written in step 6).
@@ -680,15 +680,16 @@ public sealed class Database : IDisposable
     /// the table has neither. Access gives an .accdb of any earlier format that version when such a column is
     /// added to it, and refuses the column in an .mdb ("Invalid argument"), as this does.
     /// </summary>
-    /// <exception cref="NotSupportedException">The file is an .mdb, which has no such column. Nothing is created.</exception>
-    private static byte? FormatVersionFor(string table, IReadOnlyList<Column> columns, JetFormat format)
+    /// <param name="whatWasNotDone">How the refusal begins: "Table 'T' was not created", or the like.</param>
+    /// <exception cref="NotSupportedException">The file is an .mdb, which has no such column. Nothing is changed.</exception>
+    internal static byte? FormatVersionFor(string whatWasNotDone, IReadOnlyList<Column> columns, JetFormat format)
     {
         var newest = columns.Where(c => c.DataType is DataType.BigInt or DataType.ExtendedDateTime)
                             .OrderByDescending(c => c.DataType).FirstOrDefault();
         if (newest is null) return null;
         if (format.Version is JetVersion.Jet3 or JetVersion.Jet4)
             throw new NotSupportedException(
-                $"Table '{table}' was not created: its column '{newest.Name}' is a {newest.DataType}, which an .mdb file " +
+                $"{whatWasNotDone}: its column '{newest.Name}' is a {newest.DataType}, which an .mdb file " +
                 "(Access 2000-2003) does not have. Create the database as an .accdb, JetVersion.Jet12 or later.");
         return newest.DataType == DataType.ExtendedDateTime ? DatabaseHeader.Version2019 : DatabaseHeader.Version2016;
     }
