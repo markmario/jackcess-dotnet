@@ -60,13 +60,15 @@ public sealed class Database : IDisposable
     /// every index of its table, as any other update or delete does, so Access goes on finding it.
     /// </para>
     /// <para>
-    /// An index is trusted to hold every row of its table, as Access trusts it. An entry whose row has gone does no
-    /// harm - each row found is read and compared - but a row with no entry is not found. Versions of this library
-    /// before it kept every index (those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key
-    /// and to no other index: a row one of them inserted into a table Access made is missing from the index on
-    /// its foreign key. Enforcement does not see such a row as a child - its parent can be deleted or re-keyed
-    /// with the row left behind, an orphan, where it should have followed or forbidden the change. Access makes
-    /// the same mistake with the same file, which is already inconsistent to it (qcatco/exportmdb.interop#64).
+    /// An index is searched only once it has been seen to hold every row of its table. Access trusts an index to;
+    /// a file a version of this library before it kept every index wrote to (those in ExportMdb.Interop up to
+    /// 2.1.2) can have rows that are in their table's primary key and in no other index - not in the one on their
+    /// foreign key, so that through it they would not be found as children, and their parent could be deleted or
+    /// re-keyed from under them (qcatco/exportmdb.interop#64). So the first change that looks for rows through an
+    /// index, while the database is open, reads that index and its table once and compares them row by row; the
+    /// changes after it find rows through the index, or, when it does not hold every row, by reading the table as
+    /// for a table with no index. An entry whose row has gone does no harm either way: each row found is read
+    /// and compared.
     /// </para>
     /// <para>
     /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
