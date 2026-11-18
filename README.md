@@ -285,7 +285,16 @@ have been deleted - and a row Access moved to another page is read where its poi
   certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
-- **A calculated column reads as null**, and a table with one is not written to.
+- **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a
+  delete are each refused with `NotSupportedException`.
+- **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
+  written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
+  not of its type, or a row too large leaves the file byte for byte as it was. Only a failure of the file itself
+  (the disk, the stream) can leave a change half made; an update outside a foreign-key cascade is not undone.
+- **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
+  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
+- **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**
+  (`InvalidDataException` naming the page), not a missing row.
 - **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
   first bit alone; they stay deleted for this library and for Access, which reads, edits and compacts such a
   table as any other.
@@ -295,6 +304,12 @@ have been deleted - and a row Access moved to another page is read where its poi
   placement of earlier releases - the last chunk on a page with other values' - which is smaller (a fifth
   smaller for 5,000-character Memos, nearly half for values just over one page) and reads the same, but is not
   safe for Access to edit long values in. A file written that way keeps its shared pages when it is added to.
+  Added to in the default placement, such a file gets no value on a page that may hold the end of a chain.
+- **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
+  looks at no page that cannot take the value, however many the column has. A page is listed in the column's
+  free-space map while it has 264 bytes or more free, which is where ACE was seen to list one (it listed none
+  with 258 or fewer), and only once a value is on it. The first long value written to a column in a session
+  reads the pages its map lists, once.
 - **Not handled for Access 97 files:** a row this library writes with a variable-length column (the end-of-data
   offset and the count are written in two bytes where Access 97 has one), and rows longer than 256 bytes, which
   use a jump table. Reading the Access 97 files of the corpus agrees with 32-bit ACE 12 and DAO.

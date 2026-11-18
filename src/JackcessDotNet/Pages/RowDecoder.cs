@@ -88,6 +88,17 @@ internal sealed class RowDecoder
     }
 
     /// <summary>
+    /// The bytes of <paramref name="col"/>'s value as the row holds them among its fixed-length values, or null
+    /// when the column is null in the row, is not kept there, or is a Yes/No (which has no bytes).
+    /// </summary>
+    public byte[]? RawFixedValue(byte[] rowBytes, Column col)
+    {
+        if (col.DataType == DataType.Boolean || _layout.PlaceOf(col) is not { IsVariable: false, FixedSize: > 0 }) return null;
+        if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull) || !notNull) return null;
+        return TryLocate(rowBytes, col, maskOffset, out int start, out int length) ? rowBytes.Slice(start, start + length) : null;
+    }
+
+    /// <summary>
     /// Finds the row's null mask and <paramref name="col"/>'s bit in it. False for a row too short to hold them, or
     /// written before the column was added to the table: the row's own column count says how many it has.
     /// </summary>

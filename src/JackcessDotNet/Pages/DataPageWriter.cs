@@ -46,7 +46,7 @@ public sealed class DataPageWriter
     /// <summary>
     /// As <see cref="InsertRow(TableDefinition, Row)"/>, for the row an update writes in place of another:
     /// <paramref name="keptVariableValues"/> are the old row's own bytes for the variable-length columns the update
-    /// leaves alone, written back as they are (<see cref="RowEncoder.Encode(Row, IReadOnlyDictionary{Column, byte[]})"/>);
+    /// leaves alone, written back as they are (<see cref="RowEncoder.Prepare"/>);
     /// with <paramref name="datesAsStored"/>, a Date/Time value may be the double a row stores
     /// (<see cref="RowEncoder.DatesAsStored"/>).
     /// </summary>
@@ -57,12 +57,19 @@ public sealed class DataPageWriter
 
         var format = _file.Format;
 
-        var    encoder = new RowEncoder(format, tableDef, LvalWritersFor(tableDef)) { DatesAsStored = datesAsStored };
-        byte[] rowData = encoder.Encode(row, keptVariableValues);
+        // Everything that can refuse the row - a value its column cannot hold, a row too large - does so here,
+        // before a page is written: a refused row leaves the file as it was.
+        var encoder = new RowEncoder(format, tableDef, LvalWritersFor(tableDef)) { DatesAsStored = datesAsStored };
+        return Place(tableDef, encoder, encoder.Prepare(row, keptVariableValues, null));
+    }
 
+    // Writes a prepared row's long values and then the row. Only the file can fail here.
+    private int Place(TableDefinition tableDef, RowEncoder encoder, RowEncoder.PreparedRow prepared)
+    {
+        var    format  = _file.Format;
+        byte[] rowData = encoder.Complete(prepared);
         int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
         int rowNum     = WriteRowOnPage(dataPage, rowData, tableDef.TdefPageNumber, format);
-
         return RowPointer.Pack(dataPage, rowNum);
     }
 
@@ -376,25 +383,32 @@ public sealed class DataPageWriter
         // A merged row the new one could not be written as - text longer than its column, a duplicate in
         // a unique index - must not cost the row it replaces, so it is checked before anything is freed
         // or deleted.
-        var check = new RowEncoder(_file.Format, table, LvalWritersFor(table)) { DatesAsStored = keepStoredDates };   // as the new row will be written
-        check.EnsureWritable();
-        check.Validate(merged);
+        var encoder = new RowEncoder(_file.Format, table, LvalWritersFor(table)) { DatesAsStored = keepStoredDates };
 
         // A long value the update does not change stays where it is: the new row carries the old row's reference
         // to it, as Access and Java Jackcess leave it, so it is neither freed nor written again. Only the long
         // values being replaced are freed, before the row is rewritten. One kept in the row though longer than a
         // row may keep (releases before ExportMdb.Interop 2.1.2 wrote those, and Access shows #Error for them,
         // qcatco/exportmdb.interop#29) is not kept as it is: written again, it goes to pages of its own.
-        var kept = new Dictionary<Column, byte[]>();
+        //
+        // Every other column the update does not name keeps the row's own bytes too: an update does not change a
+        // value it was not given. Read and written again, a Date/Time outside what DateTime holds came back null.
+        var kept      = new Dictionary<Column, byte[]>();
+        var keptFixed = new Dictionary<Column, byte[]>();
         foreach (var col in table.Columns)
-            if (col.DataType.IsLongValue() && !newValues.ContainsKey(col.Name) && merged.ContainsKey(col.Name)
-                && decoder.RawVariableValue(rowBytes, col) is { Length: >= 4 } reference
-                && !IsOverlongInRowValue(reference))
-                kept[col] = reference;
+        {
+            if (col.DataType == DataType.Boolean || newValues.ContainsKey(col.Name)) continue;
+            if (decoder.RawFixedValue(rowBytes, col) is { } bytes)
+                keptFixed[col] = bytes;
+            else if (decoder.RawVariableValue(rowBytes, col) is { } stored
+                     && !(col.DataType.IsLongValue() && (stored.Length < 4 || IsOverlongInRowValue(stored))))
+                kept[col] = stored;
+        }
 
-        // A row too large for the format is refused here too, with nothing changed: checked only as the new row
-        // was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
-        check.EnsureFits(merged, kept);
+        // The new row whole, but for the long values still to go to their pages: a value its column cannot hold,
+        // or one not of its type, or a row too large for the format is refused here, with nothing changed. Refused
+        // only as the new row was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
+        var prepared = encoder.Prepare(merged, kept, keptFixed);
         beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNumber, rowIndex));
 
         FreeRowLvalChains(table, rowBytes, decoder, kept);
@@ -408,7 +422,7 @@ public sealed class DataPageWriter
         DataRows.MarkDeleted(_file, moved);
 
         // Insert the merged row; the caller moves the row's index entries from the old pointer to the new.
-        return InsertRow(table, merged, kept, datesAsStored: keepStoredDates);
+        return Place(table, encoder, prepared);
     }
 
     // A long value's reference whose value is in the row (THIS_PAGE) and longer than Access keeps one there.
@@ -431,6 +445,12 @@ public sealed class DataPageWriter
             if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
                 && decoder.DecodeForKey(rowBytes, col) is { } stored)
                 values[col.Name] = stored;
+
+        // A table with a calculated column is not written to, and a delete is a write (qcatco/exportmdb.interop#42).
+        if (table.Columns.FirstOrDefault(c => c.IsCalculated) is { } calculated)
+            throw new NotSupportedException(
+                $"No row of this table is deleted: its column {calculated.Name} is calculated, and this library " +
+                "works no expression out. Nothing was changed.");
 
         // A row whose index entries could not be taken out stays: nothing has changed yet.
         TableIndexes.EnsureEntriesCanBeRemoved(table, values);
