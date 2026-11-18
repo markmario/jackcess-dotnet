@@ -276,7 +276,7 @@ public sealed class GeneralSortOrderTests : IDisposable
         Assert.All(columns.Where(c => c.DataType is DataType.Text or DataType.Memo), c => Assert.Equal(sourceOrder, c.SortOrder));
 
         // Refused: a key column the table has not, and a name no key is made for.
-        Assert.Throws<InvalidOperationException>(() => target.CreateTable("Refused", ColumnDefinitions.Of(columns), primaryKey: "NoSuchColumn"));
+        Assert.Throws<ArgumentException>(() => target.CreateTable("Refused", ColumnDefinitions.Of(columns), primaryKey: "NoSuchColumn"));
         Assert.Throws<NotSupportedException>(() => target.CreateTable("データ", ColumnDefinitions.Of(columns), primaryKey: "Id"));
         Assert.Equal(before, State());
 

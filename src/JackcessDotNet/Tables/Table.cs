@@ -237,7 +237,13 @@ public sealed class Table
     /// </summary>
     public IndexCursor CreateIndexCursor() => new IndexCursor(this, _file, _definition, indexName: null);
 
-    /// <summary>Creates a cursor that finds rows through the index named <paramref name="indexName"/>.</summary>
+    /// <summary>
+    /// Creates a cursor that finds rows through the index named <paramref name="indexName"/>, whatever the case
+    /// of its letters. The name is an index's name (<see cref="Indexes"/>), not a column's: a primary key is
+    /// asked for by its index's name, "PrimaryKey" in a table Access or this library made, or with
+    /// <see cref="CreateIndexCursor()"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The table has no index of that name.</exception>
     public IndexCursor CreateIndexCursor(string indexName)
         => new IndexCursor(this, _file, _definition, indexName ?? throw new ArgumentNullException(nameof(indexName)));
 

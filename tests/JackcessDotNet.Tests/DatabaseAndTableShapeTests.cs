@@ -188,11 +188,90 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
 
         Assert.True(table.CreateIndexCursor().Index!.IsPrimaryKey);
         Assert.Equal("ByName", table.CreateIndexCursor("byname").Index!.Name);
-        Assert.Null(table.CreateIndexCursor("NoSuchIndex").Index);
+        Assert.Equal("PrimaryKey", table.CreateIndexCursor("primarykey").Index!.Name);
         Assert.Throws<ArgumentNullException>(() => table.CreateIndexCursor(null!));
 
         var loose = db.CreateTable("Loose", new[] { new ColumnDefinition("Id", DataType.Int32) });
         Assert.Null(loose.CreateIndexCursor().Index);
+    }
+
+    [Fact]
+    public void An_index_cursor_for_a_name_that_is_no_index_of_the_table_is_refused()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("People", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name") });
+        table.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
+
+        var refused = Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("NoSuchIndex"));
+        Assert.Equal("indexName", refused.ParamName);
+        Assert.Contains("'People'", refused.Message);
+        Assert.Contains("'NoSuchIndex'", refused.Message);
+
+        // A column's name is not an index's: not the primary key's column, and not an indexed column.
+        Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("Id"));
+        Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("Name"));
+        Assert.Throws<ArgumentException>(() => table.CreateIndexCursor(""));
+
+        // A table with no primary key has no index named for one either.
+        var loose = db.CreateTable("Loose", new[] { new ColumnDefinition("Id", DataType.Int32) });
+        Assert.Throws<ArgumentException>(() => loose.CreateIndexCursor("PrimaryKey"));
+    }
+
+    [Fact]
+    public void An_index_named_as_the_primary_key_s_column_is_the_index_its_name_asks_for()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("Things", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
+        }, new[] { "Id" }, new[] { new IndexDefinition("Id", "Code") });
+        for (int i = 1; i <= 5; i++)
+            table.Insert(new Row { ["Id"] = i, ["Code"] = "code " + i });
+
+        // The primary key is on the column Id; the index named Id is on Code.
+        var named = table.CreateIndexCursor("Id");
+        Assert.Equal("Id", named.Index!.Name);
+        Assert.False(named.Index.IsPrimaryKey);
+        Assert.Equal("Code", Assert.Single(named.Index.Columns).Column.Name);
+
+        // What the cursor says it is for is what it looks rows up by.
+        Assert.Equal(3, named.FindRowByEntry("code 3")!["Id"]);
+        Assert.Null(named.FindRowByEntry(3));
+        Assert.Equal(4, named.FindRow("Code", "code 4")!["Id"]);
+        Assert.Equal("code 2", named.FindRow("Id", 2)!["Code"]);
+
+        // The primary key is still the cursor made with no name, and the lookup by key.
+        var key = table.CreateIndexCursor();
+        Assert.True(key.Index!.IsPrimaryKey);
+        Assert.Equal("PrimaryKey", key.Index.Name);
+        Assert.Equal("code 3", key.FindRowByEntry(3)!["Code"]);
+        Assert.Equal("code 5", table.FindRowByPrimaryKey(5)!["Code"]);
+    }
+
+    [Fact]
+    public void A_primary_key_column_that_is_not_among_the_columns_is_the_caller_s_argument()
+    {
+        using var db = Database.Create(_path);
+        var columns = new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+        };
+        long written = db.File.WriteCount;
+
+        var one = Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, "Nope"));
+        Assert.Equal("primaryKey", one.ParamName);
+        Assert.Contains("'Nope'", one.Message);
+        Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, "Id", "Nope"));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, new[] { "Nope" }, new[] { new IndexDefinition("ByName", "Name") }));
+
+        Assert.Equal(written, db.File.WriteCount);
+        Assert.Empty(db.GetTableNames());
     }
 
     [Fact]

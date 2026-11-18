@@ -40,8 +40,10 @@ changes with them.
 - **`Database.EnforceForeignKeys` is `true` by default** (it was `false`), as in Jackcess.
 - **`Table.ReadAllRows()` is `Table.Rows`**, read as it is enumerated; `Rows.ToList()` gives the list.
 - **`Table.NewCursor()` and `NewIndexCursor(name)` are `CreateCursor()`, `CreateIndexCursor()` and
-  `CreateIndexCursor(name)`.** `IndexCursor.FindRowByPrimaryKey` is `Table.FindRowByPrimaryKey`, which takes a
-  key of several columns too.
+  `CreateIndexCursor(name)`.** The name is an index's name and nothing else: one that is no index of the table
+  throws `ArgumentException` (the cursor read the table instead), and the name of the primary key's column no
+  longer stands for the primary key. `IndexCursor.FindRowByPrimaryKey` is `Table.FindRowByPrimaryKey`, which
+  takes a key of several columns too.
 - **A cursor moves with `MoveNext()` and `MovePrevious()` and has `Current`**, in place of `GetNextRow()`,
   `GetPreviousRow()` and `GetCurrentRow()`; `BeforeFirst()` and `AfterLast()` are `MoveBeforeFirst()` and
   `MoveAfterLast()`.
@@ -49,7 +51,7 @@ changes with them.
   by a `ColumnDefinition` - `new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 }` - and
   `Database.CreateTable` and `Table.AddColumn` take definitions; `CreateTable`'s primary key is
   `params string[]`. What the builder refused with `InvalidOperationException` as it was built, `CreateTable`
-  refuses with `ArgumentException`.
+  refuses with `ArgumentException`, as it does a primary key column that is not among the columns.
 - **`Row` no longer derives from `Dictionary<string, object?>`.** It implements `IDictionary` and
   `IReadOnlyDictionary`, so the indexer, initialisers and `TryGetValue` are as they were; `Row.Set` and
   `Row.FromValues` are removed, and `GetValue<T>` and `IsNull` added. **A row that is read has an entry for

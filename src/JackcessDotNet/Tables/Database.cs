@@ -629,8 +629,9 @@ public sealed class Database : IDisposable
     /// <see cref="IndexDefinition.MaxColumns"/>.
     /// </param>
     /// <exception cref="ArgumentException">
-    /// The name is empty, there are no columns, or a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>). Nothing is created.
+    /// The name is empty, there are no columns, a column's definition is not one a table can have
+    /// (<see cref="ColumnDefinition"/>), or the primary key names a column that is not among them. Nothing is
+    /// created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The primary key is on a column whose keys this library does not write as Access does, or the database
@@ -650,7 +651,8 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>), or two indexes have one name. Nothing is created.
+    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, or two indexes
+    /// have one name. Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
@@ -856,10 +858,14 @@ public sealed class Database : IDisposable
         for (short i = 0; i < columns.Count; i++)
             columns[i].Ordinal = i;
 
-        Column Find(string column, string what)
+        // A primary key's columns come in the call that names the table's columns: one that is not among them
+        // is a fault in the arguments.
+        Column Find(string column, string what, bool ofPrimaryKey = false)
         {
             var found = columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"{what} column '{column}' not found in table '{table}'.");
+                ?? throw (ofPrimaryKey
+                    ? new ArgumentException($"{what} column '{column}' not found in table '{table}'.", "primaryKey")
+                    : new InvalidOperationException($"{what} column '{column}' not found in table '{table}'."));
             if (!IndexKeys.CanEncode(found))
                 throw new NotSupportedException(
                     $"{what} on '{column}' is not supported: {IndexKeys.WhyNot(found)}, " +
@@ -875,7 +881,7 @@ public sealed class Database : IDisposable
                     $"Composite primary keys are limited to {IndexDefinition.MaxColumns} columns; got {pkColumns.Count}.");
             planned.Add(new PlannedIndex(
                 TableDefinition.PrimaryKeyIndexName,
-                pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key"), TableDefinition.AscendingColumnFlag)).ToList(),
+                pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key", ofPrimaryKey: true), TableDefinition.AscendingColumnFlag)).ToList(),
                 TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag,
                 TableDefinition.PrimaryKeyIndexType));
         }

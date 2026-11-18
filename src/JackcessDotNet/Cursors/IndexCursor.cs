@@ -17,6 +17,7 @@ public sealed class IndexCursor : Cursor
     private readonly TableDefinition _definition;
     private readonly PageFile        _file;
     private readonly string?         _indexName;
+    private readonly Index?          _index;
     private readonly bool            _isPrimaryKey;
 
     internal IndexCursor(Table table, PageFile file, TableDefinition definition, string? indexName)
@@ -26,20 +27,24 @@ public sealed class IndexCursor : Cursor
         _file         = file;
         _definition   = definition;
         _indexName    = indexName;
-        _isPrimaryKey = indexName is null
-                     || string.Equals(indexName, "PrimaryKey", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(indexName, definition.PrimaryKeyColumnName, StringComparison.OrdinalIgnoreCase);
+
+        // A name is an index's name and nothing else, as in Jackcess's Table.getIndex: not the name of a column
+        // the primary key happens to be on, which another index may have for its own name. Only a cursor made
+        // with no name is for the primary key, whatever that index is called.
+        _index = indexName is null
+            ? definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)
+            : definition.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, indexName, StringComparison.OrdinalIgnoreCase))
+              ?? throw new ArgumentException(
+                  $"Table '{definition.Name}' has no index named '{indexName}'.", nameof(indexName));
+        _isPrimaryKey = indexName is null || _index!.IsPrimaryKey;
     }
 
     /// <summary>
-    /// The index the cursor was made for: the table's primary key for <see cref="Table.CreateIndexCursor()"/>,
-    /// the index of that name for <see cref="Table.CreateIndexCursor(string)"/>. Null when the table has no such
-    /// index; the cursor then finds rows by reading the table. Jackcess's <c>getIndex</c>.
+    /// The index the cursor was made for: the table's primary key for <see cref="Table.CreateIndexCursor()"/> -
+    /// null when the table has none, and the cursor then finds rows by reading the table - and the index of that
+    /// name for <see cref="Table.CreateIndexCursor(string)"/>. Jackcess's <c>getIndex</c>.
     /// </summary>
-    public Index? Index
-        => _isPrimaryKey
-            ? _definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)
-            : _definition.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, _indexName, StringComparison.OrdinalIgnoreCase));
+    public Index? Index => _index;
 
     /// <summary>
     /// Finds the first row where <paramref name="columnName"/> equals <paramref name="value"/>, or null when
