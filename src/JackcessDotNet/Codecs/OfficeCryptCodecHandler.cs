@@ -1,3 +1,4 @@
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
@@ -24,7 +25,7 @@ namespace JackcessDotNet;
 /// Both variants are read-only — encryption (write) is out of scope; encrypted
 /// files open and decode pages, attempts to write throw <see cref="NotSupportedException"/>.
 /// </summary>
-public sealed class OfficeCryptCodecHandler : ICodecHandler
+internal sealed class OfficeCryptCodecHandler : ICodecHandler
 {
     // Header / encryption-info offsets shared across all schemes.
     private const int OffsetEncodingKey    = 0x3E;
@@ -77,7 +78,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
     /// with the password. Returns null when the file is not encrypted (the
     /// encoding-key slot at 0x3E is zeroed).
     /// </summary>
-    /// <exception cref="UnauthorizedAccessException">Password verification failed.</exception>
+    /// <exception cref="InvalidCredentialException">Password verification failed.</exception>
     /// <exception cref="NotSupportedException">Scheme not implemented (RC4, extensible).</exception>
     public static OfficeCryptCodecHandler? FromDbHeader(byte[] headerPage, string password)
     {
@@ -196,7 +197,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
             "key data");
 
         if (!AgileEngine.VerifyPassword(descriptor, pwdBytes))
-            throw new UnauthorizedAccessException(
+            throw new InvalidCredentialException(
                 "Incorrect password for Agile-encrypted .accdb (Office 2010+).");
 
         byte[] keyValue = AgileEngine.DecryptKeyValue(descriptor, pwdBytes);
@@ -442,7 +443,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
             var info = StandardEncryptionInfo.Read(headerPage, p, infoEnd, requireAes: true);
             var engine = new StandardEngine(info);
             if (!engine.VerifyPassword(pwdBytes))
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     "Incorrect password for ECMA Standard-encrypted .accdb (Office 2007).");
             return new OfficeCryptCodecHandler(
                 encodingKey,
@@ -469,7 +470,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
             var info = StandardEncryptionInfo.Read(headerPage, p, infoEnd, requireAes: false);
             var rc4 = new Rc4CryptoApiEngine(info);
             if (!rc4.VerifyPassword(pwdBytes))
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     "Incorrect password for RC4 CryptoAPI-encrypted .accdb (Office 2002–2003).");
             return new OfficeCryptCodecHandler(
                 encodingKey,
@@ -489,7 +490,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
             var info = StandardEncryptionInfo.Read(headerPage, p, infoEnd, requireAes: true);
             var engine = new StandardEngine(info, iterations: 0);
             if (!engine.VerifyPassword(pwdBytes))
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     "Incorrect password for non-standard AES-encrypted .accdb (compat mode 0).");
             return new OfficeCryptCodecHandler(
                 encodingKey,
@@ -497,7 +498,7 @@ public sealed class OfficeCryptCodecHandler : ICodecHandler
                 (page, pageNumber) => engine.EncryptPage(pwdBytes, encodingKey, page, pageNumber),
                 $"Non-Standard AES Encryption (compat mode 0, AES-{info.KeySizeBits})");
         }
-        catch (Exception fallbackEx) when (fallbackEx is not UnauthorizedAccessException)
+        catch (Exception fallbackEx) when (fallbackEx is not InvalidCredentialException)
         {
             // Neither path is structurally valid — re-throw the original RC4 error
             // since that was the primary candidate the flags pointed at.

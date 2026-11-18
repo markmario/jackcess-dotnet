@@ -117,7 +117,7 @@ public sealed class AccdbCreationTests : IDisposable
             table.Insert(Person(1501));
             table.UpdateByPrimaryKey(10, new Row { ["Name"] = "changed" });
             table.DeleteRow("Id", 11);
-            Assert.Throws<InvalidOperationException>(() => table.Insert(Person(12)));
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(Person(12)));
         }
 
         using (var db = Database.Open(path))

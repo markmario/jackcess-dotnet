@@ -22,7 +22,7 @@ namespace JackcessDotNet;
 ///   cursor (next write position) = OffsetDataRowTable + rowCount×2 + freeSpace
 ///   newRowStart = cursor − rowSize
 /// </summary>
-public sealed class DataPageWriter
+internal sealed class DataPageWriter
 {
     private readonly PageFile      _file;
     private readonly PageAllocator _allocator;

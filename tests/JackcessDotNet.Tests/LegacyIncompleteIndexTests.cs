@@ -91,7 +91,7 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
     {
         using (var db = OpenEnforcing())
         {
-            string message = Assert.Throws<InvalidOperationException>(() => db.GetTable("Parent").DeleteRow("K", 2)).Message;
+            string message = Assert.Throws<ConstraintViolationException>(() => db.GetTable("Parent").DeleteRow("K", 2)).Message;
             Assert.Contains("ParentHolders", message);
         }
 
@@ -152,6 +152,6 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
     {
         using var db = OpenEnforcing();
         db.GetTable("Followers").Insert(new Row { ["Id"] = 6, ["K"] = 3, ["Name"] = "f6" });
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Followers").Insert(new Row { ["Id"] = 7, ["K"] = 8, ["Name"] = "f7" }));
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Followers").Insert(new Row { ["Id"] = 7, ["K"] = 8, ["Name"] = "f7" }));
     }
 }

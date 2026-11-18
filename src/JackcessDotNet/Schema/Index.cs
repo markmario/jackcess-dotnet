@@ -18,19 +18,19 @@ public sealed class Index
     public IReadOnlyList<IndexColumn> Columns { get; }
 
     /// <summary>Page number of the index's root page (node or leaf).</summary>
-    public int RootPageNumber { get; }
+    internal int RootPageNumber { get; }
 
     /// <summary>
     /// Ordinal of this index inside the TDEF (matches the index slot's
     /// <c>indexDataNumber</c>, which the foreign-key reference points at).
     /// </summary>
-    public int IndexNumber { get; }
+    internal int IndexNumber { get; }
 
     /// <summary>Raw index-flags byte from the index column block.</summary>
-    public byte Flags { get; }
+    internal byte Flags { get; }
 
     /// <summary>Index type byte from the logical-index slot (1 = primary key, 2 = foreign key, 0 = regular).</summary>
-    public byte IndexType { get; }
+    internal byte IndexType { get; }
 
     /// <summary>
     /// The index's block among the TDEF's index blocks (its index data number):
@@ -78,7 +78,7 @@ public sealed class IndexColumn
     public Column Column { get; }
 
     /// <summary>Raw flags byte from the index column block.</summary>
-    public byte Flags { get; }
+    internal byte Flags { get; }
 
     /// <summary>True when the column is sorted ascending in this index (bit 0 of <see cref="Flags"/>).</summary>
     public bool IsAscending => (Flags & 0x01) != 0;

@@ -2,7 +2,7 @@ using System.IO;
 
 namespace JackcessDotNet;
 
-public sealed class PageFile : IDisposable
+internal sealed class PageFile : IDisposable
 {
     private readonly FileStream _stream;
     private readonly JetFormat _format;

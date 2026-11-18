@@ -14,6 +14,6 @@ namespace JackcessDotNet;
 ///   [2]     owned-pages umap row      [3..5]  owned-pages umap page (3-byte LE)
 ///   [6]     free-space umap row       [7..9]  free-space umap page  (3-byte LE)
 /// </summary>
-public readonly record struct LvalUmapRef(
+internal readonly record struct LvalUmapRef(
     int OwnedPage, int OwnedRow,
     int FreePage, int FreeRow);

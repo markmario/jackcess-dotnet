@@ -21,7 +21,7 @@ public sealed class PropertyMap
     public string Name { get; }
 
     /// <summary>Block-type byte from the on-disk stream (0x00 default, 0x01 column).</summary>
-    public byte Type { get; }
+    internal byte Type { get; }
 
     private readonly Dictionary<string, Property> _props = new(StringComparer.OrdinalIgnoreCase);
 

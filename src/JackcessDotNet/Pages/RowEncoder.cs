@@ -10,7 +10,7 @@ namespace JackcessDotNet;
 /// the data and for the count of variable-length columns where Jet3 has one (qcatco/exportmdb.interop#67).
 /// </para>
 /// </summary>
-public sealed class RowEncoder
+internal sealed class RowEncoder
 {
     private readonly JetFormat _format;
     private readonly IReadOnlyList<Column> _columns;

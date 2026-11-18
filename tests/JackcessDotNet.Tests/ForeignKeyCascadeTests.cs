@@ -112,7 +112,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         byte[] before = File.ReadAllBytes(_path);
         string message;
         using (var db = OpenEnforcing())
-            message = Assert.Throws<InvalidOperationException>(() => change(db)).Message;
+            message = Assert.Throws<ConstraintViolationException>(() => change(db)).Message;
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change altered the file");
         return message;
     }
@@ -364,7 +364,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
             var child = db.GetTable("Child");
             var orphan = new Row { ["K"] = 99, ["Name"] = "orphan" };
 
-            var refusal = Assert.Throws<InvalidOperationException>(() => child.Insert(orphan));
+            var refusal = Assert.Throws<ConstraintViolationException>(() => child.Insert(orphan));
 
             Assert.Contains("Foreign-key violation", refusal.Message);
             Assert.False(orphan.ContainsKey("Id"), "the refused row was left holding the number it was not given");

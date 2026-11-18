@@ -10,7 +10,7 @@ namespace JackcessDotNet;
 /// <see cref="Database.Open(string)"/> and rejected with a clear error so users
 /// don't get cryptic page-parse failures downstream.
 /// </summary>
-public interface ICodecHandler
+internal interface ICodecHandler
 {
     /// <summary>
     /// Returns the plaintext page bytes given the raw bytes read from disk.
@@ -24,7 +24,7 @@ public interface ICodecHandler
 }
 
 /// <summary>Identity codec used for unencrypted .mdb / .accdb files.</summary>
-public sealed class NullCodecHandler : ICodecHandler
+internal sealed class NullCodecHandler : ICodecHandler
 {
     public static readonly NullCodecHandler Instance = new();
     public byte[] DecodePage(byte[] rawPage, int pageNumber) => rawPage;

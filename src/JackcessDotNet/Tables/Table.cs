@@ -183,7 +183,7 @@ public sealed class Table
     /// written leaves the counter and <paramref name="row"/> as they were, so the number is not lost.
     /// </para>
     /// </summary>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="ConstraintViolationException">
     /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
     /// index, or has a null in a column of the primary key or of an index that requires its values. Nothing of
     /// the row is written, and the counter and <paramref name="row"/> are as they were.
@@ -295,7 +295,7 @@ public sealed class Table
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
     /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
-    /// <see cref="InvalidOperationException"/> for a null a primary key or required index does not take or a
+    /// <see cref="ConstraintViolationException"/> for a null a primary key or required index does not take or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
     /// writing many rows can check them all first, so a refused row stops the batch before any of it is in the
@@ -327,7 +327,7 @@ public sealed class Table
     /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
     /// moves the counter up to it.
     /// </summary>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
     /// in a column of the primary key or of an index that requires its values. The row is left as it was.
     /// </exception>
@@ -597,10 +597,11 @@ public sealed class Table
     /// The table already has an index of that name, or 32 indexes; or the index sorts descending a column that
     /// is not one of its own.
     /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// A column the index names is not in the table; two rows of the table have the same values in a unique
-    /// index; or a row has a null in an index that requires its values. Nothing is changed.
+    /// <exception cref="ConstraintViolationException">
+    /// Two rows of the table have the same values in a unique index, or a row has a null in an index that
+    /// requires its values. Nothing is changed.
     /// </exception>
+    /// <exception cref="InvalidOperationException">A column the index names is not in the table. Nothing is changed.</exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
     /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and

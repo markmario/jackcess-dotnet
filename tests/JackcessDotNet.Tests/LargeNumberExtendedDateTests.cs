@@ -231,8 +231,8 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         table.Insert(new Row { ["K"] = long.MaxValue - 1, ["At"] = at.AddTicks(1) });
 
         var before = IndexChecks.AllPages(db);
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["K"] = long.MaxValue, ["At"] = at.AddTicks(2) }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["K"] = 5L, ["At"] = at.AddTicks(1) }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["K"] = long.MaxValue, ["At"] = at.AddTicks(2) }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["K"] = 5L, ["At"] = at.AddTicks(1) }));
         // A value that is not of the column's type refuses the row before anything is written.
         Assert.Throws<InvalidCastException>(() => table.Insert(new Row { ["K"] = 6L, ["At"] = "2026-11-18" }));
         Assert.Throws<OverflowException>(() => table.Insert(new Row { ["K"] = 9223372036854775808m, ["At"] = at.AddTicks(3) }));

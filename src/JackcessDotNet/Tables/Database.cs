@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Security.Authentication;
 
 namespace JackcessDotNet;
 
@@ -47,7 +49,7 @@ public sealed class Database : IDisposable
     /// parent.
     /// </para>
     /// <para>
-    /// A refused change throws <see cref="InvalidOperationException"/> and leaves the file as it was: everything is
+    /// A refused change throws <see cref="ConstraintViolationException"/> and leaves the file as it was: everything is
     /// checked, cascades included, before anything is written. A change that fails while it is being written is
     /// taken back.
     /// </para>
@@ -220,6 +222,9 @@ public sealed class Database : IDisposable
     /// extensible-provider variants still throw with a clear error — see
     /// <see cref="OfficeCryptCodecHandler"/>.
     /// </summary>
+    /// <exception cref="InvalidCredentialException">
+    /// The password is not the file's, or the file is encrypted in a way the password cannot be checked against.
+    /// </exception>
     public static Database Open(string path, string password)
     {
         if (string.IsNullOrEmpty(password)) return Open(path);
@@ -265,7 +270,7 @@ public sealed class Database : IDisposable
             // (or the file uses an unsupported codec we silently accepted).
             byte[] catalogPage = file.ReadPage(JetFormat.PageSystemCatalog);
             if (catalogPage[0] != JetFormat.PageTypeTableDef || catalogPage[1] != 0x01)
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     $"Failed to decrypt '{path}' — wrong password, or the file uses an " +
                     "encryption scheme not yet supported by this codec.");
         }
@@ -302,14 +307,14 @@ public sealed class Database : IDisposable
             byte[] dbHeader = file.ReadPage(0);
             var codec = JetCryptCodecHandler.FromDbHeader(dbHeader, password);
             if (codec is null)
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     $"'{path}' appears encrypted but no password was supplied " +
                     "(or its verifier block is empty).");
             file.Codec = codec;
 
             byte[] retry = file.ReadPage(JetFormat.PageSystemCatalog);
             if (retry[0] != JetFormat.PageTypeTableDef || retry[1] != 0x01)
-                throw new UnauthorizedAccessException(
+                throw new InvalidCredentialException(
                     $"Failed to decrypt '{path}' — wrong password or unsupported encryption scheme.");
         }
         catch
@@ -453,18 +458,11 @@ public sealed class Database : IDisposable
     /// </summary>
     public IReadOnlyList<Relationship> GetRelationships()
     {
-        try
-        {
-            var t = GetTable("MSysRelationships");
-            var rows = t.NewCursor().ToList();
-            return BuildRelationships(rows);
-        }
-        catch (InvalidOperationException)
-        {
-            // Database has no MSysRelationships (rare — empty Access files include it,
-            // but defensive in case of corrupt or trimmed files).
+        // A database has MSysRelationships as a rule - an empty Access file includes it - but a trimmed one
+        // may not.
+        if (!TryGetTable("MSysRelationships", out var t))
             return Array.Empty<Relationship>();
-        }
+        return BuildRelationships(t.NewCursor().ToList());
     }
 
     private static IReadOnlyList<Relationship> BuildRelationships(IReadOnlyList<Row> rows)
@@ -790,16 +788,31 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Opens an existing user table by name (scans MSysObjects).
     /// </summary>
+    /// <exception cref="InvalidOperationException">The database has no table of that name.</exception>
     public Table GetTable(string name)
+        => TryGetTable(name, out var table)
+            ? table
+            : throw new InvalidOperationException($"Table '{name}' was not found in this database.");
+
+    /// <summary>
+    /// Opens an existing table by name when the database has one: what <see cref="GetTable"/> does, for a caller
+    /// asking whether the table is there.
+    /// </summary>
+    /// <returns>Whether the database has a table of that name; <paramref name="table"/> is it.</returns>
+    public bool TryGetTable(string name, [NotNullWhen(true)] out Table? table)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
 
         int tdefPageNum = _catalog.FindTableTdefPage(name);
         if (tdefPageNum < 0)
-            throw new InvalidOperationException($"Table '{name}' was not found in this database.");
+        {
+            table = null;
+            return false;
+        }
 
-        return new Table(_file, _allocator, ReadDefinition(_file, name, tdefPageNum), owningDb: this);
+        table = new Table(_file, _allocator, ReadDefinition(_file, name, tdefPageNum), owningDb: this);
+        return true;
     }
 
     /// <summary>
@@ -879,11 +892,14 @@ public sealed class Database : IDisposable
     /// The definition names no columns, or a different number on each side, or a column twice on one side of a
     /// relationship with referential integrity; or asks for a cascade without referential integrity.
     /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// With referential integrity: a row of the referring table refers to no row of the referenced table.
+    /// Nothing is changed.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// A table or column is not there; two matched columns are of different types; a relationship of that name
-    /// exists, or the referring table has an index of that name; and, with referential integrity: the referenced
-    /// columns have no unique index (or primary key) on exactly them, or a row of the referring table refers to
-    /// no row of the referenced table. Nothing is changed.
+    /// exists, or the referring table has an index of that name; or, with referential integrity, the referenced
+    /// columns have no unique index (or primary key) on exactly them. Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;

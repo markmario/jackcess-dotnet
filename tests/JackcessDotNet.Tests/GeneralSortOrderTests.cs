@@ -195,7 +195,7 @@ public sealed class GeneralSortOrderTests : IDisposable
             Assert.All(table.Columns.Where(c => c.DataType is DataType.Text or DataType.Memo), c => Assert.Equal(order, c.SortOrder));
             Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 600 - 86));
             Assert.Equal(9, table.NewIndexCursor("ByCode").FindRow("Code", $"{Words[9]} 0009")?["Id"]);
-            Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 9000, ["Code"] = $"{Words[2].ToUpperInvariant()} 0002" }));   // unique, whatever the case
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 9000, ["Code"] = $"{Words[2].ToUpperInvariant()} 0002" }));   // unique, whatever the case
         }
     }
 
@@ -243,7 +243,7 @@ public sealed class GeneralSortOrderTests : IDisposable
         using var db = Database.Open(general ? GeneralDatabase() : LegacyDatabase());
         var table = CreateIndexed(db);
         table.Insert(new Row { ["Id"] = 1, ["Code"] = first, ["Family"] = first });
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Code"] = second }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Code"] = second }));
         Assert.Contains("ByCode", refused.Message);
 
         table.Insert(new Row { ["Id"] = 2, ["Code"] = "other", ["Family"] = second });   // ByName is not unique

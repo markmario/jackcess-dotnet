@@ -96,9 +96,9 @@ public sealed class GeneralForeignKeyTests : IDisposable
         using (var db = OpenEnforcing(path))
         {
             var child = db.GetTable("Child");
-            Assert.Throws<InvalidOperationException>(() => child.Insert(new Row { ["Id"] = 10, ["Code"] = "resume" }));
-            Assert.Throws<InvalidOperationException>(() => child.Insert(new Row { ["Id"] = 10, ["Code"] = "Zurich" }));
-            Assert.Throws<InvalidOperationException>(() => child.UpdateByPrimaryKey(5, new Row { ["Code"] = "日本語" }));
+            Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["Id"] = 10, ["Code"] = "resume" }));
+            Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["Id"] = 10, ["Code"] = "Zurich" }));
+            Assert.Throws<ConstraintViolationException>(() => child.UpdateByPrimaryKey(5, new Row { ["Code"] = "日本語" }));
         }
         Assert.Equal(before, File.ReadAllBytes(path));
 
@@ -174,8 +174,8 @@ public sealed class GeneralForeignKeyTests : IDisposable
             Assert.Equal(new[] { "(null)", "ZÜRICH", first, first, "æther", "日本" }, Codes(db, "Child"));
 
             child.Insert(new Row { ["Id"] = 20, ["Code"] = first.ToUpperInvariant() });
-            Assert.Throws<InvalidOperationException>(() => child.Insert(new Row { ["Id"] = 21, ["Code"] = second }));    // no such parent
-            Assert.Throws<InvalidOperationException>(() => parent.Insert(new Row { ["Code"] = second }));                // one entry with the first
+            Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["Id"] = 21, ["Code"] = second }));    // no such parent
+            Assert.Throws<ConstraintViolationException>(() => parent.Insert(new Row { ["Code"] = second }));                // one entry with the first
             AssertIndexesHoldTheRows(db);
 
             parent.DeleteRow("Code", first);

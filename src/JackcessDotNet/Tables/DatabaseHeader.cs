@@ -18,7 +18,7 @@ namespace JackcessDotNet;
 /// own empty files for them are.
 /// </para>
 /// </summary>
-public sealed class DatabaseHeader
+internal sealed class DatabaseHeader
 {
     /// <summary>Where the header keeps the format's version: a byte no codec hides.</summary>
     internal const int OffsetVersion = 0x14;

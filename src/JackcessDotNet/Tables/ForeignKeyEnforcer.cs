@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -113,9 +114,8 @@ internal sealed class ForeignKeyEnforcer
     /// </summary>
     private bool ParentExists(Relationship relationship, object?[] values)
     {
-        Table parent;
-        try { parent = _database.GetTable(relationship.FromTable); }
-        catch (InvalidOperationException) { return false; }   // no such table: nothing can be referred to
+        // No such table: nothing can be referred to.
+        if (!_database.TryGetTable(relationship.FromTable, out var parent)) return false;
 
         var types = ParentColumns(relationship, parent);
         byte[] key = KeyOf(types, values);
@@ -285,6 +285,9 @@ internal sealed class ForeignKeyEnforcer
         var indexes = rows.Table.IndexEntries;
         indexes.EnsureCanBeKept();
         string? refusal = null;
+        // Whether the refusal is a rule of the table's the row would break - a duplicate, a null a key does not
+        // take - and not some other failure to work its entries out.
+        bool brokenRule = true;
         try
         {
             foreach (var entry in indexes.EntriesFor(rows.RowOf(row), enforce: true))
@@ -300,11 +303,12 @@ internal sealed class ForeignKeyEnforcer
         }
         catch (InvalidOperationException e)
         {
-            refusal = e.Message;
+            refusal    = e.Message;
+            brokenRule = e is ConstraintViolationException;
         }
         if (refusal is null) return;
         throw cascade is null
-            ? new InvalidOperationException(refusal)
+            ? brokenRule ? new ConstraintViolationException(refusal) : new InvalidOperationException(refusal)
             : Violation(cascade, $"the cascade would leave a row of '{rows.Table.Name}' that cannot be written. {refusal.TrimEnd('.')}");
     }
 
@@ -544,7 +548,7 @@ internal sealed class ForeignKeyEnforcer
 
     // ── Messages ─────────────────────────────────────────────────────────────
 
-    private static InvalidOperationException Violation(Relationship relationship, string what)
+    private static ConstraintViolationException Violation(Relationship relationship, string what)
         => new($"Foreign-key violation in relationship '{relationship.Name}': {what}. Nothing was changed.");
 
     private static IReadOnlyList<string> ParentColumnList(Relationship relationship) => relationship.ColumnPairs.Select(p => p.FromColumn).ToList();
@@ -570,6 +574,15 @@ internal sealed class ForeignKeyEnforcer
             if (!_tables.TryGetValue(name, out var table))
                 _tables[name] = table = _enforcer._database.GetTable(name);
             return table;
+        }
+
+        /// <summary>The table of that name, when the database has one.</summary>
+        private bool TryTable(string name, [NotNullWhen(true)] out Table? table)
+        {
+            if (_tables.TryGetValue(name, out table)) return true;
+            if (!_enforcer._database.TryGetTable(name, out table)) return false;
+            _tables[name] = table;
+            return true;
         }
 
         internal IReadOnlyList<Column> ParentColumns(Relationship relationship)
@@ -608,9 +621,12 @@ internal sealed class ForeignKeyEnforcer
         /// </summary>
         internal bool ParentExists(Relationship relationship, object?[] values)
         {
-            TableRows parent;
-            try { parent = RowsOf(relationship.FromTable); }
-            catch (InvalidOperationException) { return false; }   // no such table: nothing can be referred to
+            if (!_rows.TryGetValue(relationship.FromTable, out var parent))
+            {
+                // No such table: nothing can be referred to.
+                if (!TryTable(relationship.FromTable, out var table)) return false;
+                parent = RowsOf(table);
+            }
             return parent.Referred(relationship, KeyOf(ParentColumns(relationship), values), values).Count > 0;
         }
 

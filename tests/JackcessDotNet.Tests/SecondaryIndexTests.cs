@@ -74,7 +74,7 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(new Row { ["Id"] = 1, ["Name"] = "one" });
 
         Assert.Equal(new[] { "PrimaryKey", "ByName" }, table.Indexes.Select(ix => ix.Name));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Name"] = "ONE" }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Name"] = "ONE" }));
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Built", expectedRows: 1));
     }
 
@@ -155,7 +155,7 @@ public sealed class SecondaryIndexTests : IDisposable
         var before = IndexChecks.AllPages(db);
 
         // A new primary key and a long memo, whose pages would be written first: the code is row 77's.
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row
         {
             ["Id"] = 9_000, ["Code"] = "CODE 000077", ["Grp"] = 1, ["Seq"] = (short)1, ["Note"] = new string('n', 20_000),
         }));
@@ -174,7 +174,7 @@ public sealed class SecondaryIndexTests : IDisposable
             table.Insert(RowOf(i));
         var before = IndexChecks.AllPages(db);
 
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 150, ["Code"] = "not taken" }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 150, ["Code"] = "not taken" }));
 
         Assert.Contains("primary key", refused.Message);
         IndexChecks.AssertUnchanged(before, db);
@@ -189,8 +189,8 @@ public sealed class SecondaryIndexTests : IDisposable
             table.Insert(RowOf(i));
         var before = IndexChecks.AllPages(db);
 
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(10, new Row { ["Code"] = "code 000011", ["Note"] = new string('n', 20_000) }));
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(10, new Row { ["Id"] = 11 }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(10, new Row { ["Code"] = "code 000011", ["Note"] = new string('n', 20_000) }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(10, new Row { ["Id"] = 11 }));
         IndexChecks.AssertUnchanged(before, db);
 
         // Its own value is not another row's: the row is rewritten with the code it had.
@@ -211,9 +211,9 @@ public sealed class SecondaryIndexTests : IDisposable
         var before = IndexChecks.AllPages(db);
 
         table.Validate(RowOf(101));
-        Assert.Throws<InvalidOperationException>(() => table.Validate(new Row { ["Id"] = 101, ["Code"] = "code 000050" }));   // a duplicate code
-        Assert.Throws<InvalidOperationException>(() => table.Validate(new Row { ["Id"] = 50, ["Code"] = "new" }));            // a duplicate key
-        Assert.Throws<InvalidOperationException>(() => table.Validate(new Row { ["Code"] = "new" }));                         // no key
+        Assert.Throws<ConstraintViolationException>(() => table.Validate(new Row { ["Id"] = 101, ["Code"] = "code 000050" }));   // a duplicate code
+        Assert.Throws<ConstraintViolationException>(() => table.Validate(new Row { ["Id"] = 50, ["Code"] = "new" }));            // a duplicate key
+        Assert.Throws<ConstraintViolationException>(() => table.Validate(new Row { ["Code"] = "new" }));                         // no key
         Assert.Throws<ColumnValueTooLongException>(() => table.Validate(new Row { ["Id"] = 101, ["Code"] = new string('c', 41) }));
 
         IndexChecks.AssertUnchanged(before, db);
@@ -237,11 +237,11 @@ public sealed class SecondaryIndexTests : IDisposable
         var before = IndexChecks.AllPages(db);
 
         var duplicate = new Row { ["Code"] = "A" };
-        Assert.Throws<InvalidOperationException>(() => table.Insert(duplicate));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(duplicate));
         var withAnId = new Row { ["Id"] = 77, ["Code"] = "b" };
-        Assert.Throws<InvalidOperationException>(() => table.Insert(withAnId));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(withAnId));
         table.Validate(new Row { ["Code"] = "c" });   // no Id: checked with the one it would be given
-        Assert.Throws<InvalidOperationException>(() => table.Validate(new Row { ["Code"] = "B" }));
+        Assert.Throws<ConstraintViolationException>(() => table.Validate(new Row { ["Code"] = "B" }));
 
         Assert.False(duplicate.ContainsKey("Id"));
         Assert.Equal(77, withAnId["Id"]);
@@ -254,7 +254,7 @@ public sealed class SecondaryIndexTests : IDisposable
 
         // A row that brings a number another row has is a duplicate in the primary key.
         table.AllowAutoNumberInsert = true;
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Code"] = "d" }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Code"] = "d" }));
         Assert.Equal(3, table.LastAutoNumber);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Numbered", expectedRows: 3));
     }
@@ -283,7 +283,7 @@ public sealed class SecondaryIndexTests : IDisposable
         long plainReads = ReadsFor(plain);
         Assert.Equal(plainReads, ReadsFor(unique));
         Assert.Equal(plainReads, ReadsFor(keyed));
-        Assert.Throws<InvalidOperationException>(() => unique.Insert(new Row { ["Id"] = 17, ["Txt"] = "twice" }));
+        Assert.Throws<ConstraintViolationException>(() => unique.Insert(new Row { ["Id"] = 17, ["Txt"] = "twice" }));
     }
 
     // An entry left behind for a row long gone can point at a page that has since become another table's. The row
@@ -307,7 +307,7 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(new Row { ["Id"] = 2, ["Code"] = "taken" });
 
         Assert.Equal(2, table.ReadAllRows().Count);
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3, ["Code"] = "TAKEN" }));   // now it is a row's
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 3, ["Code"] = "TAKEN" }));   // now it is a row's
     }
 
     // Five text columns of 255 characters make a key of some 1,290 bytes, which no index page could hold three
@@ -358,17 +358,17 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(one);
         Assert.True(Stored(1));
         Assert.Equal(1, one["Flag"]);   // the caller's row is as it came
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = true }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = "True" }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = -0.5 }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = true }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = "True" }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Flag"] = -0.5 }));
 
         table.Insert(new Row { ["Id"] = 2, ["Flag"] = "false" });
         Assert.False(Stored(2));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = 0 }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3 }));                          // no value: No
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = DBNull.Value }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = "yes" }));       // only "true" is Yes
-        Assert.Throws<InvalidOperationException>(() => table.UpdateByPrimaryKey(2, new Row { ["Flag"] = 7m }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = 0 }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 3 }));                          // no value: No
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = DBNull.Value }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 3, ["Flag"] = "yes" }));       // only "true" is Yes
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(2, new Row { ["Flag"] = 7m }));
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Flags", expectedRows: 2));
 
         table.DeleteRow("Id", 1);        // its entry goes: the key it was entered under is the key of what is stored
@@ -406,8 +406,8 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(new Row { ["Id"] = 3, ["Code"] = null });
         table.Insert(new Row { ["Id"] = 4, ["Code"] = DBNull.Value });      // no value is no duplicate
         table.Validate(new Row { ["Id"] = 5, ["Code"] = DBNull.Value });
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = 5, ["Code"] = "" }));   // an empty string is a value
-        Assert.Throws<InvalidOperationException>(() => table.Validate(new Row { ["Id"] = 5, ["Code"] = "" }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 5, ["Code"] = "" }));   // an empty string is a value
+        Assert.Throws<ConstraintViolationException>(() => table.Validate(new Row { ["Id"] = 5, ["Code"] = "" }));
 
         // Stored as no value...
         var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
@@ -465,8 +465,8 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(new Row());
         table.Insert(new Row { ["A"] = 1, ["B"] = 2 });
 
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["A"] = 1, ["B"] = 2 }));
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["A"] = 5, ["B"] = 5, ["T"] = "X" }));   // "x", as Access compares text
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["A"] = 1, ["B"] = 2 }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["A"] = 5, ["B"] = 5, ["T"] = "X" }));   // "x", as Access compares text
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Pairs", expectedRows: 5));
     }
 
@@ -489,7 +489,7 @@ public sealed class SecondaryIndexTests : IDisposable
         table.Insert(new Row { ["A"] = 3, ["C"] = 3 });
         var before = IndexChecks.AllPages(db);
 
-        var refused = Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["B"] = 4, ["C"] = 4 }));
+        var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["B"] = 4, ["C"] = 4 }));
 
         Assert.Contains("Required", refused.Message);
         IndexChecks.AssertUnchanged(before, db);
@@ -527,7 +527,7 @@ public sealed class SecondaryIndexTests : IDisposable
         Assert.True(IndexChecks.Height(db, indexes.Single(ix => ix.Name == "ByGroupAndName").RootPageNumber) >= 2);
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Large", expectedRows: Count));
         Assert.Equal(4_321, db.GetTable("Large").NewIndexCursor("ByName").FindRow("Name", NameOf(4_321))?["Id"]);
-        Assert.Throws<InvalidOperationException>(() => table.Insert(new Row { ["Id"] = Count + 1, ["Name"] = NameOf(77).ToUpperInvariant() }));
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = Count + 1, ["Name"] = NameOf(77).ToUpperInvariant() }));
 
         foreach (int i in Shuffled(Count).Take(9_000))   // in the order they went in: each is the first row left
             table.DeleteRow("Id", i);

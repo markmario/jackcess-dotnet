@@ -60,6 +60,30 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!-- The public API is recorded in PublicAPI.Shipped.txt (what a release has
+       published) and PublicAPI.Unshipped.txt (what has changed since), and the
+       build fails when the code and the files disagree: a public type or member
+       added, changed or removed shows as a diff of those files. The three target
+       frameworks have the same API, so they share one pair of files.
+       The version is pinned here because this repository builds on its own,
+       with no central package management. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0" PrivateAssets="All" />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+  <PropertyGroup>
+    <!-- RS0016/RS0017: an API that is not recorded, or a recorded one that is gone.
+         RS0036/RS0037/RS0041: nullability is part of what is recorded.
+         RS0022: a constructor that would let a caller derive from a class.
+         RS0024/RS0025/RS0048/RS0050: the files themselves are wrong. -->
+    <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017;RS0022;RS0024;RS0025;RS0036;RS0037;RS0041;RS0048;RS0050</WarningsAsErrors>
+    <!-- RS0026/RS0027 object to overloads with optional parameters, which the API
+         as recorded already has (ColumnBuilder, CreateTable, ImportTable): they
+         would report every build without saying anything about a change. -->
+    <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
+  </PropertyGroup>
+
   <!-- net472 support: framework references plus packages backfilling BCL types
        (Span/Memory/BinaryPrimitives, ValueTuple, HashCode). See Compat/. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'netstandard2.0'">
