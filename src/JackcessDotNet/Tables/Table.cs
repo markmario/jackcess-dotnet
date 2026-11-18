@@ -145,7 +145,7 @@ public sealed class Table
             // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
             // bool it stands for - read once, for the row's bytes and its index entries alike.
             var written = RowValues.AsWritten(row, _definition.Columns);
-            _owningDb?.ValidateForeignKeysForInsert(this, written);
+            _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
             // Everything an index can refuse the row for, before any of it is written.
             entries = _indexes.EntriesFor(written, enforce: true);
@@ -293,25 +293,86 @@ public sealed class Table
                     .Max();
         }
 
-        // What the indexes hold for the row as it was and as it will be - its primary key, changed or not, and
-        // every other index - found, and a duplicate or a null refused, once the new row is known and before
-        // anything is rewritten.
-        IReadOnlyList<TableIndexes.Entry> oldEntries = Array.Empty<TableIndexes.Entry>();
-        IReadOnlyList<TableIndexes.Entry> newEntries = Array.Empty<TableIndexes.Entry>();
-        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!,
-            beforeChange: (oldRow, newRow, oldPointer) =>
-            {
-                oldEntries = _indexes.EntriesFor(oldRow, enforce: false);
-                newEntries = _indexes.EntriesFor(newRow, enforce: true);
-                _indexes.EnsureNoDuplicates(newEntries, replacedRowPointer: oldPointer);
-            });
+        // With foreign keys enforced, a table in a relationship is changed through the enforcer: the row, and the
+        // rows a cascade reaches, or nothing.
+        if (_definition.PrimaryKeyColumnName is not null && _owningDb?.ForeignKeysFor(this) is { } foreignKeys)
+        {
+            foreignKeys.Update(this, primaryKeyValue, newValues ?? throw new ArgumentNullException(nameof(newValues)));
+            if (highestGiven is { } brought)
+                _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, brought);
+            return;
+        }
+
+        var entries = new EntryMove(_indexes, refuseDuplicates: true);
+        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!, entries.BeforeChange);
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
-
-        // The row has moved: every entry it had goes, and it gains one at its new place.
-        _indexes.Remove(oldEntries, oldRowPtr);
-        _indexes.Add(newEntries, newRowPtr);
+        entries.Follow(oldRowPtr, newRowPtr);
     }
+
+    /// <summary>
+    /// The index side of rewriting a row, the same however the row was found. What the indexes hold for the row as
+    /// it was and as it will be - its primary key, changed or not, and every other index - is found, and a null
+    /// refused, once the new row is known and before anything is rewritten; then, the row having moved, every
+    /// entry it had goes and it gains one at its new place.
+    /// </summary>
+    private sealed class EntryMove
+    {
+        private readonly TableIndexes _indexes;
+        private readonly bool _refuseDuplicates;
+        private IReadOnlyList<TableIndexes.Entry> _old = Array.Empty<TableIndexes.Entry>();
+        private IReadOnlyList<TableIndexes.Entry> _new = Array.Empty<TableIndexes.Entry>();
+
+        /// <param name="refuseDuplicates">
+        /// Whether a duplicate in a unique index is looked for in the file. The foreign-key enforcer has looked
+        /// already, among the rows as its whole change leaves them: the file, part-way through that change, can
+        /// hold for a moment a key that a row about to be rewritten is giving up.
+        /// </param>
+        internal EntryMove(TableIndexes indexes, bool refuseDuplicates)
+        {
+            _indexes = indexes;
+            _refuseDuplicates = refuseDuplicates;
+        }
+
+        internal void BeforeChange(Row oldRow, Row newRow, int oldPointer)
+        {
+            _old = _indexes.EntriesFor(oldRow, enforce: false);
+            _new = _indexes.EntriesFor(newRow, enforce: true);
+            if (_refuseDuplicates) _indexes.EnsureNoDuplicates(_new, replacedRowPointer: oldPointer);
+        }
+
+        internal void Follow(int oldPointer, int newPointer)
+        {
+            _indexes.Remove(_old, oldPointer);
+            _indexes.Add(_new, newPointer);
+        }
+    }
+
+    // ── Rows the foreign-key enforcer has found ───────────────────────────────
+
+    /// <summary>
+    /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="changes"/> laid over it, its entry in
+    /// every index following it, as <see cref="UpdateByPrimaryKey"/> does for the row it finds. Duplicates are
+    /// the enforcer's to have refused.
+    /// </summary>
+    internal void RewriteRowAt(int rowPtr, Row changes)
+    {
+        var entries = new EntryMove(_indexes, refuseDuplicates: false);
+        int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
+        entries.Follow(rowPtr, newRowPtr);
+    }
+
+    /// <summary>Deletes the row at <paramref name="rowPtr"/>, as <see cref="DeleteRow"/> does the row it finds.</summary>
+    internal void DeleteRowAt(int rowPtr) => RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+
+    /// <summary>The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, or null when no row is there.</summary>
+    internal Row? ReadRowAt(int rowPtr, IReadOnlyList<Column> columns) => _dataWriter.ReadRowAt(_definition, rowPtr, columns);
+
+    /// <summary>The file the table is in, for a change of many rows to be taken back whole.</summary>
+    internal PageFile File => _file;
+
+    /// <summary>The table's indexes: what a row's entries in them are, and the rows an index holds for a key.</summary>
+    internal TableIndexes IndexEntries => _indexes;
 
     /// <summary>
     /// Deletes the first row where <paramref name="columnName"/> equals <paramref name="value"/>.
@@ -321,12 +382,24 @@ public sealed class Table
     public void DeleteRow(string columnName, object value)
     {
         _indexes.EnsureCanBeKept();
-        var deleted = _dataWriter.DeleteFirstMatch(_definition, columnName, value);
+        if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
+        {
+            foreignKeys.Delete(this, columnName ?? throw new ArgumentNullException(nameof(columnName)), value);
+            return;
+        }
+
+        // A row is always reported: with none to delete, DeleteFirstMatch throws.
+        if (_dataWriter.DeleteFirstMatch(_definition, columnName, value) is { } row)
+            RecordDeleted(row.RowPtr, row.Values);
+    }
+
+    /// <summary>What follows a row's deletion, however it was found: one row fewer, and its index entries gone.</summary>
+    private void RecordDeleted(int rowPtr, Row values)
+    {
         _dataWriter.IncrementTdefRowCount(_definition.TdefPageNumber, -1);
 
         // Its index entries go with it: Access counts and finds rows through them.
-        if (deleted is { } row)
-            _indexes.Remove(_indexes.EntriesFor(row.Values, enforce: false), row.RowPtr);
+        _indexes.Remove(_indexes.EntriesFor(values, enforce: false), rowPtr);
     }
 
     /// <summary>
