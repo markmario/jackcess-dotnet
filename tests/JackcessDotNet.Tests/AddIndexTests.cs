@@ -203,6 +203,14 @@ public sealed class AddIndexTests : IDisposable
         AssertRefusedAndUnchanged<NotSupportedException>(table => table.AddIndex(new IndexDefinition("ByGroupAndAmount", "Grp", "Amount")));
     }
 
+    // With no row there is no key to fail to make: the column's type alone refuses the index.
+    [Fact]
+    public void An_index_on_a_column_whose_keys_are_not_written_is_refused_for_a_table_with_no_rows_too()
+    {
+        CreateWithRows(0).Dispose();
+        AssertRefusedAndUnchanged<NotSupportedException>(table => table.AddIndex(new IndexDefinition("ByAmount", "Amount")), "not supported");
+    }
+
     [Fact]
     public void An_index_over_a_value_no_key_is_made_for_is_refused_and_nothing_changes()
     {
