@@ -3,9 +3,10 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Adds entries to an index's B-tree the way Access writes one, so Access reads
-/// the tree and can go on adding to it: the primary key of a table this library
-/// creates, and MSysObjects' and MSysACEs' indexes when it creates a table.
+/// Adds entries to, and takes them out of, an index's B-tree the way Access writes
+/// one, so Access reads the tree and can go on adding to it: every index of a table,
+/// whoever made it (<see cref="TableIndexes"/> says which entries a row has), and
+/// MSysObjects' and MSysACEs' indexes when a table is created.
 ///
 /// Access's rules, as its own pages show them:
 ///   • A leaf's entries are sorted by key, then by row pointer; each is the key
@@ -46,6 +47,32 @@ public sealed class IndexWriter
     private readonly PageFile      _file;
     private readonly PageAllocator _allocator;
     private readonly JetFormat     _format;
+
+    // The index pages this writer has read, when it is asked to keep them (RememberPagesRead): a row is looked
+    // for in a unique index before it is written and entered in it after, down the same pages, and nothing
+    // changes an index in between. A page this writer writes is forgotten.
+    private Dictionary<int, byte[]>? _remembered;
+
+    /// <summary>
+    /// Keeps each index page read from here on, so that an entry added through this writer after a search
+    /// through it reads no page twice. For one row's check and entry only: pages another writer changes
+    /// meanwhile are not seen.
+    /// </summary>
+    internal void RememberPagesRead() => _remembered ??= new Dictionary<int, byte[]>();
+
+    private byte[] ReadRaw(int pageNumber)
+    {
+        if (_remembered is null) return _file.ReadPage(pageNumber);
+        if (!_remembered.TryGetValue(pageNumber, out var raw))
+            _remembered[pageNumber] = raw = _file.ReadPage(pageNumber);
+        return (byte[])raw.Clone();
+    }
+
+    private void WriteRaw(int pageNumber, byte[] page)
+    {
+        _remembered?.Remove(pageNumber);
+        _file.WritePage(pageNumber, page);
+    }
 
     public IndexWriter(PageFile file, PageAllocator allocator)
     {
@@ -118,18 +145,6 @@ public sealed class IndexWriter
         var target = new Target(table.TdefPageNumber, table.PrimaryKeyIndexPage,
                                 table.PrimaryKeyIndexUmapPage, table.PrimaryKeyIndexUmapRow);
         Insert(target, PrimaryKeyBytes(table, values), rowPointer);
-    }
-
-    /// <summary>
-    /// Takes the entry for <paramref name="values"/> at <paramref name="rowPointer"/> out of the table's primary
-    /// key: a row deleted, or moved by an update.
-    /// </summary>
-    internal void RemovePrimaryKey(TableDefinition table, IReadOnlyList<object?> values, int rowPointer)
-    {
-        if (table.PrimaryKeyIndexPage == 0) return;
-        var target = new Target(table.TdefPageNumber, table.PrimaryKeyIndexPage,
-                                table.PrimaryKeyIndexUmapPage, table.PrimaryKeyIndexUmapRow);
-        Remove(target, PrimaryKeyBytes(table, values), rowPointer);
     }
 
     /// <summary>
@@ -388,6 +403,37 @@ public sealed class IndexWriter
         }
     }
 
+    /// <summary>
+    /// Every entry whose key begins with <paramref name="prefix"/>, in order, in the tree rooted at
+    /// <paramref name="rootPage"/>: its key as the tree holds it, and its row pointer. A key that was cut and the
+    /// same key written whole - as versions of this library before the cut, and Jackcess before it, wrote one -
+    /// begin alike, so this finds an entry under either.
+    /// </summary>
+    internal IEnumerable<(byte[] Key, int RowPointer)> EntriesWithPrefix(int rootPage, byte[] prefix)
+    {
+        var first = new Entry(prefix, 0, 0);
+        var page  = Read(rootPage);
+        while (!page.IsLeaf)
+        {
+            UseTail(page, target: null);
+            int slot  = FirstAtLeast(page.Entries, first);
+            int child = slot >= 0 ? page.Entries[slot].SubPage : page.Tail;
+            if (child <= 0) yield break;
+            page = Read(child);
+        }
+
+        while (true)
+        {
+            foreach (var e in page.Entries)
+            {
+                if (e.Key.Length >= prefix.Length && e.Key.AsSpan(0, prefix.Length).SequenceEqual(prefix)) yield return (e.Key, e.RowPtr);
+                else if (CompareBytes(e.Key, prefix) > 0) yield break;
+            }
+            if (page.Next <= 0) yield break;
+            page = Read(page.Next);
+        }
+    }
+
     // ── Splitting ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -543,9 +589,9 @@ public sealed class IndexWriter
 
     private void PatchLink(int pageNumber, int offset, int value)
     {
-        byte[] raw = _file.ReadPage(pageNumber);
+        byte[] raw = ReadRaw(pageNumber);
         ByteUtil.PutInt(raw, offset, value);
-        _file.WritePage(pageNumber, raw);
+        WriteRaw(pageNumber, raw);
     }
 
     // ── Pages ────────────────────────────────────────────────────────────────
@@ -574,12 +620,20 @@ public sealed class IndexWriter
 
     private int EntriesStart => _format.OffsetIndexEntryMask + _format.SizeIndexEntryMask;
 
+    /// <summary>
+    /// The longest key an entry can have and its tree still be written: a node must hold three entries - one
+    /// each side of the entry that goes up when it splits - written in full, each with its row and child page.
+    /// A longer key is refused before its row is written, not found out when a page will not split.
+    /// </summary>
+    internal static int MaxKeyLength(JetFormat format)
+        => (format.PageSize - format.OffsetIndexEntryMask - format.SizeIndexEntryMask) / 3 - NodeTrailerLen;
+
     // Jet4 keeps a page's height above the leaves in the byte after the shared-prefix length.
     private bool HasLevelByte => _format.OffsetIndexEntryMask - _format.OffsetIndexCompressedByteCount > 2;
 
     private IndexPage Read(int number)
     {
-        byte[] raw = _file.ReadPage(number);
+        byte[] raw = ReadRaw(number);
         if (raw[0] != JetFormat.PageTypeIndexLeaf && raw[0] != JetFormat.PageTypeIndexNode)
             throw new InvalidDataException($"Page {number} is not an index page (type 0x{raw[0]:X2}).");
 
@@ -709,7 +763,7 @@ public sealed class IndexWriter
             page[_format.OffsetIndexEntryMask + end / 8] |= (byte)(1 << (end % 8));
         }
         ByteUtil.PutShort(page, 2, (short)(_format.PageSize - EntriesStart - end));
-        _file.WritePage(p.Number, page);
+        WriteRaw(p.Number, page);
     }
 
     // ── Ordering ─────────────────────────────────────────────────────────────

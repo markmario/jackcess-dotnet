@@ -41,14 +41,41 @@ public sealed class DataPageWriter
     /// registers it in the table's owned-pages usage-map.
     /// </summary>
     /// <returns>The row's pointer (<see cref="RowPointer"/>: its page and its row on it).</returns>
-    public int InsertRow(TableDefinition tableDef, Row row)
+    public int InsertRow(TableDefinition tableDef, Row row) => InsertRow(tableDef, row, null, datesAsStored: false);
+
+    /// <summary>
+    /// As <see cref="InsertRow(TableDefinition, Row)"/>, for the row an update writes in place of another:
+    /// <paramref name="keptVariableValues"/> are the old row's own bytes for the variable-length columns the update
+    /// leaves alone, written back as they are (<see cref="RowEncoder.Prepare"/>);
+    /// with <paramref name="datesAsStored"/>, a Date/Time value may be the double a row stores
+    /// (<see cref="RowEncoder.DatesAsStored"/>).
+    /// </summary>
+    internal int InsertRow(TableDefinition tableDef, Row row, IReadOnlyDictionary<Column, byte[]>? keptVariableValues, bool datesAsStored = false)
     {
         if (tableDef is null) throw new ArgumentNullException(nameof(tableDef));
         if (row      is null) throw new ArgumentNullException(nameof(row));
 
         var format = _file.Format;
 
-        // Build per-column LvalWriters for any Memo/OLE columns that have a umap page.
+        // Everything that can refuse the row - a value its column cannot hold, a row too large - does so here,
+        // before a page is written: a refused row leaves the file as it was.
+        var encoder = new RowEncoder(format, tableDef, LvalWritersFor(tableDef)) { DatesAsStored = datesAsStored };
+        return Place(tableDef, encoder, encoder.Prepare(row, keptVariableValues, null));
+    }
+
+    // Writes a prepared row's long values and then the row. Only the file can fail here.
+    private int Place(TableDefinition tableDef, RowEncoder encoder, RowEncoder.PreparedRow prepared)
+    {
+        var    format  = _file.Format;
+        byte[] rowData = encoder.Complete(prepared);
+        int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
+        int rowNum     = WriteRowOnPage(dataPage, rowData, tableDef.TdefPageNumber, format);
+        return RowPointer.Pack(dataPage, rowNum);
+    }
+
+    // A writer for each Memo/OLE column that has usage maps of its own: where its longer values go.
+    private Dictionary<string, LvalWriter>? LvalWritersFor(TableDefinition tableDef)
+    {
         Dictionary<string, LvalWriter>? lvalWriters = null;
         foreach (var col in tableDef.Columns)
         {
@@ -59,14 +86,7 @@ public sealed class DataPageWriter
                 lvalWriters[col.Name] = new LvalWriter(_file, _allocator, umapRef);
             }
         }
-
-        var    encoder = new RowEncoder(format, tableDef.Columns, lvalWriters);
-        byte[] rowData = encoder.Encode(row);
-
-        int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
-        int rowNum     = WriteRowOnPage(dataPage, rowData, tableDef.TdefPageNumber, format);
-
-        return RowPointer.Pack(dataPage, rowNum);
+        return lvalWriters;
     }
 
     /// <summary>
@@ -79,6 +99,33 @@ public sealed class DataPageWriter
         var tdefPage  = _file.ReadPage(tdefPageNumber);
         int current   = ByteUtil.GetInt(tdefPage, format.TdefOffsetNumRows);
         ByteUtil.PutInt(tdefPage, format.TdefOffsetNumRows, current + delta);
+        _file.WritePage(tdefPageNumber, tdefPage);
+    }
+
+    /// <summary>
+    /// Records an inserted row in the table's definition: one more row, and - when the insert used or passed the
+    /// table's Long auto-number counter - the counter's new value. Both go in one write, after the row is on its
+    /// page, so the counter never runs ahead of the rows nor falls behind them.
+    /// </summary>
+    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber)
+    {
+        var format   = _file.Format;
+        var tdefPage = _file.ReadPage(tdefPageNumber);
+        ByteUtil.PutInt(tdefPage, format.TdefOffsetNumRows, ByteUtil.GetInt(tdefPage, format.TdefOffsetNumRows) + 1);
+        if (lastAutoNumber is { } last)
+            ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, last);
+        _file.WritePage(tdefPageNumber, tdefPage);
+    }
+
+    /// <summary>
+    /// Moves the table's Long auto-number counter up to <paramref name="value"/> when it is behind it; never down.
+    /// </summary>
+    internal void RaiseLastAutoNumber(int tdefPageNumber, int value)
+    {
+        var format   = _file.Format;
+        var tdefPage = _file.ReadPage(tdefPageNumber);
+        if (value <= ByteUtil.GetInt(tdefPage, format.TdefOffsetLastAutoNumber)) return;
+        ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, value);
         _file.WritePage(tdefPageNumber, tdefPage);
     }
 
@@ -161,8 +208,14 @@ public sealed class DataPageWriter
     public int UpdateRowByPrimaryKey(TableDefinition table, object primaryKeyValue, Row newValues)
         => UpdateRowByPrimaryKeyMoving(table, primaryKeyValue, newValues).NewRowPtr;
 
-    /// <summary>As <see cref="UpdateRowByPrimaryKey"/>, with the old row's pointer too: the row moves.</summary>
-    internal (int OldRowPtr, int NewRowPtr) UpdateRowByPrimaryKeyMoving(TableDefinition table, object primaryKeyValue, Row newValues)
+    /// <summary>
+    /// As <see cref="UpdateRowByPrimaryKey"/>, with the old row's pointer too: the row moves.
+    /// <paramref name="beforeChange"/> is given the row as it was, the row as it will be and the old row's pointer
+    /// once the new row is known to be writable and before anything is changed: what it throws refuses the update
+    /// with the table as it was.
+    /// </summary>
+    internal (int OldRowPtr, int NewRowPtr) UpdateRowByPrimaryKeyMoving(
+        TableDefinition table, object primaryKeyValue, Row newValues, Action<Row, Row, int>? beforeChange = null)
     {
         if (table    is null) throw new ArgumentNullException(nameof(table));
         if (newValues is null) throw new ArgumentNullException(nameof(newValues));
@@ -203,50 +256,12 @@ public sealed class DataPageWriter
 
             for (int r = 0; r < rowCount; r++)
             {
-                int    slotOff = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
-                ushort slotVal = ByteUtil.GetUShort(dp, slotOff);
-
-                if ((slotVal & 0x8000) != 0) continue;   // deleted
-                if ((slotVal & 0x4000) != 0) continue;   // overflow pointer
-
-                int rowStart = slotVal & JetFormat.RowOffsetMask;
-                int rowEnd   = (r == 0)
-                    ? format.PageSize
-                    : (ByteUtil.GetUShort(dp, format.OffsetDataRowTable + (r - 1) * JetFormat.SizeRowEntry)
-                       & JetFormat.RowOffsetMask);
-                int rowLen = rowEnd - rowStart;
-                if (rowLen <= 0) continue;
-
-                var rowBytes = new byte[rowLen];
-                Array.Copy(dp, rowStart, rowBytes, 0, rowLen);
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // deleted
 
                 object? pkVal = decoder.Decode(rowBytes, pkCol);
                 if (pkVal is null || !PrimaryKeysEqual(pkVal, primaryKeyValue)) continue;
 
-                // Build the merged row: existing values overlaid by newValues.
-                var merged = new Row();
-                foreach (var col in columns)
-                {
-                    object? existing = decoder.Decode(rowBytes, col);
-                    if (existing is not null)
-                        merged[col.Name] = existing;
-                }
-                foreach (var kvp in newValues)
-                    merged[kvp.Key] = kvp.Value;
-
-                // A merged row the new one could not be written as - text longer than its column - must not cost
-                // the row it replaces, so it is checked before anything is freed or deleted.
-                new RowEncoder(format, columns).Validate(merged);
-
-                // Free any LVAL chains referenced by the old row before overwriting.
-                FreeRowLvalChains(table, rowBytes, decoder);
-
-                // Mark the original slot as deleted (bit 15).
-                ByteUtil.PutUShort(dp, slotOff, (ushort)(slotVal | 0x8000u));
-                _file.WritePage(pageNum, dp);
-
-                // Insert the merged row; the caller moves the row's PK entry from the old pointer to the new.
-                return (RowPointer.Pack(pageNum, r), InsertRow(table, merged));
+                return (RowPointer.Pack(pageNum, r), Rewrite(table, decoder, dp, pageNum, r, rowBytes, newValues, beforeChange, keepStoredDates: false));
             }
         }
 
@@ -265,10 +280,10 @@ public sealed class DataPageWriter
         => DeleteFirstMatch(table, columnName, value);
 
     /// <summary>
-    /// As <see cref="DeleteRow"/>, reporting the deleted row: its pointer and its primary-key values, for its
-    /// entry to leave the primary key. Null when no row matched.
+    /// As <see cref="DeleteRow"/>, reporting the deleted row: its pointer and the values its index keys were
+    /// made of, for its entries to leave the table's indexes. Null when no row matched.
     /// </summary>
-    internal (int RowPtr, object?[] PrimaryKey)? DeleteFirstMatch(TableDefinition table, string columnName, object value)
+    internal (int RowPtr, Row Values)? DeleteFirstMatch(TableDefinition table, string columnName, object value)
     {
         if (table is null)      throw new ArgumentNullException(nameof(table));
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
@@ -300,39 +315,12 @@ public sealed class DataPageWriter
 
             for (int r = 0; r < rowCount; r++)
             {
-                int    slotOff = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
-                ushort slotVal = ByteUtil.GetUShort(dp, slotOff);
-
-                if ((slotVal & 0x8000) != 0) continue;   // already deleted
-                if ((slotVal & 0x4000) != 0) continue;   // overflow pointer
-
-                int rowStart = slotVal & JetFormat.RowOffsetMask;
-                int rowEnd   = (r == 0)
-                    ? format.PageSize
-                    : (ByteUtil.GetUShort(dp,
-                           format.OffsetDataRowTable + (r - 1) * JetFormat.SizeRowEntry)
-                       & JetFormat.RowOffsetMask);
-                int rowLen = rowEnd - rowStart;
-                if (rowLen <= 0) continue;
-
-                var rowBytes = new byte[rowLen];
-                Array.Copy(dp, rowStart, rowBytes, 0, rowLen);
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // already deleted
 
                 object? colVal = decoder.Decode(rowBytes, targetCol);
                 if (!PrimaryKeysEqual(colVal, value)) continue;
 
-                var primaryKey = table.EffectivePrimaryKeyColumns
-                    .Select(name => decoder.Decode(rowBytes, table.Columns.First(c =>
-                        c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))))
-                    .ToArray();
-
-                // Free any LVAL chains referenced by this row.
-                FreeRowLvalChains(table, rowBytes, decoder);
-
-                // Mark the slot as deleted.
-                ByteUtil.PutUShort(dp, slotOff, (ushort)(slotVal | 0x8000u));
-                _file.WritePage(pageNum, dp);
-                return (RowPointer.Pack(pageNum, r), primaryKey);
+                return (RowPointer.Pack(pageNum, r), Delete(table, decoder, dp, pageNum, r, rowBytes));
             }
         }
 
@@ -340,25 +328,232 @@ public sealed class DataPageWriter
             $"No row with {columnName} = '{value}' found in table '{table.Name}'.");
     }
 
+    // ── A row at a known place ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="newValues"/> laid over its own, exactly as
+    /// <see cref="UpdateRowByPrimaryKeyMoving"/> rewrites the row it finds - <paramref name="beforeChange"/>
+    /// included - and returns where the row now is. One thing differs: a Date/Time value the change does not
+    /// touch is written back as the double the row stored, not as the <see cref="DateTime"/> it reads as, which
+    /// does not hold every double Access writes. A row rewritten here is one its caller did not name - a cascade
+    /// reached it - and a date of it that a relationship refers to must still be the date its parent has.
+    /// </summary>
+    internal int RewriteRowAt(TableDefinition table, int rowPtr, Row newValues, Action<Row, Row, int>? beforeChange = null)
+    {
+        var (page, rowBytes) = ReadLiveRow(table, rowPtr);
+        return Rewrite(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes, newValues, beforeChange, keepStoredDates: true);
+    }
+
+    /// <summary>
+    /// Deletes the row at <paramref name="rowPtr"/>, exactly as <see cref="DeleteFirstMatch"/> deletes the row it
+    /// finds, and reports the values its index keys were made of. The caller takes one off the TDEF's row count.
+    /// </summary>
+    internal Row DeleteRowAt(TableDefinition table, int rowPtr)
+    {
+        var (page, rowBytes) = ReadLiveRow(table, rowPtr);
+        return Delete(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes);
+    }
+
+    /// <summary>
+    /// The one way a row is rewritten, however it was found: <paramref name="newValues"/> laid over the row on
+    /// <paramref name="page"/>, the old row deleted and the merged one added, so the row moves. Returns the new
+    /// row's pointer.
+    /// </summary>
+    private int Rewrite(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex,
+                        byte[] rowBytes, Row newValues, Action<Row, Row, int>? beforeChange, bool keepStoredDates)
+    {
+        // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
+        // index keys were made of it (a date as the double stored), for its entries to be found.
+        var old    = new Row();
+        var merged = new Row();
+        foreach (var col in table.Columns)
+        {
+            object? existing = decoder.Decode(rowBytes, col);
+            if (existing is not null)
+                merged[col.Name] = existing;
+            object? keyed = col.DataType == DataType.ShortDateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+            if (keyed is not null)
+                old[col.Name] = keyed;
+            if (keepStoredDates && keyed is double)
+                merged[col.Name] = keyed;
+        }
+        foreach (var kvp in newValues)
+            merged[kvp.Key] = kvp.Value;
+
+        // A merged row the new one could not be written as - text longer than its column, a duplicate in
+        // a unique index - must not cost the row it replaces, so it is checked before anything is freed
+        // or deleted.
+        var encoder = new RowEncoder(_file.Format, table, LvalWritersFor(table)) { DatesAsStored = keepStoredDates };
+
+        // A long value the update does not change stays where it is: the new row carries the old row's reference
+        // to it, as Access and Java Jackcess leave it, so it is neither freed nor written again. Only the long
+        // values being replaced are freed, before the row is rewritten. One kept in the row though longer than a
+        // row may keep (releases before ExportMdb.Interop 2.1.2 wrote those, and Access shows #Error for them,
+        // qcatco/exportmdb.interop#29) is not kept as it is: written again, it goes to pages of its own.
+        //
+        // Every other column the update does not name keeps the row's own bytes too: an update does not change a
+        // value it was not given. Read and written again, a Date/Time outside what DateTime holds came back null.
+        var kept      = new Dictionary<Column, byte[]>();
+        var keptFixed = new Dictionary<Column, byte[]>();
+        foreach (var col in table.Columns)
+        {
+            if (col.DataType == DataType.Boolean || newValues.ContainsKey(col.Name)) continue;
+            if (decoder.RawFixedValue(rowBytes, col) is { } bytes)
+                keptFixed[col] = bytes;
+            else if (decoder.RawVariableValue(rowBytes, col) is { } stored
+                     && !(col.DataType.IsLongValue() && (stored.Length < 4 || IsOverlongInRowValue(stored))))
+                kept[col] = stored;
+        }
+
+        // The new row whole, but for the long values still to go to their pages: a value its column cannot hold,
+        // or one not of its type, or a row too large for the format is refused here, with nothing changed. Refused
+        // only as the new row was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
+        var prepared = encoder.Prepare(merged, kept, keptFixed);
+        beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNumber, rowIndex));
+
+        FreeRowLvalChains(table, rowBytes, decoder, kept);
+
+        // Mark the original slot as deleted, and with it wherever Access had moved the row's values to.
+        var moved = new List<(int Page, int Row)>();
+        DataRows.Read(_file, page, rowIndex, moved);
+        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
+        _file.WritePage(pageNumber, page);
+        DataRows.MarkDeleted(_file, moved);
+
+        // Insert the merged row; the caller moves the row's index entries from the old pointer to the new.
+        return Place(table, encoder, prepared);
+    }
+
+    // A long value's reference whose value is in the row (THIS_PAGE) and longer than Access keeps one there.
+    private static bool IsOverlongInRowValue(byte[] reference)
+    {
+        int lengthWithFlags = ByteUtil.GetInt(reference, 0);
+        return (lengthWithFlags & unchecked((int)0xC0000000)) == LvalWriter.LvalTypeThisPage
+            && (lengthWithFlags & LvalWriter.LvalLengthMask) > RowEncoder.InlineLvalThreshold;
+    }
+
+    /// <summary>
+    /// The one way a row is deleted, however it was found. Returns the values its index keys were made of.
+    /// </summary>
+    private Row Delete(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex, byte[] rowBytes)
+    {
+        // What its index keys were made of: every column kept in the row itself, and a Memo that is
+        // indexed (read before its pages are freed).
+        var values = new Row();
+        foreach (var col in table.Columns)
+            if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
+                && decoder.DecodeForKey(rowBytes, col) is { } stored)
+                values[col.Name] = stored;
+
+        // A table with a calculated column is not written to, and a delete is a write (qcatco/exportmdb.interop#42).
+        if (table.Columns.FirstOrDefault(c => c.IsCalculated) is { } calculated)
+            throw new NotSupportedException(
+                $"No row of this table is deleted: its column {calculated.Name} is calculated, and this library " +
+                "works no expression out. Nothing was changed.");
+
+        // A row whose index entries could not be taken out stays: nothing has changed yet.
+        TableIndexes.EnsureEntriesCanBeRemoved(table, values);
+
+        // Free any LVAL chains referenced by this row.
+        FreeRowLvalChains(table, rowBytes, decoder);
+
+        // Mark the slot as deleted, and with it wherever Access had moved the row's values to.
+        var moved = new List<(int Page, int Row)>();
+        DataRows.Read(_file, page, rowIndex, moved);
+        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
+        _file.WritePage(pageNumber, page);
+        DataRows.MarkDeleted(_file, moved);
+        return values;
+    }
+
+    /// <summary>
+    /// The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, as its index keys are made
+    /// of them (<see cref="RowDecoder.DecodeForKey"/>: a date as the double stored), or null when no row of the
+    /// table is there: what a pointer from an index is checked against. One page is read, and the long-value pages
+    /// of the columns asked for.
+    /// </summary>
+    internal Row? ReadRowAt(TableDefinition table, int rowPtr, IReadOnlyList<Column> columns)
+    {
+        if (TryReadLiveRow(table, rowPtr) is not { } found) return null;
+        var decoder = DecoderFor(table);
+        var row = new Row();
+        foreach (var column in columns)
+            if (decoder.DecodeForKey(found.RowBytes, column) is { } value)
+                row[column.Name] = value;
+        return row;
+    }
+
+    private RowDecoder DecoderFor(TableDefinition table)
+        => new(_file.Format, table.Columns, table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
+
+    // The page holding the row at rowPtr and the row's bytes. The row has to be one of this table's and still
+    // there: a pointer kept across a change to the row is no longer one.
+    private (byte[] Page, byte[] RowBytes) ReadLiveRow(TableDefinition table, int rowPtr)
+        => TryReadLiveRow(table, rowPtr) ?? throw new InvalidOperationException(
+            $"No row of table '{table.Name}' is at page {RowPointer.Page(rowPtr)}, row {RowPointer.Row(rowPtr)}.");
+
+    private (byte[] Page, byte[] RowBytes)? TryReadLiveRow(TableDefinition table, int rowPtr)
+    {
+        var format   = _file.Format;
+        int rowIndex = RowPointer.Row(rowPtr);
+        int pageNum  = RowPointer.Page(rowPtr);
+        if (pageNum <= 0 || pageNum >= _file.PageCount) return null;
+        byte[] page  = _file.ReadPage(pageNum);
+        int slotOff  = format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+
+        // The page is the one the row's slot is on, whose slot a delete or an update marks; the bytes are the
+        // row's own, from wherever an overflow pointer leads.
+        if (page[0] != JetFormat.PageTypeData || ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) != table.TdefPageNumber)
+            return null;
+        return DataRows.Read(_file, page, rowIndex) is { } rowBytes ? (page, rowBytes) : null;
+    }
+
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     // Frees every OTHER_PAGE LVAL chain referenced by the given row bytes. The room each page gains is noted for the
     // column the value was in (its owned-pages map), whose later values may use it.
-    private void FreeRowLvalChains(TableDefinition table, byte[] rowBytes, RowDecoder decoder)
+    private void FreeRowLvalChains(TableDefinition table, byte[] rowBytes, RowDecoder decoder,
+                                   IReadOnlyDictionary<Column, byte[]>? kept = null)
     {
         var lvalFree = new LvalFree(_file);
         foreach (var (column, lvalPage, lvalRow, chained) in decoder.GetOtherPageLvRefs(rowBytes))
         {
+            if (kept is not null && kept.ContainsKey(column)) continue;
             LvalUmapRef? owner = table.LvalColumnUmapPages.TryGetValue(column.Name, out var umap) ? umap : null;
             lvalFree.FreeChain(lvalPage, lvalRow, chained, owner);
         }
     }
 
-    private static bool PrimaryKeysEqual(object? stored, object? requested)
+    /// <summary>
+    /// How a value a caller names a row by is matched to a stored one - the one comparison every lookup that
+    /// confirms a row uses. A floating-point value is matched by its bits, the caller's taken to the column's type
+    /// as a row would store it: +0.0 and -0.0 are two keys to Access and to the index, and so are a Double and the
+    /// next Double after it, which a comparison as decimals called equal - an update by the second rewrote the
+    /// first. Anything else is equal, or equal as numbers (a Long column's 5 for a caller's 5L; a Currency or a
+    /// Decimal exactly, as decimals compare). Text is matched exactly. A Date/Time is matched as it is read, to
+    /// the millisecond.
+    /// </summary>
+    internal static bool PrimaryKeysEqual(object? stored, object? requested)
     {
-        if (Equals(stored, requested)) return true;
-        if (stored is null || requested is null) return false;
-        try { return Convert.ToDecimal(stored) == Convert.ToDecimal(requested); }
-        catch { return false; }
+        if (stored is null || requested is null) return stored is null && requested is null;
+        try
+        {
+            switch (stored)
+            {
+                case double d:
+                    return BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(requested));
+                case float f:
+                    return BitConverter.ToInt32(BitConverter.GetBytes(f), 0)
+                        == BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(requested)), 0);
+            }
+            if (Equals(stored, requested)) return true;
+            return Convert.ToDecimal(stored) == Convert.ToDecimal(requested);
+        }
+        catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
+        {
+            return false;
+        }
     }
 }

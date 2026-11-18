@@ -59,7 +59,15 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   also stay in insertion order. A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
-- **Text index keys are the ones Access writes**, for the General Legacy sort order (Access 2000-2007).
+- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
+  and for General (Access 2010 and later).
+- **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
+  enforced. Access answers through them after the engine adds, changes or deletes rows.
+- **An insert fills AutoNumber columns from the table's own counter**, as Access does.
+- **Foreign keys can be enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
+  off by default).
+- **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
+  engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
@@ -67,13 +75,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 
 Limits to know about:
 
-- The engine keeps a table's **primary key** index up to date. It maintains **no other index** on
-  insert, and has no API for one. Access trusts an index when one covers a query, so a table with other
-  indexes gives wrong answers in Access after the engine adds rows to it.
-- Text keys are written only in the General Legacy order. The engine refuses, before changing anything,
-  to create a table in a file whose catalog sorts in Access 2010's General order, and to insert, update
-  or delete in a table whose primary key it cannot write keys for: text in another order, or a type
-  other than Byte, Integer, Long, Text or GUID.
+- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
+  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
+  order or any other sort order, or a column type it makes no key for. It still reads such a table.
+  See [Text index keys](#text-index-keys-sort-orders-and-limits).
 
 ## Building and testing
 
@@ -153,20 +158,69 @@ db.CreateTable("Orders", new[]
 Up to 10 columns per composite key (Jet's hard limit). The single-column
 `primaryKey:` overload still works for the common case.
 
-## Foreign-key enforcement on insert (opt-in)
+## Foreign-key enforcement (opt-in)
 
 ```csharp
 using var db = Database.Open("Northwind.mdb");
 db.EnforceForeignKeys = true;                  // default: false
 
-// MSysRelationships drives validation. Any Insert whose FK column doesn't
-// match an existing parent row throws InvalidOperationException.
+// The relationships in MSysRelationships that have referential integrity are kept.
 orders.Insert(new Row { ["CustomerID"] = "INVALID", ... });
-//                                                    ^ throws "Foreign-key violation in
-//                                                              relationship 'CustomersOrders'..."
+//   throws InvalidOperationException: "Foreign-key violation in relationship 'CustomersOrders'..."
+
+customers.UpdateByPrimaryKey("ALFKI", new Row { ["CustomerID"] = "ALFKA" });
+//   cascade update: the customer's orders take the new key - or, without it, refused while it has orders
+
+customers.DeleteRow("CustomerID", "ALFKA");
+//   cascade delete: its orders go too, and their order lines; cascade-to-null: their CustomerID becomes null;
+//   neither: refused while it has orders
 ```
 
-Null FK values are allowed (SQL semantics). Restrict-only — no cascade.
+`Insert`, `UpdateByPrimaryKey` and `DeleteRow` refuse what would leave a row referring to no parent, and carry out
+the cascades a relationship asks for, as Access does. A foreign key whose columns are all null refers to nothing.
+A refused change leaves the file untouched: everything is checked, cascades included, before anything is written,
+and a change that fails while being written is taken back. With the property off, nothing is checked and nothing
+cascades.
+
+What it costs: rows are found through the tables' indexes. Access gives every relationship an index on its
+foreign key, so an insert reads about a dozen pages to find its parent, and an update or delete reads the rows it
+reaches and the index pages that lead to them - a cascade delete of five rows about fifty pages, whether the child
+has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
+keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
+
+An index is trusted to hold every row, as Access trusts it. An entry whose row has gone is harmless (each row found
+is read and compared), but a row with no entry is not found. Versions of this library before it kept every index
+(those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key and to no other index, so a row one
+of them inserted into an Access-made table is missing from the index on its foreign key: enforcement does not see
+it as a child, and its parent can be deleted or re-keyed leaving it an orphan. Access makes the same mistake with
+the same file, which is already inconsistent to it
+([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)).
+
+Keys are matched as Access matches them - as its indexes hold them:
+
+- **A null matches a null.** A parent whose key is null (a unique index allows one) has the rows whose foreign
+  key is null for children: deleting it deletes them under cascade delete and is refused without it, and giving
+  it a key gives them the key under cascade update. A parent that has a key never touches them, and a row can
+  always be added, or changed, to have no foreign key. In a key of several columns, null matches null column by
+  column.
+- **Numbers are matched as stored.** A Double or Single by its bits: 0 and -0 are two keys, and so are a Double
+  and the next Double after it. A Date/Time by the double the row stores, which a `DateTime` does not always hold.
+- **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
+  A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
+
+What enforcement does not check:
+
+- **A column's Required property**, for a caller's own update: `UpdateByPrimaryKey` may null a column Access would
+  require a value for, exactly as with enforcement off. (A cascade-to-null into such a column is refused.)
+- **A key written again unchanged**: Access's `UPDATE` refuses to assign a key other rows refer to when the
+  relationship does not cascade updates, even the value it already has; here an unchanged key is not a change.
+- **Relationships without referential integrity**: they only tell Access's query designer how tables join.
+
+Where no index on the columns can be searched (a table made without one on its foreign key, an index whose keys
+this library does not write, a parent key that is null) the table is read from end to end and held in memory until
+the change is written: some 200 bytes a row, about 60 MB and a second for a table of 300,000 rows. A change that
+would rewrite a row of a table Access has deleted a column from is refused (`NotSupportedException`): rows of
+such a table are not yet written correctly.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
@@ -209,7 +263,7 @@ materialising the whole table.
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4 / Jet 3)           | ✅      |
 | Row CRUD + primary-key B-tree index               | ✅      |
-| Other (secondary) indexes kept up to date on write | ❌ See [limits](#what-this-fork-changes) |
+| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
@@ -219,7 +273,7 @@ materialising the whole table.
 | Password-protected `.accdb` (Non-Standard AES, compat mode 0) | ✅ Read + write |
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
-| Foreign-key enforcement on insert (opt-in)        | ✅ Restrict-only |
+| Foreign-key enforcement, with cascades (opt-in)   | ✅      |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
@@ -227,6 +281,112 @@ through this library round-trip cleanly through `Database.Open(path, password)`
 but Office Access may flag a stale integrity hash. Matches the upstream
 `jackcess-encrypt` limitation.
 
+## Text index keys: sort orders and limits
+
+An index entry's key for text depends on the column's sort order. The library
+writes, and searches by, the keys of two orders, each checked byte for byte
+against the keys Microsoft's own engine (ACE 16) writes:
+
+- **General - Legacy** (sort order 1033, version 0): Access 2000 to 2007, and
+  what a new database gets by default in later versions.
+- **General** (1033, version 1): what Access 2010 and later can make a new
+  database in. A table created in such a file sorts as the file does.
+
+What it does not do, and refuses rather than write a key Access cannot find:
+
+- **Access 97's order, and any other sort order** (for example 1049, Russian).
+  A file whose catalog sorts in one is not given a table, and a table with an
+  index on a Text or Memo column that sorts in one is not inserted into,
+  updated or deleted from.
+  Such a file is still read; its text indexes are not searched, its tables are
+  scanned. ACE 12's keys for Access 97's order are kept in
+  `tests/JackcessDotNet.Tests/IndexKeys` for a later port
+  (qcatco/exportmdb.interop#26).
+- **A value in an indexed Text or Memo column, or a table name, with a
+  character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
+  々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
+  ｰ U+FF70; in General also U+3033-3035, 〻 U+303B, ゠ U+30A0 and ꀕ U+A015) and,
+  in General - Legacy, the Arabic shadda (U+0651, U+FE7C, U+FE7D). So a Japanese
+  name with ー (データ, コンピューター) or an Arabic word with a shadda cannot be a
+  value of an indexed column (the primary key or any other index) or a table name: `Insert`, `UpdateByPrimaryKey`,
+  `DeleteRow` and `CreateTable` throw `NotSupportedException` before anything
+  is written. In General the same goes for four Arabic ligatures (U+06D6,
+  U+06D7, U+FD24, U+FD6F). Any text is fine in a column that is no key, and a
+  row Access wrote with such a key is still found: the table is scanned for it.
+
+### Keys longer than 510 bytes
+
+Access keeps no index key longer than 510 bytes. It cuts a longer one there
+and ends it in a two-byte digest of the rest - a key of one column, of a Memo
+(its first 255 characters) or of several columns together. A file can hold
+three kinds of entry for such a key:
+
+| Written by | Stored as | Read / lookup | Insert, update | Delete |
+| --- | --- | --- | --- | --- |
+| Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
+| This library, since it cut keys | the same bytes as Access | found | the same | entry removed |
+| This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
+
+- **Lookups** of a value whose key is cut read the table instead of searching
+  the index, so a row is found whichever way its entry is stored.
+- **Writes** always store the cut key. Updating a row whose entry was whole
+  replaces it with a cut one; nothing converts rows that are not written.
+- **Uniqueness** follows Access: two values cut to the same entry are
+  duplicates, whichever way the existing one is stored. A file an earlier
+  release wrote may hold two such rows (their whole keys differed); neither
+  can then be rewritten until the other is deleted.
+- **Deletes and updates** remove the entry the row actually has, cut or whole,
+  matched by its row. A row with no entry at all - earlier releases kept only
+  the primary key - has nothing to remove, and that is not an error.
+- Access itself does not seek a whole key: until such a row is rewritten,
+  Access finds it by a scan but not through the index.
+
+`tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
+earlier release wrote, made by `tools/legacy-long-keys.ps1`.
+
+## Rows and long values: what to know
+
+Rows are read and written by the table's own definition - where it keeps each column, including after columns
+have been deleted - and a row Access moved to another page is read where its pointer leads.
+
+- **Decimal values written by releases before this read back as different numbers.** A Decimal is stored as
+  four 32-bit words; earlier releases wrote and read sixteen bytes in the other order, so they and Access never
+  agreed (a 1 written by an earlier release is 16,777,216 to Access, and now to this library too). Such a value
+  cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
+  certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
+- **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
+  is written that way.
+- **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a
+  delete are each refused with `NotSupportedException`.
+- **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
+  written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
+  not of its type, or a row too large leaves the file byte for byte as it was. Only a failure of the file itself
+  (the disk, the stream) can leave a change half made; an update outside a foreign-key cascade is not undone.
+- **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
+  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
+- **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**
+  (`InvalidDataException` naming the page), not a missing row.
+- **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
+  first bit alone; they stay deleted for this library and for Access, which reads, edits and compacts such a
+  table as any other.
+- **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
+  has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
+  replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
+  placement of earlier releases - the last chunk on a page with other values' - which is smaller (a fifth
+  smaller for 5,000-character Memos, nearly half for values just over one page) and reads the same, but is not
+  safe for Access to edit long values in. A file written that way keeps its shared pages when it is added to.
+  Added to in the default placement, such a file gets no value on a page that may hold the end of a chain.
+- **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
+  looks at no page that cannot take the value, however many the column has. A page is listed in the column's
+  free-space map while it has 264 bytes or more free, which is where ACE was seen to list one (it listed none
+  with 258 or fewer), and only once a value is on it. The first long value written to a column in a session
+  reads the pages its map lists, once.
+- **Not handled for Access 97 files:** a row this library writes with a variable-length column (the end-of-data
+  offset and the count are written in two bytes where Access 97 has one), and rows longer than 256 bytes, which
+  use a jump table. Reading the Access 97 files of the corpus agrees with 32-bit ACE 12 and DAO.
+
+`tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
+versions of the engine.
 ## Type round-trip cheat sheet
 
 | CLR type          | Jet column        | Notes                                  |

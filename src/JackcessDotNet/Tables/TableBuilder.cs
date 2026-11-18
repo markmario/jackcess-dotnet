@@ -2,8 +2,8 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// Fluent factory for creating tables on a <see cref="Database"/>. Mirrors
-/// Java Jackcess's <c>TableBuilder</c>. Carries the column list plus the
-/// primary-key column name until <see cref="ToTable"/> is called.
+/// Java Jackcess's <c>TableBuilder</c>. Carries the column list, the
+/// primary-key column name and any other indexes until <see cref="ToTable"/> is called.
 ///
 /// Usage:
 /// <code>
@@ -11,6 +11,7 @@ namespace JackcessDotNet;
 ///       .AddColumn(new ColumnBuilder("Id",   DataType.Long).Build())
 ///       .AddColumn(new ColumnBuilder("Name", DataType.Text).MaxLength(100).Build())
 ///       .WithPrimaryKey("Id")
+///       .WithIndex(new IndexDefinition("ByName", "Name") { IsUnique = true })
 ///       .ToTable(db);
 /// </code>
 /// </summary>
@@ -19,6 +20,7 @@ public sealed class TableBuilder
     private readonly string        _name;
     private readonly List<Column>  _columns = new();
     private          string?       _primaryKey;
+    private readonly List<IndexDefinition> _indexes = new();
 
     public TableBuilder(string name)
     {
@@ -56,12 +58,21 @@ public sealed class TableBuilder
         return this;
     }
 
+    /// <summary>Gives the table an index beside its primary key, on columns added before or after.</summary>
+    public TableBuilder WithIndex(IndexDefinition index)
+    {
+        _indexes.Add(index ?? throw new ArgumentNullException(nameof(index)));
+        return this;
+    }
+
     /// <summary>Creates the table on <paramref name="db"/> and returns it.</summary>
     public Table ToTable(Database db)
     {
         if (db is null) throw new ArgumentNullException(nameof(db));
         if (_columns.Count == 0)
             throw new InvalidOperationException("TableBuilder requires at least one column before ToTable.");
-        return db.CreateTable(_name, _columns, _primaryKey);
+        return _indexes.Count == 0
+            ? db.CreateTable(_name, _columns, _primaryKey)
+            : db.CreateTable(_name, _columns, _primaryKey is null ? null : new[] { _primaryKey }, _indexes);
     }
 }

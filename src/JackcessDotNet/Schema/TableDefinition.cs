@@ -9,6 +9,7 @@ namespace JackcessDotNet;
 public sealed class TableDefinition
 {
     private const int     MagicTableNumber = 1625;
+    private const int     MagicIndexNumber = 1923;
     private const byte    TableTypeUser    = 0x4E;
 
     private const byte    ColumnFlagFixedLen      = 0x01;
@@ -17,12 +18,14 @@ public sealed class TableDefinition
     private const byte    ColumnFlagAutoNumberGuid= 0x40;
 
     // Per-index sort-flag bits (per Jackcess IndexData)
-    private const byte    AscendingColumnFlag     = 0x01;
+    internal const byte   AscendingColumnFlag     = 0x01;
     // Per-index index-data-flags byte (per Jackcess IndexData)
-    private const byte    UniqueIndexFlag         = 0x01;
-    private const byte    UnknownIndexFlag        = 0x80;   // always set on Access 2000+ indexes
+    internal const byte   UniqueIndexFlag         = 0x01;
+    internal const byte   IgnoreNullsIndexFlag    = 0x02;
+    internal const byte   RequiredIndexFlag       = 0x08;
+    internal const byte   UnknownIndexFlag        = 0x80;   // always set on Access 2000+ indexes
     // Index slot's index-type byte
-    private const byte    PrimaryKeyIndexType     = 0x01;
+    internal const byte   PrimaryKeyIndexType     = 0x01;
     // Sentinel meaning "no related index"
     private const int     InvalidIndexNumber      = -1;
 
@@ -84,15 +87,65 @@ public sealed class TableDefinition
         = new Dictionary<string, LvalUmapRef>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Real B-tree indexes parsed from the on-disk TDEF (empty for tables this
-    /// library creates, since we don't yet serialize real index column blocks).
+    /// The table's indexes: parsed from the on-disk TDEF, or those it was created with
+    /// (its primary key first).
     /// </summary>
     public IReadOnlyList<Index> Indexes { get; internal set; } = Array.Empty<Index>();
+
+    /// <summary>
+    /// True when the table has indexes this library did not read: its definition runs past its first page, into
+    /// the index blocks. Such a table is not changed - a row written without its index entries is one Access
+    /// does not find through them.
+    /// </summary>
+    internal bool HasUnreadIndexes { get; set; }
+
+    /// <summary>
+    /// The column count a row of this table is written with: one more than the highest column number the table has
+    /// ever had. Access leaves a deleted column's number behind, so it can be more than <see cref="Columns"/> has.
+    /// 0 until the definition is read or written.
+    /// </summary>
+    internal int MaxColumnCount { get; set; }
+
+    /// <summary>
+    /// The number of variable-length offsets a row of this table is written with, a deleted column's among them.
+    /// 0 until the definition is read or written.
+    /// </summary>
+    internal int MaxVarColumnCount { get; set; }
+
+    /// <summary>
+    /// True when the table's columns were not all read: its definition runs past its first page before the column
+    /// names end. Such a table's rows are not written - a row laid out by half the columns is not one Access reads.
+    /// </summary>
+    internal bool HasUnreadColumns { get; set; }
 
     public TableDefinition(string name, IReadOnlyList<Column> columns)
     {
         Name    = name    ?? throw new ArgumentNullException(nameof(name));
         Columns = columns ?? throw new ArgumentNullException(nameof(columns));
+    }
+
+    /// <summary>The name Access gives a table's primary key index.</summary>
+    internal const string PrimaryKeyIndexName = "PrimaryKey";
+
+    /// <summary>
+    /// The indexes <see cref="Serialize"/> writes: <see cref="Indexes"/> when the table has them, and otherwise the
+    /// primary key the <c>PrimaryKey…</c> properties describe, as index 0.
+    /// </summary>
+    private IReadOnlyList<Index> IndexesToWrite(IReadOnlyList<string> pkColumns)
+    {
+        if (Indexes.Count > 0) return Indexes;
+        if (pkColumns.Count == 0 || PrimaryKeyIndexPage <= 0) return Array.Empty<Index>();
+
+        var columns = pkColumns.Select(name => new IndexColumn(
+            Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Primary key column '{name}' not found in table '{Name}'."),
+            AscendingColumnFlag)).ToList();
+        return new[]
+        {
+            new Index(PrimaryKeyIndexName, columns, PrimaryKeyIndexPage, indexNumber: 0,
+                      flags: UnknownIndexFlag | UniqueIndexFlag, indexType: PrimaryKeyIndexType,
+                      indexDataNumber: 0, usedPagesUmapPage: PrimaryKeyIndexUmapPage, usedPagesUmapRow: PrimaryKeyIndexUmapRow),
+        };
     }
 
     // ── Serialisation ─────────────────────────────────────────────────────────
@@ -128,15 +181,13 @@ public sealed class TableDefinition
             throw new InvalidOperationException(
                 $"Composite primary keys are limited to 10 columns; got {pkColumns.Count}.");
 
-        bool hasPrimaryKey = pkColumns.Count > 0 && PrimaryKeyIndexPage > 0;
-        int  numIndexes    = hasPrimaryKey ? 1 : 0;
-        int  numIndexSlots = hasPrimaryKey ? 1 : 0;
-
-        // Per-index sections sum to SizeIndexDefinition + SizeIndexColumnBlock + SizeIndexInfoBlock
-        // for one index, plus a length-prefixed "PrimaryKey" name.
-        byte[] pkNameBytes = hasPrimaryKey
-            ? System.Text.Encoding.Unicode.GetBytes("PrimaryKey")
-            : Array.Empty<byte>();
+        // The indexes to write: those the table was given, or, for a definition that only names a
+        // primary key, that key. One block per index's data, one slot and one name per index.
+        var indexes = IndexesToWrite(pkColumns);
+        var blocks  = indexes.GroupBy(ix => ix.IndexDataNumber).OrderBy(g => g.Key).Select(g => g.First()).ToList();
+        int  numIndexes    = blocks.Count;
+        int  numIndexSlots = indexes.Count;
+        byte[][] indexNameBytes = indexes.Select(ix => System.Text.Encoding.Unicode.GetBytes(ix.Name)).ToArray();
 
         int headerSize     = format.SizeTdefHeader;                  // 63 (Jet4) or 43 (Jet3)
         int idxDefSection  = numIndexes * format.SizeIndexDefinition;
@@ -144,7 +195,7 @@ public sealed class TableDefinition
         int nameSection    = nameBytes.Sum(b => 2 + b.Length);
         int idxColBlocks   = numIndexes * format.SizeIndexColumnBlock;
         int idxInfoBlocks  = numIndexSlots * format.SizeIndexInfoBlock;
-        int idxNameSection = numIndexSlots * (2 + pkNameBytes.Length);
+        int idxNameSection = indexNameBytes.Sum(b => 2 + b.Length);
         int lvalSection    = Columns.Count(c => c.DataType.IsLongValue()) * 10;
         int trailerSize    = 2;
 
@@ -216,17 +267,33 @@ public sealed class TableDefinition
         short fixedOff = 0;
         short varIdx   = 0;
 
+        // A new table's columns are numbered in order and kept where their types usually are: variable-length
+        // values in column order, fixed-length ones one after another, each taking its length. A Yes/No column is
+        // given a byte it never uses (Access gives it none, at offset 0): Access reads and writes rows by the
+        // offsets the definition gives, so it reads these, and tables this library made before are laid out so.
+        // Each column is told its place, as one read from a definition is: rows are written by it (RowLayout).
         for (short i = 0; i < Columns.Count; i++)
         {
-            Columns[i].ColumnNumber = i;
-            if (Columns[i].DataType.IsVariableLength())
-                varIndexes[Columns[i]] = varIdx++;
+            var column = Columns[i];
+            column.ColumnNumber     = i;
+            column.IsVariableLength = column.DataType.IsVariableLength();
+            column.HasStoredPlace   = true;
+            if (column.IsVariableLength)
+            {
+                varIndexes[column] = varIdx;
+                column.VarLenTableIndex = varIdx++;
+                column.FixedDataOffset  = -1;
+            }
             else
             {
-                fixedOffsets[Columns[i]] = fixedOff;
-                fixedOff += (short)Columns[i].Length;
+                fixedOffsets[column] = fixedOff;
+                column.FixedDataOffset  = fixedOff;
+                column.VarLenTableIndex = -1;
+                fixedOff += (short)column.Length;
             }
         }
+        MaxColumnCount    = Columns.Count;
+        MaxVarColumnCount = varIdx;
 
         // ── Column definitions (25 bytes each) ───────────────────────────────
         foreach (var col in Columns)
@@ -272,39 +339,29 @@ public sealed class TableDefinition
             pos += nameBytes[i].Length;
         }
 
-        // ── Index column block(s) + slot info + index name ────────────────────
-        // Only emitted when PrimaryKey is configured. Layout per Jackcess Java:
-        //   index column block: SkipBeforeIndex + 10×(short colNum + byte flags)
+        // ── Index column blocks, slots and names ──────────────────────────────
+        // As Access lays them out (and Jackcess reads them):
+        //   index column block: 4-byte magic + 10×(short colNum + byte flags)
         //                     + 4-byte umap ref + 4-byte root page
         //                     + SkipBeforeIndexFlags + 1-byte flags + SkipAfterIndexFlags
-        //   slot block:        SkipBeforeIndexSlot + 4-byte indexNumber + 4-byte indexDataNumber
+        //   slot block:        4-byte magic + 4-byte indexNumber + 4-byte indexDataNumber
         //                     + 1-byte relIndexType + 4-byte relIndexNumber + 4-byte relTablePage
         //                     + 1-byte cascadeUpdates + 1-byte cascadeDeletes + 1-byte indexType
         //                     + SkipAfterIndexSlot
         //   slot name:         length-prefixed UTF-16LE
-        if (hasPrimaryKey)
+        foreach (var index in blocks)
         {
-            // Map every PK column name → its column number; throw if any is missing.
-            short[] pkColumnNumbers = pkColumns.Select(name =>
-            {
-                var col = Columns.FirstOrDefault(c =>
-                    string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (col is null)
-                    throw new InvalidOperationException(
-                        $"Primary key column '{name}' not found in table '{Name}'.");
-                return (short)col.ColumnNumber;
-            }).ToArray();
-
             int blockStart = pos;
+            if (format.SkipBeforeIndex >= 4) ByteUtil.PutInt(page, pos, MagicIndexNumber);
             int p = pos + format.SkipBeforeIndex;
 
-            // 10 column slots: populated PK columns ASC, remaining slots = COLUMN_UNUSED (-1).
-            for (int c = 0; c < 10; c++)
+            // 10 column slots: the index's columns, then COLUMN_UNUSED (-1).
+            for (int c = 0; c < IndexDefinition.MaxColumns; c++)
             {
-                if (c < pkColumnNumbers.Length)
+                if (c < index.Columns.Count)
                 {
-                    ByteUtil.PutShort(page, p, pkColumnNumbers[c]); p += 2;
-                    page[p++] = AscendingColumnFlag;
+                    ByteUtil.PutShort(page, p, (short)index.Columns[c].Column.ColumnNumber); p += 2;
+                    page[p++] = index.Columns[c].Flags;
                 }
                 else
                 {
@@ -313,32 +370,36 @@ public sealed class TableDefinition
                 }
             }
             // The index's used-pages UsageMap ref (1-byte row + 3-byte page).
-            page[p] = (byte)PrimaryKeyIndexUmapRow;
-            ByteUtil.Put3ByteInt(page, p + 1, PrimaryKeyIndexUmapPage);
+            page[p] = (byte)index.UsedPagesUmapRow;
+            ByteUtil.Put3ByteInt(page, p + 1, index.UsedPagesUmapPage);
             p += 4;
-            // Root page = PK index leaf page.
-            ByteUtil.PutInt(page, p, PrimaryKeyIndexPage); p += 4;
+            ByteUtil.PutInt(page, p, index.RootPageNumber); p += 4;
             p += format.SkipBeforeIndexFlags;
-            page[p++] = (byte)(UnknownIndexFlag | UniqueIndexFlag);
+            page[p++] = index.Flags;
             // SkipAfterIndexFlags absorbed by the block-size advance below.
             pos = blockStart + format.SizeIndexColumnBlock;
+        }
 
-            // Logical-index slot block.
+        foreach (var index in indexes)
+        {
             int slotStart = pos;
-            p = pos + format.SkipBeforeIndexSlot;
-            ByteUtil.PutInt(page, p, 0);                   p += 4;   // indexNumber
-            ByteUtil.PutInt(page, p, 0);                   p += 4;   // indexDataNumber
+            if (format.SkipBeforeIndexSlot >= 4) ByteUtil.PutInt(page, pos, MagicTableNumber);
+            int p = pos + format.SkipBeforeIndexSlot;
+            ByteUtil.PutInt(page, p, index.IndexNumber);      p += 4;
+            ByteUtil.PutInt(page, p, index.IndexDataNumber);  p += 4;
             p += 1;                                                 // relIndexType
             ByteUtil.PutInt(page, p, InvalidIndexNumber);  p += 4;   // relIndexNumber
             p += 4;                                                 // relTablePage
             p += 2;                                                 // cascadeUpdates + cascadeDeletes
-            page[p] = PrimaryKeyIndexType;
+            page[p] = index.IndexType;
             pos = slotStart + format.SizeIndexInfoBlock;
+        }
 
-            // Length-prefixed "PrimaryKey" name.
-            ByteUtil.PutShort(page, pos, (short)pkNameBytes.Length); pos += 2;
-            Array.Copy(pkNameBytes, 0, page, pos, pkNameBytes.Length);
-            pos += pkNameBytes.Length;
+        foreach (byte[] indexName in indexNameBytes)
+        {
+            ByteUtil.PutShort(page, pos, (short)indexName.Length); pos += 2;
+            Array.Copy(indexName, 0, page, pos, indexName.Length);
+            pos += indexName.Length;
         }
 
         // ── LVAL column usage-map references ─────────────────────────────────

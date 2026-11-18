@@ -13,7 +13,8 @@ namespace JackcessDotNet;
 ///       new ColumnBuilder("Id",   DataType.Long ).AutoNumber().Build(),
 ///       new ColumnBuilder("Name", DataType.Text ).MaxLength(100).Build(),
 ///   });
-///   table.Insert(new Row { ["Id"] = 1, ["Name"] = "Alice" });
+///   var row = new Row { ["Name"] = "Alice" };
+///   table.Insert(row);          // row["Id"] is now 1
 /// </code>
 /// </summary>
 public sealed class Database : IDisposable
@@ -24,7 +25,7 @@ public sealed class Database : IDisposable
     /// <summary>The open file, for tests that look at its pages.</summary>
     internal PageFile File => _file;
     private readonly SystemCatalog _catalog;
-    private IReadOnlyList<Relationship>? _relsCache;
+    private ForeignKeyEnforcer? _foreignKeys;
 
     private Database(PageFile file)
     {
@@ -34,17 +35,95 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// When true, <see cref="Table.Insert"/> validates that every FK column
-    /// value maps to an existing row in the parent table per the relationships
-    /// declared in <c>MSysRelationships</c>. Default <c>false</c> for backward
-    /// compatibility — Access historically left FK validation to the
-    /// application layer, not the engine.
+    /// When true, the relationships in <c>MSysRelationships</c> that have referential integrity are kept, as
+    /// Access keeps them, by <see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/> and
+    /// <see cref="Table.DeleteRow"/>. Default <c>false</c>: nothing is checked and nothing cascades.
     /// <para>
-    /// Restrict-only — no cascade behaviour is implemented. Null FK values are
-    /// allowed (matches SQL semantics). Composite FKs are checked column-by-column.
+    /// A row that would refer to no parent row is refused: on insert, and when an update changes its foreign key.
+    /// A foreign key whose columns are all null refers to nothing and is allowed. Changing a parent's key, or
+    /// deleting the parent, does what the relationship says: with cascade update the referring rows take the new
+    /// key; with cascade delete they are deleted, and the rows referring to them in turn; with cascade-to-null
+    /// their foreign key is set to null; with none of these the change is refused while any row refers to the
+    /// parent.
+    /// </para>
+    /// <para>
+    /// A refused change throws <see cref="InvalidOperationException"/> and leaves the file as it was: everything is
+    /// checked, cascades included, before anything is written. A change that fails while it is being written is
+    /// taken back.
+    /// </para>
+    /// <para>
+    /// Rows are found through the tables' indexes. Access gives every relationship an index on its foreign key,
+    /// and the key it refers to is a primary key or a unique index: so an insert reads a few pages to find its
+    /// parent, and an update or delete reads the rows it reaches and the index pages that lead to them - a cascade
+    /// delete of five rows about fifty pages, whether the child table has a thousand rows or a million - and holds
+    /// only those rows in memory until it is written. Every row a cascade rewrites or deletes keeps its entry in
+    /// every index of its table, as any other update or delete does, so Access goes on finding it.
+    /// </para>
+    /// <para>
+    /// An index is trusted to hold every row of its table, as Access trusts it. An entry whose row has gone does no
+    /// harm - each row found is read and compared - but a row with no entry is not found. Versions of this library
+    /// before it kept every index (those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key
+    /// and to no other index: a row one of them inserted into a table Access made is missing from the index on
+    /// its foreign key. Enforcement does not see such a row as a child - its parent can be deleted or re-keyed
+    /// with the row left behind, an orphan, where it should have followed or forbidden the change. Access makes
+    /// the same mistake with the same file, which is already inconsistent to it (qcatco/exportmdb.interop#64).
+    /// </para>
+    /// <para>
+    /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
+    /// whose key is null (a unique index allows it) has the rows whose foreign key is null for children, so
+    /// deleting it deletes them or is refused by them, and re-keying it takes them with it. A parent that has a key
+    /// never touches them, and a row may always be added, or changed, to have no foreign key at all. Numbers are
+    /// matched as stored: a Double or Single by its bits, so 0 and -0 are two keys, and so are a Double and the
+    /// next one after it; a Date/Time by the double stored, not the <see cref="DateTime"/> it reads as. A Yes/No
+    /// holds no null: a null given it is stored No, and is checked as No - so a cascade-to-null of a Yes/No foreign
+    /// key leaves the row No, as Access leaves it, whether or not a parent's key is No.
+    /// </para>
+    /// <para>
+    /// Only relationships are kept. A column's Required property is not: a caller's own update may null a column
+    /// Access would require a value for, as it may with enforcement off. (A cascade may not.)
+    /// </para>
+    /// <para>
+    /// Where no index on the columns can be searched - a table made without one on its foreign key, an index
+    /// whose keys this library does not write, a parent key that is null - the table is read from end to end,
+    /// once in the change, and all its rows are held until the change is written: the row's place and the columns
+    /// its indexes and relationships name, some 200 bytes a row with numeric keys (about 60 MB and a second for a
+    /// table of 300,000 rows). A change that would rewrite a row of a table whose rows this library does not
+    /// write as Access does is refused with <see cref="NotSupportedException"/>.
     /// </para>
     /// </summary>
     public bool EnforceForeignKeys { get; set; }
+
+    /// <summary>
+    /// How a long value (Memo or OLE) too long for one page is put on its pages. <c>false</c>, the default, is
+    /// Access's way: every chunk of such a value has a page to itself, the last chunk too, and only values that
+    /// fit in one chunk share pages - those the column's free-space map lists. <c>true</c> is how this library
+    /// placed them before: the last chunk of a value goes on a page with other values' chunks, which makes a
+    /// smaller file and one Access reads the same.
+    /// <para>
+    /// The difference shows when Access itself later deletes or replaces such a value. It takes every page of the
+    /// value to be the value's alone and gives them all back to the file, whatever else is on them; the next thing
+    /// Access adds is written over the other values there, and they, or the whole file, can no longer be read. A
+    /// file written with <c>true</c> is therefore one to be read, or added to by this library, but not one for
+    /// Access to change long values in. It is kept for a caller whose files must stay byte for byte as they were.
+    /// </para>
+    /// </summary>
+    public bool ShareLongValuePages
+    {
+        get => _file.ShareLongValuePages;
+        set => _file.ShareLongValuePages = value;
+    }
+
+    /// <summary>
+    /// Whether a row may bring its own value for an AutoNumber column. Default <c>false</c>: an insert numbers
+    /// the row itself and ignores any value the row holds for such a column, and an update leaves the column as
+    /// it was. When <c>true</c>, a value the row holds is written as given - and a Long one past the table's
+    /// counter moves the counter up to it - while a row without one is still numbered. A table can decide for
+    /// itself with <see cref="Table.AllowAutoNumberInsert"/>.
+    /// <para>
+    /// Turn it on with care: nothing checks that a value supplied this way is not already in the table.
+    /// </para>
+    /// </summary>
+    public bool AllowAutoNumberInsert { get; set; }
 
     // ── Factory methods ───────────────────────────────────────────────────────
 
@@ -282,67 +361,17 @@ public sealed class Database : IDisposable
         };
     }
 
-    // ── Foreign-key validation ───────────────────────────────────────────────
+    // ── Foreign keys ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Called by <see cref="Table.Insert"/> when <see cref="EnforceForeignKeys"/>
-    /// is set. Walks the relationships in MSysRelationships, finds the ones
-    /// where <paramref name="childTable"/> is the dependent side, and confirms
-    /// every non-null FK value in <paramref name="row"/> has a matching parent
-    /// row. Throws on the first violation; relationships are checked in
-    /// declaration order.
+    /// What keeps <paramref name="table"/>'s relationships, or null when nothing is to be kept: enforcement is off,
+    /// or no relationship with referential integrity has the table on either side.
     /// </summary>
-    internal void ValidateForeignKeysForInsert(Table childTable, Row row)
+    internal ForeignKeyEnforcer? ForeignKeysFor(Table table)
     {
-        if (!EnforceForeignKeys) return;
-        var rels = _relsCache ??= GetRelationships();
-        if (rels.Count == 0) return;
-
-        foreach (var rel in rels)
-        {
-            if (!string.Equals(rel.ToTable, childTable.Name, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            foreach (var (fromCol, toCol) in rel.ColumnPairs)
-            {
-                if (!row.TryGetValue(toCol, out var value) || value is null)
-                    continue;   // SQL semantics: NULL FK is allowed
-                if (!ParentRowExists(rel.FromTable, fromCol, value))
-                    throw new InvalidOperationException(
-                        $"Foreign-key violation in relationship '{rel.Name}': " +
-                        $"'{childTable.Name}.{toCol}' = {value} has no matching " +
-                        $"'{rel.FromTable}.{fromCol}'.");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Look up whether <paramref name="parentTableName"/> has any row whose
-    /// <paramref name="parentCol"/> equals <paramref name="value"/>. Uses the
-    /// primary-key index when the parent column happens to be the PK; otherwise
-    /// falls back to a linear scan.
-    /// </summary>
-    private bool ParentRowExists(string parentTableName, string parentCol, object value)
-    {
-        Table parent;
-        try { parent = GetTable(parentTableName); }
-        catch (InvalidOperationException) { return false; }   // table gone → constraint can't hold
-
-        // Fast path: parent column is the PK and there's exactly one PK column.
-        var pkIx = parent.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey);
-        if (pkIx is { Columns.Count: 1 } &&
-            string.Equals(pkIx.Columns[0].Column.Name, parentCol, StringComparison.OrdinalIgnoreCase))
-        {
-            return parent.NewIndexCursor().FindRowByPrimaryKey(value) is not null;
-        }
-
-        // Slow path: linear scan. Used for non-PK relationships (rare but valid).
-        foreach (var r in parent.NewCursor())
-        {
-            if (r.TryGetValue(parentCol, out var v) && v is not null && v.Equals(value))
-                return true;
-        }
-        return false;
+        if (!EnforceForeignKeys) return null;
+        _foreignKeys ??= new ForeignKeyEnforcer(this);
+        return _foreignKeys.Involves(table) ? _foreignKeys : null;
     }
 
     /// <summary>
@@ -369,7 +398,8 @@ public sealed class Database : IDisposable
     /// Reads MSysRelationships and returns the schema's foreign-key / join
     /// relationships, grouping the per-column-pair rows back into one entry
     /// per named relationship. Returns an empty list when MSysRelationships
-    /// is absent or empty.
+    /// is absent or empty. They are in the order the table lists them, which is the
+    /// order they were made in.
     /// </summary>
     public IReadOnlyList<Relationship> GetRelationships()
     {
@@ -401,6 +431,7 @@ public sealed class Database : IDisposable
         var byName = new Dictionary<string, (string from, string to, int flags,
                                              List<(int idx, string fromCol, string toCol)> pairs)>(
                                              StringComparer.OrdinalIgnoreCase);
+        var names = new List<string>();
 
         foreach (var r in rows)
         {
@@ -417,13 +448,15 @@ public sealed class Database : IDisposable
             {
                 entry = (from, to, flags, new List<(int, string, string)>());
                 byName[name] = entry;
+                names.Add(name);
             }
             entry.pairs.Add((idx, fc, tc));
         }
 
         var result = new List<Relationship>(byName.Count);
-        foreach (var (name, e) in byName)
+        foreach (string name in names)
         {
+            var e = byName[name];
             var pairs = e.pairs.OrderBy(p => p.idx)
                                .Select(p => (p.fromCol, p.toCol))
                                .ToList();
@@ -445,7 +478,7 @@ public sealed class Database : IDisposable
     ///   inserted, deleted and updated.
     /// </param>
     public Table CreateTable(string name, IReadOnlyList<Column> columns, string? primaryKey = null)
-        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey });
+        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey }, Array.Empty<IndexDefinition>());
 
     /// <summary>
     /// Composite-PK overload. Creates a table with a multi-column primary key
@@ -458,11 +491,33 @@ public sealed class Database : IDisposable
         if (primaryKeyColumns is null || primaryKeyColumns.Count == 0)
             throw new ArgumentException(
                 "primaryKeyColumns must contain at least one column.", nameof(primaryKeyColumns));
-        return CreateTableCore(name, columns, primaryKeyColumns);
+        return CreateTableCore(name, columns, primaryKeyColumns, Array.Empty<IndexDefinition>());
+    }
+
+    /// <summary>
+    /// Creates a table with indexes beside its primary key: single- or multi-column, unique or not. Every index is
+    /// kept as rows are inserted, updated and deleted, and a unique index refuses a duplicate before anything of
+    /// the row is written.
+    /// </summary>
+    /// <param name="name">Table name (must be unique in the database).</param>
+    /// <param name="columns">Column definitions (use <see cref="ColumnBuilder"/>).</param>
+    /// <param name="primaryKeyColumns">The primary key's columns, in key order; null or empty for no primary key.</param>
+    /// <param name="indexes">The table's other indexes.</param>
+    /// <exception cref="NotSupportedException">
+    ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
+    ///   or Complex column, or text in a sort order other than General - Legacy and General. Nothing is created.
+    /// </exception>
+    public Table CreateTable(string name, IReadOnlyList<Column> columns,
+                             IReadOnlyList<string>? primaryKeyColumns,
+                             IReadOnlyList<IndexDefinition> indexes)
+    {
+        if (indexes is null) throw new ArgumentNullException(nameof(indexes));
+        return CreateTableCore(name, columns, primaryKeyColumns is { Count: > 0 } ? primaryKeyColumns : null, indexes);
     }
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
-                                  IReadOnlyList<string>? pkColumns)
+                                  IReadOnlyList<string>? pkColumns,
+                                  IReadOnlyList<IndexDefinition> secondary)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
@@ -471,34 +526,36 @@ public sealed class Database : IDisposable
 
         var format = _file.Format;
 
-        // Everything that can refuse the table does so before a page is added: the key, the
+        // The table has columns of its own, copies of the caller's: the caller's may be another table's - one
+        // of another database, that sorts otherwise - and are left as they came, whether the table is made or
+        // refused. The copies' text sorts as this database's does, as a table Access adds to it would.
+        var textOrder = _catalog.TextSortOrder;
+        columns = columns.Select(column => column.CopyFor(textOrder)).ToList();
+
+        // Everything that can refuse the table does so before a page is added: its indexes, the
         // definition (laid out once with no pages), the name and the catalog.
-        if (pkColumns is { Count: > 0 })
-        {
-            foreach (string pk in pkColumns)
-            {
-                var pkColumn = columns.FirstOrDefault(c => string.Equals(c.Name, pk, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException($"Primary key column '{pk}' not found in table '{name}'.");
-                if (!IndexKeys.CanEncode(pkColumn))
-                    throw new NotSupportedException(
-                        $"A primary key on '{pk}' is not supported: {IndexKeys.WhyNot(pkColumn)}, " +
-                        "so its index entries would not be the ones Access writes.");
-            }
-        }
+        var planned = PlanIndexes(name, columns, pkColumns, secondary);
         new TableDefinition(name, columns)
         {
-            PrimaryKeyIndexPage   = pkColumns is { Count: > 0 } ? 1 : 0,
-            PrimaryKeyColumnNames = pkColumns ?? Array.Empty<string>(),
+            Indexes = BuildIndexes(planned, planned.Select(_ => (Page: 0, Row: 0)).ToList(), rootPages: planned.Select(_ => 1).ToList()),
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
-        // 1. Allocate the TDEF page (content written in step 3).
+        // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
 
-        // 2. Allocate the usage-map page: owned pages, free space, and with a primary
-        //    key a third map for the key's index pages, where Access keeps it.
-        bool hasPk = pkColumns is { Count: > 0 };
-        int umapPage = _allocator.AllocateUmapPage(hasPk ? 3 : 2);
+        // 2. Allocate the usage-map page: owned pages, free space, and a map for each index's
+        //    pages, where Access keeps them. Maps that do not fit the page go on pages of their own.
+        int mapsPerPage = UsageMap.MapsPerUmapPage(format);
+        int onFirstPage = Math.Min(planned.Count, mapsPerPage - FirstIndexUmapRow);
+        int umapPage    = _allocator.AllocateUmapPage(FirstIndexUmapRow + onFirstPage);
+        var indexMaps   = Enumerable.Range(0, onFirstPage).Select(i => (Page: umapPage, Row: FirstIndexUmapRow + i)).ToList();
+        while (indexMaps.Count < planned.Count)
+        {
+            int rows = Math.Min(planned.Count - indexMaps.Count, mapsPerPage);
+            int page = _allocator.AllocateUmapPage(rows);
+            indexMaps.AddRange(Enumerable.Range(0, rows).Select(row => (Page: page, Row: row)));
+        }
 
         // 3. Allocate a LVAL usage-map page for each Memo/OLE column (must happen before
         //    Serialize so the page numbers can be embedded in the TDEF).
@@ -511,9 +568,7 @@ public sealed class Database : IDisposable
                 lvalUmaps[col.Name] = new LvalUmapRef(lvalUmapPage, 0, lvalUmapPage, 1);
             }
 
-        // 4. Build the TableDefinition (column numbers + var-table indices will be assigned
-        //    by Serialize, but PK info must be set BEFORE Serialize so the index column
-        //    block can be persisted with the correct column number and root page).
+        // 4. Build the TableDefinition.
         var tableDef = new TableDefinition(name, columns)
         {
             TdefPageNumber = tdefPage,
@@ -524,26 +579,31 @@ public sealed class Database : IDisposable
         foreach (var kvp in lvalUmaps)
             tableDef.LvalColumnUmapPages[kvp.Key] = kvp.Value;
 
-        // Assign column numbers up front so the index block can reference the correct
-        // column. Serialize will re-assign these in the same order — same outcome.
-        for (short i = 0; i < columns.Count; i++)
-            columns[i].ColumnNumber = i;
+        // 5. Give each index an empty root leaf, listed in the index's own usage map, so its
+        //    page number is known at Serialize time.
+        var idxWriter = new IndexWriter(_file, _allocator);
+        var rootPages = new List<int>(planned.Count);
+        for (int i = 0; i < planned.Count; i++)
+        {
+            int root = idxWriter.CreateEmptyLeafPage(tdefPage);
+            UsageMap.AddPage(_file, _allocator, indexMaps[i].Page, indexMaps[i].Row, root);
+            rootPages.Add(root);
+        }
+        tableDef.Indexes = BuildIndexes(planned, indexMaps, rootPages);
 
-        // 5. Pre-allocate the PK index leaf so its page number is known at Serialize time.
         if (pkColumns is { Count: > 0 })
         {
-            var idxWriter = new IndexWriter(_file, _allocator);
-            tableDef.PrimaryKeyIndexPage      = idxWriter.CreatePrimaryKeyIndex(tableDef, pkColumns);
-            tableDef.PrimaryKeyIndexUmapPage  = umapPage;
-            tableDef.PrimaryKeyIndexUmapRow   = 2;
-            UsageMap.AddPage(_file, _allocator, umapPage, 2, tableDef.PrimaryKeyIndexPage);
+            var pk = tableDef.Indexes[0];
+            tableDef.PrimaryKeyIndexPage      = pk.RootPageNumber;
+            tableDef.PrimaryKeyIndexUmapPage  = pk.UsedPagesUmapPage;
+            tableDef.PrimaryKeyIndexUmapRow   = pk.UsedPagesUmapRow;
             if (pkColumns.Count == 1)
                 tableDef.PrimaryKeyColumnName = pkColumns[0];
             else
                 tableDef.PrimaryKeyColumnNames = pkColumns;
         }
 
-        // 6. Now serialise — the index column block + slot + name will be included.
+        // 6. Now serialise — the index blocks, slots and names are included.
         byte[] tdefBytes = tableDef.Serialize(format);
         _file.WritePage(tdefPage, tdefBytes);
 
@@ -552,6 +612,98 @@ public sealed class Database : IDisposable
 
         return new Table(_file, _allocator, tableDef, owningDb: this);
     }
+
+    // A table's index maps follow its owned-pages and free-space maps on its usage-map page.
+    private const int FirstIndexUmapRow = 2;
+
+    /// <summary>An index a new table is to have: checked, with its columns found, and no pages yet.</summary>
+    private sealed class PlannedIndex
+    {
+        public PlannedIndex(string name, IReadOnlyList<IndexColumn> columns, byte flags, byte indexType)
+        {
+            Name      = name;
+            Columns   = columns;
+            Flags     = flags;
+            IndexType = indexType;
+        }
+
+        public string Name { get; }
+        public IReadOnlyList<IndexColumn> Columns { get; }
+        public byte Flags { get; }
+        public byte IndexType { get; }
+    }
+
+    /// <summary>
+    /// Checks the indexes a new table is asked for and returns them in the order they are written: the primary key
+    /// first, named as Access names it, then the others. Assigns the columns their numbers, which the index blocks
+    /// name (Serialize assigns the same ones).
+    /// </summary>
+    private static List<PlannedIndex> PlanIndexes(string table, IReadOnlyList<Column> columns,
+                                                  IReadOnlyList<string>? pkColumns,
+                                                  IReadOnlyList<IndexDefinition> secondary)
+    {
+        for (short i = 0; i < columns.Count; i++)
+            columns[i].ColumnNumber = i;
+
+        Column Find(string column, string what)
+        {
+            var found = columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"{what} column '{column}' not found in table '{table}'.");
+            if (!IndexKeys.CanEncode(found))
+                throw new NotSupportedException(
+                    $"{what} on '{column}' is not supported: {IndexKeys.WhyNot(found)}, " +
+                    "so its index entries would not be the ones Access writes.");
+            return found;
+        }
+
+        var planned = new List<PlannedIndex>();
+        if (pkColumns is { Count: > 0 })
+        {
+            if (pkColumns.Count > IndexDefinition.MaxColumns)
+                throw new InvalidOperationException(
+                    $"Composite primary keys are limited to {IndexDefinition.MaxColumns} columns; got {pkColumns.Count}.");
+            planned.Add(new PlannedIndex(
+                TableDefinition.PrimaryKeyIndexName,
+                pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key"), TableDefinition.AscendingColumnFlag)).ToList(),
+                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag,
+                TableDefinition.PrimaryKeyIndexType));
+        }
+
+        foreach (var index in secondary)
+        {
+            if (index is null) throw new ArgumentException("An index definition must not be null.", nameof(secondary));
+            if (planned.Any(p => string.Equals(p.Name, index.Name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException($"Table '{table}' is given two indexes named '{index.Name}'.", nameof(secondary));
+            foreach (string descending in index.DescendingColumns)
+                if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        $"Index '{index.Name}' sorts '{descending}' descending, which is not one of its columns.", nameof(secondary));
+
+            byte flags = TableDefinition.UnknownIndexFlag;
+            if (index.IsUnique)    flags |= TableDefinition.UniqueIndexFlag;
+            if (index.IgnoreNulls) flags |= TableDefinition.IgnoreNullsIndexFlag;
+            if (index.IsRequired)  flags |= TableDefinition.RequiredIndexFlag;
+            planned.Add(new PlannedIndex(
+                index.Name,
+                index.Columns.Select(c => new IndexColumn(
+                    Find(c, $"Index '{index.Name}'"),
+                    index.DescendingColumns.Contains(c, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList(),
+                flags,
+                indexType: 0));
+        }
+
+        if (planned.Count > IndexDefinition.MaxIndexesPerTable)
+            throw new ArgumentException(
+                $"A table has at most {IndexDefinition.MaxIndexesPerTable} indexes; '{table}' is given {planned.Count}.", nameof(secondary));
+        return planned;
+    }
+
+    // The planned indexes with their pages: each its own block, with its own usage map and root.
+    private static IReadOnlyList<Index> BuildIndexes(List<PlannedIndex> planned, IReadOnlyList<(int Page, int Row)> maps,
+                                                     IReadOnlyList<int> rootPages)
+        => planned.Select((p, i) => new Index(p.Name, p.Columns, rootPages[i], indexNumber: i, p.Flags, p.IndexType,
+                                              indexDataNumber: i, usedPagesUmapPage: maps[i].Page,
+                                              usedPagesUmapRow: maps[i].Row)).ToList();
 
     /// <summary>
     /// Opens an existing user table by name (scans MSysObjects).
@@ -576,6 +728,10 @@ public sealed class Database : IDisposable
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
+            HasUnreadIndexes = info.HasUnreadIndexes,
+            MaxColumnCount    = info.MaxColumnCount,
+            MaxVarColumnCount = info.MaxVarColumnCount,
+            HasUnreadColumns  = info.HasUnreadColumns,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)

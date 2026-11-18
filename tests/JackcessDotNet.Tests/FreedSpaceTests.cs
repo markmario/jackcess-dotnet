@@ -1,5 +1,4 @@
 using System.IO;
-using System.Security.Cryptography;
 using JackcessDotNet.Util;
 using Xunit;
 
@@ -42,13 +41,62 @@ public sealed class FreedSpaceTests : IDisposable
     private static int RowsOn(Database db, int page) => ByteUtil.GetShort(db.File.ReadPage(page), db.File.Format.OffsetDataNumRows);
 
     [Fact]
-    public void The_last_chunk_of_a_long_value_reuses_a_page_a_delete_left_partly_free()
+    public void Every_chunk_of_a_long_value_has_a_page_to_itself_and_one_chunk_values_share_theirs()
     {
+        // As Access places them: it gives every page of a chain back to the file when it frees the value, so nothing
+        // else may be on one. Ten 2,000-byte values go two to a page; deleting every second leaves five pages half
+        // free. A 5,000-byte value is two chunks and takes two pages of its own, not the room on those; a 1,500-byte
+        // value, one chunk, takes that room.
+        using (var db = Database.Create(_path, JetVersion.Jet4))
+        {
+            var table = db.CreateTable("T", BlobColumns());
+            for (int i = 1; i <= 10; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(2_000, i) });
+            for (int i = 2; i <= 10; i += 2)
+                table.DeleteRow("Id", i);
+            var before = LvalPages(db, table, "Blob");
+
+            for (int i = 11; i <= 15; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(5_000, i) });
+            var chains = LvalPages(db, table, "Blob").Except(before).ToList();
+            Assert.Equal(10, chains.Count);
+            Assert.All(chains, page => Assert.Equal(1, RowsOn(db, page)));
+
+            for (int i = 16; i <= 20; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(1_500, i) });
+            Assert.Equal(before.Count + 10, LvalPages(db, table, "Blob").Count);   // the one-chunk values took the freed room
+            Assert.All(chains, page => Assert.Equal(1, RowsOn(db, page)));         // and none of them a chain's page
+
+            // A chain's pages, emptied by a delete, are used again by a chain.
+            table.DeleteRow("Id", 11);
+            table.Insert(new Row { ["Id"] = 21, ["Blob"] = Bytes(8_000, 21) });
+            Assert.Equal(before.Count + 10, LvalPages(db, table, "Blob").Count);
+        }
+
+        using (var db = Database.Open(_path))
+        {
+            var rows = db.GetTable("T").ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            Assert.Equal(15, rows.Count);
+            for (int i = 1; i <= 9; i += 2)
+                Assert.Equal(Bytes(2_000, i), rows[i]["Blob"]);
+            for (int i = 12; i <= 15; i++)
+                Assert.Equal(Bytes(5_000, i), rows[i]["Blob"]);
+            for (int i = 16; i <= 20; i++)
+                Assert.Equal(Bytes(1_500, i), rows[i]["Blob"]);
+            Assert.Equal(Bytes(8_000, 21), rows[21]["Blob"]);
+        }
+    }
+
+    [Fact]
+    public void Sharing_pages_the_last_chunk_of_a_long_value_reuses_a_page_a_delete_left_partly_free()
+    {
+        // The placement of earlier releases, kept for files that must stay as they were (Database.ShareLongValuePages).
         // Ten 2,000-byte values go two to a page; deleting every second leaves five pages with 2,080 bytes free. A
         // 5,000-byte value is a full chunk, which needs a page of its own, and a 934-byte last one, which fits a freed
         // page. The freed pages were walked once, for the full chunk, and not again for the last.
         using (var db = Database.Create(_path, JetVersion.Jet4))
         {
+            db.ShareLongValuePages = true;
             var table = db.CreateTable("T", BlobColumns());
             for (int i = 1; i <= 10; i++)
                 table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(2_000, i) });
@@ -70,6 +118,47 @@ public sealed class FreedSpaceTests : IDisposable
                 Assert.Equal(Bytes(2_000, i), rows[i]["Blob"]);
             for (int i = 11; i <= 15; i++)
                 Assert.Equal(Bytes(5_000, i), rows[i]["Blob"]);
+        }
+    }
+
+    [Fact]
+    public void Adding_to_a_file_whose_long_values_share_pages_leaves_them_as_they_are_and_shares_no_more()
+    {
+        // A file an earlier release wrote: the last chunks of its chains two to a page. Added to as Access places
+        // long values, the old values stay where they are - still sharing, still read - and no new chunk goes onto
+        // their pages: each new chain has pages of its own.
+        List<int> old;
+        using (var db = Database.Create(_path, JetVersion.Jet4))
+        {
+            db.ShareLongValuePages = true;
+            var table = db.CreateTable("T", BlobColumns());
+            for (int i = 1; i <= 10; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(5_000, i) });
+            old = LvalPages(db, table, "Blob");
+            Assert.Equal(15, old.Count);                                     // ten full chunks, and their last chunks two to a page
+            Assert.Equal(5, old.Count(page => RowsOn(db, page) == 2));
+        }
+        byte[] before = File.ReadAllBytes(_path);
+
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            for (int i = 11; i <= 20; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(5_000, i) });
+            for (int i = 21; i <= 25; i++)
+                table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(1_500, i) });  // one chunk each
+
+            var added = LvalPages(db, table, "Blob").Except(old).ToList();
+            Assert.Equal(20 + 3, added.Count);                               // two pages a chain; the five one-chunk values two to a page
+            foreach (int page in old)
+                Assert.True(db.File.ReadPage(page).AsSpan().SequenceEqual(before.AsSpan(page * 4096, 4096)), $"page {page}, of the earlier values, was written to");
+
+            var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            Assert.Equal(25, rows.Count);
+            for (int i = 1; i <= 20; i++)
+                Assert.Equal(Bytes(5_000, i), rows[i]["Blob"]);
+            for (int i = 21; i <= 25; i++)
+                Assert.Equal(Bytes(1_500, i), rows[i]["Blob"]);
         }
     }
 
@@ -143,7 +232,7 @@ public sealed class FreedSpaceTests : IDisposable
         Assert.DoesNotContain(othersPage, LvalPages(db, mine, "Blob"));
         Assert.Equal(Bytes(2_000, 1), other.ReadAllRows().Single()["Blob"]);
         Assert.Equal(Bytes(1_500, 2), mine.ReadAllRows().Single()["Blob"]);
-        Assert.Empty(db.File.FreedLvalPages.Of(lval.OwnedPage, lval.OwnedRow));   // and the record is dropped
+        Assert.DoesNotContain(db.File.FreedLvalPages.Of(lval.OwnedPage, lval.OwnedRow), r => r.Key == othersPage);   // and the record is dropped
     }
 
     [Fact]
@@ -237,49 +326,30 @@ public sealed class FreedSpaceTests : IDisposable
         Assert.Equal(Bytes(1_500, 1), table.ReadAllRows().Single()["Blob"]);
     }
 
+    // The corpus's one file of long values Access wrote (blobV2007.accdb) keeps them in a table with an index on
+    // an attachment (Complex) column, whose keys the engine does not write. Until the engine kept every index it
+    // deleted a row there and left the row's entry in that index; now it refuses, and the file stays as Access
+    // wrote it. Space freed and used again in a file the engine wrote is the rest of this class.
     [Fact]
-    public void Space_a_delete_frees_in_a_file_Access_wrote_is_used_again_and_nothing_else_changes()
+    public void A_table_Access_wrote_with_an_index_the_engine_cannot_keep_is_left_as_it_was()
     {
         string? source = TestCorpus.File("V2007", "blobV2007.accdb");
         if (source is null) return;   // the corpus is optional locally; CI always has it
         File.Copy(source, _path);
+        byte[] before = File.ReadAllBytes(_path);
 
-        Dictionary<string, List<string>> before;
-        string tableName, blob, key;
-        object keyValue;
-        string replaced, replacement;
         using (var db = Database.Open(_path))
         {
-            before = Snapshot(db);
-            (tableName, blob, key, keyValue) = LargestLongValue(db);
+            var (tableName, blob, key, keyValue) = LargestLongValue(db);
             var table = db.GetTable(tableName);
-            replaced = Dump(table, table.ReadAllRows().Single(r => Equals(r[key], keyValue)));
-            int length = ((byte[])table.ReadAllRows().Single(r => Equals(r[key], keyValue))[blob]!).Length;
-            int pages = LvalPages(db, table, blob).Count;
+            Assert.Contains(table.Indexes, ix => ix.Columns.Any(c => c.Column.DataType == DataType.Complex));
 
-            table.DeleteRow(key, keyValue);
-            var row = new Row { [key] = keyValue, [blob] = Bytes(length, 7) };
-            table.Insert(row);
-
-            Assert.Equal(pages, LvalPages(db, table, blob).Count);   // the new value took the deleted one's pages
-            replacement = Dump(table, table.ReadAllRows().Single(r => Equals(r[key], keyValue)));
+            var refused = Assert.Throws<NotSupportedException>(() => table.DeleteRow(key, keyValue));
+            Assert.Contains("cannot be kept", refused.Message);
+            Assert.Throws<NotSupportedException>(() => table.Insert(new Row { [key] = 1_000_000, [blob] = Bytes(5_000, 7) }));
         }
 
-        using (var db = Database.Open(_path))
-        {
-            var after = Snapshot(db);
-            Assert.Equal(before.Keys.OrderBy(k => k), after.Keys.OrderBy(k => k));
-            foreach (var name in before.Keys)
-            {
-                var expected = before[name].ToList();
-                if (name == tableName)
-                {
-                    expected.Remove(replaced);
-                    expected.Add(replacement);
-                }
-                Assert.Equal(expected.OrderBy(r => r, StringComparer.Ordinal), after[name].OrderBy(r => r, StringComparer.Ordinal));
-            }
-        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
     }
 
     /// <summary>The table, OLE column and key of the longest OLE value in the file, keyed by a column whose values are unique.</summary>
@@ -311,20 +381,4 @@ public sealed class FreedSpaceTests : IDisposable
         Assert.True(best.HasValue && bestLength > 4_096, "the file has no long value that spans pages");
         return best!.Value;
     }
-
-    private static Dictionary<string, List<string>> Snapshot(Database db) =>
-        db.ListTables().ToDictionary(name => name, name =>
-        {
-            var table = db.GetTable(name);
-            return table.ReadAllRows().Select(r => Dump(table, r)).ToList();
-        });
-
-    private static string Dump(Table table, Row row) =>
-        // A column the reader leaves out of a row - an attachment field's hidden columns - is left out here too.
-        string.Join("|", table.Columns.Where(c => row.ContainsKey(c.Name)).Select(c => row[c.Name] switch
-        {
-            null => "null",
-            byte[] bytes => Convert.ToBase64String(SHA256.HashData(bytes)),
-            var v => Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture),
-        }));
 }

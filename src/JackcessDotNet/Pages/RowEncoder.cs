@@ -1,13 +1,16 @@
 namespace JackcessDotNet;
 
+/// <summary>
+/// Encodes a row's bytes: each value in the place the table's definition gives its column (<see cref="RowLayout"/>),
+/// as Access and Java Jackcess write a row, and as <see cref="RowDecoder"/> reads one.
+/// </summary>
 public sealed class RowEncoder
 {
     private readonly JetFormat _format;
     private readonly IReadOnlyList<Column> _columns;
-    private readonly Dictionary<Column, short> _fixedOffsets = new();
-    private readonly Dictionary<Column, short> _varIndexes = new();
-    private readonly int _varColumnCount;
+    private readonly RowLayout _layout;
     private readonly IReadOnlyDictionary<string, LvalWriter>? _lvalWriters;
+    private readonly bool _unreadColumns;
 
     public RowEncoder(JetFormat format, IReadOnlyList<Column> columns)
         : this(format, columns, null) { }
@@ -18,70 +21,121 @@ public sealed class RowEncoder
         _lvalWriters = lvalWriters;
         _format = format ?? throw new ArgumentNullException(nameof(format));
         _columns = columns ?? throw new ArgumentNullException(nameof(columns));
-
-        // Build layout in column-number order (ascending ColumnNumber), mirroring RowDecoder.
-        // This means fixed-length data is laid out in column-number order, and var indices are
-        // assigned in column-number order — both matching the Jackcess / Access on-disk format.
-        short fixedOffset = 0;
-        short varIndex = 0;
-        foreach (var col in _columns.OrderBy(c => c.ColumnNumber))
-        {
-            if (col.DataType.IsVariableLength())
-            {
-                _varIndexes[col] = varIndex++;
-            }
-            else
-            {
-                _fixedOffsets[col] = fixedOffset;
-                fixedOffset += (short)col.Length;
-            }
-        }
-        _varColumnCount = varIndex;
+        _layout = new RowLayout(format, columns);
     }
 
-    public byte[] Encode(Row row)
+    /// <summary>
+    /// Whether a Date/Time column's value may come as the double a row stores - days since 30 December 1899 -
+    /// instead of a <see cref="DateTime"/>, and is then written as it is. A <see cref="DateTime"/> does not hold
+    /// every double Access writes, so a row rewritten from what was read as one would have its dates changed.
+    /// </summary>
+    internal bool DatesAsStored { get; set; }
+
+    /// <summary>For a table's rows: the definition also says how many columns the table has ever had.</summary>
+    internal RowEncoder(JetFormat format, TableDefinition table,
+                        IReadOnlyDictionary<string, LvalWriter>? lvalWriters = null)
+    {
+        _lvalWriters = lvalWriters;
+        _format = format ?? throw new ArgumentNullException(nameof(format));
+        _columns = (table ?? throw new ArgumentNullException(nameof(table))).Columns;
+        _layout = new RowLayout(format, table);
+        _unreadColumns = table.HasUnreadColumns;
+    }
+
+    /// <summary>
+    /// The fewest bytes of fixed-length values in a row of a table with no variable-length column: Access writes
+    /// two for a table of one Yes/No or one Byte column, which leaves a row long enough for the four bytes that
+    /// say where it went, should it ever have to move.
+    /// </summary>
+    private const int MinFixedDataWithoutVariableColumns = 2;
+
+    public byte[] Encode(Row row) => Encode(row, null);
+
+    /// <summary>
+    /// Encodes <paramref name="row"/>. <paramref name="keptVariableValues"/> holds, for columns an update leaves
+    /// as they are, the bytes the old row held among its variable-length values: they are written back as they
+    /// are - a long value's reference with them, so the value it refers to is neither read nor written again.
+    /// Everything that can refuse the row does so before a long value is written to its pages.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The table's definition is not one rows can be written by.</exception>
+    internal byte[] Encode(Row row, IReadOnlyDictionary<Column, byte[]>? keptVariableValues)
+        => Complete(Prepare(row, keptVariableValues, null));
+
+    /// <summary>
+    /// A row encoded as far as it can be without writing to the file: every value converted and in its place, the
+    /// row's size settled, and only the references to the long values that go to pages of their own still to come.
+    /// </summary>
+    internal sealed class PreparedRow
+    {
+        internal PreparedRow(byte[] bytes, List<(int At, LvalWriter Writer, byte[] Data)> longValues)
+        {
+            Bytes = bytes;
+            LongValues = longValues;
+        }
+
+        /// <summary>The row, with twelve empty bytes where each of <see cref="LongValues"/>' references goes.</summary>
+        internal byte[] Bytes { get; }
+        internal List<(int At, LvalWriter Writer, byte[] Data)> LongValues { get; }
+    }
+
+    /// <summary>
+    /// Everything of encoding <paramref name="row"/> that can refuse it - a value its column cannot hold or that is
+    /// not of its type, a row too large - with nothing written. An update prepares the new row before it frees or
+    /// deletes the one it replaces, and an insert before any page is touched, so a refused row changes nothing
+    /// (qcatco/exportmdb.interop#56). <paramref name="keptVariableValues"/> and <paramref name="keptFixedValues"/>
+    /// are the old row's own bytes for the columns an update does not name, written back as they are: an update
+    /// does not change a value it was not given, whatever reading it and writing it again would make of it.
+    /// </summary>
+    internal PreparedRow Prepare(Row row, IReadOnlyDictionary<Column, byte[]>? keptVariableValues,
+                                 IReadOnlyDictionary<Column, byte[]>? keptFixedValues)
     {
         if (row is null)
             throw new ArgumentNullException(nameof(row));
-
+        EnsureWritable();
         Validate(row);
 
         int maxRowSize = _format.MaxRowSize;
         var buffer = new byte[maxRowSize];
         int pos = 0;
 
-        // Column count
+        // Column count: every column the table has had, as Access writes it.
+        int columnCount = _layout.MaxColumnCount;
         if (_format.SizeRowColumnCount == 2)
         {
-            Util.ByteUtil.PutShort(buffer, pos, (short)_columns.Count);
+            Util.ByteUtil.PutShort(buffer, pos, (short)columnCount);
             pos += 2;
         }
         else if (_format.SizeRowColumnCount == 1)
         {
-            if (_columns.Count > 255)
+            if (columnCount > 255)
                 throw new InvalidOperationException("Jet3 rows with >255 columns are not supported.");
-            buffer[pos++] = (byte)_columns.Count;
+            buffer[pos++] = (byte)columnCount;
         }
         else
         {
             throw new InvalidOperationException("Unsupported row column count size.");
         }
 
-        var nullMask = new NullMask(_columns.Count);
+        var nullMask = new NullMask(columnCount);
 
-        // Fixed data area — written in column-number order to match RowDecoder
+        // Fixed-length values, each at its column's offset. A null one leaves its room empty.
         int fixedDataStart = pos;
-        int fixedDataEnd = fixedDataStart;
-        foreach (var col in _columns.OrderBy(c => c.ColumnNumber))
+        foreach (var col in _layout.FixedColumns)
         {
-            if (col.DataType.IsVariableLength())
+            var place = _layout.PlaceOf(col)!.Value;
+            if (keptFixedValues is not null && keptFixedValues.TryGetValue(col, out var keptBytes))
+            {
+                nullMask.MarkNotNull(col.ColumnNumber);
+                Array.Copy(keptBytes, 0, buffer, fixedDataStart + place.FixedOffset, Math.Min(keptBytes.Length, place.FixedSize));
                 continue;
+            }
 
-            object? value = row.TryGetValue(col.Name, out var v) ? v : null;
+            // DBNull is no value, and a Yes/No is read as RowValues reads one: what the row's index keys go by.
+            object? value = row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v) ? v : null;
 
             if (col.DataType == DataType.Boolean)
             {
-                if (value is bool b && b)
+                if (RowValues.ToBoolean(value))
                     nullMask.MarkNotNull(col.ColumnNumber);
                 continue;
             }
@@ -89,52 +143,62 @@ public sealed class RowEncoder
             if (value != null)
             {
                 nullMask.MarkNotNull(col.ColumnNumber);
-                int writePos = fixedDataStart + _fixedOffsets[col];
-                WriteFixedValue(buffer, writePos, col, value);
+                WriteFixedValue(buffer, fixedDataStart + place.FixedOffset, col, value, place.FixedSize);
             }
-
-            int endPos = fixedDataStart + _fixedOffsets[col] + col.Length;
-            if (endPos > fixedDataEnd)
-                fixedDataEnd = endPos;
         }
 
-        pos = fixedDataEnd;
+        int fixedDataSize = _layout.FixedDataSize;
+        if (_layout.MaxVarColumnCount == 0 && fixedDataSize < MinFixedDataWithoutVariableColumns)
+            fixedDataSize = MinFixedDataWithoutVariableColumns;
+        pos = fixedDataStart + fixedDataSize;
 
-        if (_varColumnCount > 0)
+        var longValues = new List<(int At, LvalWriter Writer, byte[] Data)>();
+        int varColumnCount = _layout.MaxVarColumnCount;
+        if (varColumnCount > 0)
         {
-            int trailerSize = nullMask.ByteSize + 4 + _varColumnCount * _format.SizeRowVarColOffset;
+            int trailerSize = nullMask.ByteSize + 4 + varColumnCount * _format.SizeRowVarColOffset;
             int remaining = maxRowSize - pos - trailerSize;
             if (remaining < 0)
                 throw new InvalidOperationException("Row is too large for format.");
 
-            var varOffsets = new short[_varColumnCount];
+            var varOffsets = new short[varColumnCount];
             int varOffsetIndex = 0;
 
-            // Variable-length data — also in column-number order to match var index assignment
-            foreach (var col in _columns.OrderBy(c => c.ColumnNumber))
+            foreach (var col in _layout.VariableColumns)
             {
-                if (!col.DataType.IsVariableLength())
-                    continue;
-
                 short offset = (short)pos;
-                object? value = row.TryGetValue(col.Name, out var v) ? v : null;
-                if (value != null)
+
+                // The value's bytes in the row: the old row's own, for a column an update leaves alone; or the
+                // value encoded; or, for a long value bound for pages of its own, room for its reference.
+                byte[]? varData = null;
+                (LvalWriter Writer, byte[] Data)? toPages = null;
+                if (keptVariableValues is not null && keptVariableValues.TryGetValue(col, out var kept))
+                    varData = kept;
+                else if (row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v))
                 {
-                    nullMask.MarkNotNull(col.ColumnNumber);
-                    byte[] varData = WriteVariableValue(col, value);
-
-                    if (_format.SizeRowVarColOffset == 1 && (offset > 255 || varData.Length > 255))
-                        throw new NotSupportedException("Jet3 rows with var offsets >255 are not supported yet.");
-
-                    if (varData.Length > remaining)
-                        throw new InvalidOperationException("Row is too large for format.");
-
-                    Array.Copy(varData, 0, buffer, pos, varData.Length);
-                    pos += varData.Length;
-                    remaining -= varData.Length;
+                    if (col.DataType.IsLongValue()) (varData, toPages) = PrepareLongValue(col, v!);
+                    else varData = WriteVariableValue(col, v!);
                 }
 
-                while (varOffsetIndex <= _varIndexes[col])
+                if (varData is not null || toPages is not null)
+                {
+                    nullMask.MarkNotNull(col.ColumnNumber);
+                    int length = varData?.Length ?? LongValueReferenceSize;
+
+                    if (_format.SizeRowVarColOffset == 1 && (offset > 255 || length > 255))
+                        throw new NotSupportedException("Jet3 rows with var offsets >255 are not supported yet.");
+                    remaining -= length;
+                    if (remaining < 0)
+                        throw new InvalidOperationException("Row is too large for format.");
+
+                    if (varData is not null) Array.Copy(varData, 0, buffer, pos, length);
+                    else longValues.Add((pos, toPages!.Value.Writer, toPages.Value.Data));
+                    pos += length;
+                }
+
+                // A deleted column's offset is the next column's: it holds nothing.
+                int index = _layout.PlaceOf(col)!.Value.VarIndex;
+                while (varOffsetIndex <= index)
                 {
                     varOffsets[varOffsetIndex++] = offset;
                 }
@@ -149,7 +213,7 @@ public sealed class RowEncoder
             Util.ByteUtil.PutShort(buffer, pos, (short)eod);
             pos += 2;
 
-            for (int i = _varColumnCount - 1; i >= 0; i--)
+            for (int i = varColumnCount - 1; i >= 0; i--)
             {
                 if (_format.SizeRowVarColOffset == 2)
                 {
@@ -162,7 +226,7 @@ public sealed class RowEncoder
                 }
             }
 
-            Util.ByteUtil.PutShort(buffer, pos, (short)_varColumnCount);
+            Util.ByteUtil.PutShort(buffer, pos, (short)varColumnCount);
             pos += 2;
         }
 
@@ -171,10 +235,71 @@ public sealed class RowEncoder
 
         var result = new byte[pos];
         Array.Copy(buffer, 0, result, 0, pos);
-        return result;
+        return new PreparedRow(result, longValues);
     }
 
-    private void WriteFixedValue(byte[] buffer, int offset, Column col, object value)
+    /// <summary>
+    /// Writes the long values of <paramref name="prepared"/> that go to pages of their own, puts their references
+    /// in the row and returns its bytes. Nothing here refuses the row: only the file can fail.
+    /// </summary>
+    internal byte[] Complete(PreparedRow prepared)
+    {
+        foreach (var (at, writer, data) in prepared.LongValues)
+        {
+            byte[] reference = writer.Write(data);
+            Array.Copy(reference, 0, prepared.Bytes, at, LongValueReferenceSize);
+        }
+        return prepared.Bytes;
+    }
+
+    /// <summary>The bytes a row holds for a long value kept on pages of its own: its reference.</summary>
+    private const int LongValueReferenceSize = 12;
+
+    /// <summary>
+    /// A long value as the row will hold it: its bytes with their reference, when it is short enough to stay in the
+    /// row (or the column has no pages of its own), or else the bytes to go to pages and the writer that puts them
+    /// there. Text bound for pages is plain UTF-16LE, without the compression marker: that is what Access writes
+    /// for a chained Memo, and ACE fails to decode compressed text spread across chunks.
+    /// </summary>
+    private (byte[]? InRow, (LvalWriter Writer, byte[] Data)? ToPages) PrepareLongValue(Column col, object value)
+    {
+        LvalWriter? writer = null;
+        _lvalWriters?.TryGetValue(col.Name, out writer);
+
+        if (col.DataType == DataType.Memo)
+        {
+            string text = Convert.ToString(value) ?? string.Empty;
+            byte[] textBytes = _format.Version == JetVersion.Jet3
+                ? _format.TextEncoding.GetBytes(text)
+                : EncodeText(col, text);
+            return textBytes.Length > InlineLvalThreshold && writer is not null
+                ? (null, (writer, System.Text.Encoding.Unicode.GetBytes(text)))
+                : (BuildInlineLvRef(textBytes), null);
+        }
+
+        if (value is not byte[] bytes)
+            throw new InvalidOperationException("OLE column value must be a byte array.");
+        return bytes.Length > InlineLvalThreshold && writer is not null
+            ? (null, (writer, bytes))
+            : (BuildInlineLvRef(bytes), null);
+    }
+
+    /// <summary>
+    /// Throws when the table's definition is not one a row can be written by - a column placed outside the row, or
+    /// two in one place - so that nothing is written wrongly.
+    /// </summary>
+    internal void EnsureWritable()
+    {
+        string? why = _unreadColumns
+            ? "its definition runs past its first page, and the columns on the pages after it were not read"
+            : _columns.FirstOrDefault(c => c.IsCalculated) is { } calculated
+                ? $"its column {calculated.Name} is calculated, and this library works no expression out"
+                : _layout.WhyNotWritable;
+        if (why is not null)
+            throw new NotSupportedException($"No row of this table is written: {why}. Nothing was changed.");
+    }
+
+    private void WriteFixedValue(byte[] buffer, int offset, Column col, object value, int size)
     {
         switch (col.DataType)
         {
@@ -194,7 +319,8 @@ public sealed class RowEncoder
                 Util.ByteUtil.PutDouble(buffer, offset, Convert.ToDouble(value));
                 return;
             case DataType.ShortDateTime:
-                Util.ByteUtil.PutDouble(buffer, offset, ((DateTime)value).ToOADate());
+                // A row rewritten with its dates as stored brings the double itself for a date it does not change.
+                Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : ((DateTime)value).ToOADate());
                 return;
             case DataType.Money:
                 decimal dec = Convert.ToDecimal(value);
@@ -202,30 +328,35 @@ public sealed class RowEncoder
                 Util.ByteUtil.PutLong(buffer, offset, scaled);
                 return;
             case DataType.Guid:
-                var guidBytes = ((Guid)value).ToByteArray();
+                var guidBytes = (value is Guid guid ? guid : Guid.Parse(Convert.ToString(value)!)).ToByteArray();
                 Util.ByteUtil.PutBytes(buffer, offset, guidBytes);
                 return;
             case DataType.Numeric:
+                Util.ByteUtil.PutBytes(buffer, offset, NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name));
+                return;
+            case DataType.Text:
             {
-                decimal numVal = Convert.ToDecimal(value);
-                buffer[offset] = numVal < 0m ? (byte)0x80 : (byte)0x00;
-                decimal absVal = Math.Abs(numVal);
-                decimal scaleFactor = 1m;
-                for (int s = 0; s < col.Scale; s++) scaleFactor *= 10m;
-                decimal numScaled = Math.Round(absVal * scaleFactor, 0, MidpointRounding.AwayFromZero);
-                var bigInt = new System.Numerics.BigInteger(numScaled);
-                byte[] leBytes = bigInt.ToByteArray();   // little-endian, may include a sign byte
-                Array.Clear(buffer, offset + 1, 16);
-                int copyLen = Math.Min(leBytes.Length, 16);
-                for (int i = 0; i < copyLen; i++)
-                    buffer[offset + 1 + (15 - i)] = leBytes[i];  // reverse to big-endian
+                // Text kept among the fixed-length values (SQL's CHAR): never compressed, and filled to the
+                // column's length with spaces, as Access fills it.
+                var encoding = _format.Version == JetVersion.Jet3 ? _format.TextEncoding : System.Text.Encoding.Unicode;
+                byte[] text = encoding.GetBytes(Convert.ToString(value) ?? string.Empty);
+                byte[] space = encoding.GetBytes(" ");
+                Util.ByteUtil.PutBytes(buffer, offset, text, 0, Math.Min(text.Length, size));
+                for (int at = text.Length; at + space.Length <= size; at += space.Length)
+                    Util.ByteUtil.PutBytes(buffer, offset + at, space);
+                return;
+            }
+            case DataType.Binary:
+            {
+                // Binary kept among the fixed-length values (SQL's BINARY): filled to the column's length with zeros.
+                var bytes = (byte[])value;
+                Util.ByteUtil.PutBytes(buffer, offset, bytes, 0, Math.Min(bytes.Length, size));
                 return;
             }
             default:
                 throw new NotSupportedException($"Unsupported fixed data type {col.DataType}.");
         }
     }
-
     // ── Long-value helpers ────────────────────────────────────────────────────
 
     /// <summary>
@@ -238,8 +369,15 @@ public sealed class RowEncoder
     {
         foreach (var col in _columns)
         {
+            if (!row.TryGetValue(col.Name, out var value) || RowValues.IsNull(value)) continue;
+
+            // A Decimal with more digits than its column holds, and Binary longer than a column of one length.
+            if (col.DataType == DataType.Numeric)
+                NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name);
+            if (col.DataType == DataType.Binary && !col.IsVariableLength && value is byte[] binary && binary.Length > col.Length)
+                throw new ArgumentOutOfRangeException(nameof(row), binary.Length,
+                    $"The Binary column '{col.Name}' holds {col.Length} bytes; {binary.Length} were given.");
             if (col.DataType != DataType.Text || col.Length <= 0) continue;
-            if (!row.TryGetValue(col.Name, out var value) || value is null) continue;
 
             int maxChars = _format.Version == JetVersion.Jet3 ? col.Length : col.Length / 2;
             string text = Convert.ToString(value) ?? string.Empty;
@@ -284,35 +422,16 @@ public sealed class RowEncoder
                 return EncodeText(col, Convert.ToString(value) ?? string.Empty);
             case DataType.Binary:
                 return (byte[])value;
-            case DataType.Memo:
-            {
-                string text = Convert.ToString(value) ?? string.Empty;
-                byte[] textBytes = _format.Version == JetVersion.Jet3
-                    ? _format.TextEncoding.GetBytes(text)
-                    : EncodeText(col, text);
-                // Values Access itself keeps in the row (THIS_PAGE) are stored
-                // there; anything longer goes to LVAL pages. LVAL-bound text is stored as plain
-                // UTF-16LE without the 0xFF 0xFE compression marker - that is
-                // what Access itself writes for chained memos, and ACE fails to
-                // decode compressed content spread across LVAL chunks.
-                if (textBytes.Length > InlineLvalThreshold
-                    && _lvalWriters is not null
-                    && _lvalWriters.TryGetValue(col.Name, out var memoWriter))
-                    return memoWriter.Write(System.Text.Encoding.Unicode.GetBytes(text));
-                return BuildInlineLvRef(textBytes);
-            }
-            case DataType.Ole:
-            {
-                if (value is not byte[] oleBytes)
-                    throw new InvalidOperationException("OLE column value must be a byte array.");
-                if (oleBytes.Length > InlineLvalThreshold
-                    && _lvalWriters is not null
-                    && _lvalWriters.TryGetValue(col.Name, out var oleWriter))
-                    return oleWriter.Write(oleBytes);
-                return BuildInlineLvRef(oleBytes);
-            }
             default:
-                throw new NotSupportedException($"Unsupported variable data type {col.DataType}.");
+            {
+                // A type of one size that the definition keeps among the variable-length values: the same bytes.
+                int size = col.DataType.GetFixedSize();
+                if (size <= 0 || col.DataType == DataType.Boolean)
+                    throw new NotSupportedException($"Unsupported variable data type {col.DataType}.");
+                var bytes = new byte[size];
+                WriteFixedValue(bytes, 0, col, value, size);
+                return bytes;
+            }
         }
     }
 }

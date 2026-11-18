@@ -57,7 +57,8 @@ public sealed class IndexCursor : Cursor
             && _definition.PrimaryKeyIndexPage > 0
             && _definition.PrimaryKeyColumnName is not null
             && string.Equals(columnName, _definition.PrimaryKeyColumnName, StringComparison.OrdinalIgnoreCase)
-            && IndexWriter.PrimaryKeyColumns(_definition).All(c => IndexKeys.CanEncode(c.Column));
+            && IndexWriter.PrimaryKeyColumns(_definition) is { Count: 1 } keyColumns
+            && IndexKeys.CanSearch(keyColumns, new[] { value });
         if (path1Eligible)
         {
             var iw = new IndexWriter(_file, new PageAllocator(_file));
@@ -84,7 +85,7 @@ public sealed class IndexCursor : Cursor
 
         // Fast path #2: on a table read from disk, walk the real B-tree index whose
         // single column matches the requested column and whose key type we support.
-        if (TryFindMatchingDiskIndex(columnName, out var diskIx))
+        if (TryFindMatchingDiskIndex(columnName, value, out var diskIx))
         {
             var reader = new IndexReader(_file, diskIx!);
             foreach (int rowPtr in reader.FindRowPointers(value))
@@ -113,10 +114,11 @@ public sealed class IndexCursor : Cursor
     /// Picks a disk-resident index that's usable for a single-column lookup on
     /// <paramref name="columnName"/>: must have exactly one column, that column must
     /// match by name, and its keys must be ones IndexReader makes as Access made them
-    /// (a type it encodes; text sorted in General - Legacy). Returns false when no
-    /// such index is present (caller falls back to scan).
+    /// (a type it encodes; text sorted in an order it writes, and a value whose key a
+    /// search can trust: <see cref="IndexKeys.CanSearch"/>). Returns false when no such
+    /// index is present (caller falls back to scan).
     /// </summary>
-    private bool TryFindMatchingDiskIndex(string columnName, out Index? matched)
+    private bool TryFindMatchingDiskIndex(string columnName, object value, out Index? matched)
     {
         foreach (var ix in _definition.Indexes)
         {
@@ -124,7 +126,7 @@ public sealed class IndexCursor : Cursor
             if (ix.RootPageNumber <= 0) continue;
             if (!string.Equals(ix.Columns[0].Column.Name, columnName, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (IndexReader.CanResolve(ix.Columns[0].Column))
+            if (IndexReader.CanResolve(ix.Columns[0].Column) && IndexKeys.CanSearch(ix.Columns, new[] { value }))
             {
                 matched = ix;
                 return true;
@@ -150,7 +152,7 @@ public sealed class IndexCursor : Cursor
         if (ix is not null)
         {
             var reader = new IndexReader(_file, ix);
-            if (reader.CanResolveKey)
+            if (reader.CanResolveKey && IndexKeys.CanSearch(ix.Columns, entryValues))
             {
                 foreach (int rowPtr in reader.FindRowPointersForEntry(entryValues!))
                 {
@@ -236,10 +238,5 @@ public sealed class IndexCursor : Cursor
     }
 
     private static bool ValuesEqual(object? stored, object? requested)
-    {
-        if (Equals(stored, requested)) return true;
-        if (stored is null || requested is null) return false;
-        try   { return Convert.ToDecimal(stored) == Convert.ToDecimal(requested); }
-        catch { return false; }
-    }
+        => DataPageWriter.PrimaryKeysEqual(stored, requested);
 }

@@ -194,11 +194,15 @@ internal static class JetPages
         return (ByteUtil.Get3ByteInt(p, 56), p[55]);
     }
 
-    /// <summary>Every row of the table on <paramref name="tdefPage"/>, decoded, with its page and row.</summary>
-    public static List<(int Page, int Row, Row Values)> Rows(PageFile file, int tdefPage)
+    /// <summary>
+    /// Every row of the table on <paramref name="tdefPage"/>, decoded, with its page and row. With
+    /// <paramref name="forKeys"/>, as its index keys are made of it: a date as the double stored, and Memo
+    /// values read from their pages.
+    /// </summary>
+    public static List<(int Page, int Row, Row Values)> Rows(PageFile file, int tdefPage, bool forKeys = false)
     {
         var info = TdefReader.Read(file.ReadPage(tdefPage), file.Format);
-        var decoder = new RowDecoder(file.Format, info.Columns);
+        var decoder = new RowDecoder(file.Format, info.Columns, forKeys ? new LvalReader(file) : null);
         var (umapPage, umapRow) = OwnedPagesMap(file, tdefPage);
         var result = new List<(int, int, Row)>();
         foreach (int pageNumber in UsageMap.GetOwnedPages(file.ReadPage(umapPage), umapRow, file.Format, file))
@@ -207,14 +211,26 @@ internal static class JetPages
             int count = ByteUtil.GetShort(page, file.Format.OffsetDataNumRows);
             for (int r = 0; r < count; r++)
             {
+                // Read here on its own, not through the library's reader of slots. A row Access moved to another
+                // page (0x4000) is still the row at this slot, which its index entries name: its values are where
+                // the four bytes at the slot say - a row number, then a page.
                 int slot = ByteUtil.GetUShort(page, file.Format.OffsetDataRowTable + r * 2);
-                if ((slot & 0xC000) != 0) continue;
+                if ((slot & 0x8000) != 0) continue;
+                byte[] from = page;
+                int at = r;
+                while ((slot & 0x4000) != 0)
+                {
+                    int pointer = slot & 0x1FFF;
+                    at = from[pointer];
+                    from = file.ReadPage(from[pointer + 1] | from[pointer + 2] << 8 | from[pointer + 3] << 16);
+                    slot = ByteUtil.GetUShort(from, file.Format.OffsetDataRowTable + at * 2) & 0x7FFF;
+                }
                 int start = slot & 0x1FFF;
-                int end = r == 0 ? page.Length : ByteUtil.GetUShort(page, file.Format.OffsetDataRowTable + (r - 1) * 2) & 0x1FFF;
-                byte[] bytes = page.Skip(start).Take(end - start).ToArray();
+                int end = at == 0 ? from.Length : ByteUtil.GetUShort(from, file.Format.OffsetDataRowTable + (at - 1) * 2) & 0x1FFF;
+                byte[] bytes = from.Skip(start).Take(end - start).ToArray();
                 var row = new Row();
                 foreach (var column in info.Columns)
-                    if (decoder.Decode(bytes, column) is { } value) row[column.Name] = value;
+                    if ((forKeys ? decoder.DecodeForKey(bytes, column) : decoder.Decode(bytes, column)) is { } value) row[column.Name] = value;
                 result.Add((pageNumber, r, row));
             }
         }

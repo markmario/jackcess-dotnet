@@ -4,8 +4,9 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Tests for <see cref="Database.EnforceForeignKeys"/> — restrict-only,
-/// insert-time validation against MSysRelationships metadata.
+/// Tests for <see cref="Database.EnforceForeignKeys"/> on insert, against
+/// MSysRelationships metadata. Update, delete and cascades are in
+/// <see cref="ForeignKeyCascadeTests"/>.
 /// Existing relationships in the upstream corpus (Northwind etc.) give us
 /// real FK shapes to test against.
 /// </summary>
