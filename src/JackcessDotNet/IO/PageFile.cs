@@ -112,16 +112,7 @@ public sealed class PageFile : IDisposable
 
         string signature = System.Text.Encoding.ASCII.GetString(head, signatureAt, 15);
         if (signature != "Standard Jet DB" && signature != "Standard ACE DB") return null;
-        return head[versionAt] switch
-        {
-            0x00 => JetFormat.Jet3,
-            0x01 => JetFormat.Jet4,
-            0x02 => JetFormat.Jet12,
-            0x03 => JetFormat.Jet14,
-            0x04 => JetFormat.Jet16,
-            // Later generations keep the layout of ACE 17.
-            _    => JetFormat.Jet17,
-        };
+        return JetFormat.ForVersionCode(head[versionAt]);
     }
 
     /// <summary>

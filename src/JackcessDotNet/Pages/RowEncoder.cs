@@ -335,6 +335,12 @@ public sealed class RowEncoder
             case DataType.Numeric:
                 Util.ByteUtil.PutBytes(buffer, offset, NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name));
                 return;
+            case DataType.BigInt:
+                Util.ByteUtil.PutLong(buffer, offset, Convert.ToInt64(value));
+                return;
+            case DataType.ExtendedDateTime:
+                Util.ByteUtil.PutBytes(buffer, offset, ExtendedDateTimeCodec.Encode((DateTime)value));
+                return;
             case DataType.Text:
             {
                 // Text kept among the fixed-length values (SQL's CHAR): never compressed, and filled to the

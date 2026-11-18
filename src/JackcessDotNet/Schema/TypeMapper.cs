@@ -129,6 +129,10 @@ public static class TypeMapper
             DataType.ShortDateTime => value is DateTimeOffset dto
                                         ? dto.UtcDateTime
                                         : Convert.ToDateTime(value),
+            DataType.BigInt        => Convert.ToInt64(value),
+            DataType.ExtendedDateTime => value is DateTimeOffset extended
+                                        ? extended.UtcDateTime
+                                        : Convert.ToDateTime(value),
             DataType.Guid          => value is Guid g ? g : new Guid(value.ToString()!),
             DataType.Text          => Convert.ToString(value),
             DataType.Memo          => Convert.ToString(value),

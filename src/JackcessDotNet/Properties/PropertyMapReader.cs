@@ -168,6 +168,7 @@ internal static class PropertyMapReader
                                           : Encoding.Unicode.GetString(buf, pos, len),
             DataType.Binary        => buf.Slice(pos, pos + len),
             DataType.Ole           => buf.Slice(pos, pos + len),
+            DataType.BigInt        => ByteUtil.GetLong  (buf, pos),
             _                      => null,
         };
     }
