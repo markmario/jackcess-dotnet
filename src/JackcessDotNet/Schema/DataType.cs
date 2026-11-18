@@ -50,6 +50,20 @@ public enum DataType : byte
 
     /// <summary>Complex (Access 2007+, not supported in Jet 4)</summary>
     Complex = 0x12,
+
+    /// <summary>
+    /// 64-bit signed integer (Access "Large Number", Access 2016 and later; .accdb only). Read as a
+    /// <see cref="long"/>.
+    /// </summary>
+    BigInt = 0x13,
+
+    /// <summary>
+    /// Date and time from 1 January 0001 to 31 December 9999, to 100 nanoseconds (Access "Date/Time Extended",
+    /// Access 2019 and later; .accdb only), kept as 42 bytes of text. Read and written as a
+    /// <see cref="DateTime"/>, whose range and tick are the same, so nothing is lost either way; the value has
+    /// no time zone, and is read with <see cref="DateTimeKind.Unspecified"/>.
+    /// </summary>
+    ExtendedDateTime = 0x14,
 }
 
 /// <summary>
@@ -79,6 +93,8 @@ public static class DataTypeExtensions
         // but registering the type as "fixed 4-byte" lets the column be parsed and
         // tables that contain it can still be opened + iterated.
         [DataType.Complex]       = new(FixedSize: 4,  IsVariable: false, IsLong: false),
+        [DataType.BigInt]        = new(FixedSize: 8,  IsVariable: false, IsLong: false),
+        [DataType.ExtendedDateTime] = new(FixedSize: ExtendedDateTimeCodec.Size, IsVariable: false, IsLong: false),
     };
 
     private static readonly DataTypeInfo UnknownInfo =

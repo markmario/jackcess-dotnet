@@ -20,7 +20,8 @@ internal static class IndexKeys
     public static bool CanEncode(DataType type)
         => type is DataType.Byte or DataType.Int or DataType.Long or DataType.Money
                 or DataType.Float or DataType.Double or DataType.ShortDateTime
-                or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid;
+                or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid
+                or DataType.BigInt or DataType.ExtendedDateTime;
 
     /// <summary>
     /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
@@ -183,6 +184,28 @@ internal static class IndexKeys
                 // The number the row stores: ten-thousandths, in eight bytes.
                 bytes = SignFlipped(BigEndian(MoneyUnits(Convert.ToDecimal(value))));
                 break;
+            case DataType.BigInt:
+                bytes = SignFlipped(BigEndian(Convert.ToInt64(value)));
+                break;
+            case DataType.ExtendedDateTime:
+                // The 42 bytes the row stores, in 8-byte segments each followed by a length byte: 9 for a
+                // segment with more after it, and after the last, which is filled out with zeros, the bytes it
+                // has of the value - 2. Text, so the keys sort as the dates do.
+                byte[] stored = ExtendedDateTimeCodec.Encode((DateTime)value!);
+                bytes = new byte[(stored.Length / 8 + 1) * 9];
+                for (int segment = 0; segment * 8 < stored.Length; segment++)
+                {
+                    int length = Math.Min(8, stored.Length - segment * 8);
+                    Array.Copy(stored, segment * 8, bytes, segment * 9, length);
+                    bytes[segment * 9 + 8] = length == 8 ? (byte)9 : (byte)length;
+                }
+                if (!ascending)
+                {
+                    // The length byte of a segment with more after it stays as it is.
+                    for (int i = 0; i < bytes.Length; i++)
+                        if (i % 9 != 8 || i == bytes.Length - 1) bytes[i] = (byte)~bytes[i];
+                }
+                return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
             case DataType.Boolean:
                 // No is the greater: Yes is 0x00 and No 0xFF, and the other way round descending. A Yes/No
                 // column holds no null, and its value is read as the row encoder reads it (RowValues).

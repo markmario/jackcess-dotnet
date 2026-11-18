@@ -146,4 +146,15 @@ public sealed class ColumnBuilder
 
     public static ColumnBuilder Numeric(string name, byte precision = 18, byte scale = 0)
         => new ColumnBuilder(name, DataType.Numeric).WithNumericScale(precision, scale);
+
+    /// <summary>A Large Number column (Access 2016 and later, .accdb only): a <see cref="long"/>.</summary>
+    public static ColumnBuilder BigInt(string name)
+        => new ColumnBuilder(name, DataType.BigInt);
+
+    /// <summary>
+    /// A Date/Time Extended column (Access 2019 and later, .accdb only): a <see cref="System.DateTime"/> kept to
+    /// its last tick, over its whole range.
+    /// </summary>
+    public static ColumnBuilder ExtendedDateTime(string name)
+        => new ColumnBuilder(name, DataType.ExtendedDateTime);
 }

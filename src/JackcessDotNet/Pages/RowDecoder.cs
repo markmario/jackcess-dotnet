@@ -254,6 +254,8 @@ internal sealed class RowDecoder
             DataType.Money        => Math.Round((decimal)ByteUtil.GetLong(row, offset) / 10000m, 4),
             DataType.Guid         => new Guid(row.Slice(offset, offset + 16)),
             DataType.Numeric      => NumericCodec.Decode(row, offset, col.Scale),
+            DataType.BigInt       => ByteUtil.GetLong  (row, offset),
+            DataType.ExtendedDateTime => ExtendedDateTimeCodec.Decode(row, offset),
             _                     => null
         };
 

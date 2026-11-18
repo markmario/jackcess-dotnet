@@ -180,6 +180,8 @@ public static class DatabaseExporter
         DataType.Guid          => typeof(Guid),
         DataType.Numeric       => typeof(decimal),
         DataType.Complex       => typeof(int),
+        DataType.BigInt        => typeof(long),
+        DataType.ExtendedDateTime => typeof(DateTime),
         _                      => typeof(object),
     };
 
