@@ -32,6 +32,11 @@ public sealed class JetFormat
 
     // ── TDEF field byte-offsets (per-version) ────────────────────────────────
     public int TdefOffsetNumRows       { get; }   // int  – total row count in table
+    /// <summary>
+    /// Where a table definition keeps the last Long auto-number it handed out (Jackcess's OFFSET_NEXT_AUTO_NUMBER,
+    /// 20 in every format): the next row's is one more. Access reads and writes it there too.
+    /// </summary>
+    public int TdefOffsetLastAutoNumber => 20;
     public int TdefOffsetNumVarCols    { get; }   // short – variable-length column count
     public int TdefOffsetNumCols       { get; }   // short – total column count
     public int TdefOffsetNumIndexSlots { get; }   // int  – logical (slot) index count

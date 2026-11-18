@@ -13,7 +13,8 @@ namespace JackcessDotNet;
 ///       new ColumnBuilder("Id",   DataType.Long ).AutoNumber().Build(),
 ///       new ColumnBuilder("Name", DataType.Text ).MaxLength(100).Build(),
 ///   });
-///   table.Insert(new Row { ["Id"] = 1, ["Name"] = "Alice" });
+///   var row = new Row { ["Name"] = "Alice" };
+///   table.Insert(row);          // row["Id"] is now 1
 /// </code>
 /// </summary>
 public sealed class Database : IDisposable
@@ -45,6 +46,18 @@ public sealed class Database : IDisposable
     /// </para>
     /// </summary>
     public bool EnforceForeignKeys { get; set; }
+
+    /// <summary>
+    /// Whether a row may bring its own value for an AutoNumber column. Default <c>false</c>: an insert numbers
+    /// the row itself and ignores any value the row holds for such a column, and an update leaves the column as
+    /// it was. When <c>true</c>, a value the row holds is written as given - and a Long one past the table's
+    /// counter moves the counter up to it - while a row without one is still numbered. A table can decide for
+    /// itself with <see cref="Table.AllowAutoNumberInsert"/>.
+    /// <para>
+    /// Turn it on with care: nothing checks that a value supplied this way is not already in the table.
+    /// </para>
+    /// </summary>
+    public bool AllowAutoNumberInsert { get; set; }
 
     // ── Factory methods ───────────────────────────────────────────────────────
 

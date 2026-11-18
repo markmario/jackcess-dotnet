@@ -82,6 +82,33 @@ public sealed class DataPageWriter
         _file.WritePage(tdefPageNumber, tdefPage);
     }
 
+    /// <summary>
+    /// Records an inserted row in the table's definition: one more row, and - when the insert used or passed the
+    /// table's Long auto-number counter - the counter's new value. Both go in one write, after the row is on its
+    /// page, so the counter never runs ahead of the rows nor falls behind them.
+    /// </summary>
+    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber)
+    {
+        var format   = _file.Format;
+        var tdefPage = _file.ReadPage(tdefPageNumber);
+        ByteUtil.PutInt(tdefPage, format.TdefOffsetNumRows, ByteUtil.GetInt(tdefPage, format.TdefOffsetNumRows) + 1);
+        if (lastAutoNumber is { } last)
+            ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, last);
+        _file.WritePage(tdefPageNumber, tdefPage);
+    }
+
+    /// <summary>
+    /// Moves the table's Long auto-number counter up to <paramref name="value"/> when it is behind it; never down.
+    /// </summary>
+    internal void RaiseLastAutoNumber(int tdefPageNumber, int value)
+    {
+        var format   = _file.Format;
+        var tdefPage = _file.ReadPage(tdefPageNumber);
+        if (value <= ByteUtil.GetInt(tdefPage, format.TdefOffsetLastAutoNumber)) return;
+        ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, value);
+        _file.WritePage(tdefPageNumber, tdefPage);
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /// <summary>
