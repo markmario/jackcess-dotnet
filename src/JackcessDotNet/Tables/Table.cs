@@ -454,9 +454,9 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Lists the Decimal (Numeric) values in the table that read with more digits than their column's precision
-    /// allows. Nothing is changed, in the file or in what a read returns: this is a way to look for values a
-    /// version of this library before qcatco/exportmdb.interop#61 wrote.
+    /// Lists the Decimal (Numeric) values in the table whose stored number has more digits than their column's
+    /// precision allows. Nothing is changed, in the file or in what a read returns: this is a way to look for
+    /// values a version of this library before qcatco/exportmdb.interop#61 wrote.
     /// <para>
     /// Those versions wrote a Decimal's sixteen bytes in an order Access does not use, so every value they wrote
     /// reads as a different number - a 1 as 16,777,216 - in Access and, now, here. Nothing in the file says who
@@ -472,6 +472,11 @@ public sealed class Table
     /// is not a multiple of 256 is listed; of precision 8 or 9, some are; and of precision 10 or more - 18 is what
     /// Access and this library give a column by default - none is, and only numbers of ten digits or more can be.
     /// A table with nothing listed may still hold values written in the earlier order.
+    /// </para>
+    /// <para>
+    /// A stored number that runs past 96 bits is always listed: it is past every precision, and Access writes
+    /// none. A read gives its low 96 bits, as Access does (<see cref="DecimalBeyondPrecision.IsCut"/>), and those
+    /// can be a number the column would hold - the listing says what the row holds, not only how it reads.
     /// </para>
     /// <para>
     /// The table is read as it is asked for, a row at a time. A calculated column is not looked at.
@@ -515,7 +520,7 @@ public sealed class Table
                         key[keyColumn.Name] = decoder.Decode(rowBytes, keyColumn);
                     bool negative = NumericCodec.IsNegative(stored, 0);
                     yield return new DecimalBeyondPrecision(Name, column, rowIndex, key,
-                        NumericCodec.Decode(stored, 0, column.Scale),
+                        NumericCodec.Decode(stored, 0, column.Scale), isCut: unscaled >> 96 != 0,
                         NumericCodec.ToDecimal(NumericCodec.UnscaledInEarlierByteOrder(stored, 0), negative, column.Scale));
                 }
             }

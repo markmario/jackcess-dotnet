@@ -422,6 +422,12 @@ have been deleted - and a row Access moved to another page is read where its poi
   the default, Access's and this library's - none, and only larger numbers can be. An empty list does not say
   the file has no such value.
 
+  A stored number that runs past 96 bits - the first of the four words set, which Access never writes - reads as
+  the number its low 96 bits make, with its sign, as Access reads it through its OLE DB provider and through DAO
+  ([qcatco/exportmdb.interop#74](https://github.com/qcatco/exportmdb.interop/issues/74)); it read as null before.
+  2^96 + 12345 in a `DECIMAL(5,2)` column is 123.45. Such a value is always listed, with `IsCut` set, whatever
+  its low 96 bits make. Java Jackcess returns all 128 bits as a `BigDecimal`, which a `decimal` cannot hold.
+
   Neither Access nor Java Jackcess checks a Decimal against its column's precision when it reads one. Jackcess
   returns the number. In Access, DAO returns it and SQL computes with it (the 1 above is found by
   `WHERE Price = 16777216`), but the OLE DB provider cannot hand it over - reading the column fails with

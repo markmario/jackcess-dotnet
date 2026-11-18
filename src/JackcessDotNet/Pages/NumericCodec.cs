@@ -16,12 +16,19 @@ internal static class NumericCodec
     private const byte NegativeSign = 0x80;
 
     /// <summary>
-    /// The value at <paramref name="offset"/>, with <paramref name="scale"/> digits after the point; null for one
-    /// a <see cref="decimal"/> cannot hold (more than 96 bits, or a scale past 28).
+    /// The value at <paramref name="offset"/>, with <paramref name="scale"/> digits after the point; null for a
+    /// scale past 28, which a <see cref="decimal"/> cannot hold.
+    /// <para>
+    /// The number is the last three words, 96 bits, and the first is not read: that is how Access reads one
+    /// (qcatco/exportmdb.interop#74). Access writes no number with the first word set - its 28 digits are under
+    /// 2^96 - so one is there only in bytes something else wrote, and ACE's OLE DB provider and DAO both give
+    /// the number its low 96 bits make, with its sign, and no error: 2^96 + 12345 in a DECIMAL(5,2) column is
+    /// 123.45. Java Jackcess gives all 128 bits as a BigDecimal; a <see cref="decimal"/> has no room for them.
+    /// </para>
     /// </summary>
     public static decimal? Decode(byte[] row, int offset, int scale)
     {
-        if (ByteUtil.GetInt(row, offset + 1) != 0 || scale > 28) return null;
+        if (scale > 28) return null;
         int high = ByteUtil.GetInt(row, offset + 5);
         int mid  = ByteUtil.GetInt(row, offset + 9);
         int low  = ByteUtil.GetInt(row, offset + 13);
@@ -32,8 +39,8 @@ internal static class NumericCodec
     public static bool IsNegative(byte[] row, int offset) => row[offset] != 0;
 
     /// <summary>
-    /// The number at <paramref name="offset"/> without its sign or its decimal point, as <see cref="Decode"/>
-    /// reads it: all 128 bits, whether or not a <see cref="decimal"/> holds them.
+    /// The number at <paramref name="offset"/> without its sign or its decimal point, as the row stores it: all
+    /// 128 bits, of which <see cref="Decode"/> reads the low 96.
     /// </summary>
     public static BigInteger Unscaled(byte[] row, int offset)
     {
@@ -57,7 +64,7 @@ internal static class NumericCodec
 
     /// <summary>
     /// <paramref name="unscaled"/> with its sign and <paramref name="scale"/> digits after the point; null for a
-    /// number a <see cref="decimal"/> cannot hold, where <see cref="Decode"/> gives null.
+    /// number a <see cref="decimal"/> cannot hold: one of more than 96 bits, or a scale past 28.
     /// </summary>
     public static decimal? ToDecimal(BigInteger unscaled, bool negative, int scale)
     {

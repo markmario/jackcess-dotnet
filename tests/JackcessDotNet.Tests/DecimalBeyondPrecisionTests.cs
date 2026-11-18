@@ -72,7 +72,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         var found = table.FindDecimalsBeyondPrecision().ToList();
 
         Assert.Equal(2, found.Count);
-        Assert.All(found, f => { Assert.Equal("Prices", f.Table); Assert.Equal("Price", f.Column.Name); Assert.Equal(5, f.Column.Precision); });
+        Assert.All(found, f => { Assert.Equal("Prices", f.Table); Assert.Equal("Price", f.Column.Name); Assert.Equal(5, f.Column.Precision); Assert.False(f.IsCut); });
 
         Assert.Equal(1, found[0].RowIndex);
         Assert.Equal(2, found[0].PrimaryKey["Id"]);
@@ -155,11 +155,13 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     }
 
     /// <summary>
-    /// Sixteen bytes can make a number of more than the 96 bits a <see cref="decimal"/> has. A read of such a value
-    /// gives null; it is listed, without a number.
+    /// Sixteen bytes can make a number of more than the 96 bits a <see cref="decimal"/> has, and Access reads of
+    /// one: 2^100 in the earlier order has only its first word set. A read gives the number its low 96 bits make,
+    /// here 0, as Access does (qcatco/exportmdb.interop#74; <see cref="WideDecimalTests"/>). It is listed, though
+    /// 0 is a number the column holds: no number Access wrote runs past 96 bits.
     /// </summary>
     [Fact]
-    public void a_value_more_than_a_decimal_holds_is_listed_without_a_number()
+    public void a_value_whose_number_runs_past_96_bits_is_listed_with_the_low_96_bits_a_read_gives()
     {
         using (var db = Database.Create(_path, JetVersion.Jet4))
             Prices(db).Insert(new Row { ["Id"] = 1, ["Price"] = 111.11m });
@@ -169,10 +171,11 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         var found = Assert.Single(read.FindDecimalsBeyondPrecision());
 
         Assert.Equal(1, found.PrimaryKey["Id"]);
-        Assert.Null(found.Value);
+        Assert.True(found.IsCut);
+        Assert.Equal(0.00m, found.Value);
         Assert.Null(found.ValueInEarlierByteOrder);
-        Assert.False(read.GetTable("Prices").ReadAllRows()[0].ContainsKey("Price"));
-        Assert.Equal("Prices.Price, row 0 (Id=1): reads more than a decimal holds, more than a decimal holds in the earlier byte order",
+        Assert.Equal(found.Value, read.GetTable("Prices").ReadAllRows()[0]["Price"]);
+        Assert.Equal("Prices.Price, row 0 (Id=1): reads 0.00 (the low 96 bits of a longer number), more than a decimal holds in the earlier byte order",
                      found.ToString());
     }
 
