@@ -308,12 +308,15 @@ public sealed class CreateRelationshipTests : IDisposable
 
         db.CreateRelationship(new RelationshipDefinition("Staff", "Id", "Staff", "Manager") { Name = "Reports", HasReferentialIntegrity = true });
 
+        // As DAO numbers them in one table: the foreign key's index first, then the referenced side's, which is
+        // named by its own number - .rC, the table's third index.
         var slots = Slots(db, "Staff");
-        var primary = slots.Single(s => s.Name == ".rB");
+        var primary = slots.Single(s => s.Name == ".rC");
         var secondary = slots.Single(s => s.Name == "Reports");
         int tdef = IndexChecks.TdefOf(db, "Staff");
-        Assert.Equal(new Slot(".rB", 1, 0, 1, 2, tdef, 0, 0, 2), primary);
-        Assert.Equal(new Slot("Reports", 2, 1, 2, 1, tdef, 0, 0, 2), secondary);
+        Assert.Equal(new Slot(".rC", 2, 0, 1, 1, tdef, 0, 0, 2), primary);
+        Assert.Equal(new Slot("Reports", 1, 1, 2, 2, tdef, 0, 0, 2), secondary);
+        Assert.Equal(3, slots.Select(s => s.Name).Distinct().Count());
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Staff", expectedRows: 3));
 
         db.EnforceForeignKeys = true;
@@ -361,6 +364,85 @@ public sealed class CreateRelationshipTests : IDisposable
         reopened.GetTable("Table3").UpdateByPrimaryKey(referring[0]["otherfk3"]!, new Row { ["id"] = 77 });
         Assert.All(reopened.GetTable("Table1").ReadAllRows(), row => Assert.Equal(77, row["otherfk3"]));
         IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Table1", expectedRows: 4);
+    }
+
+    // Access takes no name with a period, an exclamation mark, a grave accent or a square bracket in it, nor one
+    // that begins with a space: so no relationship can have the name Access gives the index on a referenced
+    // table (.rB, .rC...). Given ".rB" for a table related to itself, whose referenced side's index would be
+    // named so, the library used to write two indexes of that name into the one table.
+    [Theory]
+    [InlineData(".rB")]
+    [InlineData(".rC")]
+    [InlineData("a.b")]
+    [InlineData("wow!")]
+    [InlineData("[bracketed]")]
+    [InlineData("gra`ve")]
+    [InlineData(" leading")]
+    public void A_relationship_with_a_name_Access_does_not_allow_is_refused_and_nothing_changes(string name)
+    {
+        using (var db = Database.Create(_path, JetVersion.Jet4))
+        {
+            var staff = db.CreateTable("Staff", new[] { Long("Id"), Long("Manager"), Text("Name") }, primaryKey: "Id");
+            staff.Insert(new Row { ["Id"] = 1 });
+            staff.Insert(new Row { ["Id"] = 2, ["Manager"] = 1 });
+        }
+
+        foreach (bool enforced in new[] { true, false })
+            AssertRefusedAndUnchanged<ArgumentException>(
+                new RelationshipDefinition("Staff", "Id", "Staff", "Manager") { Name = name, HasReferentialIntegrity = enforced }, "not a valid name");
+
+        using var again = Database.Open(_path);
+        Assert.Equal(new[] { "PrimaryKey" }, again.GetTable("Staff").Indexes.Select(ix => ix.Name));
+    }
+
+    // The name the library makes when none is given is of the tables' names: when they hold what a name may not,
+    // a name has to be given.
+    [Fact]
+    public void A_relationship_between_tables_whose_names_make_no_valid_name_needs_a_name()
+    {
+        using (var db = Database.Create(_path, JetVersion.Jet4))
+        {
+            db.CreateTable("Par.ent", new[] { Long("K") }, primaryKey: "K");
+            db.CreateTable("Child", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
+        }
+        AssertRefusedAndUnchanged<ArgumentException>(new RelationshipDefinition("Par.ent", "K", "Child", "K") { HasReferentialIntegrity = true }, "not a valid name");
+
+        using var again = Database.Open(_path);
+        again.CreateRelationship(new RelationshipDefinition("Par.ent", "K", "Child", "K") { Name = "ParentChild", HasReferentialIntegrity = true });
+        Assert.Equal(new[] { ".rB", "PrimaryKey" }, again.GetTable("Par.ent").Indexes.Select(ix => ix.Name));
+    }
+
+    // Two relationships made one after another to the same table: each referenced-side index is named by its number.
+    [Fact]
+    public void Relationships_made_one_after_another_give_the_referenced_table_indexes_of_different_names()
+    {
+        using var db = ParentAndChild();
+        db.CreateRelationship(ByK("First"));
+        db.CreateRelationship(new RelationshipDefinition("Parent", "Code", "Child", "Code") { Name = "Second", HasReferentialIntegrity = true });
+        db.CreateRelationship(ByK("Third"));
+
+        // PrimaryKey 0 and ByCode 1 were there: .rC, .rD and .rE follow.
+        Assert.Equal(new[] { ".rC 2", ".rD 3", ".rE 4", "ByCode 1", "PrimaryKey 0" },
+                     db.GetTable("Parent").Indexes.Select(ix => $"{ix.Name} {ix.IndexNumber}").OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Parent", expectedRows: 5));
+        Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Child", expectedRows: 42));
+    }
+
+    // Access allows no index a name like .rC, and nor does AddIndex; a table made by CreateTable, which checks no
+    // names, can have one. The name made for the referenced side's index passes over it.
+    [Fact]
+    public void The_name_made_for_the_referenced_side_passes_over_an_index_that_has_it()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, new[] { "K" }, new[] { new IndexDefinition(".rC", "Name") });
+        db.CreateTable("Child", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
+
+        db.CreateRelationship(ByK());   // the table's third index, which Access would name .rC
+
+        Assert.Equal(new[] { ".rC 1", ".rD 2", "PrimaryKey 0" },
+                     parent.Indexes.Select(ix => $"{ix.Name} {ix.IndexNumber}").OrderBy(n => n, StringComparer.Ordinal));
+        Assert.True(parent.Indexes.Single(ix => ix.Name == ".rD").IsForeignKey);
+        Assert.Equal(new[] { ".rC", ".rD", "PrimaryKey" }, Slots(db, "Parent").Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal));
     }
 
     // ── Refusals: nothing changes ────────────────────────────────────────────

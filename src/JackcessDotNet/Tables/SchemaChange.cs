@@ -118,6 +118,7 @@ internal static class SchemaChange
 
         if (index.Name.Length > MaxNameLength)
             throw new ArgumentException($"An index's name is at most {MaxNameLength} characters; '{index.Name}' is longer.", nameof(index));
+        EnsureValidName(index.Name, "an index", nameof(index));
         foreach (string descending in index.DescendingColumns)
             if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
                 throw new ArgumentException(
@@ -418,6 +419,7 @@ internal static class SchemaChange
         {
             if (string.IsNullOrWhiteSpace(asked) || asked.Length > MaxNameLength)
                 throw new ArgumentException($"A relationship's name is 1 to {MaxNameLength} characters; '{asked}' is not.", nameof(definition));
+            EnsureValidName(asked, "a relationship", nameof(definition));
             if (taken.Contains(asked))
                 throw new InvalidOperationException(
                     $"There is already a relationship named '{asked}' in this database, or an index of that name on '{toName}'. Nothing was changed.");
@@ -425,7 +427,9 @@ internal static class SchemaChange
         }
         else
         {
+            // Made of the tables' names, which this library lets hold what a name may not: then one must be given.
             name = FreeName(fromName, toName, taken);
+            EnsureValidName(name, "a relationship (made of the tables' names: give it one of its own)", nameof(definition));
         }
         var entry = db.Catalog.PrepareRelationship(name);
 
@@ -472,7 +476,9 @@ internal static class SchemaChange
             byte unique = (byte)(TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag);
             const byte ignored = TableDefinition.IgnoreNullsIndexFlag | TableDefinition.RequiredIndexFlag;
 
-            primary = Plan(file, parent.Definition, PrimaryIndexName(parent.Definition),
+            // In one table Access numbers the foreign key's index first and the referenced side's after it, and
+            // names the second by that number.
+            primary = Plan(file, parent.Definition, PrimaryIndexName(parent.Definition, numbersTaken: sameTable ? 1 : 0),
                            fromColumns.Select(c => new IndexColumn(c, ascending)).ToList(), unique, TdefEditor.IndexTypeForeignKey,
                            shares: existing => (existing.Flags | ignored) == (unique | ignored));
             secondary = Plan(file, child.Definition, name,
@@ -490,17 +496,24 @@ internal static class SchemaChange
             if (primary is not null && secondary is not null)
             {
                 // Each side's slot names the other's index by its number, so both are settled before either is written.
-                int primaryNumber   = NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
-                int secondaryNumber = sameTable
-                    ? primaryNumber + 1
-                    : NextIndexNumber(new TdefEditor(file.ReadPage(child.Definition.TdefPageNumber), file.Format, toName));
-
-                Write(db, file, primary, new TdefEditor.ForeignKeyReference(
+                // A table related to itself has both: the foreign key's index takes the next number and the
+                // referenced side's the one after, as DAO numbers them, so it is written first.
+                int secondaryNumber = NextIndexNumber(new TdefEditor(file.ReadPage(child.Definition.TdefPageNumber), file.Format, toName));
+                int primaryNumber   = sameTable
+                    ? secondaryNumber + 1
+                    : NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
+                var fromPrimary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
-                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull));
-                Write(db, file, secondary, new TdefEditor.ForeignKeyReference(
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull);
+                var fromSecondary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeySecondaryTable, primaryNumber, parent.Definition.TdefPageNumber,
-                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull));
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull);
+
+                int writtenSecondary = Write(db, file, secondary, fromSecondary);
+                int writtenPrimary   = Write(db, file, primary, fromPrimary);
+                if (writtenSecondary != secondaryNumber || writtenPrimary != primaryNumber)
+                    throw new InvalidOperationException(
+                        $"Relationship '{name}' was not created: its indexes were not given the numbers their slots name. Nothing was changed.");
             }
             undo.Commit();
         }
@@ -522,16 +535,31 @@ internal static class SchemaChange
     /// table's second index, C for its third - the letter the index's number counts to - with the lower-case
     /// letters after Z; and, as in Jackcess, the next letter while a name is taken.
     /// </summary>
-    private static string PrimaryIndexName(TableDefinition table)
+    private static string PrimaryIndexName(TableDefinition table, int numbersTaken)
     {
         var taken = new HashSet<string>(table.Indexes.Select(ix => ix.Name), StringComparer.OrdinalIgnoreCase);
-        int number = table.Indexes.Select(ix => ix.IndexNumber).DefaultIfEmpty(-1).Max() + 1;
+        int number = table.Indexes.Select(ix => ix.IndexNumber).DefaultIfEmpty(-1).Max() + 1 + numbersTaken;
         for (int n = number; ; n++)
         {
             char letter = n < 26 ? (char)('A' + n) : (char)('a' + (n - 26) % 26);
             string name = ".r" + letter + (n < 52 ? "" : (n / 52).ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (!taken.Contains(name)) return name;
         }
+    }
+
+    /// <summary>
+    /// Refuses a name Access does not allow an index or a relationship: one with a period, an exclamation mark, a
+    /// grave accent or a square bracket in it, a control character, or a space at its start ("... is not a valid
+    /// name. Make sure that it does not include invalid characters or punctuation"). It is what keeps the names
+    /// Access makes itself for a referenced table's index - .rB, .rC... - from being anyone else's: given ".rB"
+    /// for a relationship of a table to itself, this library once wrote two indexes of that name into the table.
+    /// </summary>
+    private static void EnsureValidName(string name, string ofWhat, string parameter)
+    {
+        if (name.Length > 0 && name[0] != ' ' && !name.Any(c => c is '.' or '!' or '`' or '[' or ']' || char.IsControl(c))) return;
+        throw new ArgumentException(
+            $"'{name}' is not a valid name for {ofWhat}: Access allows no period, exclamation mark, grave accent, square bracket " +
+            "or control character in one, and no space at its start. Nothing was changed.", parameter);
     }
 
     /// <summary>

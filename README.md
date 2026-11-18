@@ -333,6 +333,12 @@ index slots.
   index on exactly those columns or is built. It is refused when a row already there refers to no parent, when
   the matched columns differ in type, and when its name is a relationship's or an index's of the referring
   table. `EnforceForeignKeys` keeps it from then on.
+- **Names.** An index or a relationship is refused a name Access does not allow: one with a period, an
+  exclamation mark, a grave accent, a square bracket or a control character in it, or a space at its start. So
+  nothing can take the name Access gives a referenced table's index (`.rB`, `.rC`...). A relationship given no
+  name is named for its two tables; when their names make no valid name, one has to be given.
+- **A table related to itself** has both of the relationship's indexes: the foreign key's is numbered first and
+  the referenced side's after it, and named by that number, as DAO writes them.
 - **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
   Relationships window and Jackcess mark it, and its foreign key's index is then unique, as Access makes it
   (Jackcess gives it a plain one).
