@@ -527,14 +527,33 @@ public sealed class DataPageWriter
     }
 
     /// <summary>
-    /// How a value a caller names a row by is matched to a stored one: equal, or equal as numbers (a Long column's 5
-    /// for a caller's 5L). Text is matched exactly.
+    /// How a value a caller names a row by is matched to a stored one - the one comparison every lookup that
+    /// confirms a row uses. A floating-point value is matched by its bits, the caller's taken to the column's type
+    /// as a row would store it: +0.0 and -0.0 are two keys to Access and to the index, and so are a Double and the
+    /// next Double after it, which a comparison as decimals called equal - an update by the second rewrote the
+    /// first. Anything else is equal, or equal as numbers (a Long column's 5 for a caller's 5L; a Currency or a
+    /// Decimal exactly, as decimals compare). Text is matched exactly. A Date/Time is matched as it is read, to
+    /// the millisecond.
     /// </summary>
     internal static bool PrimaryKeysEqual(object? stored, object? requested)
     {
-        if (Equals(stored, requested)) return true;
-        if (stored is null || requested is null) return false;
-        try { return Convert.ToDecimal(stored) == Convert.ToDecimal(requested); }
-        catch { return false; }
+        if (stored is null || requested is null) return stored is null && requested is null;
+        try
+        {
+            switch (stored)
+            {
+                case double d:
+                    return BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(requested));
+                case float f:
+                    return BitConverter.ToInt32(BitConverter.GetBytes(f), 0)
+                        == BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(requested)), 0);
+            }
+            if (Equals(stored, requested)) return true;
+            return Convert.ToDecimal(stored) == Convert.ToDecimal(requested);
+        }
+        catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
+        {
+            return false;
+        }
     }
 }
