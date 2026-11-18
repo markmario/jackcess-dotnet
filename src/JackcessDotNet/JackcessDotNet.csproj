@@ -10,7 +10,7 @@
     <!-- The package ID is not the assembly name: nuget.org's JackcessDotNet is the upstream port's
          package (net10.0 only), so this one has an ID of its own. The assembly and namespace stay
          JackcessDotNet, so code written against either reads the same. -->
-    <PackageId>Markmario.JackcessDotNet</PackageId>
+    <PackageId>Jackcess.Net</PackageId>
     <!-- The release tag is the version: CI passes -p:Version from a vX.Y.Z tag (scripts/Assert-ReleaseTag.ps1),
          and the assembly, file and package versions all follow it. This is only the untagged default, so a
          local or branch build is plainly not a release and cannot shadow a published package in

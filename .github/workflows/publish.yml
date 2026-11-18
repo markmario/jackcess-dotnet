@@ -31,7 +31,7 @@ concurrency:
 env:
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
-  PACKAGE_ID: Markmario.JackcessDotNet
+  PACKAGE_ID: Jackcess.Net
   PROJECT: src/JackcessDotNet/JackcessDotNet.csproj
 
 jobs:

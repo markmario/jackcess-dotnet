@@ -6,7 +6,7 @@
 
 # JackcessDotNet
 
-[![NuGet](https://img.shields.io/nuget/v/Markmario.JackcessDotNet?logo=nuget)](https://www.nuget.org/packages/Markmario.JackcessDotNet)
+[![NuGet](https://img.shields.io/nuget/v/Jackcess.Net?logo=nuget)](https://www.nuget.org/packages/Jackcess.Net)
 [![Ported from](https://img.shields.io/badge/ported%20from-mehran--ghanizadeh%2Fjackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -16,7 +16,8 @@ and .NET Standard 2.0.
 
 This project started from release 1.2.2 of
 [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet) and is now
-maintained on its own, with its own package, `Markmario.JackcessDotNet`. It differs from that port in two ways:
+maintained on its own, with its own package, `Jackcess.Net`. It is not a release of the Jackcess project, and
+neither the Jackcess authors nor Mehran Ghanizadeh maintain or endorse it. It differs from that port in two ways:
 
 - **.NET Framework.** The `JackcessDotNet` package on nuget.org ships a `net10.0` assembly and nothing
   else (checked for 2.0.0 and 3.1.0), so nothing on .NET Framework can use it. This one ships `net8.0`,
@@ -33,7 +34,7 @@ verification.
 ## Installing
 
 ```
-dotnet add package Markmario.JackcessDotNet
+dotnet add package Jackcess.Net
 ```
 
 The package ID is not the assembly name. The assembly and the namespace are `JackcessDotNet`, as in the
@@ -53,7 +54,7 @@ git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-
 <ProjectReference Include="..\..\ext\jackcess-dotnet\src\JackcessDotNet\JackcessDotNet.csproj" />
 ```
 
-A build here writes `Markmario.JackcessDotNet.0.0.0-local.nupkg` to `artifacts/`: only a release build has a
+A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a release build has a
 real version (see [Releasing](#releasing)).
 
 ## What this fork changes

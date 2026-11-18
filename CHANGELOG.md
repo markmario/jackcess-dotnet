@@ -1,19 +1,19 @@
 # Changelog
 
-All notable changes to JackcessDotNet (the `Markmario.JackcessDotNet` package) are documented in this file. The format
+All notable changes to JackcessDotNet (the `Jackcess.Net` package) are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The first release of this repository as a package of its own, `Markmario.JackcessDotNet`. Everything below
+The first release of this repository as a package of its own, `Jackcess.Net`. Everything below
 1.2.2 is the history of [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet),
 where this started; nothing from it was released under this ID. It will be 2.0.0, because the public API has
 changed since 1.2.2.
 
 ### Changed
 
-- **Package ID `Markmario.JackcessDotNet`.** nuget.org's `JackcessDotNet` is the other port's package. The
+- **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
 - **Targets `net8.0`, `net472` and `netstandard2.0`.**
 - **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
