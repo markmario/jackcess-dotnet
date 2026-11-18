@@ -230,6 +230,20 @@ public sealed class AddIndexTests : IDisposable
             table => table.AddIndex(new IndexDefinition("Descending", "Grp") { DescendingColumns = new[] { "Seq" } }));
     }
 
+    // As Access refuses them: with such a name allowed, an index could take the name Access gives a
+    // relationship's index on a referenced table (.rB, .rC...).
+    [Theory]
+    [InlineData(".rB")]
+    [InlineData("a.b")]
+    [InlineData("wow!")]
+    [InlineData("[bracketed]")]
+    [InlineData(" leading")]
+    public void An_index_with_a_name_Access_does_not_allow_is_refused_and_nothing_changes(string name)
+    {
+        CreateWithRows(10).Dispose();
+        AssertRefusedAndUnchanged<ArgumentException>(table => table.AddIndex(new IndexDefinition(name, "Grp")), "not a valid name");
+    }
+
     [Fact]
     public void A_table_takes_thirty_two_indexes_and_the_next_is_refused()
     {
