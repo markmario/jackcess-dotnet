@@ -807,5 +807,36 @@ public sealed class Database : IDisposable
     /// </summary>
     internal void SchemaChanged() => _foreignKeys = null;
 
+    /// <summary>
+    /// Creates a relationship between two tables, as Access's Relationships window and Jackcess's
+    /// <c>RelationshipBuilder</c> do: its rows in <c>MSysRelationships</c> and its entry in the catalog and, when it
+    /// has referential integrity, the two indexes Access keeps for one - on the referenced table an index named
+    /// <c>.rB</c>, <c>.rC</c>... that shares the tree of the unique index on the referenced columns, and on the
+    /// referring table an index with the relationship's name on the foreign key, built over the rows already there
+    /// (or sharing the tree of a plain index already on exactly those columns). Access then shows the
+    /// relationship and enforces it, and so does this library when <see cref="EnforceForeignKeys"/> is set.
+    /// <para>
+    /// Everything is checked before anything is written, and what is written is taken back if writing it fails:
+    /// a refused relationship leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <returns>The relationship as <see cref="GetRelationships"/> now lists it.</returns>
+    /// <exception cref="ArgumentException">
+    /// The definition names no columns, or a different number on each side, or a column twice on one side of a
+    /// relationship with referential integrity; or asks for a cascade without referential integrity.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A table or column is not there; two matched columns are of different types; a relationship of that name
+    /// exists, or the referring table has an index of that name; and, with referential integrity: the referenced
+    /// columns have no unique index (or primary key) on exactly them, or a row of the referring table refers to
+    /// no row of the referenced table. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;
+    /// or a table's definition runs, or would run, over more than one page. Nothing is changed.
+    /// </exception>
+    public Relationship CreateRelationship(RelationshipDefinition definition)
+        => SchemaChange.CreateRelationship(this, _file, definition ?? throw new ArgumentNullException(nameof(definition)));
+
     public void Dispose() => _file.Dispose();
 }

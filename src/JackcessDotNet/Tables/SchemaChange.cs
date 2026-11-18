@@ -346,6 +346,203 @@ internal static class SchemaChange
         return names.Count;
     }
 
+    // ── A relationship ───────────────────────────────────────────────────────
+
+    private const int NoReferentialIntegrityFlag = 0x00000002;
+    private const int OneToOneFlag               = 0x00000001;
+    private const int CascadeUpdatesFlag         = 0x00000100;
+    private const int CascadeDeletesFlag         = 0x00001000;
+    private const int CascadeNullFlag            = 0x00002000;
+    private const int LeftOuterJoinFlag          = 0x01000000;
+    private const int RightOuterJoinFlag         = 0x02000000;
+
+    private const string RelationshipsTable = "MSysRelationships";
+
+    internal static Relationship CreateRelationship(Database db, PageFile file, RelationshipDefinition definition)
+    {
+        file.EnsureWritable();
+
+        // The tables, by the names the catalog has for them: MSysRelationships holds those.
+        string fromName = db.Catalog.TableNameAsListed(definition.FromTable)
+            ?? throw new InvalidOperationException($"Table '{definition.FromTable}' was not found in this database. Nothing was changed.");
+        string toName = db.Catalog.TableNameAsListed(definition.ToTable)
+            ?? throw new InvalidOperationException($"Table '{definition.ToTable}' was not found in this database. Nothing was changed.");
+        var parent = db.GetTable(fromName);
+        var child  = db.GetTable(toName);
+        bool sameTable = string.Equals(fromName, toName, StringComparison.OrdinalIgnoreCase);
+
+        var fromColumns = definition.ColumnPairs.Select(p => ColumnOf(parent.Definition, p.FromColumn, "A relationship's")).ToList();
+        var toColumns   = definition.ColumnPairs.Select(p => ColumnOf(child.Definition, p.ToColumn, "A relationship's")).ToList();
+        for (int i = 0; i < fromColumns.Count; i++)
+            if (fromColumns[i].DataType != toColumns[i].DataType)
+                throw new InvalidOperationException(
+                    $"A relationship's matched columns must have the same data type: '{fromName}.{fromColumns[i].Name}' is " +
+                    $"{fromColumns[i].DataType} and '{toName}.{toColumns[i].Name}' is {toColumns[i].DataType}. Nothing was changed.");
+
+        bool enforced = definition.HasReferentialIntegrity;
+        if (!enforced && (definition.CascadeUpdates || definition.CascadeDeletes || definition.CascadeNull))
+            throw new ArgumentException("A relationship cascades only when it has referential integrity.", nameof(definition));
+
+        int flags = enforced ? 0 : NoReferentialIntegrityFlag;
+        if (definition.CascadeUpdates) flags |= CascadeUpdatesFlag;
+        if (definition.CascadeDeletes) flags |= CascadeDeletesFlag;
+        if (definition.CascadeNull)    flags |= CascadeNullFlag;
+        if (definition.JoinType == RelationshipJoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
+        if (definition.JoinType == RelationshipJoinType.RightOuter) flags |= RightOuterJoinFlag;
+        // One to one when each side's columns have a unique index of their own, as Access's Relationships window
+        // and Jackcess mark it. The flag describes the relationship; what keeps it one to one is the index.
+        if (UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null)
+            flags |= OneToOneFlag;
+
+        Table relationships;
+        try { relationships = db.GetTable(RelationshipsTable); }
+        catch (InvalidOperationException)
+        {
+            throw new NotSupportedException($"The database has no {RelationshipsTable} table to hold a relationship. Nothing was changed.");
+        }
+        if (relationships.InsertRefusal is { } refusal) throw new NotSupportedException(refusal);
+
+        // The name: the one asked for, which must be free, or one made of the tables' names and made free.
+        var taken = new HashSet<string>(db.GetRelationships().Select(r => r.Name).Concat(db.Catalog.RelationshipNames()),
+                                        StringComparer.OrdinalIgnoreCase);
+        if (enforced)
+            foreach (var index in child.Indexes) taken.Add(index.Name);
+        string name;
+        if (definition.Name is { } asked)
+        {
+            if (string.IsNullOrWhiteSpace(asked) || asked.Length > MaxNameLength)
+                throw new ArgumentException($"A relationship's name is 1 to {MaxNameLength} characters; '{asked}' is not.", nameof(definition));
+            if (taken.Contains(asked))
+                throw new InvalidOperationException(
+                    $"There is already a relationship named '{asked}' in this database, or an index of that name on '{toName}'. Nothing was changed.");
+            name = asked;
+        }
+        else
+        {
+            name = FreeName(fromName, toName, taken);
+        }
+        var entry = db.Catalog.PrepareRelationship(name);
+
+        var pairs = fromColumns.Select((c, i) => (c.Name, toColumns[i].Name)).ToList();
+        var rows = pairs.Select((pair, i) => new Row
+        {
+            ["ccolumn"]            = pairs.Count,
+            ["grbit"]              = flags,
+            ["icolumn"]            = i,
+            ["szColumn"]           = pair.Item2,
+            ["szObject"]           = toName,
+            ["szReferencedColumn"] = pair.Item1,
+            ["szReferencedObject"] = fromName,
+            ["szRelationship"]     = name,
+        }).ToList();
+        foreach (var row in rows) relationships.Validate(row);
+
+        var relationship = new Relationship(name, fromName, toName, flags, pairs);
+
+        PlannedIndex? primary = null, secondary = null;
+        if (enforced)
+        {
+            if (fromColumns.Distinct().Count() != fromColumns.Count || toColumns.Distinct().Count() != toColumns.Count)
+                throw new ArgumentException("A relationship with referential integrity names each column of a table once.", nameof(definition));
+            if (UniqueIndexOn(parent, fromColumns) is null)
+                throw new InvalidOperationException(
+                    $"No unique index found for the referenced columns ({string.Join(", ", fromColumns.Select(c => c.Name))}) of " +
+                    $"'{fromName}': a relationship with referential integrity refers to a primary key or a unique index. Nothing was changed.");
+            EnsureReadWhole(parent.Definition);
+            EnsureReadWhole(child.Definition);
+
+            if (ForeignKeyEnforcer.FirstOrphan(relationship, parent, child) is { } orphan)
+                throw new InvalidOperationException(
+                    $"Relationship '{name}' cannot have referential integrity: existing data in '{toName}' violates it - {orphan}. Nothing was changed.");
+
+            // On the referenced table, an index Access names .rB, .rC... that shares the tree of the unique index
+            // on those columns; on the referring table, an index with the relationship's name on the foreign key,
+            // which shares the tree of a plain index on exactly those columns when there is one and otherwise is
+            // built - Access shares no unique, required or null-ignoring index's tree for it.
+            var ascending = TableDefinition.AscendingColumnFlag;
+            byte plain  = TableDefinition.UnknownIndexFlag;
+            byte unique = (byte)(TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag);
+            const byte ignored = TableDefinition.IgnoreNullsIndexFlag | TableDefinition.RequiredIndexFlag;
+
+            primary = Plan(file, parent.Definition, PrimaryIndexName(parent.Definition),
+                           fromColumns.Select(c => new IndexColumn(c, ascending)).ToList(), unique, TdefEditor.IndexTypeForeignKey,
+                           shares: existing => (existing.Flags | ignored) == (unique | ignored));
+            secondary = Plan(file, child.Definition, name,
+                             toColumns.Select(c => new IndexColumn(c, ascending)).ToList(), plain, TdefEditor.IndexTypeForeignKey,
+                             shares: existing => existing.Flags == plain,
+                             alsoAdded: sameTable ? primary.DefinitionBytes : 0, alsoIndexes: sameTable ? 1 : 0);
+        }
+
+        using (var undo = file.BeginUndo())
+        {
+            foreach (var row in rows) relationships.Insert(row);
+            db.Catalog.InsertRelationshipEntry(entry, name);
+
+            if (primary is not null && secondary is not null)
+            {
+                // Each side's slot names the other's index by its number, so both are settled before either is written.
+                int primaryNumber   = NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
+                int secondaryNumber = sameTable
+                    ? primaryNumber + 1
+                    : NextIndexNumber(new TdefEditor(file.ReadPage(child.Definition.TdefPageNumber), file.Format, toName));
+
+                Write(db, file, primary, new TdefEditor.ForeignKeyReference(
+                    TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull));
+                Write(db, file, secondary, new TdefEditor.ForeignKeyReference(
+                    TdefEditor.ForeignKeySecondaryTable, primaryNumber, parent.Definition.TdefPageNumber,
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull));
+            }
+            undo.Commit();
+        }
+
+        Changed(db, file, parent.Definition.TdefPageNumber);
+        Changed(db, file, child.Definition.TdefPageNumber);
+        return relationship;
+    }
+
+    /// <summary>The unique index (or primary key) of <paramref name="table"/> on exactly <paramref name="columns"/>, in that order, or null.</summary>
+    private static Index? UniqueIndexOn(Table table, IReadOnlyList<Column> columns)
+        => table.Indexes.FirstOrDefault(index =>
+            index.IsUnique
+            && index.Columns.Count == columns.Count
+            && index.Columns.Zip(columns, (a, b) => a.Column.ColumnNumber == b.ColumnNumber).All(same => same));
+
+    /// <summary>
+    /// The name Access gives the index a relationship has on its referenced table: ".r" and a letter, B for the
+    /// table's second index, C for its third - the letter the index's number counts to - with the lower-case
+    /// letters after Z; and, as in Jackcess, the next letter while a name is taken.
+    /// </summary>
+    private static string PrimaryIndexName(TableDefinition table)
+    {
+        var taken = new HashSet<string>(table.Indexes.Select(ix => ix.Name), StringComparer.OrdinalIgnoreCase);
+        int number = table.Indexes.Select(ix => ix.IndexNumber).DefaultIfEmpty(-1).Max() + 1;
+        for (int n = number; ; n++)
+        {
+            char letter = n < 26 ? (char)('A' + n) : (char)('a' + (n - 26) % 26);
+            string name = ".r" + letter + (n < 52 ? "" : (n / 52).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (!taken.Contains(name)) return name;
+        }
+    }
+
+    /// <summary>
+    /// A name for a relationship that was given none: the two tables' names run together, as Access's
+    /// Relationships window names one, kept to what an index's name can be (Jackcess's limits), with a number
+    /// after it when a relationship - or an index of the referring table - has it already.
+    /// </summary>
+    private static string FreeName(string fromTable, string toTable, HashSet<string> taken)
+    {
+        int limit = MaxNameLength / 2 - 3;
+        string name = (fromTable.Length > limit ? fromTable.Substring(0, limit) : fromTable) + toTable;
+        limit = MaxNameLength - 3;
+        if (name.Length > limit) name = name.Substring(0, limit);
+
+        string free = name;
+        for (int i = 1; taken.Contains(free); i++)
+            free = name + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return free;
+    }
+
     // ── Shared ───────────────────────────────────────────────────────────────
 
     /// <summary>
