@@ -1,0 +1,26 @@
+jackcess-dotnet
+https://github.com/markmario/jackcess-dotnet
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product is a derivative work. It contains, in modified form:
+
+- jackcess-dotnet by Mehran Ghanizadeh
+  https://github.com/mehran-ghanizadeh/jackcess-dotnet
+  A C# port of Jackcess, licensed under the Apache License, Version 2.0.
+  This repository started from its release 1.2.2.
+
+- Jackcess, originally by James Ahlborn, and its maintained fork by Markus Spann
+  https://jackcess.sourceforge.io/
+  https://github.com/spannm/jackcess
+  Licensed under the Apache License, Version 2.0. The port follows its
+  behaviour and reuses its test corpus.
+
+Files of the works above have been modified in this repository since 1.2.2:
+the changes are recorded in its git history, its pull requests and
+CHANGELOG.md. Neither Mehran Ghanizadeh nor the Jackcess authors endorse
+or maintain this package; report problems with it to this repository.
+
+Mehran Ghanizadeh's port ships no NOTICE file. The Java Jackcess project's
+NOTICE.txt covers financial functions in its expression engine (from Apache
+POI and UCanAccess), which this port does not include.
