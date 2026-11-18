@@ -3,7 +3,7 @@ using System.IO;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Entry point for creating and opening Microsoft Access (.mdb) database files.
+/// Entry point for creating and opening Microsoft Access (.mdb / .accdb) database files.
 ///
 /// Usage:
 /// <code>
@@ -130,8 +130,16 @@ public sealed class Database : IDisposable
     // ── Factory methods ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a new blank .mdb file at <paramref name="path"/> and returns an
-    /// open <see cref="Database"/> ready for use.
+    /// Creates a new blank database at <paramref name="path"/>, in the format of <paramref name="version"/>, and
+    /// returns it open and ready for use: an .mdb for <see cref="JetVersion.Jet4"/> (Access 2000-2003), an .accdb
+    /// for <see cref="JetVersion.Jet12"/> (Access 2007), <see cref="JetVersion.Jet14"/> (Access 2010),
+    /// <see cref="JetVersion.Jet16"/> (Access 2016) and <see cref="JetVersion.Jet17"/> (Access 2019) - the formats
+    /// Jackcess creates. The file's name is the caller's: no extension is added or asked for.
+    /// <para>
+    /// The new file is a copy of an empty database Access's own engine made (<see cref="DatabaseHeader"/>). Tables
+    /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
+    /// there; in the later formats they sort in General.
+    /// </para>
     /// </summary>
     /// <exception cref="NotSupportedException">
     /// <paramref name="version"/> is <see cref="JetVersion.Jet3"/>: Access 97 files are read, and neither created
@@ -140,7 +148,7 @@ public sealed class Database : IDisposable
     /// </exception>
     public static Database Create(string path, JetVersion version)
     {
-        var format = version == JetVersion.Jet3 ? JetFormat.Jet3 : JetFormat.Jet4;
+        var format = JetFormat.For(version);
         if (format.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
         var file   = new PageFile(path, format, FileMode.Create);
         var db     = new Database(file);
@@ -179,16 +187,10 @@ public sealed class Database : IDisposable
             throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database.");
 
-        byte versionCode = head[0x14];
-        return versionCode switch
-        {
-            0x00 => OpenWithJetCrypt   (path, JetVersion.Jet3, password),
-            0x01 => OpenWithJetCrypt   (path, JetVersion.Jet4, password),
-            0x02 => OpenWithOfficeCrypt(path, JetVersion.Jet12, password),
-            0x03 => OpenWithOfficeCrypt(path, JetVersion.Jet14, password),
-            0x04 => OpenWithOfficeCrypt(path, JetVersion.Jet16, password),
-            _    => OpenWithOfficeCrypt(path, JetVersion.Jet17, password),
-        };
+        JetVersion version = JetFormat.ForVersionCode(head[0x14]).Version;
+        return version is JetVersion.Jet3 or JetVersion.Jet4
+            ? OpenWithJetCrypt   (path, version, password)
+            : OpenWithOfficeCrypt(path, version, password);
     }
 
     /// <summary>
@@ -200,15 +202,7 @@ public sealed class Database : IDisposable
     /// </summary>
     private static Database OpenWithOfficeCrypt(string path, JetVersion version, string password)
     {
-        JetFormat format = version switch
-        {
-            JetVersion.Jet12 => JetFormat.Jet12,
-            JetVersion.Jet14 => JetFormat.Jet14,
-            JetVersion.Jet16 => JetFormat.Jet16,
-            _                => JetFormat.Jet17,
-        };
-
-        var file = new PageFile(path, format, FileMode.Open);
+        var file = new PageFile(path, JetFormat.For(version), FileMode.Open);
         try
         {
             byte[] header = file.ReadPage(0);
@@ -291,16 +285,7 @@ public sealed class Database : IDisposable
     /// </summary>
     public static Database Open(string path, JetVersion version)
     {
-        JetFormat format = PageFile.FormatOf(path) ?? version switch
-        {
-            JetVersion.Jet3  => JetFormat.Jet3,
-            JetVersion.Jet4  => JetFormat.Jet4,
-            JetVersion.Jet12 => JetFormat.Jet12,
-            JetVersion.Jet14 => JetFormat.Jet14,
-            JetVersion.Jet16 => JetFormat.Jet16,
-            JetVersion.Jet17 => JetFormat.Jet17,
-            _                => throw new NotSupportedException($"Unsupported JetVersion: {version}")
-        };
+        JetFormat format = PageFile.FormatOf(path) ?? JetFormat.For(version);
         var file = new PageFile(path, format, FileMode.Open);
         try
         {
@@ -339,10 +324,10 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Opens an existing Access database file, auto-detecting the Jet format
-    /// version from the byte at file offset 0x14:
+    /// version from the byte at file offset 0x14 (<see cref="JetFormat.ForVersionCode"/>):
     ///   0x00 = Jet3 (Access 97), which is opened for reading only
     ///   0x01 = Jet4 (Access 2000-2003)
-    ///   0x02+ = .accdb formats (not yet supported)
+    ///   0x02 and later = the .accdb formats, Access 2007 to Access 2019
     /// </summary>
     public static Database Open(string path)
     {
@@ -365,18 +350,7 @@ public sealed class Database : IDisposable
             throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database (missing 'Standard Jet/ACE DB' signature).");
 
-        byte versionCode = head[0x14];
-        return versionCode switch
-        {
-            0x00 => Open(path, JetVersion.Jet3),
-            0x01 => Open(path, JetVersion.Jet4),
-            0x02 => Open(path, JetVersion.Jet12),
-            0x03 => Open(path, JetVersion.Jet14),
-            0x04 => Open(path, JetVersion.Jet16),
-            // Newer ACE generations (0x05+) re-use the V17 layout we know about;
-            // fall through to Jet17 rather than refusing to open.
-            _    => Open(path, JetVersion.Jet17)
-        };
+        return Open(path, JetFormat.ForVersionCode(head[0x14]).Version);
     }
 
     // ── Foreign keys ─────────────────────────────────────────────────────────

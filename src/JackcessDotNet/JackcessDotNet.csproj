@@ -81,6 +81,9 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\\empty2003.mdb" />
+    <!-- Made by DAO (tools/empty-databases.ps1), not copied from Jackcess: see DatabaseHeader. -->
+    <EmbeddedResource Include="Resources\\empty2007.accdb" />
+    <EmbeddedResource Include="Resources\\empty2010.accdb" />
     <EmbeddedResource Include="Resources\\index_codes_genleg.txt" />
     <EmbeddedResource Include="Resources\\index_codes_ext_genleg.txt" />
     <EmbeddedResource Include="Resources\\index_codes_gen.txt" />

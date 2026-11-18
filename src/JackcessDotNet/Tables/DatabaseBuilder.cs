@@ -25,7 +25,10 @@ public sealed class DatabaseBuilder
         return this;
     }
 
-    /// <summary>Selects the on-disk format to create. Defaults to Jet4 (.mdb / Access 2000-2003).</summary>
+    /// <summary>
+    /// Selects the on-disk format to create: Jet4 (.mdb / Access 2000-2003), the default, or one of the .accdb
+    /// formats, Jet12 to Jet17 (<see cref="Database.Create"/>).
+    /// </summary>
     public DatabaseBuilder WithVersion(JetVersion version)
     {
         _version = version;

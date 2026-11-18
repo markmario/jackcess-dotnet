@@ -342,4 +342,33 @@ public sealed class JetFormat
     public static JetFormat Jet16 { get; } = new(JetVersion.Jet16, _jet4Spec);
     /// <summary>ACE 17 — same on-disk layout as Jet12/14/16.</summary>
     public static JetFormat Jet17 { get; } = new(JetVersion.Jet17, _jet4Spec);
+
+    /// <summary>The format of <paramref name="version"/>.</summary>
+    public static JetFormat For(JetVersion version) => version switch
+    {
+        JetVersion.Jet3  => Jet3,
+        JetVersion.Jet4  => Jet4,
+        JetVersion.Jet12 => Jet12,
+        JetVersion.Jet14 => Jet14,
+        JetVersion.Jet16 => Jet16,
+        JetVersion.Jet17 => Jet17,
+        _                => throw new NotSupportedException($"Unsupported JetVersion: {version}")
+    };
+
+    /// <summary>
+    /// The format a file's header names, by the version byte at offset 0x14, as Jackcess reads it: 0 is Access
+    /// 97's, 1 Access 2000-2003's, 2 Access 2007's, 3 Access 2010's, 5 Access 2016's - a file with a Large Number
+    /// column - and 6 Access 2019's, a file with a Date/Time Extended column. 4 was to be Access 2013's, which
+    /// wrote what Access 2010 wrote, so that no file has been seen with it; it is taken with 5. A later version
+    /// than any known is read as the latest known.
+    /// </summary>
+    public static JetFormat ForVersionCode(byte code) => code switch
+    {
+        0x00 => Jet3,
+        0x01 => Jet4,
+        0x02 => Jet12,
+        0x03 => Jet14,
+        0x04 or 0x05 => Jet16,
+        _    => Jet17,
+    };
 }
