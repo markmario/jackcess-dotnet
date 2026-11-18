@@ -1,7 +1,7 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// A Decimal (Numeric) value that reads with more digits than its column's precision allows: what
+/// A Decimal (Numeric) value whose stored number has more digits than its column's precision allows: what
 /// <see cref="Table.FindDecimalsBeyondPrecision"/> and <see cref="Database.FindDecimalsBeyondPrecision"/> list.
 /// Access does not write such a value, and neither does this library, so it is almost certainly one a version of
 /// this library before qcatco/exportmdb.interop#61 wrote, with its bytes in the order those versions used:
@@ -10,13 +10,14 @@ namespace JackcessDotNet;
 public sealed class DecimalBeyondPrecision
 {
     internal DecimalBeyondPrecision(string table, Column column, int rowIndex, Row primaryKey,
-                                    decimal? value, decimal? valueInEarlierByteOrder)
+                                    decimal? value, bool isCut, decimal? valueInEarlierByteOrder)
     {
         Table                   = table;
         Column                  = column;
         RowIndex                = rowIndex;
         PrimaryKey              = primaryKey;
         Value                   = value;
+        IsCut                   = isCut;
         ValueInEarlierByteOrder = valueInEarlierByteOrder;
     }
 
@@ -36,10 +37,17 @@ public sealed class DecimalBeyondPrecision
     public Row PrimaryKey { get; }
 
     /// <summary>
-    /// The value as it is read, and as Access reads it; null when it is more than a <see cref="decimal"/> holds,
-    /// for which a read of the row gives null too.
+    /// The value as it is read, and as Access reads it: what a read of the row gives. When the stored number runs
+    /// past 96 bits (<see cref="IsCut"/>) that is the number its low 96 bits make. Null only for a column whose
+    /// scale is past 28, which a <see cref="decimal"/> cannot hold.
     /// </summary>
     public decimal? Value { get; }
+
+    /// <summary>
+    /// Whether the stored number runs past the 96 bits Access reads of one, so that <see cref="Value"/> is only
+    /// its low 96 bits - which may be a number the column would hold, 0 among them. Access writes no such number.
+    /// </summary>
+    public bool IsCut { get; }
 
     /// <summary>
     /// The value its bytes make in the order earlier versions of this library wrote them - sixteen bytes, the most
@@ -51,7 +59,8 @@ public sealed class DecimalBeyondPrecision
     public override string ToString()
         => $"{Table}.{Column.Name}, row {RowIndex}" +
            (PrimaryKey.Count > 0 ? $" ({string.Join(", ", PrimaryKey.Select(k => $"{k.Key}={k.Value}"))})" : string.Empty) +
-           $": reads {Show(Value)}, {Show(ValueInEarlierByteOrder)} in the earlier byte order";
+           $": reads {Show(Value)}{(IsCut ? " (the low 96 bits of a longer number)" : string.Empty)}, " +
+           $"{Show(ValueInEarlierByteOrder)} in the earlier byte order";
 
     private static string Show(decimal? value)
         => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "more than a decimal holds";

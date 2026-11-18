@@ -21,9 +21,12 @@ namespace JackcessDotNet;
 /// index already on its columns); a tree is changed once however many indexes name it. An index that ignores
 /// nulls holds no entry for a row whose index columns are all null.
 ///
-/// Rows are found through an index, for the relationships <see cref="ForeignKeyEnforcer"/> keeps, only once the
-/// index has been seen to hold every row (<see cref="HoldsEveryRow"/>): a file an earlier version of this library
-/// wrote to can have rows its indexes do not hold.
+/// An index is taken at its word, as Access and Jackcess take one: what it holds are the table's rows. A file an
+/// earlier version of this library wrote to can have rows its indexes do not hold, and for such a file a caller
+/// sets <see cref="Database.VerifyIndexes"/>. Then rows are found through an index, for the relationships
+/// <see cref="ForeignKeyEnforcer"/> keeps, only once the index has been seen to hold every row
+/// (<see cref="HoldsEveryRow"/>), and a unique index is looked at the same way before a row is compared with it,
+/// the rows it does not hold being compared too (<see cref="EnsureNoDuplicates"/>).
 /// </summary>
 internal sealed class TableIndexes
 {
@@ -186,14 +189,31 @@ internal sealed class TableIndexes
     }
 
     /// <summary>
-    /// Refuses <paramref name="entries"/>, a row's about to be written, when a unique index already holds one of
-    /// their keys for another row. <paramref name="replacedRowPointer"/> is the row an update is replacing, whose
-    /// own entries are not another row's. Returns the writer that looked, when one did and
-    /// <paramref name="forEntry"/> asks for it: it holds the pages it read, which <see cref="Add"/> then reads
-    /// no second time - so a unique index costs an insert no more page reads than one that is not.
+    /// Refuses <paramref name="entries"/>, a row's about to be written, when another row has one of their keys in
+    /// a unique index. <paramref name="replacedRowPointer"/> is the row an update is replacing, whose own entries
+    /// are not another row's. Returns the writer that looked, when one did and <paramref name="forEntry"/> asks
+    /// for it: it holds the pages it read, which <see cref="Add"/> then reads no second time - so a unique index
+    /// costs an insert no more page reads than one that is not.
+    /// <para>
+    /// With <see cref="Database.VerifyIndexes"/> the index is not taken at its word
+    /// (qcatco/exportmdb.interop#73): the rows it was seen not to hold (<see cref="RowsNotHeldBy"/>) are asked as
+    /// well, since a second row with the values of one of them is a duplicate the index knows nothing of. Access
+    /// adds such a row, and when the file is next compacted cannot build the index, and leaves the table without
+    /// it. Seeing costs the first row a session checks one reading of the table, for all its unique indexes
+    /// together, and no row after it anything. Without it nothing is read but the index.
+    /// </para>
     /// </summary>
     public IndexWriter? EnsureNoDuplicates(IReadOnlyList<Entry> entries, int? replacedRowPointer = null, bool forEntry = false)
     {
+        if (_file.VerifyIndexes)
+        {
+            List<Tree>? unseen = null;
+            foreach (var entry in entries)
+                if (entry.Tree.IsUnique && !entry.HasNull && !_file.IndexesChecked.ContainsKey(Which(entry.Tree)))
+                    (unseen ??= new List<Tree>()).Add(entry.Tree);
+            if (unseen is not null) Look(unseen);
+        }
+
         IndexWriter? writer = null;
         foreach (var entry in entries)
         {
@@ -205,11 +225,14 @@ internal sealed class TableIndexes
                 writer = new IndexWriter(_file, _allocator);
                 if (forEntry) writer.RememberPagesRead();
             }
+            var notHeld = RowsNotHeldBy(tree);
             foreach (var (_, holder) in StoredUnder(writer, entry))
             {
                 if (holder == replacedRowPointer || !IsLiveRow(holder)) continue;
                 throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
             }
+            if (notHeld.AnotherHas(entry.Key, replacedRowPointer))
+                throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
         }
         return forEntry ? writer : null;
     }
@@ -275,9 +298,10 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Whether <paramref name="tree"/> has an entry for every row of the table that a search of it could be for:
-    /// what makes "the index has no such row" mean that the table has none. Access takes that on trust. Here it
-    /// is seen once for each index, the first time rows are looked for through it, and remembered while the
-    /// database is open (qcatco/exportmdb.interop#64).
+    /// what makes "the index has no such row" mean that the table has none. Access takes that on trust, and
+    /// Jackcess, and so does this library unless <see cref="Database.VerifyIndexes"/> is set. Then it is seen
+    /// once for each index, the first time rows are looked for through it, and remembered while the database is
+    /// open (qcatco/exportmdb.interop#64).
     /// <para>
     /// Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
     /// primary key and no other index. A row one of them inserted has no entry in the others; a row one of them
@@ -293,26 +317,38 @@ internal sealed class TableIndexes
     /// nulls, or a value this library makes no key for -
     /// <see cref="RowPointersFor(IReadOnlyList{string}, IReadOnlyList{object?})"/> answers neither through the
     /// index. What this library writes afterwards keeps the index as it found it, a complete one complete: every
-    /// row it inserts or rewrites gains its entries. An index found wanting is not looked at again, though the
-    /// rows that were missing may since have been rewritten.
+    /// row it inserts or rewrites gains its entries. The rows an index was found not to hold are kept
+    /// (<see cref="RowsNotHeld"/>), and one leaves them when it is deleted or rewritten here: an index holds
+    /// every row once none of them is left.
     /// </para>
     /// </summary>
-    internal bool HoldsEveryRow(Tree tree)
+    internal bool HoldsEveryRow(Tree tree) => RowsNotHeldBy(tree).Count == 0;
+
+    /// <summary>
+    /// The rows <paramref name="tree"/> does not hold, as they were seen when the index was first looked at in
+    /// this session and as this library's own changes have left them since; none, with nothing read, for an
+    /// index that is taken at its word.
+    /// </summary>
+    private RowsNotHeld RowsNotHeldBy(Tree tree)
     {
-        var known = _file.IndexesChecked;
-        var which = (_table.TdefPageNumber, tree.Number);
-        if (!known.TryGetValue(which, out bool holdsEveryRow))
-            known[which] = holdsEveryRow = FindsEveryRow(tree);
-        return holdsEveryRow;
+        if (!_file.VerifyIndexes) return RowsNotHeld.None;
+        if (!_file.IndexesChecked.ContainsKey(Which(tree))) Look(new[] { tree });
+        return _file.IndexesChecked[Which(tree)];
     }
 
-    private bool FindsEveryRow(Tree tree)
+    private (int TdefPage, int Index) Which(Tree tree) => (_table.TdefPageNumber, tree.Number);
+
+    /// <summary>Reads the table once, and each of <paramref name="trees"/>, for the rows each does not hold.</summary>
+    private void Look(IReadOnlyList<Tree> trees)
     {
-        // The key each row should be under, by where the row is: every page of the table read once, and of each
-        // row only the index's columns, as its keys are made of them (RowDecoder.DecodeForKey)...
+        // The key each row should be under in each index, by where the row is: every page of the table read once,
+        // and of each row only the indexes' columns, as their keys are made of them (RowDecoder.DecodeForKey)...
         var format  = _file.Format;
         var decoder = new RowDecoder(format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
-        var unfound = new Dictionary<int, byte[]>();
+        var columns = trees.SelectMany(tree => tree.Columns).Select(c => c.Column).Distinct().ToList();
+        // Room for every row at once, by the definition's count of them (kept within reason, should it be wrong).
+        int rows    = Math.Min(Math.Max(ByteUtil.GetInt(_file.ReadPage(_table.TdefPageNumber), format.TdefOffsetNumRows), 0), 1 << 24);
+        var unfound = trees.Select(_ => new Dictionary<int, byte[]>(rows)).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
         {
@@ -323,27 +359,37 @@ internal sealed class TableIndexes
                 if (DataRows.Read(_file, page, r) is not { } rowBytes) continue;
 
                 row.Clear();
-                foreach (var column in tree.Columns)
-                    if (decoder.DecodeForKey(rowBytes, column.Column) is { } value)
-                        row[column.Column.Name] = value;
-                var values = ValuesIn(tree, row, out int nulls);
-                if (nulls == values.Length && tree.IgnoresNulls) continue;
-                if (!tree.Columns.Select((c, i) => IndexKeys.CanEncode(c.Column, values[i])).All(can => can)) continue;
-                unfound[RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
+                foreach (var column in columns)
+                    if (decoder.DecodeForKey(rowBytes, column) is { } value)
+                        row[column.Name] = value;
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    var tree   = trees[t];
+                    var values = ValuesIn(tree, row, out int nulls);
+                    if (nulls == values.Length && tree.IgnoresNulls) continue;
+
+                    bool keyed = true;
+                    for (int i = 0; keyed && i < values.Length; i++)
+                        keyed = IndexKeys.CanEncode(tree.Columns[i].Column, values[i]);
+                    if (keyed) unfound[t][RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
+                }
             }
         }
 
-        // ...and the index's entries, from first to last: each takes out the row it is the entry of. A long key
+        // ...and each index's entries, from first to last: each takes out the row it is the entry of. A long key
         // may be there whole, as earlier versions wrote it (StoredUnder); it is the row's when, cut, it is.
-        var entries = new IndexWriter(_file, _allocator).EntriesWithPrefix(tree.Target.RootPage, Array.Empty<byte>());
-        foreach (var (key, pointer) in entries)
+        for (int t = 0; t < trees.Count; t++)
         {
-            if (unfound.Count == 0) break;
-            if (unfound.TryGetValue(pointer, out byte[]? expected)
-                && (key.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(key) : key).AsSpan().SequenceEqual(expected))
-                unfound.Remove(pointer);
+            var entries = new IndexWriter(_file, _allocator).EntriesWithPrefix(trees[t].Target.RootPage, Array.Empty<byte>());
+            foreach (var (key, pointer) in entries)
+            {
+                if (unfound[t].Count == 0) break;
+                if (unfound[t].TryGetValue(pointer, out byte[]? expected)
+                    && (key.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(key) : key).AsSpan().SequenceEqual(expected))
+                    unfound[t].Remove(pointer);
+            }
+            _file.IndexesChecked[Which(trees[t])] = new RowsNotHeld(unfound[t]);
         }
-        return unfound.Count == 0;
     }
 
     /// <summary>
@@ -387,6 +433,9 @@ internal sealed class TableIndexes
         var writer = new IndexWriter(_file, _allocator);
         foreach (var entry in entries)
         {
+            // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
+            if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld)) notHeld.Forget(rowPointer);
+
             // The entry goes under the key it is stored under: for a key that was cut, the cut key or the whole
             // one (StoredUnder), whichever holds this row. A row with no entry at all - one an earlier version of
             // this library wrote without keeping the index - has nothing to take out, and that is no error: the

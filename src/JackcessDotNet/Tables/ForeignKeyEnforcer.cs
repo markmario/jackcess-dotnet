@@ -26,11 +26,12 @@ namespace JackcessDotNet;
 /// - the table is read from end to end, once, and all its rows are held until the change is written.
 /// </para>
 /// <para>
-/// An index is searched only once it has been seen to hold every row of its table
+/// An index is trusted to hold every row of its table, as Access trusts one, unless
+/// <see cref="Database.VerifyIndexes"/> is set. Then it is searched only once it has been seen to
 /// (<see cref="TableIndexes.RowPointersFor(IReadOnlyList{string}, IReadOnlyList{object?})"/>): the first search
 /// through each index, while the database is open, reads its table to see. Versions of this library before it
 /// kept every index left rows out of all but the primary key, and a row that is not in the index on its foreign
-/// key would not be found as a child (qcatco/exportmdb.interop#64). An index that does not hold every row is not
+/// key is not found as a child (qcatco/exportmdb.interop#64). An index seen not to hold every row is not
 /// searched: its table is read, as one with no index is.
 /// </para>
 /// <para>
@@ -344,6 +345,43 @@ internal sealed class ForeignKeyEnforcer
         }
     }
 
+    // ── A relationship about to be created ───────────────────────────────────
+
+    /// <summary>
+    /// The first row of <paramref name="child"/> that refers to no row of <paramref name="parent"/> by
+    /// <paramref name="relationship"/>, as a refusal names it, or null when every row refers to a parent or to
+    /// nothing: what Access looks for before it gives a relationship referential integrity ("Existing data in
+    /// table ... violates referential integrity rules"). Keys are matched as an insert's are
+    /// (<see cref="CheckInsert"/>): a foreign key that is all null refers to nothing, and a row may refer to itself.
+    /// Both tables are read once, the parent's keys held while the child is read; nothing is changed.
+    /// </summary>
+    internal static string? FirstOrphan(Relationship relationship, Table parent, Table child)
+    {
+        var types = ParentColumns(relationship, parent);
+        var childColumns = relationship.ColumnPairs
+            .Select(pair => child.Columns.First(c => c.Name.Equals(pair.ToColumn, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var parents = parent.NewCursor();
+        parents.ColumnsToRead  = types;
+        parents.ValuesAsStored = true;
+        foreach (var row in parents)
+            keys.Add(Convert.ToBase64String(KeyOf(types, types.Select(c => row.TryGetValue(c.Name, out var value) ? value : null))));
+
+        var children = child.NewCursor();
+        children.ColumnsToRead  = childColumns;
+        children.ValuesAsStored = true;
+        foreach (var row in children)
+        {
+            object?[] values = childColumns.Select(c => Stored(c, row.TryGetValue(c.Name, out var value) ? value : null)).ToArray();
+            if (values.All(v => v is null)) continue;
+            if (!keys.Contains(Convert.ToBase64String(KeyOf(types, values))))
+                return $"'{child.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{parent.Name}'";
+        }
+        return null;
+    }
+
     // ── Keys ─────────────────────────────────────────────────────────────────
 
     /// <summary>The parent table's columns of the relationship: both sides' values are compared as that column's type.</summary>
@@ -407,7 +445,7 @@ internal sealed class ForeignKeyEnforcer
     }
 
     /// <summary>Keys by their bytes.</summary>
-    private sealed class KeyComparer : IEqualityComparer<byte[]>
+    internal sealed class KeyComparer : IEqualityComparer<byte[]>
     {
         internal static readonly KeyComparer Instance = new();
 
@@ -452,7 +490,8 @@ internal sealed class ForeignKeyEnforcer
                 DataType.Byte          => Convert.ToByte(value),
                 DataType.Int           => Convert.ToInt16(value),
                 DataType.Long          => Convert.ToInt32(value),
-                DataType.Float         => Convert.ToSingle(value),
+                DataType.BigInt        => Convert.ToInt64(value),
+                DataType.Float        => Convert.ToSingle(value),
                 DataType.Double        => Convert.ToDouble(value),
                 DataType.Money         => IndexKeys.MoneyUnits(Convert.ToDecimal(value)) / 10000m,
                 DataType.ShortDateTime => value is DateTime date ? date.ToOADate() : value,

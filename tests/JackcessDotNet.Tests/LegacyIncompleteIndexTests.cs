@@ -13,6 +13,10 @@ namespace JackcessDotNet.Tests;
 /// it was at commit 3ad3aed, the one in ExportMdb.Interop 2.1.2, which kept a primary key and no other index:
 /// inserted Followers 5, of parent 1; changed Movers 30 from parent 4 to parent 3; inserted Holders 5, of parent 2.
 /// </para>
+/// <para>
+/// Every change here is made with <see cref="Database.VerifyIndexes"/> on, which is what such a file is for.
+/// <see cref="TrustedIndexTests"/> has the same file without it, where this library does what Access does.
+/// </para>
 /// </summary>
 public sealed class LegacyIncompleteIndexTests : IDisposable
 {
@@ -27,6 +31,7 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
     {
         var db = Database.Open(_path);
         db.EnforceForeignKeys = true;
+        db.VerifyIndexes = true;
         return db;
     }
 

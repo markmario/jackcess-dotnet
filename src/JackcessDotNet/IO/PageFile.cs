@@ -19,6 +19,13 @@ public sealed class PageFile : IDisposable
     /// <summary>Pages written since the file was opened: what tests tell a change that was begun from one refused.</summary>
     internal long WriteCount { get; private set; }
 
+    /// <summary>
+    /// For tests of a change that fails while it is being written: when set, that many more pages are written
+    /// and the write after them throws <see cref="IOException"/>, as a full disk would. Null (always, outside a
+    /// test) for no such failure.
+    /// </summary>
+    internal int? WritesBeforeFailure { get; set; }
+
     // Pages read through ReadKeptPage, as last read or written here.
     private readonly Dictionary<int, byte[]> _kept = new();
 
@@ -30,10 +37,29 @@ public sealed class PageFile : IDisposable
     internal FreedLvalPages FreedLvalPages { get; } = new FreedLvalPages();
 
     /// <summary>
-    /// The indexes seen in this session to hold, or not to hold, every row of their table, by the table's
-    /// definition page and the index's block in it (<see cref="TableIndexes"/>): an index is looked at once.
+    /// The indexes looked at in this session (<see cref="VerifyIndexes"/>), by the table's definition page and the
+    /// index's block in it, each with the rows of its table it does not hold - none, for an index that holds
+    /// every row (<see cref="TableIndexes"/>): an index is looked at once.
     /// </summary>
-    internal Dictionary<(int TdefPage, int Index), bool> IndexesChecked { get; } = new();
+    internal Dictionary<(int TdefPage, int Index), RowsNotHeld> IndexesChecked { get; } = new();
+
+    /// <summary>See <see cref="Database.VerifyIndexes"/>.</summary>
+    internal bool VerifyIndexes { get; set; }
+
+    // How many times each table's definition has been changed in this session, by its definition page.
+    private readonly Dictionary<int, int> _definitionVersions = new();
+
+    /// <summary>
+    /// How many times the definition on <paramref name="tdefPage"/> has been changed while the file has been open:
+    /// a column or an index added to the table (<see cref="Table.AddColumn"/>, <see cref="Table.AddIndex"/>,
+    /// <see cref="Database.CreateRelationship"/>). A <see cref="Table"/> reads its definition again when the number
+    /// is no longer the one it read at, so every <see cref="Table"/> open on a table writes rows by the table's
+    /// columns and keeps the table's indexes as they now are, whichever of them made the change.
+    /// </summary>
+    internal int DefinitionVersion(int tdefPage) => _definitionVersions.TryGetValue(tdefPage, out int version) ? version : 0;
+
+    /// <summary>Records that the definition on <paramref name="tdefPage"/> has been changed and written.</summary>
+    internal void DefinitionChanged(int tdefPage) => _definitionVersions[tdefPage] = DefinitionVersion(tdefPage) + 1;
 
     /// <summary>See <see cref="Database.ShareLongValuePages"/>.</summary>
     internal bool ShareLongValuePages { get; set; }
@@ -108,16 +134,7 @@ public sealed class PageFile : IDisposable
 
         string signature = System.Text.Encoding.ASCII.GetString(head, signatureAt, 15);
         if (signature != "Standard Jet DB" && signature != "Standard ACE DB") return null;
-        return head[versionAt] switch
-        {
-            0x00 => JetFormat.Jet3,
-            0x01 => JetFormat.Jet4,
-            0x02 => JetFormat.Jet12,
-            0x03 => JetFormat.Jet14,
-            0x04 => JetFormat.Jet16,
-            // Later generations keep the layout of ACE 17.
-            _    => JetFormat.Jet17,
-        };
+        return JetFormat.ForVersionCode(head[versionAt]);
     }
 
     /// <summary>
@@ -196,6 +213,11 @@ public sealed class PageFile : IDisposable
             throw new ArgumentException(
                 $"Page data must be exactly {_format.PageSize} bytes for {Format.Version}.");
         EnsureWritable();
+        if (WritesBeforeFailure is { } left)
+        {
+            if (left <= 0) throw new IOException($"Page {pageNumber} was not written: a test asked for the write to fail.");
+            WritesBeforeFailure = left - 1;
+        }
 
         byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
@@ -284,6 +306,7 @@ public sealed class PageFile : IDisposable
             // What was read or noted of the pages since is no longer what the file holds.
             _file._kept.Clear();
             _file.FreedLvalPages.Clear();
+            _file.IndexesChecked.Clear();
         }
     }
 

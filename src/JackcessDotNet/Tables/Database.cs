@@ -3,7 +3,7 @@ using System.IO;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Entry point for creating and opening Microsoft Access (.mdb) database files.
+/// Entry point for creating and opening Microsoft Access (.mdb / .accdb) database files.
 ///
 /// Usage:
 /// <code>
@@ -60,15 +60,15 @@ public sealed class Database : IDisposable
     /// every index of its table, as any other update or delete does, so Access goes on finding it.
     /// </para>
     /// <para>
-    /// An index is searched only once it has been seen to hold every row of its table. Access trusts an index to;
-    /// a file a version of this library before it kept every index wrote to (those in ExportMdb.Interop up to
-    /// 2.1.2) can have rows that are in their table's primary key and in no other index - not in the one on their
-    /// foreign key, so that through it they would not be found as children, and their parent could be deleted or
-    /// re-keyed from under them (qcatco/exportmdb.interop#64). So the first change that looks for rows through an
-    /// index, while the database is open, reads that index and its table once and compares them row by row; the
-    /// changes after it find rows through the index, or, when it does not hold every row, by reading the table as
-    /// for a table with no index. An entry whose row has gone does no harm either way: each row found is read
-    /// and compared.
+    /// An index is trusted to hold every row of its table, as Access trusts one. A file a version of this library
+    /// before it kept every index wrote to (those in ExportMdb.Interop up to 2.1.2) can have rows that are in
+    /// their table's primary key and in no other index - not in the one on their foreign key, so that through it
+    /// they are not found as children, and their parent is deleted or re-keyed from under them, as Access itself
+    /// does with such a file (qcatco/exportmdb.interop#64). For such a file set <see cref="VerifyIndexes"/> as
+    /// well: the first change that looks for rows through an index, while the database is open, then reads that
+    /// index and its table once and compares them row by row, and the changes after it find rows through the
+    /// index, or, while it does not hold every row, by reading the table as for a table with no index. An entry
+    /// whose row has gone does no harm either way: each row found is read and compared.
     /// </para>
     /// <para>
     /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
@@ -94,6 +94,56 @@ public sealed class Database : IDisposable
     /// </para>
     /// </summary>
     public bool EnforceForeignKeys { get; set; }
+
+    /// <summary>
+    /// Whether an index is checked against its table before it is believed. Default <c>false</c>: an index is
+    /// taken at its word, as Access and Java Jackcess take one - a unique index or primary key that holds no
+    /// entry for a value means no row has it, and, with <see cref="EnforceForeignKeys"/>, an index that holds no
+    /// entry for a key means no row refers to it - and nothing is read but the index.
+    /// <para>
+    /// <b>When to turn it on:</b> for a file that a version of this library before it kept every index wrote
+    /// rows into - any up to the one in ExportMdb.Interop 2.1.2 - in a table Access made with indexes, and that
+    /// has not been compacted in Access since. Those versions kept a table's primary key and no other index: a
+    /// row one of them inserted is in no other index, and a row one of them updated is in each where it was
+    /// before. They kept the primary key under the value a row was found by, so a row whose key they changed is
+    /// in the key under the value it had. Nothing in a file says that one of them wrote to it. With such a file
+    /// and the default, this library does what Access does: it takes a second row with the values of a row a
+    /// unique index does not hold - after which Access cannot compact the file without dropping that index, or
+    /// the primary key - and, enforcing foreign keys, deletes or re-keys a parent from under a child the index
+    /// on its foreign key does not hold. Compacting the file in Access rebuilds its indexes and makes the
+    /// option needless.
+    /// </para>
+    /// <para>
+    /// <b>What it does:</b> the first time a session compares a row with a table's unique indexes
+    /// (<see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/>, <see cref="Table.Validate"/>), or
+    /// looks for rows through an index to keep a relationship, the table is read once and each index's entries
+    /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
+    /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows
+    /// is not searched for a relationship - the table is read instead - until this library has rewritten or
+    /// deleted them. Set it before the first change; an index is looked at once.
+    /// </para>
+    /// <para>
+    /// <b>What it costs:</b> one reading of the table, and of the indexes' leaf pages, for the first such change
+    /// to each table, and memory for a key a row while it is read; nothing after. Measured on a table of
+    /// 1,000,000 rows in 30,304 pages, the file in the operating system's cache: the first insert read 33,644
+    /// pages in half a second and allocated 620 MB in passing with a primary key, and 36,965 pages in 0.8 to
+    /// 0.9 seconds and 990 MB with a unique index as well, where every other insert, and the first without
+    /// the option, reads 8 and 11 pages. A table with no unique index, a row with a null in its unique
+    /// columns, and a table filled in the session that made it cost nothing.
+    /// </para>
+    /// <para>
+    /// <b>What it does not catch:</b> an entry is still believed for what it points at. A value a row had before
+    /// one of those versions changed its primary key is refused as a duplicate, though no row has it; and a row
+    /// added under a value whose only entry points at a row long gone is added beside that entry, where Access
+    /// does not find it through the index until the file is compacted (qcatco/exportmdb.interop#79). Nothing
+    /// here rebuilds an index.
+    /// </para>
+    /// </summary>
+    public bool VerifyIndexes
+    {
+        get => _file.VerifyIndexes;
+        set => _file.VerifyIndexes = value;
+    }
 
     /// <summary>
     /// How a long value (Memo or OLE) too long for one page is put on its pages. <c>false</c>, the default, is
@@ -130,8 +180,16 @@ public sealed class Database : IDisposable
     // ── Factory methods ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a new blank .mdb file at <paramref name="path"/> and returns an
-    /// open <see cref="Database"/> ready for use.
+    /// Creates a new blank database at <paramref name="path"/>, in the format of <paramref name="version"/>, and
+    /// returns it open and ready for use: an .mdb for <see cref="JetVersion.Jet4"/> (Access 2000-2003), an .accdb
+    /// for <see cref="JetVersion.Jet12"/> (Access 2007), <see cref="JetVersion.Jet14"/> (Access 2010),
+    /// <see cref="JetVersion.Jet16"/> (Access 2016) and <see cref="JetVersion.Jet17"/> (Access 2019) - the formats
+    /// Jackcess creates. The file's name is the caller's: no extension is added or asked for.
+    /// <para>
+    /// The new file is a copy of an empty database Access's own engine made (<see cref="DatabaseHeader"/>). Tables
+    /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
+    /// there; in the later formats they sort in General.
+    /// </para>
     /// </summary>
     /// <exception cref="NotSupportedException">
     /// <paramref name="version"/> is <see cref="JetVersion.Jet3"/>: Access 97 files are read, and neither created
@@ -140,7 +198,7 @@ public sealed class Database : IDisposable
     /// </exception>
     public static Database Create(string path, JetVersion version)
     {
-        var format = version == JetVersion.Jet3 ? JetFormat.Jet3 : JetFormat.Jet4;
+        var format = JetFormat.For(version);
         if (format.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
         var file   = new PageFile(path, format, FileMode.Create);
         var db     = new Database(file);
@@ -179,16 +237,10 @@ public sealed class Database : IDisposable
             throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database.");
 
-        byte versionCode = head[0x14];
-        return versionCode switch
-        {
-            0x00 => OpenWithJetCrypt   (path, JetVersion.Jet3, password),
-            0x01 => OpenWithJetCrypt   (path, JetVersion.Jet4, password),
-            0x02 => OpenWithOfficeCrypt(path, JetVersion.Jet12, password),
-            0x03 => OpenWithOfficeCrypt(path, JetVersion.Jet14, password),
-            0x04 => OpenWithOfficeCrypt(path, JetVersion.Jet16, password),
-            _    => OpenWithOfficeCrypt(path, JetVersion.Jet17, password),
-        };
+        JetVersion version = JetFormat.ForVersionCode(head[0x14]).Version;
+        return version is JetVersion.Jet3 or JetVersion.Jet4
+            ? OpenWithJetCrypt   (path, version, password)
+            : OpenWithOfficeCrypt(path, version, password);
     }
 
     /// <summary>
@@ -200,15 +252,7 @@ public sealed class Database : IDisposable
     /// </summary>
     private static Database OpenWithOfficeCrypt(string path, JetVersion version, string password)
     {
-        JetFormat format = version switch
-        {
-            JetVersion.Jet12 => JetFormat.Jet12,
-            JetVersion.Jet14 => JetFormat.Jet14,
-            JetVersion.Jet16 => JetFormat.Jet16,
-            _                => JetFormat.Jet17,
-        };
-
-        var file = new PageFile(path, format, FileMode.Open);
+        var file = new PageFile(path, JetFormat.For(version), FileMode.Open);
         try
         {
             byte[] header = file.ReadPage(0);
@@ -291,16 +335,7 @@ public sealed class Database : IDisposable
     /// </summary>
     public static Database Open(string path, JetVersion version)
     {
-        JetFormat format = PageFile.FormatOf(path) ?? version switch
-        {
-            JetVersion.Jet3  => JetFormat.Jet3,
-            JetVersion.Jet4  => JetFormat.Jet4,
-            JetVersion.Jet12 => JetFormat.Jet12,
-            JetVersion.Jet14 => JetFormat.Jet14,
-            JetVersion.Jet16 => JetFormat.Jet16,
-            JetVersion.Jet17 => JetFormat.Jet17,
-            _                => throw new NotSupportedException($"Unsupported JetVersion: {version}")
-        };
+        JetFormat format = PageFile.FormatOf(path) ?? JetFormat.For(version);
         var file = new PageFile(path, format, FileMode.Open);
         try
         {
@@ -339,10 +374,10 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Opens an existing Access database file, auto-detecting the Jet format
-    /// version from the byte at file offset 0x14:
+    /// version from the byte at file offset 0x14 (<see cref="JetFormat.ForVersionCode"/>):
     ///   0x00 = Jet3 (Access 97), which is opened for reading only
     ///   0x01 = Jet4 (Access 2000-2003)
-    ///   0x02+ = .accdb formats (not yet supported)
+    ///   0x02 and later = the .accdb formats, Access 2007 to Access 2019
     /// </summary>
     public static Database Open(string path)
     {
@@ -365,18 +400,7 @@ public sealed class Database : IDisposable
             throw new InvalidDataException(
                 $"File '{path}' is not a recognised Access database (missing 'Standard Jet/ACE DB' signature).");
 
-        byte versionCode = head[0x14];
-        return versionCode switch
-        {
-            0x00 => Open(path, JetVersion.Jet3),
-            0x01 => Open(path, JetVersion.Jet4),
-            0x02 => Open(path, JetVersion.Jet12),
-            0x03 => Open(path, JetVersion.Jet14),
-            0x04 => Open(path, JetVersion.Jet16),
-            // Newer ACE generations (0x05+) re-use the V17 layout we know about;
-            // fall through to Jet17 rather than refusing to open.
-            _    => Open(path, JetVersion.Jet17)
-        };
+        return Open(path, JetFormat.ForVersionCode(head[0x14]).Version);
     }
 
     // ── Foreign keys ─────────────────────────────────────────────────────────
@@ -569,6 +593,13 @@ public sealed class Database : IDisposable
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
+        // A table with a Large Number or a Date/Time Extended column makes the file one of Access 2016's format
+        // or Access 2019's, as it does when Access adds the table: older versions of Access then refuse the file
+        // rather than misread it. An .mdb has no such column, and the table is refused here, with no page added.
+        // The header is changed last, once the table is in the catalog: a creation that fails on the way - a
+        // full disk, when a page is added - must not leave a file marked for a table it does not have.
+        byte? version = FormatVersionFor($"Table '{name}' was not created", columns, format);
+
         // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
 
@@ -638,11 +669,34 @@ public sealed class Database : IDisposable
         // 7. Register the table in MSysObjects.
         _catalog.InsertTableEntry(name, tdefPage);
 
+        // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
+        if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
+
         return new Table(_file, _allocator, tableDef, owningDb: this);
     }
 
     // A table's index maps follow its owned-pages and free-space maps on its usage-map page.
     private const int FirstIndexUmapRow = 2;
+
+    /// <summary>
+    /// The version a file's header must name, at the least, for a table of <paramref name="columns"/> to be in
+    /// it: Access 2016's for a Large Number column, Access 2019's for a Date/Time Extended one, and null when
+    /// the table has neither. Access gives an .accdb of any earlier format that version when such a column is
+    /// added to it, and refuses the column in an .mdb ("Invalid argument"), as this does.
+    /// </summary>
+    /// <param name="whatWasNotDone">How the refusal begins: "Table 'T' was not created", or the like.</param>
+    /// <exception cref="NotSupportedException">The file is an .mdb, which has no such column. Nothing is changed.</exception>
+    internal static byte? FormatVersionFor(string whatWasNotDone, IReadOnlyList<Column> columns, JetFormat format)
+    {
+        var newest = columns.Where(c => c.DataType is DataType.BigInt or DataType.ExtendedDateTime)
+                            .OrderByDescending(c => c.DataType).FirstOrDefault();
+        if (newest is null) return null;
+        if (format.Version is JetVersion.Jet3 or JetVersion.Jet4)
+            throw new NotSupportedException(
+                $"{whatWasNotDone}: its column '{newest.Name}' is a {newest.DataType}, which an .mdb file " +
+                "(Access 2000-2003) does not have. Create the database as an .accdb, JetVersion.Jet12 or later.");
+        return newest.DataType == DataType.ExtendedDateTime ? DatabaseHeader.Version2019 : DatabaseHeader.Version2016;
+    }
 
     /// <summary>An index a new table is to have: checked, with its columns found, and no pages yet.</summary>
     private sealed class PlannedIndex
@@ -745,8 +799,18 @@ public sealed class Database : IDisposable
         if (tdefPageNum < 0)
             throw new InvalidOperationException($"Table '{name}' was not found in this database.");
 
-        var format   = _file.Format;
-        var tdefPage = _file.ReadPage(tdefPageNum);
+        return new Table(_file, _allocator, ReadDefinition(_file, name, tdefPageNum), owningDb: this);
+    }
+
+    /// <summary>
+    /// The definition of table <paramref name="name"/> as its definition page, <paramref name="tdefPageNum"/>, now
+    /// holds it: what <see cref="GetTable"/> opens a table with, and what a <see cref="Table"/> reads again after
+    /// the table has been given a column or an index.
+    /// </summary>
+    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
+    {
+        var format   = file.Format;
+        var tdefPage = file.ReadPage(tdefPageNum);
         var info     = TdefReader.Read(tdefPage, format);
 
         var tableDef = new TableDefinition(name, info.Columns)
@@ -780,8 +844,53 @@ public sealed class Database : IDisposable
                     pkIndex.Columns.Select(ic => ic.Column.Name).ToArray();
         }
 
-        return new Table(_file, _allocator, tableDef, owningDb: this);
+        return tableDef;
     }
+
+    // ── Changing the schema ──────────────────────────────────────────────────
+
+    /// <summary>The catalog, for a change to the schema that registers an object in it.</summary>
+    internal SystemCatalog Catalog => _catalog;
+
+    /// <summary>What appends pages to the file, for a change to the schema.</summary>
+    internal PageAllocator Allocator => _allocator;
+
+    /// <summary>
+    /// Has the relationships read again by whatever next keeps them (<see cref="EnforceForeignKeys"/>): one has
+    /// been created, or a table in one has been given an index its rows can be found through.
+    /// </summary>
+    internal void SchemaChanged() => _foreignKeys = null;
+
+    /// <summary>
+    /// Creates a relationship between two tables, as Access's Relationships window and Jackcess's
+    /// <c>RelationshipBuilder</c> do: its rows in <c>MSysRelationships</c> and its entry in the catalog and, when it
+    /// has referential integrity, the two indexes Access keeps for one - on the referenced table an index named
+    /// <c>.rB</c>, <c>.rC</c>... that shares the tree of the unique index on the referenced columns, and on the
+    /// referring table an index with the relationship's name on the foreign key, built over the rows already there
+    /// (or sharing the tree of a plain index already on exactly those columns). Access then shows the
+    /// relationship and enforces it, and so does this library when <see cref="EnforceForeignKeys"/> is set.
+    /// <para>
+    /// Everything is checked before anything is written, and what is written is taken back if writing it fails:
+    /// a refused relationship leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <returns>The relationship as <see cref="GetRelationships"/> now lists it.</returns>
+    /// <exception cref="ArgumentException">
+    /// The definition names no columns, or a different number on each side, or a column twice on one side of a
+    /// relationship with referential integrity; or asks for a cascade without referential integrity.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A table or column is not there; two matched columns are of different types; a relationship of that name
+    /// exists, or the referring table has an index of that name; and, with referential integrity: the referenced
+    /// columns have no unique index (or primary key) on exactly them, or a row of the referring table refers to
+    /// no row of the referenced table. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;
+    /// or a table's definition runs, or would run, over more than one page. Nothing is changed.
+    /// </exception>
+    public Relationship CreateRelationship(RelationshipDefinition definition)
+        => SchemaChange.CreateRelationship(this, _file, definition ?? throw new ArgumentNullException(nameof(definition)));
 
     public void Dispose() => _file.Dispose();
 }

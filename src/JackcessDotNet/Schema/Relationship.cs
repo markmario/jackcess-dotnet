@@ -5,7 +5,7 @@ namespace JackcessDotNet;
 /// MSysRelationships; one row per column pair (a composite relationship is
 /// reassembled from rows that share <see cref="Name"/>).
 ///
-/// Read-only: relationships cannot be created or dropped. One that has referential integrity is enforced when
+/// One is created with <see cref="Database.CreateRelationship"/>; none can be changed or dropped. One that has referential integrity is enforced when
 /// <see cref="Database.EnforceForeignKeys"/> is set.
 /// </summary>
 public sealed class Relationship

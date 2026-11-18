@@ -11,28 +11,53 @@ public sealed class Table
 {
     private readonly PageFile       _file;
     private readonly PageAllocator  _allocator;
-    private readonly TableDefinition _definition;
     private readonly DataPageWriter  _dataWriter;
-    private readonly TableIndexes    _indexes;
     private readonly Database?       _owningDb;
+
+    // The table as its definition was last read, and how many times the definition had been changed by then
+    // (PageFile.DefinitionVersion). Everything below reaches these through the three properties after them, which
+    // read the definition again once it has been changed - by this Table or by another open on the same table -
+    // so that a row is never written by the columns, nor kept in the indexes, the table had before.
+    private TableDefinition       _readDefinition = null!;
+    private TableIndexes          _readIndexes = null!;
+    private IReadOnlyList<Column> _readAutoNumberColumns = null!;
+    private int                   _readAtVersion;
+
+    private TableDefinition _definition { get { Refresh(); return _readDefinition; } }
+    private TableIndexes    _indexes    { get { Refresh(); return _readIndexes; } }
     /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
-    private readonly IReadOnlyList<Column> _autoNumberColumns;
+    private IReadOnlyList<Column> _autoNumberColumns { get { Refresh(); return _readAutoNumberColumns; } }
 
     internal Table(PageFile file, PageAllocator allocator, TableDefinition definition,
                    Database? owningDb = null)
     {
         _file        = file        ?? throw new ArgumentNullException(nameof(file));
         _allocator   = allocator   ?? throw new ArgumentNullException(nameof(allocator));
-        _definition  = definition  ?? throw new ArgumentNullException(nameof(definition));
         _dataWriter  = new DataPageWriter(file, allocator);
-        _indexes     = new TableIndexes(file, allocator, definition);
         _owningDb    = owningDb;
+        Use(definition ?? throw new ArgumentNullException(nameof(definition)), file.DefinitionVersion(definition.TdefPageNumber));
+    }
+
+    private void Use(TableDefinition definition, int version)
+    {
+        _readDefinition = definition;
+        _readIndexes    = new TableIndexes(_file, _allocator, definition);
         // A complex column (attachments, multi-value fields) carries the flag too: its number is the key of the
         // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
-        _autoNumberColumns = definition.Columns
+        _readAutoNumberColumns = definition.Columns
             .Where(c => c.IsAutoNumber && c.DataType != DataType.Complex)
             .OrderBy(c => c.ColumnNumber)
             .ToArray();
+        _readAtVersion = version;
+        _writability   = null;
+    }
+
+    // Reads the definition again when it has been changed since it was read.
+    private void Refresh()
+    {
+        int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
+        if (version != _readAtVersion)
+            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber), version);
     }
 
     /// <summary>The table's definition, for tests that look at its pages.</summary>
@@ -454,9 +479,9 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Lists the Decimal (Numeric) values in the table that read with more digits than their column's precision
-    /// allows. Nothing is changed, in the file or in what a read returns: this is a way to look for values a
-    /// version of this library before qcatco/exportmdb.interop#61 wrote.
+    /// Lists the Decimal (Numeric) values in the table whose stored number has more digits than their column's
+    /// precision allows. Nothing is changed, in the file or in what a read returns: this is a way to look for
+    /// values a version of this library before qcatco/exportmdb.interop#61 wrote.
     /// <para>
     /// Those versions wrote a Decimal's sixteen bytes in an order Access does not use, so every value they wrote
     /// reads as a different number - a 1 as 16,777,216 - in Access and, now, here. Nothing in the file says who
@@ -472,6 +497,11 @@ public sealed class Table
     /// is not a multiple of 256 is listed; of precision 8 or 9, some are; and of precision 10 or more - 18 is what
     /// Access and this library give a column by default - none is, and only numbers of ten digits or more can be.
     /// A table with nothing listed may still hold values written in the earlier order.
+    /// </para>
+    /// <para>
+    /// A stored number that runs past 96 bits is always listed: it is past every precision, and Access writes
+    /// none. A read gives its low 96 bits, as Access does (<see cref="DecimalBeyondPrecision.IsCut"/>), and those
+    /// can be a number the column would hold - the listing says what the row holds, not only how it reads.
     /// </para>
     /// <para>
     /// The table is read as it is asked for, a row at a time. A calculated column is not looked at.
@@ -515,12 +545,77 @@ public sealed class Table
                         key[keyColumn.Name] = decoder.Decode(rowBytes, keyColumn);
                     bool negative = NumericCodec.IsNegative(stored, 0);
                     yield return new DecimalBeyondPrecision(Name, column, rowIndex, key,
-                        NumericCodec.Decode(stored, 0, column.Scale),
+                        NumericCodec.Decode(stored, 0, column.Scale), isCut: unscaled >> 96 != 0,
                         NumericCodec.ToDecimal(NumericCodec.UnscaledInEarlierByteOrder(stored, 0), negative, column.Scale));
                 }
             }
         }
     }
+
+    // ── Changing the table ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Adds <paramref name="column"/> to the table, after its other columns, as Access's <c>ALTER TABLE ... ADD
+    /// COLUMN</c> and Jackcess's <c>ColumnBuilder.addToTable</c> do. The rows already in the table are not
+    /// rewritten: each reads the new column as null (a Yes/No column as No), as Access shows them, until it is
+    /// updated. The table may be one Access made or one this library made.
+    /// <para>
+    /// Only the table's definition changes, and it changes whole or not at all: a refused column leaves the file
+    /// byte for byte as it was. This <see cref="Table"/>, and any other open on the same table, has the column
+    /// from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="column">The column to add (use <see cref="ColumnBuilder"/>). It is left as it was given.</param>
+    /// <returns>The table's new column.</returns>
+    /// <exception cref="ArgumentException">The table already has a column of that name, or 255 columns.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
+    /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
+    /// or would run, over more than one page, which is all this library reads of one - so a table is never left
+    /// that it could no longer write rows to. Nothing is changed.
+    /// </exception>
+    public Column AddColumn(Column column)
+    {
+        if (column is null) throw new ArgumentNullException(nameof(column));
+        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column);
+        return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Adds <paramref name="index"/> to the table, built over the rows already in it, as Access's <c>CREATE
+    /// INDEX</c> and Jackcess's <c>IndexBuilder.addToTable</c> do. From then on it is kept on every insert, update
+    /// and delete, like the table's other indexes, and a unique one refuses a duplicate. An index on the columns,
+    /// in the order and with the flags, of one the table already has shares that index's tree, as in Access.
+    /// <para>
+    /// The rows are read and every key made before anything is written, and what is written is taken back if
+    /// writing it fails: a refused index leaves the file byte for byte as it was. This <see cref="Table"/>, and
+    /// any other open on the same table, keeps the index from then on.
+    /// </para>
+    /// </summary>
+    /// <returns>The table's new index.</returns>
+    /// <exception cref="ArgumentException">
+    /// The table already has an index of that name, or 32 indexes; or the index sorts descending a column that
+    /// is not one of its own.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A column the index names is not in the table; two rows of the table have the same values in a unique
+    /// index; or a row has a null in an index that requires its values. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
+    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and
+    /// General), or a row holds a value no key is made for; or the table's definition runs, or would run, over
+    /// more than one page. Nothing is changed.
+    /// </exception>
+    public Index AddIndex(IndexDefinition index)
+    {
+        if (index is null) throw new ArgumentNullException(nameof(index));
+        SchemaChange.AddIndex(Owner(), _file, _definition, index);
+        return Indexes.First(ix => string.Equals(ix.Name, index.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private Database Owner()
+        => _owningDb ?? throw new InvalidOperationException($"Table '{Name}' was not opened from a database, so it cannot be changed.");
 
     /// <summary>
     /// Reads and decodes every non-deleted row in the table and returns them in

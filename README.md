@@ -69,6 +69,14 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
+  for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
+  DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
+  Jackcess's.
+- **Large Number and Date/Time Extended columns** (Access 2016 and 2019) are read, written, created and
+  indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
+  9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
+  it has no time zone, and is read with `DateTimeKind.Unspecified`.
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
@@ -84,6 +92,15 @@ Limits to know about:
   asks each before it writes to any.
 - Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`.
+- A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
+  before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
+  the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
+  it does when Access adds the table: an Access older than that then refuses to open the file. Jackcess
+  refuses the table instead.
+- `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
+  which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
+  such a column.
+- An import (`DatabaseImporter`) still makes a `long` property a `Long` column, not a Large Number.
 
 ## Building and testing
 
@@ -119,7 +136,8 @@ var customers = db.GetTable("Customers");
 foreach (var row in customers.NewCursor())
     Console.WriteLine($"{row["CustomerID"]}  {row["CompanyName"]}");
 
-// Create a new database, define a schema, insert rows
+// Create a new database, define a schema, insert rows.
+// JetVersion.Jet4 is an .mdb; Jet12, Jet14, Jet16 and Jet17 are .accdb (Access 2007, 2010, 2016, 2019).
 using var fresh = Database.Create("MyData.mdb", JetVersion.Jet4);
 var people = fresh.CreateTable("People", new[]
 {
@@ -193,33 +211,60 @@ reaches and the index pages that lead to them - a cascade delete of five rows ab
 has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
 keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
 
-An index is searched only once it has been seen to hold every row
-([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)). Access trusts an index to.
-This library does not, because versions of it before it kept every index (those in ExportMdb.Interop up to 2.1.2)
-kept a table's primary key and no other: a row one of them inserted into an Access-made table is missing from the
-index on its foreign key, and a row one of them updated is in that index where it was before the update. Found
-through the index, such a row is no one's child - its parent can be deleted or re-keyed and the row left an
-orphan, which is what Access itself does with such a file.
+An index is trusted to hold every row of its table, as Access and Java Jackcess trust one
+([qcatco/exportmdb.interop#78](https://github.com/qcatco/exportmdb.interop/issues/78)): rows are found through it,
+and a unique index that has no entry for a value is taken to mean no row has it. Nothing is read to check.
+
+**`Database.VerifyIndexes`: for files an earlier version wrote to.** Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
+primary key and no other index, and kept the primary key under the value a row was *found by*. In a table Access
+made with indexes, a row one of them inserted is in no index but the primary key; a row one of them updated is in
+each other index where it was before the update; and a row whose primary key one of them changed is in the key
+under the value it had. Nothing in a file says that one of them wrote to it - a count of entries does not (after
+such an update an index has an entry for every row, by number), nor does the number an index's definition keeps,
+which is of keys ever added.
+
+With such a file, and by default, this library does what Access does with it
+([#64](https://github.com/qcatco/exportmdb.interop/issues/64),
+[#73](https://github.com/qcatco/exportmdb.interop/issues/73)):
+
+- enforcing foreign keys, a row that is not in the index on its foreign key is no one's child - its parent is
+  deleted or re-keyed and the row left an orphan;
+- a second row with the values of a row a unique index does not hold is added. The next time the file is
+  compacted Access cannot build that index, and leaves the table without it, or without its primary key.
+
+**Set `db.VerifyIndexes = true` for a file one of those versions wrote rows into and that has not been compacted
+in Access since.** Compacting rebuilds the indexes, and the option is then needless. With it set:
 
 - **The first change that looks for rows through an index reads its table once**, while the database is open, and
-  compares the two row by row: every row's key must be in the index, pointing at that row. Counting would not do -
-  after such an update the index has an entry for every row, by number, and in files Access alone wrote an index
-  can have more entries than its table's definition counts rows. Measured on a child table of 1,000,000 rows (30,304 pages) and a
-  parent of 200,000, the first cascade delete read 34,860 pages - both tables and the two indexes it used - in
-  about a second, with the file in the operating system's cache, and the deletes after it 65 pages and a
-  millisecond each; with 300,000 rows it was 10,503 pages and 0.3 seconds. Each row's key is held in memory
-  until its entry is met, so the check needs memory in proportion to the table's rows.
-- **An index that holds every row is searched from then on**, at the cost given above. What this library writes
-  keeps it whole.
-- **An index that does not is not searched** while the database is open: its table is read instead, as for a
-  table with no index (below), so a change is slower and its outcome the same. A row this library rewrites
-  gains its entries, but nothing here rebuilds an index. Compacting the database in Access does: after
-  `DBEngine.CompactDatabase` Access and this library both find every row through the index.
+  compares the two row by row: every row's key must be in the index, pointing at that row. For a unique index
+  that is the first `Insert`, `UpdateByPrimaryKey` or `Validate` of a session, which reads the table once for all
+  the table's unique indexes together; for a relationship, the first change that keeps it.
+- **The rows an index does not hold are kept beside it** while the database is open. A row is compared with them
+  as well as with the unique index, so the duplicate is refused - as Access refuses it once the file is
+  compacted. An index that lacks rows is not searched for a relationship: its table is read instead, as for a
+  table with no index (below), so a change is slower and its outcome right. A row this library rewrites gains
+  its entries and a row it deletes is gone, and the index is searched once none of them is left.
+- **What it costs.** Measured on a table of 1,000,000 rows (30,304 pages) with the file in the operating
+  system's cache: with a primary key the first insert read 33,644 pages in half a second and allocated 620 MB in
+  passing; with a primary key and a unique index, 36,965 pages in 0.8 to 0.9 seconds and 990 MB. Every insert
+  after it, and the first without the option, read 8 and 11 pages in 0.1 and 0.2 milliseconds. For a
+  relationship, on a child of 1,000,000 rows and a parent of 200,000, the first cascade delete read 34,860 pages
+  in about a second and the deletes after it 65 pages and a millisecond each. Memory is needed in proportion to
+  the table's rows while it is read.
+- **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
+  is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
+- **What it does not catch.** An entry is still believed for what it points at: the value a row had before its
+  primary key was changed is refused as a duplicate, though no row has it. And a row added under a value whose
+  only entry points at a row long gone is added beside that entry, where Access does not find it through the
+  index until the file is compacted
+  ([qcatco/exportmdb.interop#79](https://github.com/qcatco/exportmdb.interop/issues/79)). Nothing here rebuilds
+  an index: `DBEngine.CompactDatabase` does.
 
 An entry whose row has gone does no harm either way: each row found is read and compared.
 
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
-earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`.
+earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
+beside it is the same for unique indexes and a primary key, made by `tools/legacy-unique-indexes.ps1`.
 
 Keys are matched as Access matches them - as its indexes hold them:
 
@@ -246,6 +291,67 @@ this library does not write, an index that does not hold every row, a parent key
 from end to end and held in memory until the change is written: some 200 bytes a row, about 60 MB and a second
 for a table of 300,000 rows. A change that would rewrite a row of a table Access has deleted a column from is
 refused (`NotSupportedException`): rows of such a table are not yet written correctly.
+
+## Changing a table, and creating a relationship
+
+A table that already has rows - one Access made or one this library made - can be given a column or an index,
+and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do
+([qcatco/exportmdb.interop#37](https://github.com/qcatco/exportmdb.interop/issues/37)):
+
+```csharp
+using var db = Database.Open("Shop.mdb");
+var orders = db.GetTable("Orders");
+
+orders.AddColumn(new ColumnBuilder("Shipped", DataType.ShortDateTime).Build());
+orders.AddIndex(new IndexDefinition("ByCustomerAndDate", "CustomerId", "Placed") { IsUnique = true });
+
+db.CreateRelationship(new RelationshipDefinition("Customers", "Id", "Orders", "CustomerId")
+{
+    HasReferentialIntegrity = true,
+    CascadeDeletes = true,
+});
+```
+
+Each change is all or nothing: what can refuse it is found before anything is written, and what is written is
+taken back if writing it fails, so a refused change leaves the file byte for byte as it was. Access is the referee
+of what is written (ExportMdb.Interop's `SchemaChangesInAccessTests`): beside the same index made by ACE, or the
+same relationship made by DAO, in a twin file, DAO lists the same thing and the two definitions hold the same
+index slots.
+
+- **A column** goes after the table's other columns. The rows already there are not rewritten: each reads the
+  new column as null - a Yes/No column as No - as Access shows them. So an AutoNumber column is added only to a
+  table with no rows (Access would number the rows there are), and a complex or calculated column is not added.
+- **An index** is built over the rows already there and kept on every write after. It is refused for what an
+  insert would be: two rows with one key in a unique index (rows with a null in it aside), a null in an index
+  that requires its values, a column whose keys this library does not write (Decimal, Binary, OLE, Complex, text
+  in another sort order), a value no key is made for. An index like one the table has shares its tree. A
+  primary key cannot be added to a table that has none.
+- **A relationship** is a row of `MSysRelationships` for each pair of columns and an entry in the catalog. With
+  referential integrity it also has the two indexes Access keeps for one: on the referenced table one named
+  `.rB`, `.rC`... that shares the tree of the unique index on the referenced columns - there must be one - and
+  on the referring table one with the relationship's name on the foreign key, which shares the tree of a plain
+  index on exactly those columns or is built. It is refused when a row already there refers to no parent, when
+  the matched columns differ in type, and when its name is a relationship's or an index's of the referring
+  table. `EnforceForeignKeys` keeps it from then on.
+- **Names.** An index or a relationship is refused a name Access does not allow: one with a period, an
+  exclamation mark, a grave accent, a square bracket or a control character in it, or a space at its start. So
+  nothing can take the name Access gives a referenced table's index (`.rB`, `.rC`...). A relationship given no
+  name is named for its two tables; when their names make no valid name, one has to be given.
+- **A table related to itself** has both of the relationship's indexes: the foreign key's is numbered first and
+  the referenced side's after it, and named by that number, as DAO writes them.
+- **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
+  Relationships window and Jackcess mark it, and its foreign key's index is then unique, as Access makes it
+  (Jackcess gives it a plain one).
+- **Where Access and Jackcess differ, Access is followed**: a name that is taken is refused, not changed; a
+  cycle of cascading relationships is allowed; a table's index slots stay in the order of their names; a new
+  index's block carries the counts Access puts there.
+- **A table's definition stays on one page**, which is all this library reads of one. A column or an index that
+  would take it further is refused, and a table whose definition already runs over pages is not changed: no
+  table is left that the library could then not write rows to. (Jackcess writes definitions of several pages.)
+- **Usage maps.** A new index's pages, and a new Memo or OLE column's, are listed in usage maps on a page of
+  their own - 4 KB each - as for a table this library creates; Access finds room on the table's usage-map page
+  first.
+- Nothing is dropped or renamed: no column, index or relationship.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
@@ -287,9 +393,11 @@ materialising the whole table.
 | Read Jet 3 (Access 97) / Jet 4 (Access 2000–2003) | ✅      |
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4)                   | ✅      |
+| Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `JetVersion.Jet12`, `Jet14`, `Jet16`, `Jet17` |
+| Large Number (`BigInt`) and Date/Time Extended (`ExtendedDateTime`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
-| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
+| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
@@ -300,6 +408,9 @@ materialising the whole table.
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
 | Foreign-key enforcement, with cascades (opt-in)   | ✅      |
+| Add a column or an index to a table that has rows | ✅ While the definition fits one page; no AutoNumber column for a table with rows; no primary key |
+| Create a relationship, with referential integrity and cascades | ✅ |
+| Drop or rename a column, index, table or relationship | ❌ Not yet |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
@@ -399,6 +510,12 @@ have been deleted - and a row Access moved to another page is read where its poi
   placed) that is not a multiple of 256 is listed; of precision 8 or 9, some; of precision 10 or more - 18 is
   the default, Access's and this library's - none, and only larger numbers can be. An empty list does not say
   the file has no such value.
+
+  A stored number that runs past 96 bits - the first of the four words set, which Access never writes - reads as
+  the number its low 96 bits make, with its sign, as Access reads it through its OLE DB provider and through DAO
+  ([qcatco/exportmdb.interop#74](https://github.com/qcatco/exportmdb.interop/issues/74)); it read as null before.
+  2^96 + 12345 in a `DECIMAL(5,2)` column is 123.45. Such a value is always listed, with `IsCut` set, whatever
+  its low 96 bits make. Java Jackcess returns all 128 bits as a `BigDecimal`, which a `decimal` cannot hold.
 
   Neither Access nor Java Jackcess checks a Decimal against its column's precision when it reads one. Jackcess
   returns the number. In Access, DAO returns it and SQL computes with it (the 1 above is found by

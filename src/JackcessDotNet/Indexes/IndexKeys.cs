@@ -20,7 +20,8 @@ internal static class IndexKeys
     public static bool CanEncode(DataType type)
         => type is DataType.Byte or DataType.Int or DataType.Long or DataType.Money
                 or DataType.Float or DataType.Double or DataType.ShortDateTime
-                or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid;
+                or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid
+                or DataType.BigInt or DataType.ExtendedDateTime;
 
     /// <summary>
     /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
@@ -76,10 +77,21 @@ internal static class IndexKeys
     /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
     internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
-        var key = new List<byte>();
-        for (int i = 0; i < columns.Count; i++)
-            key.AddRange(EncodeColumn(columns[i].Column, columns[i].IsAscending, values[i]));
-        return key.ToArray();
+        // Most keys are of one column: its part is the key.
+        if (columns.Count == 1) return EncodeColumn(columns[0].Column, columns[0].IsAscending, values[0]);
+
+        var parts = new byte[columns.Count][];
+        int length = 0;
+        for (int i = 0; i < parts.Length; i++)
+            length += (parts[i] = EncodeColumn(columns[i].Column, columns[i].IsAscending, values[i])).Length;
+        var key = new byte[length];
+        int at = 0;
+        foreach (byte[] part in parts)
+        {
+            part.CopyTo(key, at);
+            at += part.Length;
+        }
+        return key;
     }
 
     /// <summary>
@@ -183,6 +195,28 @@ internal static class IndexKeys
                 // The number the row stores: ten-thousandths, in eight bytes.
                 bytes = SignFlipped(BigEndian(MoneyUnits(Convert.ToDecimal(value))));
                 break;
+            case DataType.BigInt:
+                bytes = SignFlipped(BigEndian(Convert.ToInt64(value)));
+                break;
+            case DataType.ExtendedDateTime:
+                // The 42 bytes the row stores, in 8-byte segments each followed by a length byte: 9 for a
+                // segment with more after it, and after the last, which is filled out with zeros, the bytes it
+                // has of the value - 2. Text, so the keys sort as the dates do.
+                byte[] stored = ExtendedDateTimeCodec.Encode((DateTime)value!);
+                bytes = new byte[(stored.Length / 8 + 1) * 9];
+                for (int segment = 0; segment * 8 < stored.Length; segment++)
+                {
+                    int length = Math.Min(8, stored.Length - segment * 8);
+                    Array.Copy(stored, segment * 8, bytes, segment * 9, length);
+                    bytes[segment * 9 + 8] = length == 8 ? (byte)9 : (byte)length;
+                }
+                if (!ascending)
+                {
+                    // The length byte of a segment with more after it stays as it is.
+                    for (int i = 0; i < bytes.Length; i++)
+                        if (i % 9 != 8 || i == bytes.Length - 1) bytes[i] = (byte)~bytes[i];
+                }
+                return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
             case DataType.Boolean:
                 // No is the greater: Yes is 0x00 and No 0xFF, and the other way round descending. A Yes/No
                 // column holds no null, and its value is read as the row encoder reads it (RowValues).
