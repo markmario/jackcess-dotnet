@@ -5,9 +5,8 @@ namespace JackcessDotNet;
 /// MSysRelationships; one row per column pair (a composite relationship is
 /// reassembled from rows that share <see cref="Name"/>).
 ///
-/// Read-only today; the on-disk row format is supported but write-side
-/// (creating/dropping relationships, FK enforcement on Insert) is not yet
-/// hooked in.
+/// Read-only: relationships cannot be created or dropped. One that has referential integrity is enforced when
+/// <see cref="Database.EnforceForeignKeys"/> is set.
 /// </summary>
 public sealed class Relationship
 {
@@ -30,8 +29,18 @@ public sealed class Relationship
     public int Flags { get; }
 
     public bool IsOneToOne     => (Flags & 0x00000001) != 0;
+
+    /// <summary>
+    /// Whether Access enforces the relationship. One without referential integrity only tells the query designer how
+    /// the tables join, and its cascade flags mean nothing.
+    /// </summary>
+    public bool HasReferentialIntegrity => (Flags & 0x00000002) == 0;
+
+    /// <summary>A change to the parent's key is made to the rows that refer to it.</summary>
     public bool CascadeUpdates => (Flags & 0x00000100) != 0;
+    /// <summary>Deleting a parent row deletes the rows that refer to it.</summary>
     public bool CascadeDeletes => (Flags & 0x00001000) != 0;
+    /// <summary>Deleting a parent row sets the columns that refer to it to null.</summary>
     public bool CascadeNull    => (Flags & 0x00002000) != 0;
     public bool LeftOuterJoin  => (Flags & 0x01000000) != 0;
     public bool RightOuterJoin => (Flags & 0x02000000) != 0;

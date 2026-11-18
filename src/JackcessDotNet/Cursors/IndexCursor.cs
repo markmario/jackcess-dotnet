@@ -236,10 +236,5 @@ public sealed class IndexCursor : Cursor
     }
 
     private static bool ValuesEqual(object? stored, object? requested)
-    {
-        if (Equals(stored, requested)) return true;
-        if (stored is null || requested is null) return false;
-        try   { return Convert.ToDecimal(stored) == Convert.ToDecimal(requested); }
-        catch { return false; }
-    }
+        => DataPageWriter.PrimaryKeysEqual(stored, requested);
 }
