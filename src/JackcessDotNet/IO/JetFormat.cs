@@ -2,7 +2,7 @@ using System.Text;
 
 namespace JackcessDotNet;
 
-public sealed class JetFormat
+internal sealed class JetFormat
 {
     // ── Per-version row-encoding properties ───────────────────────────────────
     public JetVersion Version { get; }

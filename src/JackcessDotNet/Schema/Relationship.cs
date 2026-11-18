@@ -26,7 +26,7 @@ public sealed class Relationship
     public IReadOnlyList<(string FromColumn, string ToColumn)> ColumnPairs { get; }
 
     /// <summary>Raw grbit flags from MSysRelationships.</summary>
-    public int Flags { get; }
+    internal int Flags { get; }
 
     public bool IsOneToOne     => (Flags & 0x00000001) != 0;
 

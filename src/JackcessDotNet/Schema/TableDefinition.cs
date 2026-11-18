@@ -6,7 +6,7 @@ namespace JackcessDotNet;
 /// <summary>
 /// Holds the schema of a table plus the page-level state needed to write rows.
 /// </summary>
-public sealed class TableDefinition
+internal sealed class TableDefinition
 {
     private const int     MagicTableNumber = 1625;
     private const int     MagicIndexNumber = 1923;

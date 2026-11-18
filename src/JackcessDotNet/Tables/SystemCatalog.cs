@@ -15,7 +15,7 @@ namespace JackcessDotNet;
 ///   • rows in MSysACEs giving the new table the permissions the Tables container
 ///     passes on, with their entries in MSysACEs' index.
 /// </summary>
-public sealed class SystemCatalog
+internal sealed class SystemCatalog
 {
     private readonly PageFile       _file;
     private readonly JetFormat      _format;
@@ -686,20 +686,4 @@ public sealed class SystemCatalog
     /// or <c>null</c> if the row is deleted; an overflow row's bytes are those its pointer leads to.
     /// </summary>
     private byte[]? ReadRowBytes(byte[] page, int rowNum, JetFormat format) => DataRows.Read(_file, page, rowNum);
-
-    // ── Obsolete stubs kept for API compat ────────────────────────────────────
-
-    public void InsertTableEntry(string name)
-        => throw new NotSupportedException(
-               "Use InsertTableEntry(string tableName, int tdefPageNumber) instead.");
-
-    public void InsertColumnEntry(string tableName, Column column)
-        => throw new NotSupportedException(
-               "Column metadata is stored directly in the table's TDEF page, " +
-               "not in a separate system catalog table.");
-
-    public void InsertIndexEntry(string tableName, string indexName, bool isPrimaryKey)
-        => throw new NotSupportedException(
-               "Index metadata is stored directly in the table's TDEF page, " +
-               "not in a separate system catalog table.");
 }

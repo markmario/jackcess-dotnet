@@ -157,11 +157,6 @@ using var db = Database.Open("Confidential.mdb", "passw0rd");
 // RC4 CryptoAPI (Office 2002–2003), or Non-Standard AES — all auto-detected
 // from the EncryptionInfo header.
 using var db = Database.Open("Confidential.accdb", "passw0rd");
-
-// Inspect which scheme the codec picked (useful when triaging an unfamiliar file).
-byte[] page0 = File.ReadAllBytes("Confidential.accdb").Take(4096).ToArray();
-var codec = OfficeCryptCodecHandler.FromDbHeader(page0, "passw0rd");
-Console.WriteLine(codec?.Scheme);   // → "Agile Encryption (Office 2010+)"
 ```
 
 Wrong passwords throw `UnauthorizedAccessException` before any data page is

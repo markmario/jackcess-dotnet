@@ -24,7 +24,7 @@ namespace JackcessDotNet;
 /// Both variants are read-only — encryption (write) is out of scope; encrypted
 /// files open and decode pages, attempts to write throw <see cref="NotSupportedException"/>.
 /// </summary>
-public sealed class OfficeCryptCodecHandler : ICodecHandler
+internal sealed class OfficeCryptCodecHandler : ICodecHandler
 {
     // Header / encryption-info offsets shared across all schemes.
     private const int OffsetEncodingKey    = 0x3E;

@@ -37,7 +37,7 @@ namespace JackcessDotNet;
 /// are read either way and brought to these rules, children and all, when the
 /// tree is changed.
 /// </summary>
-public sealed class IndexWriter
+internal sealed class IndexWriter
 {
     private const int LeafTrailerLen = 4;   // 3-byte BE page + 1-byte row
     private const int NodeTrailerLen = 8;   // leaf trailer + 4-byte BE child page

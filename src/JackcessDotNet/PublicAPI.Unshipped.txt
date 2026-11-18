@@ -3,7 +3,6 @@ JackcessDotNet.Column
 JackcessDotNet.Column.AllowZeroLength.get -> bool
 JackcessDotNet.Column.ColumnNumber.get -> int
 JackcessDotNet.Column.DataType.get -> JackcessDotNet.DataType
-JackcessDotNet.Column.FixedDataOffset.get -> short
 JackcessDotNet.Column.IsAutoNumber.get -> bool
 JackcessDotNet.Column.IsCalculated.get -> bool
 JackcessDotNet.Column.IsCompressedUnicode.get -> bool
@@ -14,7 +13,6 @@ JackcessDotNet.Column.Name.get -> string!
 JackcessDotNet.Column.Precision.get -> byte
 JackcessDotNet.Column.Scale.get -> byte
 override JackcessDotNet.Column.ToString() -> string!
-JackcessDotNet.Column.VarLenTableIndex.get -> short
 JackcessDotNet.ColumnBuilder
 JackcessDotNet.ColumnBuilder.AutoNumber(bool autoNumber = true) -> JackcessDotNet.ColumnBuilder!
 static JackcessDotNet.ColumnBuilder.AutoNumber(string! name) -> JackcessDotNet.ColumnBuilder!
@@ -61,12 +59,6 @@ static JackcessDotNet.CursorBuilder.FindRowByPrimaryKey(JackcessDotNet.Table! ta
 JackcessDotNet.CursorBuilder.ToCursor() -> JackcessDotNet.Cursor!
 JackcessDotNet.CursorBuilder.ToIndexCursor() -> JackcessDotNet.IndexCursor!
 JackcessDotNet.CursorBuilder.WithIndex(string? indexName) -> JackcessDotNet.CursorBuilder!
-JackcessDotNet.DataPageWriter
-JackcessDotNet.DataPageWriter.DataPageWriter(JackcessDotNet.PageFile! file, JackcessDotNet.PageAllocator! allocator) -> void
-JackcessDotNet.DataPageWriter.DeleteRow(JackcessDotNet.TableDefinition! table, string! columnName, object! value) -> void
-JackcessDotNet.DataPageWriter.IncrementTdefRowCount(int tdefPageNumber, int delta = 1) -> void
-JackcessDotNet.DataPageWriter.InsertRow(JackcessDotNet.TableDefinition! tableDef, JackcessDotNet.Row! row) -> int
-JackcessDotNet.DataPageWriter.UpdateRowByPrimaryKey(JackcessDotNet.TableDefinition! table, object! primaryKeyValue, JackcessDotNet.Row! newValues) -> int
 JackcessDotNet.DataType
 JackcessDotNet.DataType.BigInt = 19 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Binary = 9 -> JackcessDotNet.DataType
@@ -85,35 +77,6 @@ JackcessDotNet.DataType.Numeric = 16 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Ole = 11 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.ShortDateTime = 8 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Text = 10 -> JackcessDotNet.DataType
-JackcessDotNet.DataTypeExtensions
-static JackcessDotNet.DataTypeExtensions.GetDefaultSize(this JackcessDotNet.DataType dt) -> int
-static JackcessDotNet.DataTypeExtensions.GetFixedSize(this JackcessDotNet.DataType dt) -> int
-static JackcessDotNet.DataTypeExtensions.GetInfo(this JackcessDotNet.DataType dt) -> JackcessDotNet.DataTypeInfo!
-static JackcessDotNet.DataTypeExtensions.GetMaxSize(this JackcessDotNet.DataType dt) -> int
-static JackcessDotNet.DataTypeExtensions.IsFixedLength(this JackcessDotNet.DataType dt) -> bool
-static JackcessDotNet.DataTypeExtensions.IsLongValue(this JackcessDotNet.DataType dt) -> bool
-static JackcessDotNet.DataTypeExtensions.IsVariableLength(this JackcessDotNet.DataType dt) -> bool
-JackcessDotNet.DataTypeInfo
-virtual JackcessDotNet.DataTypeInfo.<Clone>$() -> JackcessDotNet.DataTypeInfo!
-JackcessDotNet.DataTypeInfo.DataTypeInfo(JackcessDotNet.DataTypeInfo! original) -> void
-JackcessDotNet.DataTypeInfo.DataTypeInfo(int FixedSize, bool IsVariable, bool IsLong, int MaxSize = 0) -> void
-JackcessDotNet.DataTypeInfo.Deconstruct(out int FixedSize, out bool IsVariable, out bool IsLong, out int MaxSize) -> void
-virtual JackcessDotNet.DataTypeInfo.EqualityContract.get -> System.Type!
-virtual JackcessDotNet.DataTypeInfo.Equals(JackcessDotNet.DataTypeInfo? other) -> bool
-override JackcessDotNet.DataTypeInfo.Equals(object? obj) -> bool
-JackcessDotNet.DataTypeInfo.FixedSize.get -> int
-JackcessDotNet.DataTypeInfo.FixedSize.init -> void
-override JackcessDotNet.DataTypeInfo.GetHashCode() -> int
-JackcessDotNet.DataTypeInfo.IsLong.get -> bool
-JackcessDotNet.DataTypeInfo.IsLong.init -> void
-JackcessDotNet.DataTypeInfo.IsVariable.get -> bool
-JackcessDotNet.DataTypeInfo.IsVariable.init -> void
-JackcessDotNet.DataTypeInfo.MaxSize.get -> int
-JackcessDotNet.DataTypeInfo.MaxSize.init -> void
-virtual JackcessDotNet.DataTypeInfo.PrintMembers(System.Text.StringBuilder! builder) -> bool
-override JackcessDotNet.DataTypeInfo.ToString() -> string!
-static JackcessDotNet.DataTypeInfo.operator !=(JackcessDotNet.DataTypeInfo? left, JackcessDotNet.DataTypeInfo? right) -> bool
-static JackcessDotNet.DataTypeInfo.operator ==(JackcessDotNet.DataTypeInfo? left, JackcessDotNet.DataTypeInfo? right) -> bool
 JackcessDotNet.Database
 JackcessDotNet.Database.AllowAutoNumberInsert.get -> bool
 JackcessDotNet.Database.AllowAutoNumberInsert.set -> void
@@ -147,9 +110,6 @@ JackcessDotNet.DatabaseExporter
 static JackcessDotNet.DatabaseExporter.ExportToCollection<T>(this JackcessDotNet.Database! db, string? tableName = null) -> System.Collections.Generic.IEnumerable<T>!
 static JackcessDotNet.DatabaseExporter.ExportToDataSet(this JackcessDotNet.Database! db, bool includeSystem = false) -> System.Data.DataSet!
 static JackcessDotNet.DatabaseExporter.ExportToDataTable(this JackcessDotNet.Database! db, string! tableName) -> System.Data.DataTable!
-JackcessDotNet.DatabaseHeader
-static JackcessDotNet.DatabaseHeader.Create(JackcessDotNet.JetFormat! format) -> JackcessDotNet.DatabaseHeader!
-JackcessDotNet.DatabaseHeader.WriteTo(JackcessDotNet.PageFile! file) -> void
 JackcessDotNet.DatabaseImporter
 static JackcessDotNet.DatabaseImporter.CreateFromCollection<T>(string! path, System.Collections.Generic.IEnumerable<T>! items, JackcessDotNet.JetVersion version = JackcessDotNet.JetVersion.Jet4, string? tableName = null, string? primaryKey = null, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Database!
 static JackcessDotNet.DatabaseImporter.CreateFromDataSet(string! path, System.Data.DataSet! dataSet, JackcessDotNet.JetVersion version = JackcessDotNet.JetVersion.Jet4, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Database!
@@ -166,9 +126,6 @@ JackcessDotNet.DecimalBeyondPrecision.Table.get -> string!
 override JackcessDotNet.DecimalBeyondPrecision.ToString() -> string!
 JackcessDotNet.DecimalBeyondPrecision.Value.get -> decimal?
 JackcessDotNet.DecimalBeyondPrecision.ValueInEarlierByteOrder.get -> decimal?
-JackcessDotNet.ICodecHandler
-JackcessDotNet.ICodecHandler.DecodePage(byte[]! rawPage, int pageNumber) -> byte[]!
-JackcessDotNet.ICodecHandler.EncodePage(byte[]! page, int pageNumber) -> byte[]!
 JackcessDotNet.ImportOptions
 JackcessDotNet.ImportOptions.AppendIfExists.get -> bool
 JackcessDotNet.ImportOptions.AppendIfExists.init -> void
@@ -182,20 +139,15 @@ JackcessDotNet.ImportOptions.OnUnmappableColumn.get -> System.Action<string!, Sy
 JackcessDotNet.ImportOptions.OnUnmappableColumn.init -> void
 JackcessDotNet.Index
 JackcessDotNet.Index.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.IndexColumn!>!
-JackcessDotNet.Index.Flags.get -> byte
 JackcessDotNet.Index.IgnoresNulls.get -> bool
-JackcessDotNet.Index.IndexNumber.get -> int
-JackcessDotNet.Index.IndexType.get -> byte
 JackcessDotNet.Index.IsForeignKey.get -> bool
 JackcessDotNet.Index.IsPrimaryKey.get -> bool
 JackcessDotNet.Index.IsRequired.get -> bool
 JackcessDotNet.Index.IsUnique.get -> bool
 JackcessDotNet.Index.Name.get -> string!
-JackcessDotNet.Index.RootPageNumber.get -> int
 override JackcessDotNet.Index.ToString() -> string!
 JackcessDotNet.IndexColumn
 JackcessDotNet.IndexColumn.Column.get -> JackcessDotNet.Column!
-JackcessDotNet.IndexColumn.Flags.get -> byte
 JackcessDotNet.IndexColumn.IsAscending.get -> bool
 override JackcessDotNet.IndexColumn.ToString() -> string!
 JackcessDotNet.IndexCursor
@@ -216,90 +168,6 @@ JackcessDotNet.IndexDefinition.IsUnique.set -> void
 const JackcessDotNet.IndexDefinition.MaxColumns = 10 -> int
 const JackcessDotNet.IndexDefinition.MaxIndexesPerTable = 32 -> int
 JackcessDotNet.IndexDefinition.Name.get -> string!
-JackcessDotNet.IndexWriter
-JackcessDotNet.IndexWriter.CreateEmptyLeafPage() -> int
-JackcessDotNet.IndexWriter.CreatePrimaryKeyIndex(JackcessDotNet.TableDefinition! table, System.Collections.Generic.IReadOnlyList<string!>! pkColumns) -> int
-JackcessDotNet.IndexWriter.CreatePrimaryKeyIndex(JackcessDotNet.TableDefinition! table, string! indexName) -> int
-JackcessDotNet.IndexWriter.EnumerateRowPointersForKey(JackcessDotNet.TableDefinition! table, object! primaryKeyValue) -> System.Collections.Generic.IEnumerable<int>!
-JackcessDotNet.IndexWriter.FindRowByPrimaryKey(JackcessDotNet.TableDefinition! table, System.Collections.Generic.IReadOnlyList<object?>! values) -> int?
-JackcessDotNet.IndexWriter.FindRowByPrimaryKey(JackcessDotNet.TableDefinition! table, object! primaryKeyValue) -> int?
-JackcessDotNet.IndexWriter.IndexWriter(JackcessDotNet.PageFile! file, JackcessDotNet.PageAllocator! allocator) -> void
-JackcessDotNet.IndexWriter.InsertPrimaryKey(JackcessDotNet.TableDefinition! table, System.Collections.Generic.IReadOnlyList<object?>! values, int rowPointer) -> void
-JackcessDotNet.IndexWriter.InsertPrimaryKey(JackcessDotNet.TableDefinition! table, object! primaryKeyValue, int rowPointer) -> void
-JackcessDotNet.JetFormat
-const JackcessDotNet.JetFormat.CatalogTypeTable = 1 -> short
-JackcessDotNet.JetFormat.DataPageHeaderSize.get -> int
-JackcessDotNet.JetFormat.DataPageInitialFreeSpace.get -> int
-const JackcessDotNet.JetFormat.DeletedRowFlag = 32768 -> ushort
-const JackcessDotNet.JetFormat.DeletedRowFlags = 49152 -> ushort
-static JackcessDotNet.JetFormat.For(JackcessDotNet.JetVersion version) -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.ForVersionCode(byte code) -> JackcessDotNet.JetFormat!
-JackcessDotNet.JetFormat.HasPageChecksum.get -> bool
-JackcessDotNet.JetFormat.IsReadOnly.get -> bool
-static JackcessDotNet.JetFormat.Jet12.get -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.Jet14.get -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.Jet16.get -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.Jet17.get -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.Jet3.get -> JackcessDotNet.JetFormat!
-static JackcessDotNet.JetFormat.Jet4.get -> JackcessDotNet.JetFormat!
-JackcessDotNet.JetFormat.MaxRowSize.get -> int
-JackcessDotNet.JetFormat.OffsetChildTailIndexPage.get -> int
-JackcessDotNet.JetFormat.OffsetColumnFixedDataOffset.get -> int
-JackcessDotNet.JetFormat.OffsetColumnFlags.get -> int
-JackcessDotNet.JetFormat.OffsetColumnLength.get -> int
-JackcessDotNet.JetFormat.OffsetColumnNumber.get -> int
-JackcessDotNet.JetFormat.OffsetColumnPrecision.get -> int
-JackcessDotNet.JetFormat.OffsetColumnScale.get -> int
-JackcessDotNet.JetFormat.OffsetColumnSortOrder.get -> int
-JackcessDotNet.JetFormat.OffsetColumnVarTableIndex.get -> int
-const JackcessDotNet.JetFormat.OffsetDataFreeSpace = 2 -> int
-JackcessDotNet.JetFormat.OffsetDataNumRows.get -> int
-JackcessDotNet.JetFormat.OffsetDataRowTable.get -> int
-const JackcessDotNet.JetFormat.OffsetDataTdefPage = 4 -> int
-JackcessDotNet.JetFormat.OffsetIndexCompressedByteCount.get -> int
-JackcessDotNet.JetFormat.OffsetIndexEntryMask.get -> int
-JackcessDotNet.JetFormat.OffsetIndexLevel.get -> int
-JackcessDotNet.JetFormat.OffsetNextIndexPage.get -> int
-JackcessDotNet.JetFormat.OffsetPrevIndexPage.get -> int
-const JackcessDotNet.JetFormat.OverflowRowFlag = 16384 -> ushort
-JackcessDotNet.JetFormat.PageSize.get -> int
-const JackcessDotNet.JetFormat.PageSystemCatalog = 2 -> int
-const JackcessDotNet.JetFormat.PageTypeData = 1 -> byte
-const JackcessDotNet.JetFormat.PageTypeIndexLeaf = 4 -> byte
-const JackcessDotNet.JetFormat.PageTypeIndexNode = 3 -> byte
-const JackcessDotNet.JetFormat.PageTypeTableDef = 2 -> byte
-const JackcessDotNet.JetFormat.PageTypeUsageMap = 5 -> byte
-const JackcessDotNet.JetFormat.RowOffsetMask = 8191 -> int
-JackcessDotNet.JetFormat.SizeColumnHeader.get -> int
-JackcessDotNet.JetFormat.SizeIndexColumnBlock.get -> int
-JackcessDotNet.JetFormat.SizeIndexCompressedByteCount.get -> int
-JackcessDotNet.JetFormat.SizeIndexDefinition.get -> int
-JackcessDotNet.JetFormat.SizeIndexEntryMask.get -> int
-JackcessDotNet.JetFormat.SizeIndexInfoBlock.get -> int
-JackcessDotNet.JetFormat.SizeNameLength.get -> int
-JackcessDotNet.JetFormat.SizeRowColumnCount.get -> int
-const JackcessDotNet.JetFormat.SizeRowEntry = 2 -> int
-JackcessDotNet.JetFormat.SizeRowVarColOffset.get -> int
-JackcessDotNet.JetFormat.SizeSortOrder.get -> int
-JackcessDotNet.JetFormat.SizeTdefHeader.get -> int
-JackcessDotNet.JetFormat.SkipAfterIndexFlags.get -> int
-JackcessDotNet.JetFormat.SkipAfterIndexSlot.get -> int
-JackcessDotNet.JetFormat.SkipBeforeIndex.get -> int
-JackcessDotNet.JetFormat.SkipBeforeIndexFlags.get -> int
-JackcessDotNet.JetFormat.SkipBeforeIndexSlot.get -> int
-JackcessDotNet.JetFormat.TdefOffsetFreePage.get -> int
-JackcessDotNet.JetFormat.TdefOffsetFreeRow.get -> int
-JackcessDotNet.JetFormat.TdefOffsetLastAutoNumber.get -> int
-JackcessDotNet.JetFormat.TdefOffsetNumCols.get -> int
-JackcessDotNet.JetFormat.TdefOffsetNumIndexSlots.get -> int
-JackcessDotNet.JetFormat.TdefOffsetNumIndexes.get -> int
-JackcessDotNet.JetFormat.TdefOffsetNumRows.get -> int
-JackcessDotNet.JetFormat.TdefOffsetNumVarCols.get -> int
-JackcessDotNet.JetFormat.TdefOffsetOwnedPage.get -> int
-JackcessDotNet.JetFormat.TdefOffsetOwnedRow.get -> int
-JackcessDotNet.JetFormat.TextEncoding.get -> System.Text.Encoding!
-JackcessDotNet.JetFormat.UmapInlineBitmapSize.get -> int
-JackcessDotNet.JetFormat.Version.get -> JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion.Jet12 = 2 -> JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion.Jet14 = 3 -> JackcessDotNet.JetVersion
@@ -307,53 +175,6 @@ JackcessDotNet.JetVersion.Jet16 = 4 -> JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion.Jet17 = 5 -> JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion.Jet3 = 0 -> JackcessDotNet.JetVersion
 JackcessDotNet.JetVersion.Jet4 = 1 -> JackcessDotNet.JetVersion
-JackcessDotNet.LvalUmapRef
-JackcessDotNet.LvalUmapRef.Deconstruct(out int OwnedPage, out int OwnedRow, out int FreePage, out int FreeRow) -> void
-JackcessDotNet.LvalUmapRef.Equals(JackcessDotNet.LvalUmapRef other) -> bool
-~override JackcessDotNet.LvalUmapRef.Equals(object obj) -> bool
-JackcessDotNet.LvalUmapRef.FreePage.get -> int
-JackcessDotNet.LvalUmapRef.FreePage.init -> void
-JackcessDotNet.LvalUmapRef.FreeRow.get -> int
-JackcessDotNet.LvalUmapRef.FreeRow.init -> void
-override JackcessDotNet.LvalUmapRef.GetHashCode() -> int
-JackcessDotNet.LvalUmapRef.LvalUmapRef() -> void
-JackcessDotNet.LvalUmapRef.LvalUmapRef(int OwnedPage, int OwnedRow, int FreePage, int FreeRow) -> void
-JackcessDotNet.LvalUmapRef.OwnedPage.get -> int
-JackcessDotNet.LvalUmapRef.OwnedPage.init -> void
-JackcessDotNet.LvalUmapRef.OwnedRow.get -> int
-JackcessDotNet.LvalUmapRef.OwnedRow.init -> void
-~override JackcessDotNet.LvalUmapRef.ToString() -> string
-static JackcessDotNet.LvalUmapRef.operator !=(JackcessDotNet.LvalUmapRef left, JackcessDotNet.LvalUmapRef right) -> bool
-static JackcessDotNet.LvalUmapRef.operator ==(JackcessDotNet.LvalUmapRef left, JackcessDotNet.LvalUmapRef right) -> bool
-JackcessDotNet.NullCodecHandler
-JackcessDotNet.NullCodecHandler.DecodePage(byte[]! rawPage, int pageNumber) -> byte[]!
-JackcessDotNet.NullCodecHandler.EncodePage(byte[]! page, int pageNumber) -> byte[]!
-JackcessDotNet.NullCodecHandler.NullCodecHandler() -> void
-JackcessDotNet.OfficeCryptCodecHandler
-JackcessDotNet.OfficeCryptCodecHandler.DecodePage(byte[]! rawPage, int pageNumber) -> byte[]!
-JackcessDotNet.OfficeCryptCodecHandler.EncodePage(byte[]! page, int pageNumber) -> byte[]!
-static JackcessDotNet.OfficeCryptCodecHandler.FromDbHeader(byte[]! headerPage, string! password) -> JackcessDotNet.OfficeCryptCodecHandler?
-JackcessDotNet.OfficeCryptCodecHandler.Scheme.get -> string!
-JackcessDotNet.PageAllocator
-JackcessDotNet.PageAllocator.AllocateDataPage(int tdefPageNumber) -> int
-JackcessDotNet.PageAllocator.AllocateLvalPage() -> int
-JackcessDotNet.PageAllocator.AllocatePage() -> int
-JackcessDotNet.PageAllocator.AllocateUmapPage() -> int
-JackcessDotNet.PageAllocator.AllocateUmapPage(int rows) -> int
-JackcessDotNet.PageAllocator.PageAllocator(JackcessDotNet.PageFile! file) -> void
-JackcessDotNet.PageFile
-JackcessDotNet.PageFile.Codec.get -> JackcessDotNet.ICodecHandler!
-JackcessDotNet.PageFile.Codec.set -> void
-JackcessDotNet.PageFile.Dispose() -> void
-JackcessDotNet.PageFile.Format.get -> JackcessDotNet.JetFormat!
-JackcessDotNet.PageFile.Length.get -> long
-JackcessDotNet.PageFile.PageCount.get -> int
-JackcessDotNet.PageFile.PageFile(string! path, JackcessDotNet.JetFormat! format, System.IO.FileMode mode) -> void
-JackcessDotNet.PageFile.PageFile(string! path, JackcessDotNet.JetFormat! format, System.IO.FileMode mode, System.IO.FileAccess access) -> void
-JackcessDotNet.PageFile.Path.get -> string!
-JackcessDotNet.PageFile.ReadPage(int pageNumber) -> byte[]!
-JackcessDotNet.PageFile.ReplaceWith(System.IO.Stream! source) -> void
-JackcessDotNet.PageFile.WritePage(int pageNumber, byte[]! data) -> void
 JackcessDotNet.PropertyMap
 JackcessDotNet.PropertyMap.IsEmpty.get -> bool
 JackcessDotNet.PropertyMap.Name.get -> string!
@@ -377,7 +198,6 @@ JackcessDotNet.PropertyMap.Property.Value.init -> void
 static JackcessDotNet.PropertyMap.Property.operator !=(JackcessDotNet.PropertyMap.Property? left, JackcessDotNet.PropertyMap.Property? right) -> bool
 static JackcessDotNet.PropertyMap.Property.operator ==(JackcessDotNet.PropertyMap.Property? left, JackcessDotNet.PropertyMap.Property? right) -> bool
 override JackcessDotNet.PropertyMap.ToString() -> string!
-JackcessDotNet.PropertyMap.Type.get -> byte
 JackcessDotNet.PropertyMap.this[string! propertyName].get -> object?
 JackcessDotNet.PropertyMaps
 JackcessDotNet.PropertyMaps.Count.get -> int
@@ -391,7 +211,6 @@ JackcessDotNet.Relationship.CascadeDeletes.get -> bool
 JackcessDotNet.Relationship.CascadeNull.get -> bool
 JackcessDotNet.Relationship.CascadeUpdates.get -> bool
 JackcessDotNet.Relationship.ColumnPairs.get -> System.Collections.Generic.IReadOnlyList<(string! FromColumn, string! ToColumn)>!
-JackcessDotNet.Relationship.Flags.get -> int
 JackcessDotNet.Relationship.FromTable.get -> string!
 JackcessDotNet.Relationship.HasReferentialIntegrity.get -> bool
 JackcessDotNet.Relationship.IsOneToOne.get -> bool
@@ -427,20 +246,6 @@ static JackcessDotNet.Row.FromValues(System.Collections.Generic.IReadOnlyList<Ja
 JackcessDotNet.Row.Row() -> void
 JackcessDotNet.Row.Row(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string!, object?>>! values) -> void
 JackcessDotNet.Row.Set(string! column, object? value) -> JackcessDotNet.Row!
-JackcessDotNet.RowEncoder
-JackcessDotNet.RowEncoder.Encode(JackcessDotNet.Row! row) -> byte[]!
-JackcessDotNet.RowEncoder.RowEncoder(JackcessDotNet.JetFormat! format, System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns) -> void
-JackcessDotNet.SystemCatalog
-JackcessDotNet.SystemCatalog.CreateBaseCatalog() -> void
-JackcessDotNet.SystemCatalog.EnsureCanRegister(string! tableName) -> void
-JackcessDotNet.SystemCatalog.FindTableTdefPage(string! tableName) -> int
-JackcessDotNet.SystemCatalog.GetPropertyBytesForObject(int objectTdefPage) -> byte[]?
-JackcessDotNet.SystemCatalog.GetTableNames(bool includeSystem) -> System.Collections.Generic.IReadOnlyList<string!>!
-JackcessDotNet.SystemCatalog.InsertColumnEntry(string! tableName, JackcessDotNet.Column! column) -> void
-JackcessDotNet.SystemCatalog.InsertIndexEntry(string! tableName, string! indexName, bool isPrimaryKey) -> void
-JackcessDotNet.SystemCatalog.InsertTableEntry(string! name) -> void
-JackcessDotNet.SystemCatalog.InsertTableEntry(string! tableName, int tdefPageNumber) -> void
-JackcessDotNet.SystemCatalog.SystemCatalog(JackcessDotNet.PageFile! file) -> void
 JackcessDotNet.Table
 JackcessDotNet.Table.AddColumn(JackcessDotNet.Column! column) -> JackcessDotNet.Column!
 JackcessDotNet.Table.AddIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.Index!
@@ -469,32 +274,3 @@ JackcessDotNet.TableBuilder.TableBuilder(string! name) -> void
 JackcessDotNet.TableBuilder.ToTable(JackcessDotNet.Database! db) -> JackcessDotNet.Table!
 JackcessDotNet.TableBuilder.WithIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.TableBuilder!
 JackcessDotNet.TableBuilder.WithPrimaryKey(string! columnName) -> JackcessDotNet.TableBuilder!
-JackcessDotNet.TableDefinition
-JackcessDotNet.TableDefinition.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>!
-JackcessDotNet.TableDefinition.EffectivePrimaryKeyColumns.get -> System.Collections.Generic.IReadOnlyList<string!>!
-JackcessDotNet.TableDefinition.FreeSpaceRow.get -> int
-JackcessDotNet.TableDefinition.FreeSpaceRow.set -> void
-JackcessDotNet.TableDefinition.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
-JackcessDotNet.TableDefinition.LvalColumnUmapPages.get -> System.Collections.Generic.Dictionary<string!, JackcessDotNet.LvalUmapRef>!
-JackcessDotNet.TableDefinition.Name.get -> string!
-JackcessDotNet.TableDefinition.OwnedPagesRow.get -> int
-JackcessDotNet.TableDefinition.OwnedPagesRow.set -> void
-JackcessDotNet.TableDefinition.PrimaryKeyColumnName.get -> string?
-JackcessDotNet.TableDefinition.PrimaryKeyColumnName.set -> void
-JackcessDotNet.TableDefinition.PrimaryKeyColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>?
-JackcessDotNet.TableDefinition.PrimaryKeyColumnNames.set -> void
-JackcessDotNet.TableDefinition.PrimaryKeyIndexPage.get -> int
-JackcessDotNet.TableDefinition.PrimaryKeyIndexPage.set -> void
-JackcessDotNet.TableDefinition.Serialize(JackcessDotNet.JetFormat! format) -> byte[]!
-JackcessDotNet.TableDefinition.TableDefinition(string! name, System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns) -> void
-JackcessDotNet.TableDefinition.TdefPageNumber.get -> int
-JackcessDotNet.TableDefinition.TdefPageNumber.set -> void
-JackcessDotNet.TableDefinition.UmapPageNumber.get -> int
-JackcessDotNet.TableDefinition.UmapPageNumber.set -> void
-JackcessDotNet.TypeMapper
-static JackcessDotNet.TypeMapper.CoerceForJet(object? value, JackcessDotNet.DataType targetType) -> object?
-static JackcessDotNet.TypeMapper.ColumnFromClrType(string! name, System.Type! clrType, int? maxLength = null, bool autoNumber = false) -> JackcessDotNet.Column?
-const JackcessDotNet.TypeMapper.DefaultTextCharLength = 255 -> int
-static JackcessDotNet.TypeMapper.MapClrType(System.Type! clrType) -> JackcessDotNet.DataType?
-const JackcessDotNet.TypeMapper.MemoLengthThreshold = 255 -> int
-static readonly JackcessDotNet.NullCodecHandler.Instance -> JackcessDotNet.NullCodecHandler!

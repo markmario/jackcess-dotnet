@@ -3,7 +3,7 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>Allocates new pages by appending them to the file.</summary>
-public sealed class PageAllocator
+internal sealed class PageAllocator
 {
     private readonly PageFile _file;
 

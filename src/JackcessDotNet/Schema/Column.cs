@@ -46,13 +46,13 @@ public sealed class Column
     /// deleted column's slot in row bytes, so subsequent columns' actual offsets
     /// aren't a tight pack — they must be read from the TDEF.
     /// </summary>
-    public short FixedDataOffset { get; internal set; } = -1;
+    internal short FixedDataOffset { get; set; } = -1;
 
     /// <summary>
     /// 0-based index into the row's table of variable-length offsets; -1 for a column kept among the fixed-length
     /// values, or one that has not been through a table definition yet.
     /// </summary>
-    public short VarLenTableIndex { get; internal set; } = -1;
+    internal short VarLenTableIndex { get; set; } = -1;
 
     /// <summary>
     /// Whether a row keeps this column among its variable-length values. It is a flag of the column in the table's

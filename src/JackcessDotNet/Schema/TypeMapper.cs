@@ -7,7 +7,7 @@ namespace JackcessDotNet;
 /// <c>DataTable</c>/<c>DataSet</c>/<c>IEnumerable&lt;T&gt;</c> and get a sensibly-typed
 /// Access schema without spelling it out themselves.
 /// </summary>
-public static class TypeMapper
+internal static class TypeMapper
 {
     /// <summary>
     /// Default text length for inferred string columns when no

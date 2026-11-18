@@ -69,7 +69,7 @@ public enum DataType : byte
 /// <summary>
 /// Extension methods and metadata for <see cref="DataType"/>.
 /// </summary>
-public static class DataTypeExtensions
+internal static class DataTypeExtensions
 {
     private static readonly Dictionary<DataType, DataTypeInfo> _info = new()
     {
@@ -136,4 +136,4 @@ public static class DataTypeExtensions
 /// <param name="IsVariable">True if the column stores data in the variable-length area.</param>
 /// <param name="IsLong">True for MEMO/OLE types stored in overflow pages.</param>
 /// <param name="MaxSize">Max bytes for variable-length types (0 = unlimited/overflow).</param>
-public record DataTypeInfo(int FixedSize, bool IsVariable, bool IsLong, int MaxSize = 0);
+internal record DataTypeInfo(int FixedSize, bool IsVariable, bool IsLong, int MaxSize = 0);
