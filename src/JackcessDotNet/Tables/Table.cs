@@ -13,6 +13,7 @@ public sealed class Table
     private readonly PageAllocator  _allocator;
     private readonly TableDefinition _definition;
     private readonly DataPageWriter  _dataWriter;
+    private readonly TableIndexes    _indexes;
     private readonly Database?       _owningDb;
     /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
     private readonly IReadOnlyList<Column> _autoNumberColumns;
@@ -24,6 +25,7 @@ public sealed class Table
         _allocator   = allocator   ?? throw new ArgumentNullException(nameof(allocator));
         _definition  = definition  ?? throw new ArgumentNullException(nameof(definition));
         _dataWriter  = new DataPageWriter(file, allocator);
+        _indexes     = new TableIndexes(file, allocator, definition);
         _owningDb    = owningDb;
         // A complex column (attachments, multi-value fields) carries the flag too: its number is the key of the
         // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
@@ -107,8 +109,8 @@ public sealed class Table
     /// Encodes and inserts <paramref name="row"/> into the table.
     /// A new data page is allocated automatically if the current one is full.
     /// The total row count in the table's TDEF is updated on every insert.
-    /// When the table has a primary-key column configured, a leaf entry is also
-    /// appended to the PK index page so <see cref="IndexCursor.FindRow"/> can use it.
+    /// The row gains its entry in each of the table's indexes - its primary key and every other - so Access
+    /// finds it through them and <see cref="IndexCursor.FindRow"/> can use them.
     /// <para>
     /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values
     /// afterwards: a Long column gets one more than <see cref="LastAutoNumber"/>, a Guid column a new GUID. A
@@ -117,22 +119,39 @@ public sealed class Table
     /// written leaves the counter and <paramref name="row"/> as they were, so the number is not lost.
     /// </para>
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
+    /// index, or has a null in a column of the primary key or of an index that requires its values. Nothing of
+    /// the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The table has an AutoNumber column that is neither Long nor Guid, or a primary key that cannot be kept.
+    /// The table has an AutoNumber column that is neither Long nor Guid, or an index whose keys this library does
+    /// not write as Access does. Nothing is written.
     /// </exception>
     public void Insert(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        EnsurePrimaryKeyCanBeKept();
+        _indexes.EnsureCanBeKept();
 
         var given = AutoNumberValuesIn(row);
         int? lastAutoNumber;
         int  rowPtr;
+        IReadOnlyList<TableIndexes.Entry> entries;
+        IndexWriter? looked;
         try
         {
             lastAutoNumber = FillAutoNumbers(row);
-            _owningDb?.ValidateForeignKeysForInsert(this, row);
-            rowPtr = _dataWriter.InsertRow(_definition, row);
+
+            // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
+            // bool it stands for - read once, for the row's bytes and its index entries alike.
+            var written = RowValues.AsWritten(row, _definition.Columns);
+            _owningDb?.ValidateForeignKeysForInsert(this, written);
+
+            // Everything an index can refuse the row for, before any of it is written.
+            entries = _indexes.EntriesFor(written, enforce: true);
+            looked  = _indexes.EnsureNoDuplicates(entries, forEntry: true);
+
+            rowPtr = _dataWriter.InsertRow(_definition, written);
         }
         catch when (given is not null)
         {
@@ -147,9 +166,9 @@ public sealed class Table
         }
 
         // The counter and the row count go to the definition together, once the row is on its page and before its
-        // key: a row in the file is always one the counter has passed, whatever becomes of the key.
+        // index entries: a row in the file is always one the counter has passed, whatever becomes of the entries.
         _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
-        MaybeAddPrimaryKeyIndexEntry(row, rowPtr);
+        _indexes.Add(entries, rowPtr, looked);
     }
 
     /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
@@ -180,8 +199,9 @@ public sealed class Table
         int? last = null;
         foreach (var column in _autoNumberColumns)
         {
-            // DBNull, as a DataRow holds an empty cell, is no value to bring: the table numbers the row.
-            object? given = allowed && row.TryGetValue(column.Name, out var value) && value is not DBNull ? value : null;
+            // No value to bring - null, or DBNull as a DataRow holds an empty cell (RowValues) - and the table
+            // numbers the row.
+            object? given = allowed && row.TryGetValue(column.Name, out var value) && !RowValues.IsNull(value) ? value : null;
             if (column.DataType == DataType.Guid)
             {
                 row[column.Name] = given switch
@@ -211,28 +231,52 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Checks <paramref name="row"/> against the table's columns without writing it: throws
-    /// <see cref="ColumnValueTooLongException"/> for a Text value longer than its column, as <see cref="Insert"/>
-    /// would. A caller writing many rows can check them all first, so a refused value stops the batch before any of
-    /// it is in the file.
+    /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
+    /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
+    /// column, <see cref="NotSupportedException"/> for a table with an index that cannot be kept,
+    /// <see cref="InvalidOperationException"/> for a null a primary key or required index does not take or a
+    /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
+    /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
+    /// writing many rows can check them all first, so a refused row stops the batch before any of it is in the
+    /// file. Rows not yet written are not compared with one another: a duplicate within the batch is refused when
+    /// it is inserted.
     /// </summary>
     public void Validate(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
+        _indexes.EnsureCanBeKept();
         new RowEncoder(_file.Format, _definition.Columns).Validate(row);
+
+        var asWritten = row;
+        if (_autoNumberColumns.Count > 0)
+        {
+            asWritten = new Row(row);
+            FillAutoNumbers(asWritten);
+        }
+        asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
 
     /// <summary>
     /// Updates the row with the given primary-key value.
     /// Old LVAL chunks are freed and their space is reclaimed before the new row is written.
-    /// The row's primary-key entry moves to the rewritten row, as Access keeps an index.
+    /// The row's entry in each of the table's indexes moves to the rewritten row, under its new values - a
+    /// changed primary key among them - as Access keeps an index.
     /// An AutoNumber column keeps the value the row has: one in <paramref name="newValues"/> is ignored, unless
     /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
     /// moves the counter up to it.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
+    /// in a column of the primary key or of an index that requires its values. The row is left as it was.
+    /// </exception>
     public void UpdateByPrimaryKey(object primaryKeyValue, Row newValues)
     {
-        EnsurePrimaryKeyCanBeKept();
+        _indexes.EnsureCanBeKept();
+
+        // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
+        if (newValues is not null)
+            newValues = RowValues.AsWritten(newValues, _definition.Columns);
 
         int? highestGiven = null;
         if (newValues is not null && _autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
@@ -240,7 +284,7 @@ public sealed class Table
             // A null, or DBNull, is not a number to bring: the column keeps the one it has, whether or not a row
             // may bring its own. Access holds no AutoNumber as null.
             bool allowed = AutoNumberInsertAllowed;
-            newValues = new Row(newValues.Where(v => (allowed && v.Value is not (null or DBNull)) || !_autoNumberColumns.Any(c =>
+            newValues = new Row(newValues.Where(v => (allowed && !RowValues.IsNull(v.Value)) || !_autoNumberColumns.Any(c =>
                 c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
             if (allowed)
                 highestGiven = _autoNumberColumns
@@ -249,95 +293,40 @@ public sealed class Table
                     .Max();
         }
 
-        // The key the rewritten row is found under: the one newValues brings for the primary-key column, when it
-        // brings a different one, and otherwise the key it had. A key another row already has is refused here,
-        // before the row is rewritten.
-        bool indexed = _definition.PrimaryKeyColumnName is not null && _definition.PrimaryKeyIndexPage > 0;
-        object newKey = primaryKeyValue;
-        if (indexed && newValues is not null
-            && newValues.TryGetValue(_definition.PrimaryKeyColumnName!, out var replacement) && replacement is not null)
-        {
-            var keyColumns = IndexWriter.PrimaryKeyColumns(_definition);
-            if (keyColumns.Count == 1
-                && !IndexKeys.Encode(keyColumns, new[] { replacement })
-                        .AsSpan().SequenceEqual(IndexKeys.Encode(keyColumns, new[] { primaryKeyValue })))
+        // What the indexes hold for the row as it was and as it will be - its primary key, changed or not, and
+        // every other index - found, and a duplicate or a null refused, once the new row is known and before
+        // anything is rewritten.
+        IReadOnlyList<TableIndexes.Entry> oldEntries = Array.Empty<TableIndexes.Entry>();
+        IReadOnlyList<TableIndexes.Entry> newEntries = Array.Empty<TableIndexes.Entry>();
+        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!,
+            beforeChange: (oldRow, newRow, oldPointer) =>
             {
-                if (new IndexWriter(_file, _allocator).FindRowByPrimaryKey(_definition, replacement) is not null)
-                    throw new InvalidOperationException(
-                        $"{Name} already has a row whose primary key is {replacement}. The table is left as it was.");
-                newKey = replacement;
-            }
-        }
-
-        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!);
+                oldEntries = _indexes.EntriesFor(oldRow, enforce: false);
+                newEntries = _indexes.EntriesFor(newRow, enforce: true);
+                _indexes.EnsureNoDuplicates(newEntries, replacedRowPointer: oldPointer);
+            });
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
 
-        if (indexed)
-        {
-            var writer = new IndexWriter(_file, _allocator);
-            writer.RemovePrimaryKey(_definition, new[] { primaryKeyValue }, oldRowPtr);
-            writer.InsertPrimaryKey(_definition, newKey, newRowPtr);
-        }
-    }
-
-    /// <summary>
-    /// Refuses, before anything changes, to change a table whose primary key this
-    /// library cannot keep: a key on a column whose entries it cannot write as Access
-    /// writes them. A row changed with its key left behind is one Access counts and
-    /// finds wrongly.
-    /// </summary>
-    private void EnsurePrimaryKeyCanBeKept()
-    {
-        if (_definition.PrimaryKeyIndexPage == 0) return;
-        foreach (var column in IndexWriter.PrimaryKeyColumns(_definition))
-            if (!IndexKeys.CanEncode(column.Column))
-                throw new NotSupportedException(
-                    $"{Name}'s primary key cannot be kept: {IndexKeys.WhyNot(column.Column)}. The table is left as it was.");
-    }
-
-    private void MaybeAddPrimaryKeyIndexEntry(Row row, int rowPtr)
-    {
-        if (_definition.PrimaryKeyIndexPage == 0) return;
-
-        var pkCols = _definition.EffectivePrimaryKeyColumns;
-        if (pkCols.Count == 0) return;
-
-        var writer = new IndexWriter(_file, _allocator);
-        if (pkCols.Count == 1)
-        {
-            // Single-column path: missing-or-null skips the index entry, matching
-            // the existing (pre-composite) behaviour exactly.
-            if (!row.TryGetValue(pkCols[0], out var pkValue) || pkValue is null) return;
-            writer.InsertPrimaryKey(_definition, pkValue, rowPtr);
-        }
-        else
-        {
-            // Composite path: every component must be present + non-null.
-            var values = new object?[pkCols.Count];
-            for (int i = 0; i < pkCols.Count; i++)
-            {
-                if (!row.TryGetValue(pkCols[i], out var v) || v is null) return;
-                values[i] = v;
-            }
-            writer.InsertPrimaryKey(_definition, values, rowPtr);
-        }
+        // The row has moved: every entry it had goes, and it gains one at its new place.
+        _indexes.Remove(oldEntries, oldRowPtr);
+        _indexes.Add(newEntries, newRowPtr);
     }
 
     /// <summary>
     /// Deletes the first row where <paramref name="columnName"/> equals <paramref name="value"/>.
     /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
-    /// The TDEF row count is decremented by one.
+    /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
     /// </summary>
     public void DeleteRow(string columnName, object value)
     {
-        EnsurePrimaryKeyCanBeKept();
+        _indexes.EnsureCanBeKept();
         var deleted = _dataWriter.DeleteFirstMatch(_definition, columnName, value);
         _dataWriter.IncrementTdefRowCount(_definition.TdefPageNumber, -1);
 
-        // Its primary-key entry goes with it: Access counts and finds rows through the key.
-        if (deleted is { } row && _definition.PrimaryKeyIndexPage > 0 && row.PrimaryKey.All(v => v is not null))
-            new IndexWriter(_file, _allocator).RemovePrimaryKey(_definition, row.PrimaryKey, row.RowPtr);
+        // Its index entries go with it: Access counts and finds rows through them.
+        if (deleted is { } row)
+            _indexes.Remove(_indexes.EntriesFor(row.Values, enforce: false), row.RowPtr);
     }
 
     /// <summary>

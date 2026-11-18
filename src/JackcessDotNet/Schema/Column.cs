@@ -52,6 +52,14 @@ public sealed class Column
     public short VarLenTableIndex { get; internal set; } = -1;
 
     /// <summary>
+    /// True when the table's definition keeps this column where this library does not look for its type: among
+    /// the row's variable-length values, for a type it reads from the fixed-length ones (or the other way round).
+    /// Access keeps a Decimal column that way, and a Replication ID column made by SQL. Such a column's values
+    /// are not read as they are, so no index key is made of them.
+    /// </summary>
+    internal bool IsStoredOtherwise { get; set; }
+
+    /// <summary>
     /// Whether a Text or Memo value may be written in Jet's compressed form (0xFF 0xFE,
     /// then one byte per character): the column's "Unicode Compression" setting, read
     /// from its TDEF. Access reads a value in that form as UTF-16 in a column without

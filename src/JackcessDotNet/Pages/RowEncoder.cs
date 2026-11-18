@@ -77,11 +77,12 @@ public sealed class RowEncoder
             if (col.DataType.IsVariableLength())
                 continue;
 
-            object? value = row.TryGetValue(col.Name, out var v) ? v : null;
+            // DBNull is no value, and a Yes/No is read as RowValues reads one: what the row's index keys go by.
+            object? value = row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v) ? v : null;
 
             if (col.DataType == DataType.Boolean)
             {
-                if (value is bool b && b)
+                if (RowValues.ToBoolean(value))
                     nullMask.MarkNotNull(col.ColumnNumber);
                 continue;
             }
@@ -117,7 +118,7 @@ public sealed class RowEncoder
                     continue;
 
                 short offset = (short)pos;
-                object? value = row.TryGetValue(col.Name, out var v) ? v : null;
+                object? value = row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v) ? v : null;
                 if (value != null)
                 {
                     nullMask.MarkNotNull(col.ColumnNumber);
@@ -239,7 +240,7 @@ public sealed class RowEncoder
         foreach (var col in _columns)
         {
             if (col.DataType != DataType.Text || col.Length <= 0) continue;
-            if (!row.TryGetValue(col.Name, out var value) || value is null) continue;
+            if (!row.TryGetValue(col.Name, out var value) || RowValues.IsNull(value)) continue;
 
             int maxChars = _format.Version == JetVersion.Jet3 ? col.Length : col.Length / 2;
             string text = Convert.ToString(value) ?? string.Empty;

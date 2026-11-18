@@ -194,11 +194,15 @@ internal static class JetPages
         return (ByteUtil.Get3ByteInt(p, 56), p[55]);
     }
 
-    /// <summary>Every row of the table on <paramref name="tdefPage"/>, decoded, with its page and row.</summary>
-    public static List<(int Page, int Row, Row Values)> Rows(PageFile file, int tdefPage)
+    /// <summary>
+    /// Every row of the table on <paramref name="tdefPage"/>, decoded, with its page and row. With
+    /// <paramref name="forKeys"/>, as its index keys are made of it: a date as the double stored, and Memo
+    /// values read from their pages.
+    /// </summary>
+    public static List<(int Page, int Row, Row Values)> Rows(PageFile file, int tdefPage, bool forKeys = false)
     {
         var info = TdefReader.Read(file.ReadPage(tdefPage), file.Format);
-        var decoder = new RowDecoder(file.Format, info.Columns);
+        var decoder = new RowDecoder(file.Format, info.Columns, forKeys ? new LvalReader(file) : null);
         var (umapPage, umapRow) = OwnedPagesMap(file, tdefPage);
         var result = new List<(int, int, Row)>();
         foreach (int pageNumber in UsageMap.GetOwnedPages(file.ReadPage(umapPage), umapRow, file.Format, file))
@@ -214,7 +218,7 @@ internal static class JetPages
                 byte[] bytes = page.Skip(start).Take(end - start).ToArray();
                 var row = new Row();
                 foreach (var column in info.Columns)
-                    if (decoder.Decode(bytes, column) is { } value) row[column.Name] = value;
+                    if ((forKeys ? decoder.DecodeForKey(bytes, column) : decoder.Decode(bytes, column)) is { } value) row[column.Name] = value;
                 result.Add((pageNumber, r, row));
             }
         }

@@ -188,8 +188,14 @@ public sealed class DataPageWriter
     public int UpdateRowByPrimaryKey(TableDefinition table, object primaryKeyValue, Row newValues)
         => UpdateRowByPrimaryKeyMoving(table, primaryKeyValue, newValues).NewRowPtr;
 
-    /// <summary>As <see cref="UpdateRowByPrimaryKey"/>, with the old row's pointer too: the row moves.</summary>
-    internal (int OldRowPtr, int NewRowPtr) UpdateRowByPrimaryKeyMoving(TableDefinition table, object primaryKeyValue, Row newValues)
+    /// <summary>
+    /// As <see cref="UpdateRowByPrimaryKey"/>, with the old row's pointer too: the row moves.
+    /// <paramref name="beforeChange"/> is given the row as it was, the row as it will be and the old row's pointer
+    /// once the new row is known to be writable and before anything is changed: what it throws refuses the update
+    /// with the table as it was.
+    /// </summary>
+    internal (int OldRowPtr, int NewRowPtr) UpdateRowByPrimaryKeyMoving(
+        TableDefinition table, object primaryKeyValue, Row newValues, Action<Row, Row, int>? beforeChange = null)
     {
         if (table    is null) throw new ArgumentNullException(nameof(table));
         if (newValues is null) throw new ArgumentNullException(nameof(newValues));
@@ -251,19 +257,27 @@ public sealed class DataPageWriter
                 if (pkVal is null || !PrimaryKeysEqual(pkVal, primaryKeyValue)) continue;
 
                 // Build the merged row: existing values overlaid by newValues.
+                // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
+                // index keys were made of it (a date as the double stored), for its entries to be found.
+                var old    = new Row();
                 var merged = new Row();
                 foreach (var col in columns)
                 {
                     object? existing = decoder.Decode(rowBytes, col);
                     if (existing is not null)
                         merged[col.Name] = existing;
+                    object? keyed = col.DataType == DataType.ShortDateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+                    if (keyed is not null)
+                        old[col.Name] = keyed;
                 }
                 foreach (var kvp in newValues)
                     merged[kvp.Key] = kvp.Value;
 
-                // A merged row the new one could not be written as - text longer than its column - must not cost
-                // the row it replaces, so it is checked before anything is freed or deleted.
+                // A merged row the new one could not be written as - text longer than its column, a duplicate in
+                // a unique index - must not cost the row it replaces, so it is checked before anything is freed
+                // or deleted.
                 new RowEncoder(format, columns).Validate(merged);
+                beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNum, r));
 
                 // Free any LVAL chains referenced by the old row before overwriting.
                 FreeRowLvalChains(table, rowBytes, decoder);
@@ -292,10 +306,10 @@ public sealed class DataPageWriter
         => DeleteFirstMatch(table, columnName, value);
 
     /// <summary>
-    /// As <see cref="DeleteRow"/>, reporting the deleted row: its pointer and its primary-key values, for its
-    /// entry to leave the primary key. Null when no row matched.
+    /// As <see cref="DeleteRow"/>, reporting the deleted row: its pointer and the values its index keys were
+    /// made of, for its entries to leave the table's indexes. Null when no row matched.
     /// </summary>
-    internal (int RowPtr, object?[] PrimaryKey)? DeleteFirstMatch(TableDefinition table, string columnName, object value)
+    internal (int RowPtr, Row Values)? DeleteFirstMatch(TableDefinition table, string columnName, object value)
     {
         if (table is null)      throw new ArgumentNullException(nameof(table));
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
@@ -348,10 +362,13 @@ public sealed class DataPageWriter
                 object? colVal = decoder.Decode(rowBytes, targetCol);
                 if (!PrimaryKeysEqual(colVal, value)) continue;
 
-                var primaryKey = table.EffectivePrimaryKeyColumns
-                    .Select(name => decoder.Decode(rowBytes, table.Columns.First(c =>
-                        c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))))
-                    .ToArray();
+                // What its index keys were made of: every column kept in the row itself, and a Memo that is
+                // indexed (read before its pages are freed).
+                var values = new Row();
+                foreach (var col in table.Columns)
+                    if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
+                        && decoder.DecodeForKey(rowBytes, col) is { } stored)
+                        values[col.Name] = stored;
 
                 // Free any LVAL chains referenced by this row.
                 FreeRowLvalChains(table, rowBytes, decoder);
@@ -359,7 +376,7 @@ public sealed class DataPageWriter
                 // Mark the slot as deleted.
                 ByteUtil.PutUShort(dp, slotOff, (ushort)(slotVal | 0x8000u));
                 _file.WritePage(pageNum, dp);
-                return (RowPointer.Pack(pageNum, r), primaryKey);
+                return (RowPointer.Pack(pageNum, r), values);
             }
         }
 

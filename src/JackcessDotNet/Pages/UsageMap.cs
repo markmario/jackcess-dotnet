@@ -73,6 +73,10 @@ internal static class UsageMap
         return page;
     }
 
+    /// <summary>The most inline maps of the format's size <see cref="CreateUmapPage(JetFormat, int, int)"/> fits on a page.</summary>
+    public static int MapsPerUmapPage(JetFormat format)
+        => (format.PageSize - format.OffsetDataRowTable) / (1 + 4 + format.UmapInlineBitmapSize + JetFormat.SizeRowEntry);
+
     // ── Row reading helpers ───────────────────────────────────────────────────
 
     /// <summary>Returns the byte-offset within <paramref name="page"/> at which row

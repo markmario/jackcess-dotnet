@@ -373,16 +373,22 @@ public static class DatabaseImporter
     /// numbered past them all, wherever in the batch it comes: objects with identities 0 and 1 were given 1 and 1,
     /// the first numbered before the second's number was seen.
     /// <para>
-    /// When the column is the table's primary key, a number two rows bring, or one a row of the table already
-    /// has, is refused here, with nothing written: the key allows it once. A column that is not the key may
-    /// repeat a number, as it may in Access.
+    /// What the table's indexes would refuse is refused here, with nothing written. Every row is checked as it
+    /// will be written (<see cref="Table.Validate"/>): a number a row of the table already has in its primary
+    /// key - or any value another row has in a unique index - is the refusal an insert of that row would be, in
+    /// the same words, made before the first row goes in and found through the index, not by reading the table.
+    /// The rows of the batch are not in any index yet, so a number two of them bring for the primary key is
+    /// looked for here. A column that is not a key may repeat a number, as it may in Access.
     /// </para>
     /// </summary>
-    /// <exception cref="InvalidOperationException">A supplied number would be in the primary key twice.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A row would be a duplicate in the primary key or another unique index, of a row of the table or - in the
+    /// primary key - of another row of the batch.
+    /// </exception>
     private static void ReserveSuppliedIdentities(Table target, Column identity, IReadOnlyList<Row> batch)
     {
         var supplied = batch
-            .Where(row => row.TryGetValue(identity.Name, out var value) && value is not null)
+            .Where(row => row.TryGetValue(identity.Name, out var value) && !RowValues.IsNull(value))
             .Select(row => Convert.ToInt32(row[identity.Name], System.Globalization.CultureInfo.InvariantCulture))
             .ToList();
         if (supplied.Count == 0) return;
@@ -394,17 +400,12 @@ public static class DatabaseImporter
             foreach (int number in supplied)
                 if (!seen.Add(number))
                     throw new InvalidOperationException(
-                        $"Two rows to import into '{target.Name}' bring {number} for its primary key " +
-                        $"'{identity.Name}'. Nothing was written.");
-
-            if (target.RowCount > 0)
-                foreach (var existing in target.NewCursor())
-                    if (existing.TryGetValue(identity.Name, out var value) && value is int number && seen.Contains(number))
-                        throw new InvalidOperationException(
-                            $"A row to import into '{target.Name}' brings {number} for its primary key " +
-                            $"'{identity.Name}', which a row of the table already has. Nothing was written. " +
-                            $"Leave {nameof(ImportOptions)}.{nameof(ImportOptions.KeepIdentity)} off to have the table number the rows.");
+                        $"Two rows to import would be duplicates in {target.Name}'s primary key, which is unique: " +
+                        $"both hold {number} for {identity.Name}. The table is left as it was.");
         }
+
+        foreach (var row in batch)
+            target.Validate(row);
 
         target.RaiseLastAutoNumber(supplied.Max());
     }

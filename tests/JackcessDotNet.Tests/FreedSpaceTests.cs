@@ -1,5 +1,4 @@
 using System.IO;
-using System.Security.Cryptography;
 using JackcessDotNet.Util;
 using Xunit;
 
@@ -237,50 +236,30 @@ public sealed class FreedSpaceTests : IDisposable
         Assert.Equal(Bytes(1_500, 1), table.ReadAllRows().Single()["Blob"]);
     }
 
+    // The corpus's one file of long values Access wrote (blobV2007.accdb) keeps them in a table with an index on
+    // an attachment (Complex) column, whose keys the engine does not write. Until the engine kept every index it
+    // deleted a row there and left the row's entry in that index; now it refuses, and the file stays as Access
+    // wrote it. Space freed and used again in a file the engine wrote is the rest of this class.
     [Fact]
-    public void Space_a_delete_frees_in_a_file_Access_wrote_is_used_again_and_nothing_else_changes()
+    public void A_table_Access_wrote_with_an_index_the_engine_cannot_keep_is_left_as_it_was()
     {
         string? source = TestCorpus.File("V2007", "blobV2007.accdb");
         if (source is null) return;   // the corpus is optional locally; CI always has it
         File.Copy(source, _path);
+        byte[] before = File.ReadAllBytes(_path);
 
-        Dictionary<string, List<string>> before;
-        string tableName, blob, key;
-        object keyValue;
-        string replaced, replacement;
         using (var db = Database.Open(_path))
         {
-            before = Snapshot(db);
-            (tableName, blob, key, keyValue) = LargestLongValue(db);
+            var (tableName, blob, key, keyValue) = LargestLongValue(db);
             var table = db.GetTable(tableName);
-            replaced = Dump(table, table.ReadAllRows().Single(r => Equals(r[key], keyValue)));
-            int length = ((byte[])table.ReadAllRows().Single(r => Equals(r[key], keyValue))[blob]!).Length;
-            int pages = LvalPages(db, table, blob).Count;
+            Assert.Contains(table.Indexes, ix => ix.Columns.Any(c => c.Column.DataType == DataType.Complex));
 
-            table.DeleteRow(key, keyValue);
-            table.AllowAutoNumberInsert = true;   // the key is the table's AutoNumber: the new row takes the old one's
-            var row = new Row { [key] = keyValue, [blob] = Bytes(length, 7) };
-            table.Insert(row);
-
-            Assert.Equal(pages, LvalPages(db, table, blob).Count);   // the new value took the deleted one's pages
-            replacement = Dump(table, table.ReadAllRows().Single(r => Equals(r[key], keyValue)));
+            var refused = Assert.Throws<NotSupportedException>(() => table.DeleteRow(key, keyValue));
+            Assert.Contains("cannot be kept", refused.Message);
+            Assert.Throws<NotSupportedException>(() => table.Insert(new Row { [key] = 1_000_000, [blob] = Bytes(5_000, 7) }));
         }
 
-        using (var db = Database.Open(_path))
-        {
-            var after = Snapshot(db);
-            Assert.Equal(before.Keys.OrderBy(k => k), after.Keys.OrderBy(k => k));
-            foreach (var name in before.Keys)
-            {
-                var expected = before[name].ToList();
-                if (name == tableName)
-                {
-                    expected.Remove(replaced);
-                    expected.Add(replacement);
-                }
-                Assert.Equal(expected.OrderBy(r => r, StringComparer.Ordinal), after[name].OrderBy(r => r, StringComparer.Ordinal));
-            }
-        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
     }
 
     /// <summary>The table, OLE column and key of the longest OLE value in the file, keyed by a column whose values are unique.</summary>
@@ -312,20 +291,4 @@ public sealed class FreedSpaceTests : IDisposable
         Assert.True(best.HasValue && bestLength > 4_096, "the file has no long value that spans pages");
         return best!.Value;
     }
-
-    private static Dictionary<string, List<string>> Snapshot(Database db) =>
-        db.ListTables().ToDictionary(name => name, name =>
-        {
-            var table = db.GetTable(name);
-            return table.ReadAllRows().Select(r => Dump(table, r)).ToList();
-        });
-
-    private static string Dump(Table table, Row row) =>
-        // A column the reader leaves out of a row - an attachment field's hidden columns - is left out here too.
-        string.Join("|", table.Columns.Where(c => row.ContainsKey(c.Name)).Select(c => row[c.Name] switch
-        {
-            null => "null",
-            byte[] bytes => Convert.ToBase64String(SHA256.HashData(bytes)),
-            var v => Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture),
-        }));
 }

@@ -1,13 +1,13 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// Read-only metadata for a real (B-tree) index defined on a table.
+/// Read-only metadata for a real (B-tree) index defined on a table: one Access
+/// made, or one the table was created with (<see cref="IndexDefinition"/>).
 ///
 /// Each entry in <see cref="Columns"/> participates in the composite sort key,
-/// in declaration order. Index trees rooted at <see cref="RootPageNumber"/> are
-/// not yet traversed by this library for Access-authored files (see B-step2/3);
-/// the metadata is exposed today so callers can introspect schemas and so the
-/// future B-tree walker has the entry points it needs.
+/// in declaration order. The tree rooted at <see cref="RootPageNumber"/> is kept
+/// as the table's rows change, and searched by <see cref="IndexCursor"/>, when
+/// its keys are ones this library writes.
 /// </summary>
 public sealed class Index
 {
