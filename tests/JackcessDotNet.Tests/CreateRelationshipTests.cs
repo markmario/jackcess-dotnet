@@ -428,6 +428,23 @@ public sealed class CreateRelationshipTests : IDisposable
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Child", expectedRows: 42));
     }
 
+    // Access allows no index a name like .rC, and nor does AddIndex; a table made by CreateTable, which checks no
+    // names, can have one. The name made for the referenced side's index passes over it.
+    [Fact]
+    public void The_name_made_for_the_referenced_side_passes_over_an_index_that_has_it()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, new[] { "K" }, new[] { new IndexDefinition(".rC", "Name") });
+        db.CreateTable("Child", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
+
+        db.CreateRelationship(ByK());   // the table's third index, which Access would name .rC
+
+        Assert.Equal(new[] { ".rC 1", ".rD 2", "PrimaryKey 0" },
+                     parent.Indexes.Select(ix => $"{ix.Name} {ix.IndexNumber}").OrderBy(n => n, StringComparer.Ordinal));
+        Assert.True(parent.Indexes.Single(ix => ix.Name == ".rD").IsForeignKey);
+        Assert.Equal(new[] { ".rC", ".rD", "PrimaryKey" }, Slots(db, "Parent").Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
     // ── Refusals: nothing changes ────────────────────────────────────────────
 
     private void AssertRefusedAndUnchanged<TException>(RelationshipDefinition definition, string? says = null) where TException : Exception
