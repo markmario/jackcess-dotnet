@@ -71,9 +71,26 @@ public sealed class SystemCatalog
     /// Access would: a name an object in the Tables container already has, in any
     /// case (a table, a query or a linked table: they share one set of names), or a
     /// catalog with an index whose keys it cannot write (names sorted in an order
-    /// other than General - Legacy, as Access 2010 and later make them).
+    /// other than General - Legacy and General, as Access 97 keeps them).
     /// </summary>
     public void EnsureCanRegister(string tableName) => Prepare(tableName);
+
+    /// <summary>
+    /// The order the database's text sorts in, which is the order its catalog keeps names in: ACE gives a new
+    /// table's Text and Memo columns that order. Access 97's orders have no Jet4 form, and a catalog with no order
+    /// is one an earlier version of this library wrote; both are General - Legacy to a new table.
+    /// Jackcess takes the order from the default in the database's header instead. The catalog is used on purpose:
+    /// it is the order ACE was seen to give a table it added, the one the new table's name is keyed in whatever the
+    /// header says, and reading it needs no unmasking of the header.
+    /// </summary>
+    internal SortOrder TextSortOrder
+    {
+        get
+        {
+            var name = BuildCatalogTableDef().Columns.FirstOrDefault(c => c.Name == ColName);
+            return name is null || name.SortOrder.IsAccess97 ? SortOrder.GeneralLegacy : name.SortOrder;
+        }
+    }
 
     /// <summary>
     /// Registers a new user table: its MSysObjects row and index entries, and its
@@ -180,8 +197,11 @@ public sealed class SystemCatalog
         int acesTdef = FindTableTdefPage("MSysACEs");
         var acesDef  = acesTdef >= 0 ? BuildTableDef("MSysACEs", acesTdef) : null;
 
-        // Every index must be one this library can write a key for.
+        // Every index must be one this library can write a key for, the name's among them.
         EnsureKeysCanBeWritten(catalogDef);
+        var nameColumn = catalogDef.Columns.First(c => c.Name == ColName);
+        if (!IndexKeys.CanEncode(nameColumn, tableName))
+            throw new NotSupportedException($"A table cannot be named '{tableName}': {IndexKeys.WhyNot(nameColumn, tableName)}.");
         if (acesDef is not null) EnsureKeysCanBeWritten(acesDef);
 
         return (catalogDef, tablesId, AdminOwner(catalog), acesDef);

@@ -192,7 +192,7 @@ materialising the whole table.
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4 / Jet 3)           | ✅      |
 | Row CRUD + B-tree indexes (single-column PK)      | ✅      |
-| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy), GUID |
+| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
@@ -209,6 +209,45 @@ materialising the whole table.
 through this library round-trip cleanly through `Database.Open(path, password)`
 but Office Access may flag a stale integrity hash. Matches the upstream
 `jackcess-encrypt` limitation.
+
+## Text index keys: sort orders and limits
+
+An index entry's key for text depends on the column's sort order. The library
+writes, and searches by, the keys of two orders, each checked byte for byte
+against the keys Microsoft's own engine (ACE 16) writes:
+
+- **General - Legacy** (sort order 1033, version 0): Access 2000 to 2007, and
+  what a new database gets by default in later versions.
+- **General** (1033, version 1): what Access 2010 and later can make a new
+  database in. A table created in such a file sorts as the file does.
+
+What it does not do, and refuses rather than write a key Access cannot find:
+
+- **Access 97's order, and any other sort order** (for example 1049, Russian).
+  A file whose catalog sorts in one is not given a table, and a table with an
+  index on a Text or Memo column that sorts in one is not inserted into,
+  updated or deleted from.
+  Such a file is still read; its text indexes are not searched, its tables are
+  scanned. ACE 12's keys for Access 97's order are kept in
+  `tests/JackcessDotNet.Tests/IndexKeys` for a later port
+  (qcatco/exportmdb.interop#26).
+- **A value in an indexed Text or Memo column, or a table name, with a
+  character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
+  々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
+  ｰ U+FF70; in General also U+3033-3035, 〻 U+303B, ゠ U+30A0 and ꀕ U+A015) and,
+  in General - Legacy, the Arabic shadda (U+0651, U+FE7C, U+FE7D). So a Japanese
+  name with ー (データ, コンピューター) or an Arabic word with a shadda cannot be a
+  value of an indexed column (the primary key or any other index) or a table name: `Insert`, `UpdateByPrimaryKey`,
+  `DeleteRow` and `CreateTable` throw `NotSupportedException` before anything
+  is written. In General the same goes for four Arabic ligatures (U+06D6,
+  U+06D7, U+FD24, U+FD6F). Any text is fine in a column that is no key, and a
+  row Access wrote with such a key is still found: the table is scanned for it.
+
+A key longer than 510 bytes - of one column or of several together - is cut
+there and ended in a two-byte digest, as Access writes it. Two values cut to
+the same entry are duplicates to a unique index, as they are to Access. A lookup of such a value scans the table instead of trusting
+the index, since Jackcess and earlier versions of this library wrote the key
+whole.
 
 ## Type round-trip cheat sheet
 

@@ -29,11 +29,6 @@ namespace JackcessDotNet;
 internal sealed class IndexReader
 {
     private const int NoPageSentinel = unchecked((int)0xFFFFFFFFu);
-    private const byte AscStartFlag  = 0x7F;
-    private const byte DescStartFlag = 0x80;
-    private const byte AscNullFlag   = 0x00;
-    private const byte DescNullFlag  = 0xFF;
-
     private readonly PageFile  _file;
     private readonly JetFormat _format;
     private readonly Index     _index;
@@ -51,8 +46,8 @@ internal sealed class IndexReader
     /// True when <see cref="FindRowPointers"/> can resolve a key for this index.
     /// Single- and multi-column indexes are supported; each column must be one
     /// of the encodable types (Byte/Int/Long/Text), and a Text column must sort in
-    /// General - Legacy, the order of the text keys this library makes: a key made
-    /// in one order is not found among keys sorted in another.
+    /// an order whose keys this library makes (<see cref="TextIndexCodes.For"/>): a
+    /// key made in one order is not found among keys sorted in another.
     /// </summary>
     public bool CanResolveKey
         => _index.Columns.Count >= 1 && _index.Columns.All(c => CanResolve(c.Column));
@@ -60,7 +55,7 @@ internal sealed class IndexReader
     /// <summary>True when a key on <paramref name="column"/> can be made as Access made the index's.</summary>
     internal static bool CanResolve(Column column)
         => column.DataType is DataType.Byte or DataType.Int or DataType.Long
-        || column.DataType == DataType.Text && column.SortOrder.IsGeneralLegacy;
+        || column.DataType == DataType.Text && TextIndexCodes.For(column.SortOrder) is not null;
 
     /// <summary>
     /// Walks the B-tree rooted at <see cref="Index.RootPageNumber"/> and yields the
@@ -79,31 +74,10 @@ internal sealed class IndexReader
         if (!CanResolveKey) yield break;
         if (keys.Length != _index.Columns.Count) yield break;
 
-        byte[] searchKey = EncodeCompositeKey(keys);
+        // The key Access made for these values: each column's part in its own order and, for text, sort order.
+        byte[] searchKey = IndexKeys.Encode(_index.Columns, keys);
         foreach (int rowPtr in DescendAndCollect(_index.RootPageNumber, searchKey))
             yield return rowPtr;
-    }
-
-    private byte[] EncodeCompositeKey(object?[] values)
-    {
-        if (_index.Columns.Count == 1)
-            return EncodeColumnKey(_index.Columns[0], values[0]);
-
-        var segments = new byte[_index.Columns.Count][];
-        int total = 0;
-        for (int i = 0; i < _index.Columns.Count; i++)
-        {
-            segments[i] = EncodeColumnKey(_index.Columns[i], values[i]);
-            total += segments[i].Length;
-        }
-        var result = new byte[total];
-        int pos = 0;
-        for (int i = 0; i < segments.Length; i++)
-        {
-            Array.Copy(segments[i], 0, result, pos, segments[i].Length);
-            pos += segments[i].Length;
-        }
-        return result;
     }
 
     // ── Tree walk ────────────────────────────────────────────────────────────
@@ -242,63 +216,6 @@ internal sealed class IndexReader
 
         return new IndexPage(isLeaf, entries, prev, next, child);
     }
-
-    // ── Key encoding ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Encodes a single non-null column value into its index sort-key form:
-    /// [start flag byte][value bytes big-endian with first bit flipped][optional desc-flip].
-    /// Null values are encoded as [null flag byte] (ASC=0x00, DESC=0xFF) without value bytes.
-    /// </summary>
-    private static byte[] EncodeColumnKey(IndexColumn ixCol, object? value)
-    {
-        bool asc = ixCol.IsAscending;
-        byte startFlag = asc ? AscStartFlag : DescStartFlag;
-        byte nullFlag  = asc ? AscNullFlag  : DescNullFlag;
-
-        if (value is null)
-            return new[] { nullFlag };
-
-        // Text keys go through the general-legacy collation encoder which already
-        // emits the leading start-flag byte and trailing end markers. Numeric keys
-        // share the simpler "start-flag + flipped value bytes" envelope.
-        if (ixCol.Column.DataType == DataType.Text)
-        {
-            byte[] textBytes = GeneralLegacyIndexCodes.EncodeText(value!.ToString() ?? string.Empty, asc);
-            var resultText = new byte[textBytes.Length + 1];
-            resultText[0] = startFlag;
-            Array.Copy(textBytes, 0, resultText, 1, textBytes.Length);
-            return resultText;
-        }
-
-        byte[] raw = ixCol.Column.DataType switch
-        {
-            DataType.Byte => new[] { Convert.ToByte(value) },
-            DataType.Int  => BigEndianShort(Convert.ToInt16(value)),
-            DataType.Long => BigEndianInt(Convert.ToInt32(value)),
-            _             => throw new NotSupportedException(
-                                $"Index key encoding for {ixCol.Column.DataType} is not implemented yet.")
-        };
-
-        // Sign-bit flip in the first byte so negative values sort before positive ones in
-        // unsigned-byte comparison. Byte (unsigned 0..255) doesn't need this — Jackcess
-        // uses a dedicated ByteColumnDescriptor for that case.
-        if (ixCol.Column.DataType != DataType.Byte)
-            raw[0] ^= 0x80;
-        if (!asc)
-            for (int i = 0; i < raw.Length; i++) raw[i] = (byte)~raw[i];
-
-        var result = new byte[raw.Length + 1];
-        result[0] = startFlag;
-        Array.Copy(raw, 0, result, 1, raw.Length);
-        return result;
-    }
-
-    private static byte[] BigEndianShort(short v) => new[] { (byte)(v >> 8), (byte)v };
-    private static byte[] BigEndianInt  (int v)   => new[]
-    {
-        (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v
-    };
 
     private static int CompareBytes(byte[] a, byte[] b)
     {

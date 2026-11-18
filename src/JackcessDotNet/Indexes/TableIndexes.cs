@@ -11,6 +11,8 @@ namespace JackcessDotNet;
 /// What Access refuses is refused here before anything is changed:
 ///   • a table with an index whose keys this library cannot write (<see cref="IndexKeys.CanEncode(Column)"/>),
 ///     or whose indexes it could not read;
+///   • a value in an indexed text or Memo column with a character Access keys by the characters around it,
+///     for which this library makes no key (<see cref="IndexKeys.CanEncode(Column, object?)"/>);
 ///   • a null in a column of the primary key or of an index that requires its values;
 ///   • a second row with the same values in a unique index. As in Access, a row with a null in any column of the
 ///     index is not a duplicate of anything.
@@ -136,11 +138,16 @@ internal sealed class TableIndexes
             }
             if (nulls == values.Length && tree.IgnoresNulls) continue;
 
+            // A value Access keys by the characters around it has no key here, whichever index it is in.
+            for (int i = 0; i < values.Length; i++)
+                if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i]))
+                    throw new NotSupportedException(
+                        $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(tree.Columns[i].Column, values[i])}. " +
+                        "The table is left as it was.");
+
+            // The key as an entry holds it: one longer than Access keeps is cut, and ends in a digest of the rest
+            // (IndexKeys.Truncate), so it is never longer than an index page takes.
             byte[] key = IndexKeys.Encode(tree.Columns, values);
-            if (enforce && key.Length > IndexWriter.MaxKeyLength(_file.Format))
-                throw new InvalidOperationException(
-                    $"The row's key in {_table.Name}'s {Describe(tree)} is {key.Length} bytes long; an index page holds " +
-                    $"keys of up to {IndexWriter.MaxKeyLength(_file.Format)}. The table is left as it was.");
             entries.Add(new Entry(tree, key, nulls > 0, values));
         }
         return entries;
@@ -186,7 +193,8 @@ internal sealed class TableIndexes
     /// The row pointers an index on exactly <paramref name="columns"/>, in that order, holds for
     /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
     /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
-    /// this library does not make, or one that holds no entry for a key that is all null. Each pointer is an
+    /// this library does not make, one that holds no entry for a key that is all null, or values whose key a
+    /// search cannot be trusted with (<see cref="IndexKeys.CanSearch"/>). Each pointer is an
     /// entry, not yet a row: the row it points at is the caller's to read and compare, as an index's text key
     /// finds 'ABC' for 'abc' and an entry may outlive its row in a file an older version of this library wrote.
     /// <para>
@@ -208,7 +216,14 @@ internal sealed class TableIndexes
         if (tree is null || (tree.IgnoresNulls && values.All(v => v is null))) return null;
 
         byte[] key;
-        try { key = IndexKeys.Encode(tree.Columns, values); }
+        try
+        {
+            // A search that misses says there is no such row, so the index is searched only for values whose key
+            // is surely the one an entry has: not one Access keys by its neighbours, nor one whose key is cut
+            // (IndexKeys.CanSearch). The caller reads the table for the others.
+            if (!IndexKeys.CanSearch(tree.Columns, values)) return null;
+            key = IndexKeys.Encode(tree.Columns, values);
+        }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
         {
             return Array.Empty<int>();   // not a value the index's columns can hold: no row has it
@@ -247,6 +262,19 @@ internal sealed class TableIndexes
         string text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
         if (text.Length > 40) text = text.Substring(0, 40) + "...";
         return value is string ? $"'{text}'" : text;
+    }
+
+    /// <summary>
+    /// Refuses, before a row with <paramref name="values"/> is deleted, a row with a value in an indexed column
+    /// that no key is made for - one Access wrote, and keyed by the characters around it: its entries could not
+    /// be taken out with it. Called by the one place a row is deleted, so the row stays, with its entries.
+    /// </summary>
+    internal static void EnsureEntriesCanBeRemoved(TableDefinition table, Row values)
+    {
+        foreach (var column in table.Indexes.SelectMany(ix => ix.Columns).Select(c => c.Column))
+            if (values.TryGetValue(column.Name, out var value) && IndexKeys.CanEncode(column) && !IndexKeys.CanEncode(column, value))
+                throw new NotSupportedException(
+                    $"{table.Name}'s indexes cannot be kept: {IndexKeys.WhyNot(column, value)}. The table is left as it was.");
     }
 
     private static string Describe(Tree tree) => tree.IsPrimaryKey ? "primary key" : $"index {tree.Name}";

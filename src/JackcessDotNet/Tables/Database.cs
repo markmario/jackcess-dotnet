@@ -485,7 +485,7 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
-    ///   or Complex column, or text in a sort order other than General - Legacy. Nothing is created.
+    ///   or Complex column, or text in a sort order other than General - Legacy and General. Nothing is created.
     /// </exception>
     public Table CreateTable(string name, IReadOnlyList<Column> columns,
                              IReadOnlyList<string>? primaryKeyColumns,
@@ -505,6 +505,12 @@ public sealed class Database : IDisposable
             throw new ArgumentException("At least one column is required.", nameof(columns));
 
         var format = _file.Format;
+
+        // The table has columns of its own, copies of the caller's: the caller's may be another table's - one
+        // of another database, that sorts otherwise - and are left as they came, whether the table is made or
+        // refused. The copies' text sorts as this database's does, as a table Access adds to it would.
+        var textOrder = _catalog.TextSortOrder;
+        columns = columns.Select(column => column.CopyFor(textOrder)).ToList();
 
         // Everything that can refuse the table does so before a page is added: its indexes, the
         // definition (laid out once with no pages), the name and the catalog.

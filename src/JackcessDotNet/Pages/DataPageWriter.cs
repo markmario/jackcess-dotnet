@@ -428,6 +428,9 @@ public sealed class DataPageWriter
                 && decoder.DecodeForKey(rowBytes, col) is { } stored)
                 values[col.Name] = stored;
 
+        // A row whose index entries could not be taken out stays: nothing has changed yet.
+        TableIndexes.EnsureEntriesCanBeRemoved(table, values);
+
         // Free any LVAL chains referenced by this row.
         FreeRowLvalChains(table, rowBytes, decoder);
 
