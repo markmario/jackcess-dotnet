@@ -69,6 +69,14 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
+  for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
+  DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
+  Jackcess's.
+- **Large Number and Date/Time Extended columns** (Access 2016 and 2019) are read, written, created and
+  indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
+  9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
+  it has no time zone, and is read with `DateTimeKind.Unspecified`.
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
@@ -84,6 +92,15 @@ Limits to know about:
   asks each before it writes to any.
 - Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`.
+- A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
+  before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
+  the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
+  it does when Access adds the table: an Access older than that then refuses to open the file. Jackcess
+  refuses the table instead.
+- `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
+  which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
+  such a column.
+- An import (`DatabaseImporter`) still makes a `long` property a `Long` column, not a Large Number.
 
 ## Building and testing
 
@@ -119,7 +136,8 @@ var customers = db.GetTable("Customers");
 foreach (var row in customers.NewCursor())
     Console.WriteLine($"{row["CustomerID"]}  {row["CompanyName"]}");
 
-// Create a new database, define a schema, insert rows
+// Create a new database, define a schema, insert rows.
+// JetVersion.Jet4 is an .mdb; Jet12, Jet14, Jet16 and Jet17 are .accdb (Access 2007, 2010, 2016, 2019).
 using var fresh = Database.Create("MyData.mdb", JetVersion.Jet4);
 var people = fresh.CreateTable("People", new[]
 {
@@ -287,9 +305,11 @@ materialising the whole table.
 | Read Jet 3 (Access 97) / Jet 4 (Access 2000–2003) | ✅      |
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4)                   | ✅      |
+| Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `JetVersion.Jet12`, `Jet14`, `Jet16`, `Jet17` |
+| Large Number (`BigInt`) and Date/Time Extended (`ExtendedDateTime`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
-| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
+| Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
