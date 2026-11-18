@@ -5,7 +5,7 @@ name: Release
 #   a vX.Y.Z tag      -> the tag is checked (scripts/Assert-ReleaseTag.ps1), the tests run, the package is packed at
 #                        X.Y.Z and checked, and - once someone approves the `nuget` environment - it is pushed to
 #                        nuget.org and a GitHub Release is made.
-#   anything else     -> a rehearsal: the guard is run against the next version, and the package is packed and checked
+#   anything else     -> a rehearsal (a run by hand too, even from a tag): the guard is run against the next version, and the package is packed and checked
 #                        at <next>-ci.<run>. Nothing is published. ci.yml runs the tests for these.
 #
 # nuget.org is reached through Trusted Publishing: NuGet/login trades this run's GitHub OIDC token for a key that
@@ -26,7 +26,7 @@ permissions:
 # A tag's run is never cancelled: it is the release. A newer push to a branch makes its older rehearsal redundant.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
 
 env:
   DOTNET_NOLOGO: 'true'
@@ -79,7 +79,7 @@ jobs:
       # release so far, at or above the csproj's MinimumReleaseVersion, and not already released.
       - name: Check the release tag
         id: tag
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         shell: pwsh
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -94,7 +94,7 @@ jobs:
       # then packed at that version with a -ci.<run> suffix, so a rehearsal can never be mistaken for a release.
       - name: Rehearse the release guard
         id: rehearsal
-        if: github.ref_type != 'tag'
+        if: github.event_name != 'push' || github.ref_type != 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -139,7 +139,7 @@ jobs:
       # A release is tested from the tagged commit itself. ci.yml tests every branch push and pull request, so a
       # rehearsal does not repeat it.
       - name: Test
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: dotnet test JackcessDotNet.slnx --configuration Release --no-build
 
       # What ships is checked, not the build output: the ID, the version, the three frameworks, the licence and
@@ -174,11 +174,11 @@ jobs:
             $dll = Join-Path $dir "lib/$tfm/JackcessDotNet.dll"
             if (-not (Test-Path $dll)) { throw "lib/$tfm/JackcessDotNet.dll is missing from the package" }
             $name = [System.Reflection.AssemblyName]::GetAssemblyName($dll)
-            if ($name.Version -ne $assemblyVersion) { throw "lib/$tfm: assembly version $($name.Version), expected $assemblyVersion" }
-            if ($name.GetPublicKeyToken().Length -ne 0) { throw "lib/$tfm: the assembly is strong-named" }
+            if ($name.Version -ne $assemblyVersion) { throw "lib/${tfm}: assembly version $($name.Version), expected $assemblyVersion" }
+            if ($name.GetPublicKeyToken().Length -ne 0) { throw "lib/${tfm}: the assembly is strong-named" }
             $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll)
-            if ($info.FileVersion -ne "$assemblyVersion") { throw "lib/$tfm: file version $($info.FileVersion), expected $assemblyVersion" }
-            if ($info.ProductVersion -ne "$env:VERSION+$env:SHA") { throw "lib/$tfm: product version $($info.ProductVersion), expected $env:VERSION+$env:SHA" }
+            if ($info.FileVersion -ne "$assemblyVersion") { throw "lib/${tfm}: file version $($info.FileVersion), expected $assemblyVersion" }
+            if ($info.ProductVersion -ne "$env:VERSION+$env:SHA") { throw "lib/${tfm}: product version $($info.ProductVersion), expected $env:VERSION+$env:SHA" }
             "lib/$tfm/JackcessDotNet.dll: $($name.Version), $($info.ProductVersion)"
           }
           "$($nupkg.Name) is $env:PACKAGE_ID $env:VERSION from $env:SHA"
@@ -193,7 +193,7 @@ jobs:
 
   publish:
     name: Publish to nuget.org
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: [pack, retired-workflow]
     runs-on: ubuntu-latest
     # The environment's required reviewer approves each release before this job starts.
