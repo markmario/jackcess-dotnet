@@ -407,7 +407,7 @@ internal sealed class ForeignKeyEnforcer
     }
 
     /// <summary>Keys by their bytes.</summary>
-    private sealed class KeyComparer : IEqualityComparer<byte[]>
+    internal sealed class KeyComparer : IEqualityComparer<byte[]>
     {
         internal static readonly KeyComparer Instance = new();
 

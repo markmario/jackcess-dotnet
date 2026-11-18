@@ -211,10 +211,32 @@ orphan, which is what Access itself does with such a file.
   until its entry is met, so the check needs memory in proportion to the table's rows.
 - **An index that holds every row is searched from then on**, at the cost given above. What this library writes
   keeps it whole.
-- **An index that does not is not searched** while the database is open: its table is read instead, as for a
-  table with no index (below), so a change is slower and its outcome the same. A row this library rewrites
-  gains its entries, but nothing here rebuilds an index. Compacting the database in Access does: after
-  `DBEngine.CompactDatabase` Access and this library both find every row through the index.
+- **An index that does not is not searched** while rows it does not hold remain: its table is read instead, as
+  for a table with no index (below), so a change is slower and its outcome the same. Those rows are kept beside
+  the index while the database is open; a row this library rewrites gains its entries and a row it deletes is
+  gone, and the index is searched once none of them is left. Nothing here rebuilds an index. Compacting the
+  database in Access does: after `DBEngine.CompactDatabase` Access and this library both find every row through
+  the index.
+
+**A unique index is looked at the same way before a row is compared with it**, whether or not foreign keys are
+enforced ([qcatco/exportmdb.interop#73](https://github.com/qcatco/exportmdb.interop/issues/73)). The same earlier
+versions left rows out of a table's unique indexes, and kept its primary key under the value a row was found by,
+so a row whose key they changed is in the key under the value it had. A second row with the values of such a row
+is a duplicate the index knows nothing of. Access adds it - and the next time the file is compacted cannot build
+the index, and leaves the table without it, or without its primary key. This library refuses it: a row is
+compared with what the index holds and with the rows the index was seen not to hold.
+
+- **The first row a session checks against a table's unique indexes reads the table once**, for all of them
+  together, and their leaf pages; `Insert`, `UpdateByPrimaryKey` and `Validate` each check. Measured on a table
+  of 1,000,000 rows (30,304 pages) with the file in the operating system's cache: with a primary key, 33,643
+  pages in 0.7 to 1 second; with a primary key and a unique index, 36,964 pages in 0.9 seconds. Every insert
+  after it read 8 and 11 pages, in 0.1 and 0.2 milliseconds, as before. Memory is needed in proportion to the
+  table's rows while it is read.
+- **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
+  is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
+- **Nothing in a file says whether an earlier version wrote to it**, so every table with a primary key or a unique
+  index pays for the first row. A count does not show it (above), and the number an index's definition keeps is
+  of keys ever added.
 
 An entry whose row has gone does no harm either way: each row found is read and compared.
 

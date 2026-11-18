@@ -394,8 +394,8 @@ public sealed class IncompleteIndexTests : IDisposable
     }
 
     /// <summary>
-    /// An index found wanting is not searched for the rest of the session, and what the session itself writes is
-    /// right in it: the next change is as right as the first.
+    /// An index found wanting is not searched while a row it does not hold remains, and what the session itself
+    /// writes is right in it: the next change is as right as the first.
     /// </summary>
     [Fact]
     public void changes_after_the_first_go_on_reading_a_table_whose_index_does_not_hold_every_row()
