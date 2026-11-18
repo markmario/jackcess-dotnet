@@ -98,6 +98,28 @@ public sealed class AddColumnNewTypesTests : IDisposable
         Assert.Equal(when, rows[3]["Seen"]);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void A_table_with_a_newer_column_whose_creation_fails_leaves_the_file_s_version_as_it_was(int writesBeforeFailure)
+    {
+        // The header is the last thing written: a creation stopped at any earlier write has not touched it.
+        string path = CreateWithRows("fails.accdb", JetVersion.Jet12);
+        byte version = VersionOf(path);
+
+        using (var db = Database.Open(path))
+        {
+            db.File.WritesBeforeFailure = writesBeforeFailure;
+            Assert.ThrowsAny<Exception>(() => db.CreateTable("Newer", new[] { Col("Id", DataType.Long), Col("Big", DataType.BigInt) }));
+            db.File.WritesBeforeFailure = null;
+        }
+
+        Assert.Equal(version, VersionOf(path));
+        using var again = Database.Open(path);
+        Assert.DoesNotContain("Newer", again.ListTables());
+    }
+
     [Fact]
     public void A_column_of_an_older_type_leaves_the_file_s_version_as_it_was()
     {

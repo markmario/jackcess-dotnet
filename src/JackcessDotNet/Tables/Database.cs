@@ -596,8 +596,9 @@ public sealed class Database : IDisposable
         // A table with a Large Number or a Date/Time Extended column makes the file one of Access 2016's format
         // or Access 2019's, as it does when Access adds the table: older versions of Access then refuse the file
         // rather than misread it. An .mdb has no such column, and the table is refused here, with no page added.
-        if (FormatVersionFor($"Table '{name}' was not created", columns, format) is { } version)
-            DatabaseHeader.RaiseVersion(_file, version);
+        // The header is changed last, once the table is in the catalog: a creation that fails on the way - a
+        // full disk, when a page is added - must not leave a file marked for a table it does not have.
+        byte? version = FormatVersionFor($"Table '{name}' was not created", columns, format);
 
         // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
@@ -667,6 +668,9 @@ public sealed class Database : IDisposable
 
         // 7. Register the table in MSysObjects.
         _catalog.InsertTableEntry(name, tdefPage);
+
+        // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
+        if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
 
         return new Table(_file, _allocator, tableDef, owningDb: this);
     }
