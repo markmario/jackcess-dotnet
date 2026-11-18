@@ -41,7 +41,13 @@ public sealed class DataPageWriter
     /// registers it in the table's owned-pages usage-map.
     /// </summary>
     /// <returns>The row's pointer (<see cref="RowPointer"/>: its page and its row on it).</returns>
-    public int InsertRow(TableDefinition tableDef, Row row)
+    public int InsertRow(TableDefinition tableDef, Row row) => InsertRow(tableDef, row, datesAsStored: false);
+
+    /// <summary>
+    /// As <see cref="InsertRow(TableDefinition, Row)"/>; with <paramref name="datesAsStored"/>, a Date/Time value
+    /// may be the double a row stores (<see cref="RowEncoder.DatesAsStored"/>).
+    /// </summary>
+    private int InsertRow(TableDefinition tableDef, Row row, bool datesAsStored)
     {
         if (tableDef is null) throw new ArgumentNullException(nameof(tableDef));
         if (row      is null) throw new ArgumentNullException(nameof(row));
@@ -60,7 +66,7 @@ public sealed class DataPageWriter
             }
         }
 
-        var    encoder = new RowEncoder(format, tableDef.Columns, lvalWriters);
+        var    encoder = new RowEncoder(format, tableDef.Columns, lvalWriters) { DatesAsStored = datesAsStored };
         byte[] rowData = encoder.Encode(row);
 
         int dataPage   = FindOrAllocateDataPage(tableDef, rowData.Length, format);
@@ -256,38 +262,7 @@ public sealed class DataPageWriter
                 object? pkVal = decoder.Decode(rowBytes, pkCol);
                 if (pkVal is null || !PrimaryKeysEqual(pkVal, primaryKeyValue)) continue;
 
-                // Build the merged row: existing values overlaid by newValues.
-                // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
-                // index keys were made of it (a date as the double stored), for its entries to be found.
-                var old    = new Row();
-                var merged = new Row();
-                foreach (var col in columns)
-                {
-                    object? existing = decoder.Decode(rowBytes, col);
-                    if (existing is not null)
-                        merged[col.Name] = existing;
-                    object? keyed = col.DataType == DataType.ShortDateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
-                    if (keyed is not null)
-                        old[col.Name] = keyed;
-                }
-                foreach (var kvp in newValues)
-                    merged[kvp.Key] = kvp.Value;
-
-                // A merged row the new one could not be written as - text longer than its column, a duplicate in
-                // a unique index - must not cost the row it replaces, so it is checked before anything is freed
-                // or deleted.
-                new RowEncoder(format, columns).Validate(merged);
-                beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNum, r));
-
-                // Free any LVAL chains referenced by the old row before overwriting.
-                FreeRowLvalChains(table, rowBytes, decoder);
-
-                // Mark the original slot as deleted (bit 15).
-                ByteUtil.PutUShort(dp, slotOff, (ushort)(slotVal | 0x8000u));
-                _file.WritePage(pageNum, dp);
-
-                // Insert the merged row; the caller moves the row's PK entry from the old pointer to the new.
-                return (RowPointer.Pack(pageNum, r), InsertRow(table, merged));
+                return (RowPointer.Pack(pageNum, r), Rewrite(table, decoder, dp, pageNum, r, rowBytes, newValues, beforeChange, keepStoredDates: false));
             }
         }
 
@@ -362,26 +337,153 @@ public sealed class DataPageWriter
                 object? colVal = decoder.Decode(rowBytes, targetCol);
                 if (!PrimaryKeysEqual(colVal, value)) continue;
 
-                // What its index keys were made of: every column kept in the row itself, and a Memo that is
-                // indexed (read before its pages are freed).
-                var values = new Row();
-                foreach (var col in table.Columns)
-                    if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
-                        && decoder.DecodeForKey(rowBytes, col) is { } stored)
-                        values[col.Name] = stored;
-
-                // Free any LVAL chains referenced by this row.
-                FreeRowLvalChains(table, rowBytes, decoder);
-
-                // Mark the slot as deleted.
-                ByteUtil.PutUShort(dp, slotOff, (ushort)(slotVal | 0x8000u));
-                _file.WritePage(pageNum, dp);
-                return (RowPointer.Pack(pageNum, r), values);
+                return (RowPointer.Pack(pageNum, r), Delete(table, decoder, dp, pageNum, r, rowBytes));
             }
         }
 
         throw new InvalidOperationException(
             $"No row with {columnName} = '{value}' found in table '{table.Name}'.");
+    }
+
+    // ── A row at a known place ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="newValues"/> laid over its own, exactly as
+    /// <see cref="UpdateRowByPrimaryKeyMoving"/> rewrites the row it finds - <paramref name="beforeChange"/>
+    /// included - and returns where the row now is. One thing differs: a Date/Time value the change does not
+    /// touch is written back as the double the row stored, not as the <see cref="DateTime"/> it reads as, which
+    /// does not hold every double Access writes. A row rewritten here is one its caller did not name - a cascade
+    /// reached it - and a date of it that a relationship refers to must still be the date its parent has.
+    /// </summary>
+    internal int RewriteRowAt(TableDefinition table, int rowPtr, Row newValues, Action<Row, Row, int>? beforeChange = null)
+    {
+        var (page, rowBytes) = ReadLiveRow(table, rowPtr);
+        return Rewrite(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes, newValues, beforeChange, keepStoredDates: true);
+    }
+
+    /// <summary>
+    /// Deletes the row at <paramref name="rowPtr"/>, exactly as <see cref="DeleteFirstMatch"/> deletes the row it
+    /// finds, and reports the values its index keys were made of. The caller takes one off the TDEF's row count.
+    /// </summary>
+    internal Row DeleteRowAt(TableDefinition table, int rowPtr)
+    {
+        var (page, rowBytes) = ReadLiveRow(table, rowPtr);
+        return Delete(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes);
+    }
+
+    /// <summary>
+    /// The one way a row is rewritten, however it was found: <paramref name="newValues"/> laid over the row on
+    /// <paramref name="page"/>, the old row deleted and the merged one added, so the row moves. Returns the new
+    /// row's pointer.
+    /// </summary>
+    private int Rewrite(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex,
+                        byte[] rowBytes, Row newValues, Action<Row, Row, int>? beforeChange, bool keepStoredDates)
+    {
+        // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
+        // index keys were made of it (a date as the double stored), for its entries to be found.
+        var old    = new Row();
+        var merged = new Row();
+        foreach (var col in table.Columns)
+        {
+            object? existing = decoder.Decode(rowBytes, col);
+            if (existing is not null)
+                merged[col.Name] = existing;
+            object? keyed = col.DataType == DataType.ShortDateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+            if (keyed is not null)
+                old[col.Name] = keyed;
+            if (keepStoredDates && keyed is double)
+                merged[col.Name] = keyed;
+        }
+        foreach (var kvp in newValues)
+            merged[kvp.Key] = kvp.Value;
+
+        // A merged row the new one could not be written as - text longer than its column, a duplicate in
+        // a unique index - must not cost the row it replaces, so it is checked before anything is freed
+        // or deleted.
+        new RowEncoder(_file.Format, table.Columns).Validate(merged);
+        beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNumber, rowIndex));
+
+        // Free any LVAL chains referenced by the old row before overwriting.
+        FreeRowLvalChains(table, rowBytes, decoder);
+
+        // Mark the original slot as deleted (bit 15).
+        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | 0x8000u));
+        _file.WritePage(pageNumber, page);
+
+        // Insert the merged row; the caller moves the row's index entries from the old pointer to the new.
+        return InsertRow(table, merged, datesAsStored: keepStoredDates);
+    }
+
+    /// <summary>
+    /// The one way a row is deleted, however it was found. Returns the values its index keys were made of.
+    /// </summary>
+    private Row Delete(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex, byte[] rowBytes)
+    {
+        // What its index keys were made of: every column kept in the row itself, and a Memo that is
+        // indexed (read before its pages are freed).
+        var values = new Row();
+        foreach (var col in table.Columns)
+            if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
+                && decoder.DecodeForKey(rowBytes, col) is { } stored)
+                values[col.Name] = stored;
+
+        // Free any LVAL chains referenced by this row.
+        FreeRowLvalChains(table, rowBytes, decoder);
+
+        // Mark the slot as deleted.
+        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | 0x8000u));
+        _file.WritePage(pageNumber, page);
+        return values;
+    }
+
+    /// <summary>
+    /// The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, as its index keys are made
+    /// of them (<see cref="RowDecoder.DecodeForKey"/>: a date as the double stored), or null when no row of the
+    /// table is there: what a pointer from an index is checked against. One page is read, and the long-value pages
+    /// of the columns asked for.
+    /// </summary>
+    internal Row? ReadRowAt(TableDefinition table, int rowPtr, IReadOnlyList<Column> columns)
+    {
+        if (TryReadLiveRow(table, rowPtr) is not { } found) return null;
+        var decoder = DecoderFor(table);
+        var row = new Row();
+        foreach (var column in columns)
+            if (decoder.DecodeForKey(found.RowBytes, column) is { } value)
+                row[column.Name] = value;
+        return row;
+    }
+
+    private RowDecoder DecoderFor(TableDefinition table)
+        => new(_file.Format, table.Columns, table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
+
+    // The page holding the row at rowPtr and the row's bytes. The row has to be one of this table's and still
+    // there: a pointer kept across a change to the row is no longer one.
+    private (byte[] Page, byte[] RowBytes) ReadLiveRow(TableDefinition table, int rowPtr)
+        => TryReadLiveRow(table, rowPtr) ?? throw new InvalidOperationException(
+            $"No row of table '{table.Name}' is at page {RowPointer.Page(rowPtr)}, row {RowPointer.Row(rowPtr)}.");
+
+    private (byte[] Page, byte[] RowBytes)? TryReadLiveRow(TableDefinition table, int rowPtr)
+    {
+        var format   = _file.Format;
+        int rowIndex = RowPointer.Row(rowPtr);
+        int pageNum  = RowPointer.Page(rowPtr);
+        if (pageNum <= 0 || pageNum >= _file.PageCount) return null;
+        byte[] page  = _file.ReadPage(pageNum);
+        int slotOff  = format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
+
+        bool live = page[0] == JetFormat.PageTypeData
+            && ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) == table.TdefPageNumber
+            && rowIndex < ByteUtil.GetShort(page, format.OffsetDataNumRows)
+            && (ByteUtil.GetUShort(page, slotOff) & 0xC000) == 0;
+        if (!live) return null;
+
+        int rowStart = ByteUtil.GetUShort(page, slotOff) & JetFormat.RowOffsetMask;
+        int rowEnd   = rowIndex == 0
+            ? format.PageSize
+            : ByteUtil.GetUShort(page, slotOff - JetFormat.SizeRowEntry) & JetFormat.RowOffsetMask;
+        return (page, page.Slice(rowStart, rowEnd));
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -398,7 +500,11 @@ public sealed class DataPageWriter
         }
     }
 
-    private static bool PrimaryKeysEqual(object? stored, object? requested)
+    /// <summary>
+    /// How a value a caller names a row by is matched to a stored one: equal, or equal as numbers (a Long column's 5
+    /// for a caller's 5L). Text is matched exactly.
+    /// </summary>
+    internal static bool PrimaryKeysEqual(object? stored, object? requested)
     {
         if (Equals(stored, requested)) return true;
         if (stored is null || requested is null) return false;

@@ -45,6 +45,13 @@ internal sealed class FreedLvalPages
         }
     }
 
+    /// <summary>Forgets everything noted: the file was put back as it was before the notes were made.</summary>
+    public void Clear()
+    {
+        _byColumn.Clear();
+        _looked.Clear();
+    }
+
     /// <summary>
     /// Notes the room <paramref name="page"/> has now if the column has it noted already - a page it freed - and leaves
     /// any other page alone.

@@ -39,6 +39,13 @@ public sealed class RowEncoder
         _varColumnCount = varIndex;
     }
 
+    /// <summary>
+    /// Whether a Date/Time column's value may come as the double a row stores - days since 30 December 1899 -
+    /// instead of a <see cref="DateTime"/>, and is then written as it is. A <see cref="DateTime"/> does not hold
+    /// every double Access writes, so a row rewritten from what was read as one would have its dates changed.
+    /// </summary>
+    internal bool DatesAsStored { get; set; }
+
     public byte[] Encode(Row row)
     {
         if (row is null)
@@ -195,7 +202,8 @@ public sealed class RowEncoder
                 Util.ByteUtil.PutDouble(buffer, offset, Convert.ToDouble(value));
                 return;
             case DataType.ShortDateTime:
-                Util.ByteUtil.PutDouble(buffer, offset, ((DateTime)value).ToOADate());
+                // A row rewritten with its dates as stored brings the double itself for a date it does not change.
+                Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : ((DateTime)value).ToOADate());
                 return;
             case DataType.Money:
                 decimal dec = Convert.ToDecimal(value);

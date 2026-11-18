@@ -169,14 +169,56 @@ internal sealed class TableIndexes
             foreach (int holder in writer.RowPointersForKey(tree.Target.RootPage, entry.Key))
             {
                 if (holder == replacedRowPointer || !IsLiveRow(holder)) continue;
-                throw new InvalidOperationException(
-                    $"The row would be a duplicate in {_table.Name}'s {Describe(tree)}, which is unique: another row holds " +
-                    $"{string.Join(", ", tree.Columns.Select((c, i) => $"{Shown(entry.Values[i])} for {c.Column.Name}"))}. " +
-                    "The table is left as it was.");
+                throw new InvalidOperationException(DuplicateIn(entry) + " The table is left as it was.");
             }
         }
         return forEntry ? writer : null;
     }
+
+    /// <summary>What is said of a row whose <paramref name="entry"/> is a duplicate in its unique index, by whoever found it one.</summary>
+    internal string DuplicateIn(Entry entry)
+        => $"The row would be a duplicate in {_table.Name}'s {Describe(entry.Tree)}, which is unique: another row holds " +
+           $"{string.Join(", ", entry.Tree.Columns.Select((c, i) => $"{Shown(entry.Values[i])} for {c.Column.Name}"))}.";
+
+    // ── Finding rows ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The row pointers an index on exactly <paramref name="columns"/>, in that order, holds for
+    /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
+    /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
+    /// this library does not make, or one that holds no entry for a key that is all null. Each pointer is an
+    /// entry, not yet a row: the row it points at is the caller's to read and compare, as an index's text key
+    /// finds 'ABC' for 'abc' and an entry may outlive its row in a file an older version of this library wrote.
+    /// <para>
+    /// That covers an entry too many. An entry too few it cannot: the index is trusted to hold every row, as Access
+    /// trusts it. Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2)
+    /// added a row to its table's primary key and to no other index, so a row one of them inserted into a table
+    /// Access made is in none of that table's other indexes, and is not found here
+    /// (qcatco/exportmdb.interop#64).
+    /// </para>
+    /// </summary>
+    internal IEnumerable<int>? RowPointersFor(IReadOnlyList<string> columns, IReadOnlyList<object?> values)
+    {
+        if (_table.HasUnreadIndexes) return null;
+        var tree = Trees.FirstOrDefault(t =>
+            t.Target.RootPage > 0
+            && t.Columns.Count == columns.Count
+            && t.Columns.Select(c => c.Column.Name).SequenceEqual(columns, StringComparer.OrdinalIgnoreCase)
+            && t.Columns.All(c => IndexKeys.CanEncode(c.Column)));
+        if (tree is null || (tree.IgnoresNulls && values.All(v => v is null))) return null;
+
+        byte[] key;
+        try { key = IndexKeys.Encode(tree.Columns, values); }
+        catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
+        {
+            return Array.Empty<int>();   // not a value the index's columns can hold: no row has it
+        }
+        return new IndexWriter(_file, _allocator).RowPointersForKey(tree.Target.RootPage, key);
+    }
+
+    /// <summary>The row pointers <paramref name="entry"/>'s index holds under its key: the rows a unique index compares it with.</summary>
+    internal IEnumerable<int> RowPointersFor(Entry entry)
+        => new IndexWriter(_file, _allocator).RowPointersForKey(entry.Tree.Target.RootPage, entry.Key);
 
     /// <summary>
     /// Adds <paramref name="entries"/> to their indexes for the row at <paramref name="rowPointer"/>, through

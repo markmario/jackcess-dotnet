@@ -25,7 +25,7 @@ public sealed class Database : IDisposable
     /// <summary>The open file, for tests that look at its pages.</summary>
     internal PageFile File => _file;
     private readonly SystemCatalog _catalog;
-    private IReadOnlyList<Relationship>? _relsCache;
+    private ForeignKeyEnforcer? _foreignKeys;
 
     private Database(PageFile file)
     {
@@ -35,14 +35,60 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// When true, <see cref="Table.Insert"/> validates that every FK column
-    /// value maps to an existing row in the parent table per the relationships
-    /// declared in <c>MSysRelationships</c>. Default <c>false</c> for backward
-    /// compatibility — Access historically left FK validation to the
-    /// application layer, not the engine.
+    /// When true, the relationships in <c>MSysRelationships</c> that have referential integrity are kept, as
+    /// Access keeps them, by <see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/> and
+    /// <see cref="Table.DeleteRow"/>. Default <c>false</c>: nothing is checked and nothing cascades.
     /// <para>
-    /// Restrict-only — no cascade behaviour is implemented. Null FK values are
-    /// allowed (matches SQL semantics). Composite FKs are checked column-by-column.
+    /// A row that would refer to no parent row is refused: on insert, and when an update changes its foreign key.
+    /// A foreign key whose columns are all null refers to nothing and is allowed. Changing a parent's key, or
+    /// deleting the parent, does what the relationship says: with cascade update the referring rows take the new
+    /// key; with cascade delete they are deleted, and the rows referring to them in turn; with cascade-to-null
+    /// their foreign key is set to null; with none of these the change is refused while any row refers to the
+    /// parent.
+    /// </para>
+    /// <para>
+    /// A refused change throws <see cref="InvalidOperationException"/> and leaves the file as it was: everything is
+    /// checked, cascades included, before anything is written. A change that fails while it is being written is
+    /// taken back.
+    /// </para>
+    /// <para>
+    /// Rows are found through the tables' indexes. Access gives every relationship an index on its foreign key,
+    /// and the key it refers to is a primary key or a unique index: so an insert reads a few pages to find its
+    /// parent, and an update or delete reads the rows it reaches and the index pages that lead to them - a cascade
+    /// delete of five rows about fifty pages, whether the child table has a thousand rows or a million - and holds
+    /// only those rows in memory until it is written. Every row a cascade rewrites or deletes keeps its entry in
+    /// every index of its table, as any other update or delete does, so Access goes on finding it.
+    /// </para>
+    /// <para>
+    /// An index is trusted to hold every row of its table, as Access trusts it. An entry whose row has gone does no
+    /// harm - each row found is read and compared - but a row with no entry is not found. Versions of this library
+    /// before it kept every index (those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key
+    /// and to no other index: a row one of them inserted into a table Access made is missing from the index on
+    /// its foreign key. Enforcement does not see such a row as a child - its parent can be deleted or re-keyed
+    /// with the row left behind, an orphan, where it should have followed or forbidden the change. Access makes
+    /// the same mistake with the same file, which is already inconsistent to it (qcatco/exportmdb.interop#64).
+    /// </para>
+    /// <para>
+    /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
+    /// whose key is null (a unique index allows it) has the rows whose foreign key is null for children, so
+    /// deleting it deletes them or is refused by them, and re-keying it takes them with it. A parent that has a key
+    /// never touches them, and a row may always be added, or changed, to have no foreign key at all. Numbers are
+    /// matched as stored: a Double or Single by its bits, so 0 and -0 are two keys, and so are a Double and the
+    /// next one after it; a Date/Time by the double stored, not the <see cref="DateTime"/> it reads as. A Yes/No
+    /// holds no null: a null given it is stored No, and is checked as No - so a cascade-to-null of a Yes/No foreign
+    /// key leaves the row No, as Access leaves it, whether or not a parent's key is No.
+    /// </para>
+    /// <para>
+    /// Only relationships are kept. A column's Required property is not: a caller's own update may null a column
+    /// Access would require a value for, as it may with enforcement off. (A cascade may not.)
+    /// </para>
+    /// <para>
+    /// Where no index on the columns can be searched - a table made without one on its foreign key, an index
+    /// whose keys this library does not write, a parent key that is null - the table is read from end to end,
+    /// once in the change, and all its rows are held until the change is written: the row's place and the columns
+    /// its indexes and relationships name, some 200 bytes a row with numeric keys (about 60 MB and a second for a
+    /// table of 300,000 rows). A change that would rewrite a row of a table whose rows this library does not
+    /// write as Access does is refused with <see cref="NotSupportedException"/>.
     /// </para>
     /// </summary>
     public bool EnforceForeignKeys { get; set; }
@@ -295,67 +341,17 @@ public sealed class Database : IDisposable
         };
     }
 
-    // ── Foreign-key validation ───────────────────────────────────────────────
+    // ── Foreign keys ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Called by <see cref="Table.Insert"/> when <see cref="EnforceForeignKeys"/>
-    /// is set. Walks the relationships in MSysRelationships, finds the ones
-    /// where <paramref name="childTable"/> is the dependent side, and confirms
-    /// every non-null FK value in <paramref name="row"/> has a matching parent
-    /// row. Throws on the first violation; relationships are checked in
-    /// declaration order.
+    /// What keeps <paramref name="table"/>'s relationships, or null when nothing is to be kept: enforcement is off,
+    /// or no relationship with referential integrity has the table on either side.
     /// </summary>
-    internal void ValidateForeignKeysForInsert(Table childTable, Row row)
+    internal ForeignKeyEnforcer? ForeignKeysFor(Table table)
     {
-        if (!EnforceForeignKeys) return;
-        var rels = _relsCache ??= GetRelationships();
-        if (rels.Count == 0) return;
-
-        foreach (var rel in rels)
-        {
-            if (!string.Equals(rel.ToTable, childTable.Name, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            foreach (var (fromCol, toCol) in rel.ColumnPairs)
-            {
-                if (!row.TryGetValue(toCol, out var value) || value is null)
-                    continue;   // SQL semantics: NULL FK is allowed
-                if (!ParentRowExists(rel.FromTable, fromCol, value))
-                    throw new InvalidOperationException(
-                        $"Foreign-key violation in relationship '{rel.Name}': " +
-                        $"'{childTable.Name}.{toCol}' = {value} has no matching " +
-                        $"'{rel.FromTable}.{fromCol}'.");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Look up whether <paramref name="parentTableName"/> has any row whose
-    /// <paramref name="parentCol"/> equals <paramref name="value"/>. Uses the
-    /// primary-key index when the parent column happens to be the PK; otherwise
-    /// falls back to a linear scan.
-    /// </summary>
-    private bool ParentRowExists(string parentTableName, string parentCol, object value)
-    {
-        Table parent;
-        try { parent = GetTable(parentTableName); }
-        catch (InvalidOperationException) { return false; }   // table gone → constraint can't hold
-
-        // Fast path: parent column is the PK and there's exactly one PK column.
-        var pkIx = parent.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey);
-        if (pkIx is { Columns.Count: 1 } &&
-            string.Equals(pkIx.Columns[0].Column.Name, parentCol, StringComparison.OrdinalIgnoreCase))
-        {
-            return parent.NewIndexCursor().FindRowByPrimaryKey(value) is not null;
-        }
-
-        // Slow path: linear scan. Used for non-PK relationships (rare but valid).
-        foreach (var r in parent.NewCursor())
-        {
-            if (r.TryGetValue(parentCol, out var v) && v is not null && v.Equals(value))
-                return true;
-        }
-        return false;
+        if (!EnforceForeignKeys) return null;
+        _foreignKeys ??= new ForeignKeyEnforcer(this);
+        return _foreignKeys.Involves(table) ? _foreignKeys : null;
     }
 
     /// <summary>
@@ -382,7 +378,8 @@ public sealed class Database : IDisposable
     /// Reads MSysRelationships and returns the schema's foreign-key / join
     /// relationships, grouping the per-column-pair rows back into one entry
     /// per named relationship. Returns an empty list when MSysRelationships
-    /// is absent or empty.
+    /// is absent or empty. They are in the order the table lists them, which is the
+    /// order they were made in.
     /// </summary>
     public IReadOnlyList<Relationship> GetRelationships()
     {
@@ -414,6 +411,7 @@ public sealed class Database : IDisposable
         var byName = new Dictionary<string, (string from, string to, int flags,
                                              List<(int idx, string fromCol, string toCol)> pairs)>(
                                              StringComparer.OrdinalIgnoreCase);
+        var names = new List<string>();
 
         foreach (var r in rows)
         {
@@ -430,13 +428,15 @@ public sealed class Database : IDisposable
             {
                 entry = (from, to, flags, new List<(int, string, string)>());
                 byName[name] = entry;
+                names.Add(name);
             }
             entry.pairs.Add((idx, fc, tc));
         }
 
         var result = new List<Relationship>(byName.Count);
-        foreach (var (name, e) in byName)
+        foreach (string name in names)
         {
+            var e = byName[name];
             var pairs = e.pairs.OrderBy(p => p.idx)
                                .Select(p => (p.fromCol, p.toCol))
                                .ToList();

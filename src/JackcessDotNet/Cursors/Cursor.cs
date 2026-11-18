@@ -66,6 +66,22 @@ public class Cursor : IEnumerable<Row>
         _currentRow = null;
     }
 
+    /// <summary>
+    /// The columns rows are read with, or null (as at first) for all of them. A reader that looks at a few columns of
+    /// every row is spared decoding the rest, long values among them.
+    /// </summary>
+    internal IReadOnlyList<Column>? ColumnsToRead { get; set; }
+
+    /// <summary>
+    /// Whether rows are read with their values as their index keys are made of them
+    /// (<see cref="RowDecoder.DecodeForKey"/>): a Date/Time as the double the row stores, which a
+    /// <see cref="DateTime"/> does not always hold. For a reader that compares values with keys.
+    /// </summary>
+    internal bool ValuesAsStored { get; set; }
+
+    /// <summary>The current row's pointer (<see cref="RowPointer"/>); meaningful only while there is a current row.</summary>
+    internal int CurrentRowPointer => RowPointer.Pack(_ownedPages[_pageIndex], _rowIndex);
+
     /// <summary>Returns the row at the current position, or null if positioned at a boundary.</summary>
     public Row? GetCurrentRow() => _currentRow;
 
@@ -190,9 +206,9 @@ public class Cursor : IEnumerable<Row>
         Array.Copy(page, rowStart, rowBytes, 0, rowLen);
 
         var row = new Row();
-        foreach (var col in _definition.Columns)
+        foreach (var col in ColumnsToRead ?? _definition.Columns)
         {
-            object? val = _decoder.Decode(rowBytes, col);
+            object? val = ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col);
             if (val is not null) row[col.Name] = val;
         }
         return row;

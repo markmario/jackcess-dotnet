@@ -87,20 +87,69 @@ db.CreateTable("Orders", new[]
 Up to 10 columns per composite key (Jet's hard limit). The single-column
 `primaryKey:` overload still works for the common case.
 
-## Foreign-key enforcement on insert (opt-in)
+## Foreign-key enforcement (opt-in)
 
 ```csharp
 using var db = Database.Open("Northwind.mdb");
 db.EnforceForeignKeys = true;                  // default: false
 
-// MSysRelationships drives validation. Any Insert whose FK column doesn't
-// match an existing parent row throws InvalidOperationException.
+// The relationships in MSysRelationships that have referential integrity are kept.
 orders.Insert(new Row { ["CustomerID"] = "INVALID", ... });
-//                                                    ^ throws "Foreign-key violation in
-//                                                              relationship 'CustomersOrders'..."
+//   throws InvalidOperationException: "Foreign-key violation in relationship 'CustomersOrders'..."
+
+customers.UpdateByPrimaryKey("ALFKI", new Row { ["CustomerID"] = "ALFKA" });
+//   cascade update: the customer's orders take the new key - or, without it, refused while it has orders
+
+customers.DeleteRow("CustomerID", "ALFKA");
+//   cascade delete: its orders go too, and their order lines; cascade-to-null: their CustomerID becomes null;
+//   neither: refused while it has orders
 ```
 
-Null FK values are allowed (SQL semantics). Restrict-only — no cascade.
+`Insert`, `UpdateByPrimaryKey` and `DeleteRow` refuse what would leave a row referring to no parent, and carry out
+the cascades a relationship asks for, as Access does. A foreign key whose columns are all null refers to nothing.
+A refused change leaves the file untouched: everything is checked, cascades included, before anything is written,
+and a change that fails while being written is taken back. With the property off, nothing is checked and nothing
+cascades.
+
+What it costs: rows are found through the tables' indexes. Access gives every relationship an index on its
+foreign key, so an insert reads about a dozen pages to find its parent, and an update or delete reads the rows it
+reaches and the index pages that lead to them - a cascade delete of five rows about fifty pages, whether the child
+has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
+keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
+
+An index is trusted to hold every row, as Access trusts it. An entry whose row has gone is harmless (each row found
+is read and compared), but a row with no entry is not found. Versions of this library before it kept every index
+(those in ExportMdb.Interop up to 2.1.2) added a row to its table's primary key and to no other index, so a row one
+of them inserted into an Access-made table is missing from the index on its foreign key: enforcement does not see
+it as a child, and its parent can be deleted or re-keyed leaving it an orphan. Access makes the same mistake with
+the same file, which is already inconsistent to it
+([qcatco/exportmdb.interop#64](https://github.com/qcatco/exportmdb.interop/issues/64)).
+
+Keys are matched as Access matches them - as its indexes hold them:
+
+- **A null matches a null.** A parent whose key is null (a unique index allows one) has the rows whose foreign
+  key is null for children: deleting it deletes them under cascade delete and is refused without it, and giving
+  it a key gives them the key under cascade update. A parent that has a key never touches them, and a row can
+  always be added, or changed, to have no foreign key. In a key of several columns, null matches null column by
+  column.
+- **Numbers are matched as stored.** A Double or Single by its bits: 0 and -0 are two keys, and so are a Double
+  and the next Double after it. A Date/Time by the double the row stores, which a `DateTime` does not always hold.
+- **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
+  A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
+
+What enforcement does not check:
+
+- **A column's Required property**, for a caller's own update: `UpdateByPrimaryKey` may null a column Access would
+  require a value for, exactly as with enforcement off. (A cascade-to-null into such a column is refused.)
+- **A key written again unchanged**: Access's `UPDATE` refuses to assign a key other rows refer to when the
+  relationship does not cascade updates, even the value it already has; here an unchanged key is not a change.
+- **Relationships without referential integrity**: they only tell Access's query designer how tables join.
+
+Where no index on the columns can be searched (a table made without one on its foreign key, an index whose keys
+this library does not write, a parent key that is null) the table is read from end to end and held in memory until
+the change is written: some 200 bytes a row, about 60 MB and a second for a table of 300,000 rows. A change that
+would rewrite a row of a table Access has deleted a column from is refused (`NotSupportedException`): rows of
+such a table are not yet written correctly.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
@@ -153,7 +202,7 @@ materialising the whole table.
 | Password-protected `.accdb` (Non-Standard AES, compat mode 0) | ✅ Read + write |
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
-| Foreign-key enforcement on insert (opt-in)        | ✅ Restrict-only |
+| Foreign-key enforcement, with cascades (opt-in)   | ✅      |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified

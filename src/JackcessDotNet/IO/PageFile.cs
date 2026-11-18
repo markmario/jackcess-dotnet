@@ -15,6 +15,9 @@ public sealed class PageFile : IDisposable
     /// <summary>Pages read since the file was opened: what tests measure an operation's cost in.</summary>
     internal long ReadCount { get; private set; }
 
+    /// <summary>Pages written since the file was opened: what tests tell a change that was begun from one refused.</summary>
+    internal long WriteCount { get; private set; }
+
     // Pages read through ReadKeptPage, as last read or written here.
     private readonly Dictionary<int, byte[]> _kept = new();
 
@@ -104,6 +107,8 @@ public sealed class PageFile : IDisposable
         byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
         long requiredLength = offset + _format.PageSize;
+        _undo?.Keep(pageNumber, offset);
+        WriteCount++;
         if (_stream.Length < requiredLength)
             _stream.SetLength(requiredLength);
 
@@ -112,6 +117,80 @@ public sealed class PageFile : IDisposable
         _stream.Flush();
         if (_kept.ContainsKey(pageNumber))
             _kept[pageNumber] = (byte[])data.Clone();
+    }
+
+    // ── Undo ──────────────────────────────────────────────────────────────────
+
+    private UndoScope? _undo;
+
+    /// <summary>
+    /// Starts keeping every page as it was before it is next written, so that a change of many rows that fails
+    /// part-way can be taken back: dispose the scope without <see cref="UndoScope.Commit"/> and the file is as it
+    /// was when the scope began, pages added since removed. It is kept in memory and guards against a failure this
+    /// process survives - an exception - not against the process ending part-way. One scope is open at a time: a
+    /// scope inside another could not be taken back on its own, so beginning one is refused.
+    /// </summary>
+    internal UndoScope BeginUndo()
+    {
+        if (_undo is not null)
+            throw new InvalidOperationException("A change to this file is already being kept for undoing; another cannot begin inside it.");
+        return _undo = new UndoScope(this);
+    }
+
+    /// <summary>The pages a change has written over, as they were, until it is committed or disposed.</summary>
+    internal sealed class UndoScope : IDisposable
+    {
+        private readonly PageFile _file;
+        private readonly Dictionary<int, byte[]> _before = new();
+        private readonly long _length;
+        private bool _done;
+
+        internal UndoScope(PageFile file)
+        {
+            _file   = file;
+            _length = file._stream.Length;
+        }
+
+        /// <summary>Keeps the change: nothing is taken back when the scope is disposed.</summary>
+        public void Commit()
+        {
+            _done = true;
+            _file._undo = null;
+        }
+
+        // The page's bytes as the file holds them (before any codec), the first time it is written in this scope.
+        internal void Keep(int pageNumber, long offset)
+        {
+            if (offset >= _length || _before.ContainsKey(pageNumber)) return;
+            var raw = new byte[_file._format.PageSize];
+            _file._stream.Seek(offset, SeekOrigin.Begin);
+            int read = 0;
+            while (read < raw.Length)
+            {
+                int n = _file._stream.Read(raw, read, raw.Length - read);
+                if (n == 0) break;
+                read += n;
+            }
+            _before[pageNumber] = raw;
+        }
+
+        /// <summary>Takes back everything written since the scope began, unless it was committed.</summary>
+        public void Dispose()
+        {
+            if (_done) return;
+            _done = true;
+            _file._undo = null;
+            foreach (var (pageNumber, raw) in _before)
+            {
+                _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
+                _file._stream.Write(raw, 0, raw.Length);
+            }
+            _file._stream.SetLength(_length);
+            _file._stream.Flush();
+            // What was read or noted of the pages since is no longer what the file holds.
+            _file._kept.Clear();
+            _file.FreedLvalPages.Clear();
+        }
     }
 
     public void ReplaceWith(Stream source)
