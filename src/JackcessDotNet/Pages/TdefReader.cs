@@ -27,7 +27,8 @@ internal static class TdefReader
         int FreeSpaceUmapPage,
         int FreeSpaceUmapRow,
         IReadOnlyDictionary<string, LvalUmapRef> LvalColumnUmapPages,
-        IReadOnlyList<Index> Indexes);
+        IReadOnlyList<Index> Indexes,
+        bool HasUnreadIndexes = false);
 
     /// <summary>Number of slots in an index column block's column array (always 10 in real Access).</summary>
     private const int MaxIndexColumns = 10;
@@ -88,6 +89,9 @@ internal static class TdefReader
                 scale:          page[p + format.OffsetColumnScale]);
 
             col.ColumnNumber = colNum;
+            // The flag says where the row keeps the value; this library goes by the type. Where they differ
+            // (Yes/No apart: its value is its null bit) the value is not where it is looked for.
+            col.IsStoredOtherwise = dataType != DataType.Boolean && ((flags & 0x01) != 0) == dataType.IsVariableLength();
             // Honour the on-disk offsets so post-deletion tables decode correctly.
             col.FixedDataOffset  = dataType.IsVariableLength() ? (short)-1 : fixedOffset;
             col.VarLenTableIndex = dataType.IsVariableLength() ? varIndex     : (short)-1;
@@ -126,6 +130,7 @@ internal static class TdefReader
         // now, bail to the old skip-with-arithmetic behaviour so plan A's reads
         // continue working.
         IReadOnlyList<Index> indexes;
+        bool indexesIncomplete = false;
         int indexBlocksEnd = pos
             + numIndexes     * format.SizeIndexColumnBlock
             + numIndexSlots  * format.SizeIndexInfoBlock;
@@ -144,7 +149,7 @@ internal static class TdefReader
         }
         else
         {
-            indexes = ParseIndexes(page, format, ref pos, numIndexes, numIndexSlots, columns);
+            indexes = ParseIndexes(page, format, ref pos, numIndexes, numIndexSlots, columns, out indexesIncomplete);
         }
 
         // Read LVAL usage-map refs. Real format (matches Java Jackcess):
@@ -177,7 +182,11 @@ internal static class TdefReader
             FreeSpaceUmapPage:    freePage,
             FreeSpaceUmapRow:     freeRow,
             LvalColumnUmapPages:  lvalUmapPages,
-            Indexes:              indexes);
+            Indexes:              indexes,
+            // Index blocks past the first page are not parsed, and a block or slot that names a column or a
+            // block the definition has not is left out or cut short: the table has indexes that are not in
+            // Indexes as Access has them. Reading tolerates that; a write must not trust them.
+            HasUnreadIndexes:     indexesIncomplete || numIndexes > 0 && indexBlocksEnd > page.Length);
     }
 
     /// <summary>Intermediate record: one decoded index column block.</summary>
@@ -190,12 +199,15 @@ internal static class TdefReader
     /// <summary>
     /// Parses the index column blocks, the logical-index slot blocks, and the per-slot
     /// name entries that follow them. Caller must ensure the deterministic-size sections
-    /// (blocks + slots) all fit on the current page.
+    /// (blocks + slots) all fit on the current page. <paramref name="incomplete"/> is set when what is returned is
+    /// not every index as the definition has it: a column of an index could not be found among the table's, a slot
+    /// names a block there is not, or a block has no slot.
     /// </summary>
     private static IReadOnlyList<Index> ParseIndexes(
         byte[] page, JetFormat format, ref int pos,
-        int numIndexes, int numIndexSlots, List<Column> columns)
+        int numIndexes, int numIndexSlots, List<Column> columns, out bool incomplete)
     {
+        incomplete = false;
         // Per index column block: SkipBeforeIndex + MaxIndexColumns × (short col + byte flags)
         //   + 4-byte umap ref + 4-byte root page + SkipBeforeIndexFlags + 1-byte flags + SkipAfterIndexFlags
         // Total = SizeIndexColumnBlock (39 Jet3 / 52 Jet4).
@@ -213,7 +225,11 @@ internal static class TdefReader
                 p += 3;
                 if (colNum == ColumnUnused) continue;
                 var col = columns.FirstOrDefault(x => x.ColumnNumber == colNum);
-                if (col is null) continue;   // tolerant of unknown column numbers
+                if (col is null)             // tolerant of unknown column numbers, for reading
+                {
+                    incomplete = true;
+                    continue;
+                }
                 idxCols.Add(new IndexColumn(col, cFlags));
             }
 
@@ -259,7 +275,11 @@ internal static class TdefReader
         for (int i = 0; i < numIndexSlots; i++)
         {
             var slot = slots[i];
-            if (slot.IndexDataNumber < 0 || slot.IndexDataNumber >= indexData.Length) continue;
+            if (slot.IndexDataNumber < 0 || slot.IndexDataNumber >= indexData.Length)
+            {
+                incomplete = true;
+                continue;
+            }
             var data = indexData[slot.IndexDataNumber];
             indexes.Add(new Index(
                 name:           slotNames[i] ?? $"__index_{i}__",
@@ -272,6 +292,8 @@ internal static class TdefReader
                 usedPagesUmapPage: data.UmapPage,
                 usedPagesUmapRow:  data.UmapRow));
         }
+        if (indexes.Select(ix => ix.IndexDataNumber).Distinct().Count() != numIndexes)
+            incomplete = true;
         return indexes;
     }
 
@@ -311,6 +333,7 @@ internal static class TdefReader
             ColumnNumber     = src.ColumnNumber,
             FixedDataOffset  = src.FixedDataOffset,
             VarLenTableIndex = src.VarLenTableIndex,
+            IsStoredOtherwise = src.IsStoredOtherwise,
             IsCompressedUnicode = src.IsCompressedUnicode,
             SortOrder        = src.SortOrder,
         };

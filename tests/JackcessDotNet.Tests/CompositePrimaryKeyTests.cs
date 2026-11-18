@@ -166,9 +166,9 @@ public sealed class CompositePrimaryKeyTests : IDisposable
     [Fact]
     public void CompositePK_NullComponent_Throws()
     {
-        // Null components in composite keys aren't supported (would need a
-        // per-column null marker). Confirm the importer/writer rejects them
-        // explicitly rather than silently inserting a "blank" PK entry.
+        // A primary key takes no null, as in Access: the row is refused before
+        // anything of it is written. (It used to go in with no entry in the key,
+        // a row Access did not find through it.)
         using var db = Database.Create(_path, JetVersion.Jet4);
         var t = db.CreateTable("T", new[]
         {
@@ -176,11 +176,9 @@ public sealed class CompositePrimaryKeyTests : IDisposable
             new ColumnBuilder("B", DataType.Long).Build(),
         }, primaryKeyColumns: new[] { "A", "B" });
 
-        // Inserting a row with one PK component null: the MaybeAddPrimaryKeyIndexEntry
-        // helper skips the index entry, so the row goes in but no index entry exists.
-        // No exception is thrown — but FindRowByPrimaryKey won't find it via PK lookup.
-        t.Insert(new Row { ["A"] = 1, ["B"] = null });
-        Assert.Single(t.ReadAllRows());
+        var refused = Assert.Throws<InvalidOperationException>(() => t.Insert(new Row { ["A"] = 1, ["B"] = null }));
+        Assert.Contains("primary key does not take a null", refused.Message);
+        Assert.Empty(t.ReadAllRows());
     }
 
     [Fact]

@@ -16,20 +16,26 @@ internal static class IndexKeys
 
     /// <summary>True for the column types <see cref="Encode"/> can write a key for.</summary>
     public static bool CanEncode(DataType type)
-        => type is DataType.Byte or DataType.Int or DataType.Long or DataType.Text or DataType.Guid;
+        => type is DataType.Byte or DataType.Int or DataType.Long or DataType.Money
+                or DataType.Float or DataType.Double or DataType.ShortDateTime
+                or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid;
 
     /// <summary>
     /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
     /// encodes and, for text, a column that sorts in General - Legacy, the order of the text keys it writes.
     /// </summary>
     public static bool CanEncode(Column column)
-        => CanEncode(column.DataType) && (column.DataType != DataType.Text || column.SortOrder.IsGeneralLegacy);
+        => CanEncode(column.DataType)
+        && !column.IsStoredOtherwise
+        && (column.DataType is not (DataType.Text or DataType.Memo) || column.SortOrder.IsGeneralLegacy);
 
     /// <summary>Why <paramref name="column"/>'s keys cannot be written (<see cref="CanEncode(Column)"/> is false).</summary>
     public static string WhyNot(Column column)
-        => CanEncode(column.DataType)
-            ? $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy}"
-            : $"{column.Name} is a {column.DataType} column, whose keys this library does not write";
+        => !CanEncode(column.DataType)
+            ? $"{column.Name} is a {column.DataType} column, whose keys this library does not write"
+            : column.IsStoredOtherwise
+                ? $"{column.Name} is a {column.DataType} column kept {(column.DataType.IsVariableLength() ? "among the row's fixed-length values" : "among the row's variable-length values")}, where this library does not read it"
+                : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy}";
 
     /// <summary>
     /// The key of an entry whose columns hold <paramref name="values"/>, in the index's column order. Refuses a
@@ -52,15 +58,17 @@ internal static class IndexKeys
     /// <summary>One column's part of a key: its flag, then its value's bytes.</summary>
     public static byte[] EncodeColumn(DataType type, bool ascending, object? value)
     {
-        if (value is null)
+        if (RowValues.IsNull(value) && type != DataType.Boolean)
             return new[] { ascending ? AscNullFlag : DescNullFlag };
 
         byte[] bytes;
         switch (type)
         {
             case DataType.Text:
+            case DataType.Memo:
                 // The text encoder writes its own end markers and does its own
-                // flipping for a descending column.
+                // flipping for a descending column. A Memo is keyed as text, by the
+                // characters a key holds (the encoder's limit).
                 bytes = GeneralLegacyIndexCodes.EncodeText(Convert.ToString(value) ?? string.Empty, ascending);
                 return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
             case DataType.Byte:
@@ -72,6 +80,27 @@ internal static class IndexKeys
             case DataType.Long:
                 bytes = SignFlipped(BigEndian(Convert.ToInt32(value)));
                 break;
+            case DataType.Money:
+                // The number the row stores: ten-thousandths, in eight bytes.
+                bytes = SignFlipped(BigEndian(MoneyUnits(Convert.ToDecimal(value))));
+                break;
+            case DataType.Boolean:
+                // No is the greater: Yes is 0x00 and No 0xFF, and the other way round descending. A Yes/No
+                // column holds no null, and its value is read as the row encoder reads it (RowValues).
+                return new[] { ascending ? AscStartFlag : DescStartFlag, RowValues.ToBoolean(value) == ascending ? (byte)0x00 : (byte)0xFF };
+            case DataType.Float:
+                bytes = BitConverter.GetBytes(Convert.ToSingle(value));
+                if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
+            case DataType.Double:
+                bytes = BigEndian(BitConverter.DoubleToInt64Bits(Convert.ToDouble(value)));
+                return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
+            case DataType.ShortDateTime:
+                // The double the row stores: days since 30 December 1899. A date read from a row comes as that
+                // double itself, since a DateTime does not hold every double Access can have written.
+                double days = value is DateTime date ? date.ToOADate() : Convert.ToDouble(value);
+                bytes = BigEndian(BitConverter.DoubleToInt64Bits(days));
+                return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
             case DataType.Guid:
                 // Big-endian, in 8-byte segments each followed by a length byte:
                 // 9 for a segment with more after it, 8 for the last.
@@ -96,6 +125,20 @@ internal static class IndexKeys
         return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
     }
 
+    /// <summary>A Currency value as its row stores it: ten-thousandths, rounded as the row encoder rounds.</summary>
+    internal static long MoneyUnits(decimal value) => (long)Math.Round(value * 10000m, 0, MidpointRounding.AwayFromZero);
+
+    // IEEE bytes, big-endian, made to sort as the numbers do: a positive number's sign bit is set, a negative
+    // number's bytes are all inverted - and the other way round descending.
+    private static byte[] FloatingPoint(byte[] bigEndian, bool ascending)
+    {
+        bool negative = (bigEndian[0] & 0x80) != 0;
+        if (!negative) bigEndian[0] ^= 0x80;
+        if (negative == ascending)
+            for (int i = 0; i < bigEndian.Length; i++) bigEndian[i] = (byte)~bigEndian[i];
+        return bigEndian;
+    }
+
     private static byte[] Prepend(byte flag, byte[] bytes)
     {
         var result = new byte[bytes.Length + 1];
@@ -113,6 +156,11 @@ internal static class IndexKeys
     private static byte[] BigEndian(short v) => new[] { (byte)(v >> 8), (byte)v };
 
     private static byte[] BigEndian(int v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+
+    private static byte[] BigEndian(long v) => new[]
+    {
+        (byte)(v >> 56), (byte)(v >> 48), (byte)(v >> 40), (byte)(v >> 32), (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v,
+    };
 
     // A GUID's bytes in the order its text shows them (.NET's own array keeps the
     // first three groups little-endian).

@@ -536,7 +536,7 @@ public sealed class AutoNumberTests : IDisposable
         var refused = Assert.Throws<InvalidOperationException>(() => db.ImportTable(People(0, 9, 2),
             options: new ImportOptions { AppendIfExists = true, KeepIdentity = true }));
 
-        Assert.Contains("brings 2", refused.Message);
+        Assert.Contains("another row holds 2 for Id", refused.Message);   // the refusal an insert of the row would be
         Assert.Equal(new[] { 1, 2 }, Ids(table));
         Assert.Equal(new[] { "A", "B" }, Names(table));
         Assert.Equal(2, table.LastAutoNumber);

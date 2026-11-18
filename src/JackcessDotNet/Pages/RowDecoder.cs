@@ -61,10 +61,19 @@ internal sealed class RowDecoder
     }
 
     /// <summary>
+    /// As <see cref="Decode"/>, for the row's index keys: a Date/Time column's value is the double the row
+    /// stores, which is what its key is made of. A <see cref="DateTime"/> does not hold every double Access can
+    /// have written, and a key made from one would not be the key Access wrote for the row.
+    /// </summary>
+    public object? DecodeForKey(byte[] rowBytes, Column col) => Decode(rowBytes, col, datesAsStored: true);
+
+    /// <summary>
     /// Decodes the value of <paramref name="col"/> from <paramref name="rowBytes"/>.
     /// Returns <c>null</c> if the column is NULL, deleted, or the row is malformed.
     /// </summary>
-    public object? Decode(byte[] rowBytes, Column col)
+    public object? Decode(byte[] rowBytes, Column col) => Decode(rowBytes, col, datesAsStored: false);
+
+    private object? Decode(byte[] rowBytes, Column col, bool datesAsStored)
     {
         if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount) return null;
 
@@ -96,6 +105,7 @@ internal sealed class RowDecoder
             if (!_fixedByteOffset.TryGetValue(col.ColumnNumber, out int relOff)) return null;
             int absOff = fixedBase + relOff;
             if (absOff + col.Length > maskOffset) return null;
+            if (datesAsStored && col.DataType == DataType.ShortDateTime) return ByteUtil.GetDouble(rowBytes, absOff);
             return ReadFixed(rowBytes, absOff, col);
         }
 

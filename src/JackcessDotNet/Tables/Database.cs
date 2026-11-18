@@ -458,7 +458,7 @@ public sealed class Database : IDisposable
     ///   inserted, deleted and updated.
     /// </param>
     public Table CreateTable(string name, IReadOnlyList<Column> columns, string? primaryKey = null)
-        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey });
+        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey }, Array.Empty<IndexDefinition>());
 
     /// <summary>
     /// Composite-PK overload. Creates a table with a multi-column primary key
@@ -471,11 +471,33 @@ public sealed class Database : IDisposable
         if (primaryKeyColumns is null || primaryKeyColumns.Count == 0)
             throw new ArgumentException(
                 "primaryKeyColumns must contain at least one column.", nameof(primaryKeyColumns));
-        return CreateTableCore(name, columns, primaryKeyColumns);
+        return CreateTableCore(name, columns, primaryKeyColumns, Array.Empty<IndexDefinition>());
+    }
+
+    /// <summary>
+    /// Creates a table with indexes beside its primary key: single- or multi-column, unique or not. Every index is
+    /// kept as rows are inserted, updated and deleted, and a unique index refuses a duplicate before anything of
+    /// the row is written.
+    /// </summary>
+    /// <param name="name">Table name (must be unique in the database).</param>
+    /// <param name="columns">Column definitions (use <see cref="ColumnBuilder"/>).</param>
+    /// <param name="primaryKeyColumns">The primary key's columns, in key order; null or empty for no primary key.</param>
+    /// <param name="indexes">The table's other indexes.</param>
+    /// <exception cref="NotSupportedException">
+    ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
+    ///   or Complex column, or text in a sort order other than General - Legacy. Nothing is created.
+    /// </exception>
+    public Table CreateTable(string name, IReadOnlyList<Column> columns,
+                             IReadOnlyList<string>? primaryKeyColumns,
+                             IReadOnlyList<IndexDefinition> indexes)
+    {
+        if (indexes is null) throw new ArgumentNullException(nameof(indexes));
+        return CreateTableCore(name, columns, primaryKeyColumns is { Count: > 0 } ? primaryKeyColumns : null, indexes);
     }
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
-                                  IReadOnlyList<string>? pkColumns)
+                                  IReadOnlyList<string>? pkColumns,
+                                  IReadOnlyList<IndexDefinition> secondary)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
@@ -484,34 +506,30 @@ public sealed class Database : IDisposable
 
         var format = _file.Format;
 
-        // Everything that can refuse the table does so before a page is added: the key, the
+        // Everything that can refuse the table does so before a page is added: its indexes, the
         // definition (laid out once with no pages), the name and the catalog.
-        if (pkColumns is { Count: > 0 })
-        {
-            foreach (string pk in pkColumns)
-            {
-                var pkColumn = columns.FirstOrDefault(c => string.Equals(c.Name, pk, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException($"Primary key column '{pk}' not found in table '{name}'.");
-                if (!IndexKeys.CanEncode(pkColumn))
-                    throw new NotSupportedException(
-                        $"A primary key on '{pk}' is not supported: {IndexKeys.WhyNot(pkColumn)}, " +
-                        "so its index entries would not be the ones Access writes.");
-            }
-        }
+        var planned = PlanIndexes(name, columns, pkColumns, secondary);
         new TableDefinition(name, columns)
         {
-            PrimaryKeyIndexPage   = pkColumns is { Count: > 0 } ? 1 : 0,
-            PrimaryKeyColumnNames = pkColumns ?? Array.Empty<string>(),
+            Indexes = BuildIndexes(planned, planned.Select(_ => (Page: 0, Row: 0)).ToList(), rootPages: planned.Select(_ => 1).ToList()),
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
-        // 1. Allocate the TDEF page (content written in step 3).
+        // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
 
-        // 2. Allocate the usage-map page: owned pages, free space, and with a primary
-        //    key a third map for the key's index pages, where Access keeps it.
-        bool hasPk = pkColumns is { Count: > 0 };
-        int umapPage = _allocator.AllocateUmapPage(hasPk ? 3 : 2);
+        // 2. Allocate the usage-map page: owned pages, free space, and a map for each index's
+        //    pages, where Access keeps them. Maps that do not fit the page go on pages of their own.
+        int mapsPerPage = UsageMap.MapsPerUmapPage(format);
+        int onFirstPage = Math.Min(planned.Count, mapsPerPage - FirstIndexUmapRow);
+        int umapPage    = _allocator.AllocateUmapPage(FirstIndexUmapRow + onFirstPage);
+        var indexMaps   = Enumerable.Range(0, onFirstPage).Select(i => (Page: umapPage, Row: FirstIndexUmapRow + i)).ToList();
+        while (indexMaps.Count < planned.Count)
+        {
+            int rows = Math.Min(planned.Count - indexMaps.Count, mapsPerPage);
+            int page = _allocator.AllocateUmapPage(rows);
+            indexMaps.AddRange(Enumerable.Range(0, rows).Select(row => (Page: page, Row: row)));
+        }
 
         // 3. Allocate a LVAL usage-map page for each Memo/OLE column (must happen before
         //    Serialize so the page numbers can be embedded in the TDEF).
@@ -524,9 +542,7 @@ public sealed class Database : IDisposable
                 lvalUmaps[col.Name] = new LvalUmapRef(lvalUmapPage, 0, lvalUmapPage, 1);
             }
 
-        // 4. Build the TableDefinition (column numbers + var-table indices will be assigned
-        //    by Serialize, but PK info must be set BEFORE Serialize so the index column
-        //    block can be persisted with the correct column number and root page).
+        // 4. Build the TableDefinition.
         var tableDef = new TableDefinition(name, columns)
         {
             TdefPageNumber = tdefPage,
@@ -537,26 +553,31 @@ public sealed class Database : IDisposable
         foreach (var kvp in lvalUmaps)
             tableDef.LvalColumnUmapPages[kvp.Key] = kvp.Value;
 
-        // Assign column numbers up front so the index block can reference the correct
-        // column. Serialize will re-assign these in the same order — same outcome.
-        for (short i = 0; i < columns.Count; i++)
-            columns[i].ColumnNumber = i;
+        // 5. Give each index an empty root leaf, listed in the index's own usage map, so its
+        //    page number is known at Serialize time.
+        var idxWriter = new IndexWriter(_file, _allocator);
+        var rootPages = new List<int>(planned.Count);
+        for (int i = 0; i < planned.Count; i++)
+        {
+            int root = idxWriter.CreateEmptyLeafPage(tdefPage);
+            UsageMap.AddPage(_file, _allocator, indexMaps[i].Page, indexMaps[i].Row, root);
+            rootPages.Add(root);
+        }
+        tableDef.Indexes = BuildIndexes(planned, indexMaps, rootPages);
 
-        // 5. Pre-allocate the PK index leaf so its page number is known at Serialize time.
         if (pkColumns is { Count: > 0 })
         {
-            var idxWriter = new IndexWriter(_file, _allocator);
-            tableDef.PrimaryKeyIndexPage      = idxWriter.CreatePrimaryKeyIndex(tableDef, pkColumns);
-            tableDef.PrimaryKeyIndexUmapPage  = umapPage;
-            tableDef.PrimaryKeyIndexUmapRow   = 2;
-            UsageMap.AddPage(_file, _allocator, umapPage, 2, tableDef.PrimaryKeyIndexPage);
+            var pk = tableDef.Indexes[0];
+            tableDef.PrimaryKeyIndexPage      = pk.RootPageNumber;
+            tableDef.PrimaryKeyIndexUmapPage  = pk.UsedPagesUmapPage;
+            tableDef.PrimaryKeyIndexUmapRow   = pk.UsedPagesUmapRow;
             if (pkColumns.Count == 1)
                 tableDef.PrimaryKeyColumnName = pkColumns[0];
             else
                 tableDef.PrimaryKeyColumnNames = pkColumns;
         }
 
-        // 6. Now serialise — the index column block + slot + name will be included.
+        // 6. Now serialise — the index blocks, slots and names are included.
         byte[] tdefBytes = tableDef.Serialize(format);
         _file.WritePage(tdefPage, tdefBytes);
 
@@ -565,6 +586,98 @@ public sealed class Database : IDisposable
 
         return new Table(_file, _allocator, tableDef, owningDb: this);
     }
+
+    // A table's index maps follow its owned-pages and free-space maps on its usage-map page.
+    private const int FirstIndexUmapRow = 2;
+
+    /// <summary>An index a new table is to have: checked, with its columns found, and no pages yet.</summary>
+    private sealed class PlannedIndex
+    {
+        public PlannedIndex(string name, IReadOnlyList<IndexColumn> columns, byte flags, byte indexType)
+        {
+            Name      = name;
+            Columns   = columns;
+            Flags     = flags;
+            IndexType = indexType;
+        }
+
+        public string Name { get; }
+        public IReadOnlyList<IndexColumn> Columns { get; }
+        public byte Flags { get; }
+        public byte IndexType { get; }
+    }
+
+    /// <summary>
+    /// Checks the indexes a new table is asked for and returns them in the order they are written: the primary key
+    /// first, named as Access names it, then the others. Assigns the columns their numbers, which the index blocks
+    /// name (Serialize assigns the same ones).
+    /// </summary>
+    private static List<PlannedIndex> PlanIndexes(string table, IReadOnlyList<Column> columns,
+                                                  IReadOnlyList<string>? pkColumns,
+                                                  IReadOnlyList<IndexDefinition> secondary)
+    {
+        for (short i = 0; i < columns.Count; i++)
+            columns[i].ColumnNumber = i;
+
+        Column Find(string column, string what)
+        {
+            var found = columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"{what} column '{column}' not found in table '{table}'.");
+            if (!IndexKeys.CanEncode(found))
+                throw new NotSupportedException(
+                    $"{what} on '{column}' is not supported: {IndexKeys.WhyNot(found)}, " +
+                    "so its index entries would not be the ones Access writes.");
+            return found;
+        }
+
+        var planned = new List<PlannedIndex>();
+        if (pkColumns is { Count: > 0 })
+        {
+            if (pkColumns.Count > IndexDefinition.MaxColumns)
+                throw new InvalidOperationException(
+                    $"Composite primary keys are limited to {IndexDefinition.MaxColumns} columns; got {pkColumns.Count}.");
+            planned.Add(new PlannedIndex(
+                TableDefinition.PrimaryKeyIndexName,
+                pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key"), TableDefinition.AscendingColumnFlag)).ToList(),
+                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag,
+                TableDefinition.PrimaryKeyIndexType));
+        }
+
+        foreach (var index in secondary)
+        {
+            if (index is null) throw new ArgumentException("An index definition must not be null.", nameof(secondary));
+            if (planned.Any(p => string.Equals(p.Name, index.Name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException($"Table '{table}' is given two indexes named '{index.Name}'.", nameof(secondary));
+            foreach (string descending in index.DescendingColumns)
+                if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        $"Index '{index.Name}' sorts '{descending}' descending, which is not one of its columns.", nameof(secondary));
+
+            byte flags = TableDefinition.UnknownIndexFlag;
+            if (index.IsUnique)    flags |= TableDefinition.UniqueIndexFlag;
+            if (index.IgnoreNulls) flags |= TableDefinition.IgnoreNullsIndexFlag;
+            if (index.IsRequired)  flags |= TableDefinition.RequiredIndexFlag;
+            planned.Add(new PlannedIndex(
+                index.Name,
+                index.Columns.Select(c => new IndexColumn(
+                    Find(c, $"Index '{index.Name}'"),
+                    index.DescendingColumns.Contains(c, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList(),
+                flags,
+                indexType: 0));
+        }
+
+        if (planned.Count > IndexDefinition.MaxIndexesPerTable)
+            throw new ArgumentException(
+                $"A table has at most {IndexDefinition.MaxIndexesPerTable} indexes; '{table}' is given {planned.Count}.", nameof(secondary));
+        return planned;
+    }
+
+    // The planned indexes with their pages: each its own block, with its own usage map and root.
+    private static IReadOnlyList<Index> BuildIndexes(List<PlannedIndex> planned, IReadOnlyList<(int Page, int Row)> maps,
+                                                     IReadOnlyList<int> rootPages)
+        => planned.Select((p, i) => new Index(p.Name, p.Columns, rootPages[i], indexNumber: i, p.Flags, p.IndexType,
+                                              indexDataNumber: i, usedPagesUmapPage: maps[i].Page,
+                                              usedPagesUmapRow: maps[i].Row)).ToList();
 
     /// <summary>
     /// Opens an existing user table by name (scans MSysObjects).
@@ -589,6 +702,7 @@ public sealed class Database : IDisposable
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
+            HasUnreadIndexes = info.HasUnreadIndexes,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)

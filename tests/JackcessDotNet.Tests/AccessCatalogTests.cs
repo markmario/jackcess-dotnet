@@ -327,7 +327,7 @@ public sealed class AccessCatalogTests : IDisposable
         using var db = Database.Create(NewPath(), JetVersion.Jet4);
 
         Assert.Throws<NotSupportedException>(() =>
-            db.CreateTable("Doubles", new[] { new ColumnBuilder("D", DataType.Double).Build() }, primaryKey: "D"));
+            db.CreateTable("Decimals", new[] { new ColumnBuilder("D", DataType.Numeric).Build() }, primaryKey: "D"));
         Assert.Empty(db.ListTables());
     }
 }
