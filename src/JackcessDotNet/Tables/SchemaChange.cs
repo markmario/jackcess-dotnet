@@ -103,6 +103,249 @@ internal static class SchemaChange
         return column.Name;
     }
 
+    // ── An index ─────────────────────────────────────────────────────────────
+
+    /// <summary>Adds <paramref name="index"/> to <paramref name="table"/>, built over its rows.</summary>
+    internal static void AddIndex(Database db, PageFile file, TableDefinition table, IndexDefinition index)
+    {
+        file.EnsureWritable();
+        EnsureReadWhole(table);
+
+        if (index.Name.Length > MaxNameLength)
+            throw new ArgumentException($"An index's name is at most {MaxNameLength} characters; '{index.Name}' is longer.", nameof(index));
+        foreach (string descending in index.DescendingColumns)
+            if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"Index '{index.Name}' sorts '{descending}' descending, which is not one of its columns.", nameof(index));
+
+        byte flags = TableDefinition.UnknownIndexFlag;
+        if (index.IsUnique)    flags |= TableDefinition.UniqueIndexFlag;
+        if (index.IgnoreNulls) flags |= TableDefinition.IgnoreNullsIndexFlag;
+        if (index.IsRequired)  flags |= TableDefinition.RequiredIndexFlag;
+
+        var columns = index.Columns.Select(name => new IndexColumn(
+            ColumnOf(table, name, $"Index '{index.Name}'"),
+            index.DescendingColumns.Contains(name, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList();
+
+        // An index like one the table has - the same columns, each sorted the same way, and the same flags -
+        // shares its tree, as Jackcess shares it.
+        var planned = Plan(file, table, index.Name, columns, flags, indexType: 0, shares: existing => existing.Flags == flags);
+
+        using (var undo = file.BeginUndo())
+        {
+            Write(db, file, planned, foreignKey: null);
+            undo.Commit();
+        }
+        Changed(db, file, table.TdefPageNumber);
+    }
+
+    /// <summary>An index about to be added to a table: checked, its keys made, and nothing written yet.</summary>
+    private sealed class PlannedIndex
+    {
+        internal PlannedIndex(TableDefinition table, string name, IReadOnlyList<IndexColumn> columns, byte flags, byte indexType)
+        {
+            Table     = table;
+            Name      = name;
+            Columns   = columns;
+            Flags     = flags;
+            IndexType = indexType;
+        }
+
+        internal TableDefinition Table { get; }
+        internal string Name { get; }
+        internal IReadOnlyList<IndexColumn> Columns { get; }
+        internal byte Flags { get; }
+        internal byte IndexType { get; }
+
+        /// <summary>The block of an index the table already has whose tree this one shares, or null for a tree of its own.</summary>
+        internal int? SharedData { get; set; }
+
+        /// <summary>The entries of a tree of its own, in key order: one for each row the index holds.</summary>
+        internal List<(byte[] Key, int RowPointer)> Entries { get; set; } = new();
+
+        internal int DistinctKeys { get; set; }
+
+        /// <summary>The bytes the index adds to the table's definition.</summary>
+        internal int DefinitionBytes { get; set; }
+    }
+
+    /// <summary>
+    /// Checks an index <paramref name="table"/> is to be given and makes its entries, writing nothing: its name is
+    /// free, the table has room for another index and its definition for this one's bytes (and
+    /// <paramref name="alsoAdded"/> more, which the same change adds), every column's keys are ones this library
+    /// writes, and - unless a tree already there is shared - every row has a key the index takes.
+    /// </summary>
+    private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
+                                     byte flags, byte indexType, Func<Index, bool> shares, int alsoAdded = 0, int alsoIndexes = 0)
+    {
+        if (table.Indexes.Any(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Table '{table.Name}' already has an index named '{name}'. Nothing was changed.");
+        if (table.Indexes.Count + alsoIndexes >= IndexDefinition.MaxIndexesPerTable)
+            throw new ArgumentException(
+                $"Table '{table.Name}' has {table.Indexes.Count + alsoIndexes} indexes; a table has at most {IndexDefinition.MaxIndexesPerTable}. Nothing was changed.");
+        foreach (var column in columns)
+            if (!IndexKeys.CanEncode(column.Column))
+                throw new NotSupportedException(
+                    $"Index '{name}' on '{table.Name}.{column.Column.Name}' is not supported: {IndexKeys.WhyNot(column.Column)}, " +
+                    "so its index entries would not be the ones Access writes. Nothing was changed.");
+
+        var planned = new PlannedIndex(table, name, columns, flags, indexType);
+        var shared = table.Indexes.FirstOrDefault(existing =>
+            existing.RootPageNumber > 0
+            && existing.Columns.Count == columns.Count
+            && existing.Columns.Zip(columns, (a, b) => a.Column.ColumnNumber == b.Column.ColumnNumber && a.Flags == b.Flags).All(same => same)
+            && shares(existing));
+        planned.SharedData = shared?.IndexDataNumber;
+
+        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
+        planned.DefinitionBytes = editor.SizeOfIndexSlot(name) + (shared is null ? editor.SizeOfIndexData : 0);
+        editor.EnsureRoomFor(planned.DefinitionBytes + alsoAdded);
+
+        if (shared is null) BuildEntries(file, planned);
+        return planned;
+    }
+
+    /// <summary>
+    /// Reads every row of the table and makes its entry in the planned index, as <see cref="TableIndexes"/> makes a
+    /// row's entry when it is inserted - and refuses what an insert is refused for: a null in an index that
+    /// requires its values, a value no key is made for, and two rows with the same key in a unique index (rows
+    /// with a null in any of its columns aside, which are duplicates of nothing).
+    /// </summary>
+    private static void BuildEntries(PageFile file, PlannedIndex planned)
+    {
+        var table    = planned.Table;
+        var format   = file.Format;
+        var columns  = planned.Columns;
+        bool unique  = (planned.Flags & TableDefinition.UniqueIndexFlag) != 0;
+        bool require = (planned.Flags & TableDefinition.RequiredIndexFlag) != 0 || planned.IndexType == TableDefinition.PrimaryKeyIndexType;
+        bool ignore  = (planned.Flags & TableDefinition.IgnoreNullsIndexFlag) != 0;
+
+        var decoder  = new RowDecoder(format, table.Columns, table.LvalColumnUmapPages.Count > 0 ? new LvalReader(file) : null);
+        var entries  = new List<(byte[] Key, int RowPointer, bool HasNull, object?[] Values)>();
+        foreach (int pageNumber in UsageMap.GetOwnedPages(file.ReadPage(table.UmapPageNumber), table.OwnedPagesRow, format, file))
+        {
+            byte[] page = file.ReadPage(pageNumber);
+            int rowCount = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+            for (int r = 0; r < rowCount; r++)
+            {
+                if (DataRows.Read(file, page, r) is not { } rowBytes) continue;
+
+                // The row's values as it stores them, which is what its keys are made of: a Yes/No holds no null.
+                var values = new object?[columns.Count];
+                int nulls = 0;
+                for (int i = 0; i < values.Length; i++)
+                {
+                    var column = columns[i].Column;
+                    values[i] = decoder.DecodeForKey(rowBytes, column);
+                    if (column.DataType == DataType.Boolean) values[i] = RowValues.ToBoolean(values[i]);
+                    else if (values[i] is null) nulls++;
+                }
+
+                if (nulls > 0 && require)
+                    throw new InvalidOperationException(
+                        $"Index '{planned.Name}' requires a value in each of its columns, and a row of '{table.Name}' has none for " +
+                        $"{string.Join(", ", columns.Where((_, i) => values[i] is null).Select(c => c.Column.Name))}. Nothing was changed.");
+                if (nulls == values.Length && ignore) continue;
+                for (int i = 0; i < values.Length; i++)
+                    if (!IndexKeys.CanEncode(columns[i].Column, values[i]))
+                        throw new NotSupportedException(
+                            $"Index '{planned.Name}' cannot be built over '{table.Name}': {IndexKeys.WhyNot(columns[i].Column, values[i])}. Nothing was changed.");
+
+                entries.Add((IndexKeys.Encode(columns, values), RowPointer.Pack(pageNumber, r), nulls > 0, values));
+            }
+        }
+
+        entries.Sort((a, b) =>
+        {
+            int byKey = CompareBytes(a.Key, b.Key);
+            return byKey != 0 ? byKey : ((uint)a.RowPointer).CompareTo((uint)b.RowPointer);
+        });
+
+        int distinct = 0;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            bool sameAsLast = i > 0 && CompareBytes(entries[i - 1].Key, entries[i].Key) == 0;
+            if (!sameAsLast) distinct++;
+            // A key longer than an entry holds is cut (IndexKeys.Encode), and two values cut to the same entry
+            // are duplicates to a unique index, in Access as here.
+            else if (unique && !entries[i].HasNull && !entries[i - 1].HasNull)
+                throw new InvalidOperationException(
+                    $"Index '{planned.Name}' is unique, and two rows of '{table.Name}' hold " +
+                    $"{string.Join(", ", columns.Select((c, n) => $"{Shown(entries[i].Values[n])} for {c.Column.Name}"))}. Nothing was changed.");
+        }
+
+        planned.Entries      = entries.Select(e => (e.Key, e.RowPointer)).ToList();
+        planned.DistinctKeys = distinct;
+    }
+
+    /// <summary>
+    /// Writes a planned index: its tree, unless it shares one - a root page, a usage map for its pages, and an
+    /// entry for each row - then its block and its slot in the table's definition. Returns the number the index
+    /// has in the table. The caller holds the undo scope.
+    /// </summary>
+    private static int Write(Database db, PageFile file, PlannedIndex planned, TdefEditor.ForeignKeyReference? foreignKey)
+    {
+        var table = planned.Table;
+        int data;
+        int root = 0, umapPage = 0;
+        if (planned.SharedData is { } sharedData)
+        {
+            data = sharedData;
+        }
+        else
+        {
+            var writer = new IndexWriter(file, db.Allocator);
+            root     = writer.CreateEmptyLeafPage(table.TdefPageNumber);
+            umapPage = db.Allocator.AllocateUmapPage(rows: 1);
+            UsageMap.AddPage(file, db.Allocator, umapPage, 0, root);
+            var target = new IndexWriter.Target(table.TdefPageNumber, root, umapPage, 0);
+            foreach (var (key, rowPointer) in planned.Entries)
+                writer.Insert(target, key, rowPointer);
+            data = -1;
+        }
+
+        // The definition as it now is: an index added to the same table earlier in this change is in it.
+        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
+        if (data < 0)
+            data = editor.AddIndexData(planned.Columns, planned.Flags, root, umapPage, 0, planned.Entries.Count, planned.DistinctKeys);
+
+        int number = NextIndexNumber(editor);
+        editor.AddIndexSlot(SlotPosition(editor.SlotNames, planned.Name, db.Catalog.TextSortOrder), planned.Name, number, data,
+                            planned.IndexType, foreignKey);
+        file.WritePage(table.TdefPageNumber, editor.ToPage());
+        return number;
+    }
+
+    /// <summary>The number the next index of a table is given: one past the highest it has.</summary>
+    private static int NextIndexNumber(TdefEditor editor) => editor.SlotNumbers.DefaultIfEmpty(-1).Max() + 1;
+
+    /// <summary>
+    /// Where a new index's slot goes among a table's: Access keeps them in the order of their names, as its
+    /// catalog sorts text, so the slot goes before the first whose name sorts after its own. (Jackcess puts a new
+    /// one last.) A name no key is made for is placed by its letters, without regard to case.
+    /// </summary>
+    private static int SlotPosition(IReadOnlyList<string> names, string name, SortOrder order)
+    {
+        var codes = TextIndexCodes.For(order);
+        byte[]? KeyOf(string text)
+        {
+            if (codes is null) return null;
+            try { return IndexKeys.EncodeText(codes, ascending: true, text); }
+            catch (Exception e) when (e is NotSupportedException or ArgumentException or InvalidOperationException) { return null; }
+        }
+
+        byte[]? key = KeyOf(name);
+        for (int i = 0; i < names.Count; i++)
+        {
+            byte[]? other = key is null ? null : KeyOf(names[i]);
+            int order2 = key is not null && other is not null
+                ? CompareBytes(other, key)
+                : string.Compare(names[i], name, StringComparison.OrdinalIgnoreCase);
+            if (order2 > 0) return i;
+        }
+        return names.Count;
+    }
+
     // ── Shared ───────────────────────────────────────────────────────────────
 
     /// <summary>

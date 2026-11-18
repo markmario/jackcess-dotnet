@@ -576,6 +576,39 @@ public sealed class Table
         return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Adds <paramref name="index"/> to the table, built over the rows already in it, as Access's <c>CREATE
+    /// INDEX</c> and Jackcess's <c>IndexBuilder.addToTable</c> do. From then on it is kept on every insert, update
+    /// and delete, like the table's other indexes, and a unique one refuses a duplicate. An index on the columns,
+    /// in the order and with the flags, of one the table already has shares that index's tree, as in Access.
+    /// <para>
+    /// The rows are read and every key made before anything is written, and what is written is taken back if
+    /// writing it fails: a refused index leaves the file byte for byte as it was. This <see cref="Table"/>, and
+    /// any other open on the same table, keeps the index from then on.
+    /// </para>
+    /// </summary>
+    /// <returns>The table's new index.</returns>
+    /// <exception cref="ArgumentException">
+    /// The table already has an index of that name, or 32 indexes; or the index sorts descending a column that
+    /// is not one of its own.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A column the index names is not in the table; two rows of the table have the same values in a unique
+    /// index; or a row has a null in an index that requires its values. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
+    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and
+    /// General), or a row holds a value no key is made for; or the table's definition runs, or would run, over
+    /// more than one page. Nothing is changed.
+    /// </exception>
+    public Index AddIndex(IndexDefinition index)
+    {
+        if (index is null) throw new ArgumentNullException(nameof(index));
+        SchemaChange.AddIndex(Owner(), _file, _definition, index);
+        return Indexes.First(ix => string.Equals(ix.Name, index.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
     private Database Owner()
         => _owningDb ?? throw new InvalidOperationException($"Table '{Name}' was not opened from a database, so it cannot be changed.");
 
