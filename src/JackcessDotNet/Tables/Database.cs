@@ -745,8 +745,18 @@ public sealed class Database : IDisposable
         if (tdefPageNum < 0)
             throw new InvalidOperationException($"Table '{name}' was not found in this database.");
 
-        var format   = _file.Format;
-        var tdefPage = _file.ReadPage(tdefPageNum);
+        return new Table(_file, _allocator, ReadDefinition(_file, name, tdefPageNum), owningDb: this);
+    }
+
+    /// <summary>
+    /// The definition of table <paramref name="name"/> as its definition page, <paramref name="tdefPageNum"/>, now
+    /// holds it: what <see cref="GetTable"/> opens a table with, and what a <see cref="Table"/> reads again after
+    /// the table has been given a column or an index.
+    /// </summary>
+    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
+    {
+        var format   = file.Format;
+        var tdefPage = file.ReadPage(tdefPageNum);
         var info     = TdefReader.Read(tdefPage, format);
 
         var tableDef = new TableDefinition(name, info.Columns)
@@ -780,8 +790,22 @@ public sealed class Database : IDisposable
                     pkIndex.Columns.Select(ic => ic.Column.Name).ToArray();
         }
 
-        return new Table(_file, _allocator, tableDef, owningDb: this);
+        return tableDef;
     }
+
+    // ── Changing the schema ──────────────────────────────────────────────────
+
+    /// <summary>The catalog, for a change to the schema that registers an object in it.</summary>
+    internal SystemCatalog Catalog => _catalog;
+
+    /// <summary>What appends pages to the file, for a change to the schema.</summary>
+    internal PageAllocator Allocator => _allocator;
+
+    /// <summary>
+    /// Has the relationships read again by whatever next keeps them (<see cref="EnforceForeignKeys"/>): one has
+    /// been created, or a table in one has been given an index its rows can be found through.
+    /// </summary>
+    internal void SchemaChanged() => _foreignKeys = null;
 
     public void Dispose() => _file.Dispose();
 }

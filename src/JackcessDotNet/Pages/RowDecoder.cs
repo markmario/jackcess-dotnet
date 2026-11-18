@@ -50,7 +50,12 @@ internal sealed class RowDecoder
 
     private object? Decode(byte[] rowBytes, Column col, bool datesAsStored)
     {
-        if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull)) return null;
+        if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull))
+        {
+            // A Yes/No column holds no null: in a row written before the column was added to the table, which
+            // has no bit for it, it is No - as Access reads such a row. Any other column is null there.
+            return col.DataType == DataType.Boolean && !col.IsCalculated && WasWrittenBefore(rowBytes, col) ? false : null;
+        }
 
         // A calculated column's value is not read: Access keeps the result in a wrapper of its own, as a type the
         // column's properties name and not its definition (qcatco/exportmdb.interop#42). It is null here, where it
@@ -124,6 +129,14 @@ internal sealed class RowDecoder
 
         notNull = (rowBytes[maskOffset + col.ColumnNumber / 8] & (1 << (col.ColumnNumber % 8))) != 0;
         return true;
+    }
+
+    /// <summary>Whether the row was written before <paramref name="col"/> was added to the table: its own column count stops short of it.</summary>
+    private bool WasWrittenBefore(byte[] rowBytes, Column col)
+    {
+        if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount) return false;
+        int colCount = _format.SizeRowColumnCount == 2 ? ByteUtil.GetShort(rowBytes, 0) : rowBytes[0];
+        return col.ColumnNumber >= colCount && colCount > 0;
     }
 
     /// <summary>

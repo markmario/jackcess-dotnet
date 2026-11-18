@@ -35,6 +35,21 @@ public sealed class PageFile : IDisposable
     /// </summary>
     internal Dictionary<(int TdefPage, int Index), bool> IndexesChecked { get; } = new();
 
+    // How many times each table's definition has been changed in this session, by its definition page.
+    private readonly Dictionary<int, int> _definitionVersions = new();
+
+    /// <summary>
+    /// How many times the definition on <paramref name="tdefPage"/> has been changed while the file has been open:
+    /// a column or an index added to the table (<see cref="Table.AddColumn"/>, <see cref="Table.AddIndex"/>,
+    /// <see cref="Database.CreateRelationship"/>). A <see cref="Table"/> reads its definition again when the number
+    /// is no longer the one it read at, so every <see cref="Table"/> open on a table writes rows by the table's
+    /// columns and keeps the table's indexes as they now are, whichever of them made the change.
+    /// </summary>
+    internal int DefinitionVersion(int tdefPage) => _definitionVersions.TryGetValue(tdefPage, out int version) ? version : 0;
+
+    /// <summary>Records that the definition on <paramref name="tdefPage"/> has been changed and written.</summary>
+    internal void DefinitionChanged(int tdefPage) => _definitionVersions[tdefPage] = DefinitionVersion(tdefPage) + 1;
+
     /// <summary>See <see cref="Database.ShareLongValuePages"/>.</summary>
     internal bool ShareLongValuePages { get; set; }
 

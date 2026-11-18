@@ -11,28 +11,53 @@ public sealed class Table
 {
     private readonly PageFile       _file;
     private readonly PageAllocator  _allocator;
-    private readonly TableDefinition _definition;
     private readonly DataPageWriter  _dataWriter;
-    private readonly TableIndexes    _indexes;
     private readonly Database?       _owningDb;
+
+    // The table as its definition was last read, and how many times the definition had been changed by then
+    // (PageFile.DefinitionVersion). Everything below reaches these through the three properties after them, which
+    // read the definition again once it has been changed - by this Table or by another open on the same table -
+    // so that a row is never written by the columns, nor kept in the indexes, the table had before.
+    private TableDefinition       _readDefinition = null!;
+    private TableIndexes          _readIndexes = null!;
+    private IReadOnlyList<Column> _readAutoNumberColumns = null!;
+    private int                   _readAtVersion;
+
+    private TableDefinition _definition { get { Refresh(); return _readDefinition; } }
+    private TableIndexes    _indexes    { get { Refresh(); return _readIndexes; } }
     /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
-    private readonly IReadOnlyList<Column> _autoNumberColumns;
+    private IReadOnlyList<Column> _autoNumberColumns { get { Refresh(); return _readAutoNumberColumns; } }
 
     internal Table(PageFile file, PageAllocator allocator, TableDefinition definition,
                    Database? owningDb = null)
     {
         _file        = file        ?? throw new ArgumentNullException(nameof(file));
         _allocator   = allocator   ?? throw new ArgumentNullException(nameof(allocator));
-        _definition  = definition  ?? throw new ArgumentNullException(nameof(definition));
         _dataWriter  = new DataPageWriter(file, allocator);
-        _indexes     = new TableIndexes(file, allocator, definition);
         _owningDb    = owningDb;
+        Use(definition ?? throw new ArgumentNullException(nameof(definition)), file.DefinitionVersion(definition.TdefPageNumber));
+    }
+
+    private void Use(TableDefinition definition, int version)
+    {
+        _readDefinition = definition;
+        _readIndexes    = new TableIndexes(_file, _allocator, definition);
         // A complex column (attachments, multi-value fields) carries the flag too: its number is the key of the
         // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
-        _autoNumberColumns = definition.Columns
+        _readAutoNumberColumns = definition.Columns
             .Where(c => c.IsAutoNumber && c.DataType != DataType.Complex)
             .OrderBy(c => c.ColumnNumber)
             .ToArray();
+        _readAtVersion = version;
+        _writability   = null;
+    }
+
+    // Reads the definition again when it has been changed since it was read.
+    private void Refresh()
+    {
+        int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
+        if (version != _readAtVersion)
+            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber), version);
     }
 
     /// <summary>The table's definition, for tests that look at its pages.</summary>
@@ -521,6 +546,38 @@ public sealed class Table
             }
         }
     }
+
+    // ── Changing the table ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Adds <paramref name="column"/> to the table, after its other columns, as Access's <c>ALTER TABLE ... ADD
+    /// COLUMN</c> and Jackcess's <c>ColumnBuilder.addToTable</c> do. The rows already in the table are not
+    /// rewritten: each reads the new column as null (a Yes/No column as No), as Access shows them, until it is
+    /// updated. The table may be one Access made or one this library made.
+    /// <para>
+    /// Only the table's definition changes, and it changes whole or not at all: a refused column leaves the file
+    /// byte for byte as it was. This <see cref="Table"/>, and any other open on the same table, has the column
+    /// from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="column">The column to add (use <see cref="ColumnBuilder"/>). It is left as it was given.</param>
+    /// <returns>The table's new column.</returns>
+    /// <exception cref="ArgumentException">The table already has a column of that name, or 255 columns.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
+    /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
+    /// or would run, over more than one page, which is all this library reads of one - so a table is never left
+    /// that it could no longer write rows to. Nothing is changed.
+    /// </exception>
+    public Column AddColumn(Column column)
+    {
+        if (column is null) throw new ArgumentNullException(nameof(column));
+        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column);
+        return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private Database Owner()
+        => _owningDb ?? throw new InvalidOperationException($"Table '{Name}' was not opened from a database, so it cannot be changed.");
 
     /// <summary>
     /// Reads and decodes every non-deleted row in the table and returns them in
