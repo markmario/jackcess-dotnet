@@ -1,0 +1,246 @@
+name: Release
+
+# Builds, checks and packs the package, and on a release tag publishes it to nuget.org.
+#
+#   a vX.Y.Z tag      -> the tag is checked (scripts/Assert-ReleaseTag.ps1), the tests run, the package is packed at
+#                        X.Y.Z and checked, and - once someone approves the `nuget` environment - it is pushed to
+#                        nuget.org and a GitHub Release is made.
+#   anything else     -> a rehearsal (a run by hand too, even from a tag): the guard is run against the next version, and the package is packed and checked
+#                        at <next>-ci.<run>. Nothing is published. ci.yml runs the tests for these.
+#
+# nuget.org is reached through Trusted Publishing: NuGet/login trades this run's GitHub OIDC token for a key that
+# lasts an hour. There is no API key in the repository's secrets, and the nuget.org policy names this file, so the
+# workflow at any other path - nuget-publish.yml on the old commits included - cannot publish.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A tag's run is never cancelled: it is the release. A newer push to a branch makes its older rehearsal redundant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  PACKAGE_ID: Jackcess.Net
+  PROJECT: src/JackcessDotNet/JackcessDotNet.csproj
+
+jobs:
+  # The workflow at nuget-publish.yml is where every commit before this file keeps upstream's unguarded release job.
+  # Enabled, a v* tag on any of those commits would publish it. This fails while it is anything but disabled, and the
+  # publish job - and so any release - waits on it.
+  retired-workflow:
+    name: Retired publish workflow stays disabled
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: The workflow at nuget-publish.yml is disabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nuget-publish.yml" --jq .state)
+          echo "The workflow at .github/workflows/nuget-publish.yml is $state"
+          if [ "$state" != "disabled_manually" ]; then
+            echo "::error::It must stay disabled: gh workflow disable nuget-publish.yml --repo $GITHUB_REPOSITORY"
+            exit 1
+          fi
+
+  pack:
+    name: Build, check and pack
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history and every tag: a release tag is checked against main and the releases so far before
+          # anything is built, and SourceLink needs the history too.
+          fetch-depth: 0
+
+      # 8.0.x and 9.0.x as ci.yml has them; 10.0.x because the tests run on Microsoft Testing Platform.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # A tag is checked before anything is built: a plain vX.Y.Z on main's own line (the merge commit), above every
+      # release so far, at or above the csproj's MinimumReleaseVersion, and not already released.
+      - name: Check the release tag
+        id: tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = ./scripts/Assert-ReleaseTag.ps1 -Tag $env:REF_NAME -Sha $env:SHA -DefaultBranch main -FloorFile $env:PROJECT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      # Every untagged run exercises the guard the way a tag run would, against the next patch of the latest release
+      # (or the floor, if higher), so a defect in the guard fails here and not on the next release. The package is
+      # then packed at that version with a -ci.<run> suffix, so a rehearsal can never be mistaken for a release.
+      - name: Rehearse the release guard
+        id: rehearsal
+        if: github.event_name != 'push' || github.ref_type != 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_number }}
+        run: |
+          $prefix = 'v'; $branch = 'main'
+          $releases = git tag --merged "origin/$branch" --list "$prefix*" |
+            ForEach-Object { if ($_ -cmatch "^$([regex]::Escape($prefix))(\d+)\.(\d+)\.(\d+)$") { [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])" } } |
+            Sort-Object
+          $latest = if ($releases) { $releases[-1] } else { [version]'0.0.0' }
+          $floor = [version]((([xml](Get-Content -LiteralPath $env:PROJECT -Raw)).Project.PropertyGroup.MinimumReleaseVersion | Where-Object { $_ } | Select-Object -First 1).Trim())
+          $next = [version]"$($latest.Major).$($latest.Minor).$($latest.Build + 1)"
+          if ($next -lt $floor) { $next = $floor }
+          $printed = ./scripts/Assert-ReleaseTag.ps1 -Tag "$prefix$next" -Sha (git rev-parse "origin/$branch") -DefaultBranch $branch -TagPrefix $prefix -FloorFile $env:PROJECT
+          if ("$printed" -ne "$next") { throw "The guard printed '$printed' for $prefix$next" }
+          "The guard accepts $prefix$next on $branch"
+          "version=$next-ci.$env:RUN" >> $env:GITHUB_OUTPUT
+
+      - name: Version
+        id: version
+        shell: pwsh
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+          REHEARSAL_VERSION: ${{ steps.rehearsal.outputs.version }}
+        run: |
+          $v = if ($env:TAG_VERSION) { $env:TAG_VERSION } else { $env:REHEARSAL_VERSION }
+          if (-not $v) { throw 'No version: neither the tag check nor the rehearsal gave one' }
+          "Building $env:PACKAGE_ID $v"
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Verify test corpus
+        shell: pwsh
+        run: ./tools/corpus.ps1
+
+      - name: Restore
+        run: dotnet restore JackcessDotNet.slnx
+
+      # GeneratePackageOnBuild: the build writes the .nupkg and .snupkg to artifacts/.
+      - name: Build
+        run: dotnet build JackcessDotNet.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+
+      # A release is tested from the tagged commit itself. ci.yml tests every branch push and pull request, so a
+      # rehearsal does not repeat it.
+      - name: Test
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build
+
+      # What ships is checked, not the build output: the ID, the version, the three frameworks, the licence and
+      # notice files Apache-2.0 requires to travel, and the version each DLL carries.
+      - name: Check the package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          $nupkgs = @(Get-ChildItem artifacts/*.nupkg)
+          if ($nupkgs.Count -ne 1) { throw "Expected one .nupkg in artifacts/, found $($nupkgs.Count): $($nupkgs.Name -join ', ')" }
+          $nupkg = $nupkgs[0]
+          if ($nupkg.Name -ne "$env:PACKAGE_ID.$env:VERSION.nupkg") { throw "Packed $($nupkg.Name), expected $env:PACKAGE_ID.$env:VERSION.nupkg" }
+          if (-not (Test-Path "artifacts/$env:PACKAGE_ID.$env:VERSION.snupkg")) { throw "No symbol package for $env:VERSION" }
+
+          $dir = Join-Path $env:RUNNER_TEMP 'package'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg.FullName, $dir)
+          $nuspec = [xml](Get-Content (Get-ChildItem $dir/*.nuspec).FullName -Raw)
+          $meta = $nuspec.package.metadata
+          if ($meta.id -cne $env:PACKAGE_ID) { throw "The package's id is $($meta.id)" }
+          if ($meta.version -ne $env:VERSION) { throw "The package's version is $($meta.version)" }
+          if ($meta.repository.commit -ne $env:SHA) { throw "The package names commit $($meta.repository.commit), not $env:SHA" }
+          foreach ($file in 'LICENSE', 'NOTICE', 'README.md', 'CHANGELOG.md', 'jackcess.png') {
+            if (-not (Test-Path (Join-Path $dir $file))) { throw "$file is missing from the package" }
+          }
+
+          $core = [version]($env:VERSION -replace '-.*$', '')
+          $assemblyVersion = [version]"$($core.Major).$($core.Minor).$($core.Build).0"
+          foreach ($tfm in 'net8.0', 'net472', 'netstandard2.0') {
+            $dll = Join-Path $dir "lib/$tfm/JackcessDotNet.dll"
+            if (-not (Test-Path $dll)) { throw "lib/$tfm/JackcessDotNet.dll is missing from the package" }
+            $name = [System.Reflection.AssemblyName]::GetAssemblyName($dll)
+            if ($name.Version -ne $assemblyVersion) { throw "lib/${tfm}: assembly version $($name.Version), expected $assemblyVersion" }
+            if ($name.GetPublicKeyToken().Length -ne 0) { throw "lib/${tfm}: the assembly is strong-named" }
+            $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll)
+            if ($info.FileVersion -ne "$assemblyVersion") { throw "lib/${tfm}: file version $($info.FileVersion), expected $assemblyVersion" }
+            if ($info.ProductVersion -ne "$env:VERSION+$env:SHA") { throw "lib/${tfm}: product version $($info.ProductVersion), expected $env:VERSION+$env:SHA" }
+            "lib/$tfm/JackcessDotNet.dll: $($name.Version), $($info.ProductVersion)"
+          }
+          "$($nupkg.Name) is $env:PACKAGE_ID $env:VERSION from $env:SHA"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish to nuget.org
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [pack, retired-workflow]
+    runs-on: ubuntu-latest
+    # The environment's required reviewer approves each release before this job starts.
+    environment: nuget
+    permissions:
+      contents: write   # the GitHub Release
+      id-token: write   # Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: artifacts
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # NUGET_USER is a repository (or environment) variable: the nuget.org account the Trusted Publishing policy
+      # belongs to - its profile name, not an e-mail address.
+      - name: Log in to nuget.org
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      # The .snupkg beside the .nupkg goes to nuget.org's symbol server with it. --skip-duplicate keeps a re-run of a
+      # release whose push succeeded, and whose GitHub Release then failed, from failing on the 409.
+      - name: Push
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          VERSION: ${{ needs.pack.outputs.version }}
+        run: |
+          dotnet nuget push "artifacts/$PACKAGE_ID.$VERSION.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      # The guard refuses a tag that has a GitHub Release, so the release marks the version as published.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.pack.outputs.version }}
+        run: |
+          gh release create "$TAG" artifacts/*.nupkg artifacts/*.snupkg \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$PACKAGE_ID $VERSION" \
+            --notes "https://www.nuget.org/packages/$PACKAGE_ID/$VERSION - see CHANGELOG.md for what changed." \
+            --generate-notes \
+            --verify-tag

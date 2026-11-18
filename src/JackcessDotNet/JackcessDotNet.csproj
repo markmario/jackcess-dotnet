@@ -7,9 +7,21 @@
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <RootNamespace>JackcessDotNet</RootNamespace>
     <AssemblyName>JackcessDotNet</AssemblyName>
-    <Version>1.2.2</Version>
-    <Description>Pure .NET 8 library for reading and writing Microsoft Access (.mdb) database files. Port of the Jackcess Java library.</Description>
-    <Authors>Mehran Ghanizadeh</Authors>
+    <!-- The package ID is not the assembly name: nuget.org's JackcessDotNet is the upstream port's
+         package (net10.0 only), so this one has an ID of its own. The assembly and namespace stay
+         JackcessDotNet, so code written against either reads the same. -->
+    <PackageId>Jackcess.Net</PackageId>
+    <!-- The release tag is the version: CI passes -p:Version from a vX.Y.Z tag (scripts/Assert-ReleaseTag.ps1),
+         and the assembly, file and package versions all follow it. This is only the untagged default, so a
+         local or branch build is plainly not a release and cannot shadow a published package in
+         ~/.nuget/packages. Do not edit it to cut a release. -->
+    <Version>0.0.0-local</Version>
+    <!-- The floor a release tag is checked against. A breaking change to the public API raises it to the
+         next major in the same change, so it cannot ship as a minor or patch release. 2.0.0 because the
+         public API has changed since upstream's 1.2.2, where this repository started. -->
+    <MinimumReleaseVersion>2.0.0</MinimumReleaseVersion>
+    <Description>Pure managed library for reading and writing Microsoft Access (.mdb and .accdb) files, for .NET 8, .NET Framework 4.7.2 and .NET Standard 2.0, with no ACE or ODBC driver. A port of the Jackcess Java library whose files are checked against Access's own engine.</Description>
+    <Authors>markmario; Mehran Ghanizadeh</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <Optimize>true</Optimize>
     <LangVersion>latest</LangVersion>
@@ -23,30 +35,23 @@
     <PackageIcon>jackcess.png</PackageIcon>
 
     <!-- GitHub linkage: surfaces "Project website" + "Source repository" on the nuget.org package page -->
-    <PackageProjectUrl>https://github.com/mehran-ghanizadeh/jackcess-dotnet</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/mehran-ghanizadeh/jackcess-dotnet.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/markmario/jackcess-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/markmario/jackcess-dotnet.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
 
     <!-- SourceLink: lets consumers step into this library's source on GitHub from their debugger -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
-    <!--
-      PackageReleaseNotes: a one-paragraph summary surfaced on nuget.org under
-      "Release Notes". CHANGELOG.md ships inside the package for the full
-      history; this short blurb tells consumers what's new in *this* release.
-    -->
-    <PackageReleaseNotes>
-      1.2.2 — Adds a package icon (jackcess.png). Same metadata + SourceLink
-      improvements introduced in 1.2.1 (PackageProjectUrl, RepositoryUrl,
-      Microsoft.SourceLink.GitHub, README badges). No library code changes
-      vs. 1.2.0; see CHANGELOG.md.
-    </PackageReleaseNotes>
+    <!-- nuget.org shows this under "Release Notes"; the full history ships in CHANGELOG.md. -->
+    <PackageReleaseNotes>See CHANGELOG.md in the package, or https://github.com/markmario/jackcess-dotnet/blob/main/CHANGELOG.md</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md"     Pack="true" PackagePath="\" />
     <None Include="..\..\LICENSE"       Pack="true" PackagePath="\" />
+    <!-- Apache-2.0 section 4: the licence and the attribution notices travel with every copy. -->
+    <None Include="..\..\NOTICE"        Pack="true" PackagePath="\" />
     <None Include="..\..\CHANGELOG.md"  Pack="true" PackagePath="\" />
     <None Include="..\..\jackcess.png"  Pack="true" PackagePath="\" />
   </ItemGroup>

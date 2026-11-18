@@ -1,6 +1,6 @@
 # Build + full test suite on every push and every pull request, on every branch.
 #
-# Separate from nuget-publish.yml deliberately: publishing is gated on main/tags,
+# Separate from publish.yml deliberately: publishing is gated on release tags,
 # but a feature branch needs to know it is green BEFORE it opens a PR. This
 # workflow never publishes anything.
 name: ci

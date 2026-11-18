@@ -1,8 +1,34 @@
 # Changelog
 
-All notable changes to JackcessDotNet are documented in this file. The format
+All notable changes to JackcessDotNet (the `Jackcess.Net` package) are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+The first release of this repository as a package of its own, `Jackcess.Net`. Everything below
+1.2.2 is the history of [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet),
+where this started; nothing from it was released under this ID. It will be 2.0.0, because the public API has
+changed since 1.2.2.
+
+### Changed
+
+- **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
+  assembly and namespace are still `JackcessDotNet`.
+- **Targets `net8.0`, `net472` and `netstandard2.0`.**
+- **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
+  format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
+  counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
+  Extended columns, and foreign keys enforced on request.
+- **Public API.** Pages, formats and codecs are internal; the public API is recorded in
+  `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` and the build checks it. A broken rule of the database
+  has its own exception, and `TryGetTable` was added.
+
+### Added
+
+- `NOTICE`, crediting the works this is derived from, in the repository and the package.
+- Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
+  Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
 
 ## [1.2.2]
 
