@@ -18,10 +18,10 @@ public sealed class CrossSessionFreedSpaceTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] BlobColumns() => new[]
+    private static ColumnDefinition[] BlobColumns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Blob", DataType.Ole).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Blob", DataType.OleObject),
     };
 
     private static byte[] Bytes(int length, int seed)
@@ -48,7 +48,7 @@ public sealed class CrossSessionFreedSpaceTests : IDisposable
     // Ten 2,000-byte values go two to a page; deleting every second leaves five pages each with 2,080 bytes free.
     private List<int> FiveHalfFreePages()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", BlobColumns());
         for (int i = 1; i <= 10; i++)
             table.Insert(new Row { ["Id"] = i, ["Blob"] = Bytes(2_000, i) });
@@ -84,7 +84,7 @@ public sealed class CrossSessionFreedSpaceTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
-            var rows = db.GetTable("T").ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = db.GetTable("T").Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(10, rows.Count);
             for (int i = 1; i <= 9; i += 2)
                 Assert.Equal(Bytes(2_000, i), rows[i]["Blob"]);

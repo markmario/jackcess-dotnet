@@ -15,11 +15,11 @@ public sealed class CursorTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> PeopleColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> PeopleColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-        new ColumnBuilder("Age",  DataType.Int ).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+        new ColumnDefinition("Age",  DataType.Int16 ),
     };
 
     /// <summary>
@@ -29,8 +29,10 @@ public sealed class CursorTests : IDisposable
     /// </summary>
     private (Database db, Table table) OpenWithPeople(string? primaryKey = null)
     {
-        var db = Database.Create(_path, JetVersion.Jet4);
-        var t  = db.CreateTable("People", PeopleColumns(), primaryKey: primaryKey);
+        var db = Database.Create(_path, FileFormat.Access2000);
+        var t  = primaryKey is null
+            ? db.CreateTable("People", PeopleColumns())
+            : db.CreateTable("People", PeopleColumns(), primaryKey);
         for (int i = 1; i <= 5; i++)
             t.Insert(new Row { ["Id"] = i, ["Name"] = $"P{i}", ["Age"] = (short)(20 + i) });
         return (db, t);
@@ -41,7 +43,7 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewCursor();
+        var c = t.CreateCursor();
 
         var ids = new List<int>();
         foreach (var row in c)
@@ -51,43 +53,44 @@ public sealed class CursorTests : IDisposable
     }
 
     [Fact]
-    public void Cursor_GetNextRow_ReturnsNullAfterLast()
+    public void Cursor_MoveNext_IsFalseAfterLast()
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewCursor();
+        var c = t.CreateCursor();
 
-        for (int i = 0; i < 5; i++) Assert.NotNull(c.GetNextRow());
-        Assert.Null(c.GetNextRow());
-        Assert.Null(c.GetNextRow());   // idempotent
+        for (int i = 0; i < 5; i++) Assert.True(c.MoveNext());
+        Assert.False(c.MoveNext());
+        Assert.False(c.MoveNext());   // idempotent
     }
 
     [Fact]
-    public void Cursor_GetPreviousRow_WalksBackwards()
+    public void Cursor_MovePrevious_WalksBackwards()
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewCursor();
+        var c = t.CreateCursor();
 
-        c.AfterLast();
+        c.MoveAfterLast();
         var ids = new List<int>();
-        while (c.GetPreviousRow() is { } r)
-            ids.Add(Convert.ToInt32(r["Id"]));
+        while (c.MovePrevious())
+            ids.Add(Convert.ToInt32(c.Current!["Id"]));
 
         Assert.Equal(new[] { 5, 4, 3, 2, 1 }, ids);
     }
 
     [Fact]
-    public void Cursor_BeforeFirst_ResetsIteration()
+    public void Cursor_MoveBeforeFirst_ResetsIteration()
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewCursor();
+        var c = t.CreateCursor();
 
-        Assert.NotNull(c.GetNextRow());
-        Assert.NotNull(c.GetNextRow());
-        c.BeforeFirst();
-        Assert.Equal(1, Convert.ToInt32(c.GetNextRow()!["Id"]));
+        Assert.True(c.MoveNext());
+        Assert.True(c.MoveNext());
+        c.MoveBeforeFirst();
+        Assert.True(c.MoveNext());
+        Assert.Equal(1, Convert.ToInt32(c.Current!["Id"]));
     }
 
     [Fact]
@@ -95,9 +98,9 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople(primaryKey: "Id");
         using var _ = db;
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
-        Row? r = c.FindRowByPrimaryKey(3);
+        Row? r = c.Table.FindRowByPrimaryKey(3);
 
         Assert.NotNull(r);
         Assert.Equal("P3", r!["Name"]);
@@ -108,7 +111,7 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
         Row? r = c.FindRow("Name", "P4");
 
@@ -121,25 +124,28 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.NewIndexCursor();
+        var c = t.CreateIndexCursor();
 
         Assert.Null(c.FindRow("Name", "DoesNotExist"));
     }
 
     [Fact]
-    public void CursorBuilder_StaticShortcuts_Work()
+    public void Table_makes_its_cursors_and_finds_a_row_by_its_primary_key()
     {
         var (db, t) = OpenWithPeople(primaryKey: "Id");
         using var _ = db;
 
-        var cursor = CursorBuilder.CreateCursor(t);
+        var cursor = t.CreateCursor();
+        Assert.Same(t, cursor.Table);
         Assert.Equal(5, System.Linq.Enumerable.Count(cursor));
 
-        var pkCursor = CursorBuilder.CreatePrimaryKeyCursor(t);
-        Assert.NotNull(pkCursor.FindRowByPrimaryKey(2));
+        var pkCursor = t.CreateIndexCursor();
+        Assert.True(pkCursor.Index!.IsPrimaryKey);
+        Assert.Equal("P2", pkCursor.FindRow("Id", 2)!["Name"]);
 
-        var found = CursorBuilder.FindRowByPrimaryKey(t, 5);
+        var found = t.FindRowByPrimaryKey(5);
         Assert.Equal("P5", found!["Name"]);
+        Assert.Null(t.FindRowByPrimaryKey(6));
     }
 
     [Fact]
@@ -150,7 +156,7 @@ public sealed class CursorTests : IDisposable
         t.DeleteRow("Id", 3);
 
         var ids = new List<int>();
-        foreach (var row in t.NewCursor())
+        foreach (var row in t.CreateCursor())
             ids.Add(Convert.ToInt32(row["Id"]));
 
         Assert.Equal(new[] { 1, 2, 4, 5 }, ids);
@@ -170,12 +176,12 @@ public sealed class CursorTests : IDisposable
     public void Cursor_OnCorpusFile_IteratesAllRows(string version, string filename, string path)
     {
         using var db = Database.Open(path);
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
-            var viaScan   = t.ReadAllRows();
+            var viaScan   = t.Rows.ToList();
             var viaCursor = new List<Row>();
-            foreach (var r in t.NewCursor()) viaCursor.Add(r);
+            foreach (var r in t.CreateCursor()) viaCursor.Add(r);
 
             Assert.True(viaScan.Count == viaCursor.Count,
                 $"{version}/{filename} table '{name}': scan={viaScan.Count} cursor={viaCursor.Count}");

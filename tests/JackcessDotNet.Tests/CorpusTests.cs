@@ -56,10 +56,10 @@ public sealed class CorpusTests
         var failures = new List<string>();
         try
         {
-            var tableNames = db.ListTables(includeSystem: false);
+            var tableNames = db.GetTableNames();
             report.AppendLine($"  user tables ({tableNames.Count}): {string.Join(", ", tableNames)}");
 
-            var sysTables = db.ListTables(includeSystem: true);
+            var sysTables = db.GetTableNames().Concat(db.GetSystemTableNames()).ToList();
             report.AppendLine($"  total tables (incl. system): {sysTables.Count}");
 
             foreach (string name in tableNames)
@@ -67,7 +67,7 @@ public sealed class CorpusTests
                 try
                 {
                     var table = db.GetTable(name);
-                    var rows  = table.ReadAllRows();
+                    var rows  = table.Rows.ToList();
                     int sample = Math.Min(rows.Count, 10);
                     report.AppendLine($"  table '{name}': {table.Columns.Count} cols, {rows.Count} rows read (sample {sample})");
                 }

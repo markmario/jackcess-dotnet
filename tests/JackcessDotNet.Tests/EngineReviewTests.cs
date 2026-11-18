@@ -37,7 +37,7 @@ public sealed class EngineReviewTests : IDisposable
         return path;
     }
 
-    private static Column[] OneColumn() => new[] { new ColumnBuilder("Id", DataType.Long).Build() };
+    private static ColumnDefinition[] OneColumn() => new[] { new ColumnDefinition("Id", DataType.Int32) };
 
     private static object? Value(Row row, string column) => row.TryGetValue(column, out var value) ? value : null;
 
@@ -102,9 +102,9 @@ public sealed class EngineReviewTests : IDisposable
         {
             var table = db.CreateTable("Ünïcødé Made", new[]
             {
-                new ColumnBuilder("Code", DataType.Text).MaxLength(20).Build(),
-                new ColumnBuilder("Notes", DataType.Memo).Build(),
-                new ColumnBuilder("N", DataType.Long).Build(),
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
+                new ColumnDefinition("Notes", DataType.Memo),
+                new ColumnDefinition("N", DataType.Int32),
             }, primaryKey: "Code");
             for (int i = 0; i < codes.Length; i++)
                 table.Insert(new Row { ["Code"] = codes[i], ["N"] = i });
@@ -134,19 +134,19 @@ public sealed class EngineReviewTests : IDisposable
                 codes.Select(c => Convert.ToHexString(IndexKeys.EncodeText(TextIndexCodes.General, true, c))).OrderBy(k => k, StringComparer.Ordinal),
                 JetPages.LeafEntries(file, root).Select(e => e.Hex));
             for (int i = 0; i < codes.Length; i++)
-                Assert.Equal(i, table.NewIndexCursor().FindRowByPrimaryKey(codes[i])?["N"]);
+                Assert.Equal(i, table.FindRowByPrimaryKey(codes[i])?["N"]);
         }
     }
 
     [Fact]
     public void The_engines_text_and_memo_columns_sort_in_General_Legacy_as_Access_writes_it()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Texts", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("Notes", DataType.Memo),
         });
 
         byte[] tdef = db.File.ReadPage(TdefOf(db.File, "Texts"));
@@ -165,17 +165,17 @@ public sealed class EngineReviewTests : IDisposable
     {
         using var db = Database.Open(CopyOf("V2010", "indexCodesV2010.accdb"));
         int found = 0, throughIndex = 0, valuesNotKeyed = 0;
-        foreach (string name in db.ListTables())
+        foreach (string name in db.GetTableNames())
         {
             var table = db.GetTable(name);
-            var rows = table.ReadAllRows();
+            var rows = table.Rows.ToList();
             if (rows.Count > 1000) continue;   // each row is found by a scan of the table
             foreach (var index in table.Indexes.Where(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text))
             {
                 string column = index.Columns[0].Column.Name;
                 foreach (var row in rows.Where(r => Value(r, column) is string s && s.Length > 0))
                 {
-                    var hit = table.NewIndexCursor(index.Name).FindRow(column, row[column]!);
+                    var hit = table.CreateIndexCursor(index.Name).FindRow(column, row[column]!);
                     Assert.NotNull(hit);
                     Assert.Equal(row[column], hit![column]);
                     found++;
@@ -222,11 +222,11 @@ public sealed class EngineReviewTests : IDisposable
         int lookedUp = 0, scannedFor = 0;
         using (db)
         {
-            foreach (string name in db.ListTables())
+            foreach (string name in db.GetTableNames())
             {
                 Table table;
                 IReadOnlyList<Row> rows;
-                try { table = db.GetTable(name); rows = table.ReadAllRows(); }
+                try { table = db.GetTable(name); rows = table.Rows.ToList(); }
                 catch (Exception e) when (e is NotSupportedException or InvalidDataException) { continue; }   // a table the engine does not read
 
                 foreach (var index in table.Indexes.Where(ix => ix.RootPageNumber > 0 && ix.Columns.Any(c => c.Column.DataType == DataType.Text)))
@@ -247,7 +247,7 @@ public sealed class EngineReviewTests : IDisposable
                         else
                         {
                             scannedFor++;
-                            found = table.NewIndexCursor(index.Name).FindRowByEntry(values!) is not null;
+                            found = table.CreateIndexCursor(index.Name).FindRowByEntry(values!) is not null;
                         }
                         if (!found)
                             misses.Add($"{name}.{index.Name}: {string.Join(" | ", values.Select(v => v is string s ? string.Join(" ", s.Select(ch => ((int)ch).ToString("X4"))) : v!.ToString()))}");
@@ -276,15 +276,15 @@ public sealed class EngineReviewTests : IDisposable
         foreach (int tdef in new[] { JetFormat.PageSystemCatalog, TdefOf(file, "MSysACEs") })
             foreach (var block in JetPages.IndexBlocks(file, tdef))
                 Assert.Empty(JetPages.RuleBreaks(file, block.Root, tdef));
-        Assert.Equal(150, db.ListTables().Count(n => n.StartsWith("Registered ")));
+        Assert.Equal(150, db.GetTableNames().Count(n => n.StartsWith("Registered ")));
     }
 
     // Two Table objects for one table each hold its key's root: a split through one must not mislead the other.
     [Fact]
     public void A_split_made_through_one_table_object_does_not_mislead_another()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
-        db.CreateTable("Keyed", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
+        db.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
         var first = db.GetTable("Keyed");
         var second = db.GetTable("Keyed");
 
@@ -341,11 +341,11 @@ public sealed class EngineReviewTests : IDisposable
     [Fact]
     public void A_primary_key_an_earlier_version_wrote_keeps_one_entry_per_row_through_deletes_and_updates()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Keyed", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 20 },
         }, primaryKey: "Id");
         for (int i = 1; i <= 1200; i++)
             table.Insert(new Row { ["Id"] = i, ["Txt"] = $"v{i}" });
@@ -366,7 +366,7 @@ public sealed class EngineReviewTests : IDisposable
         var rows = JetPages.Rows(file, tdef);
         var entries = JetPages.LeafEntries(file, root);
         Assert.Equal(rows.Select(r => (r.Page, r.Row)).OrderBy(p => p), entries.Select(e => (e.RowPage, e.Row)).OrderBy(p => p));
-        Assert.Equal("updated", db.GetTable("Keyed").NewIndexCursor().FindRowByPrimaryKey(700)?["Txt"]);
+        Assert.Equal("updated", db.GetTable("Keyed").FindRowByPrimaryKey(700)?["Txt"]);
         // Brought to Access's rules whole: the root's level, and every page naming the TDEF with 0 for no page.
         Assert.Empty(JetPages.RuleBreaks(file, root, tdef));
     }
@@ -379,12 +379,12 @@ public sealed class EngineReviewTests : IDisposable
     public void A_table_whose_key_the_engine_cannot_write_is_left_as_it_was()
     {
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Coded", new[]
             {
-                new ColumnBuilder("Code", DataType.Text).MaxLength(10).Build(),
-                new ColumnBuilder("N", DataType.Long).Build(),
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 10 },
+                new ColumnDefinition("N", DataType.Int32),
             }, primaryKey: "Code");
             foreach (var code in new[] { "a", "b", "c" })
                 table.Insert(new Row { ["Code"] = code, ["N"] = 1 });
@@ -403,7 +403,7 @@ public sealed class EngineReviewTests : IDisposable
             Assert.Throws<NotSupportedException>(() => table.DeleteRow("Code", "b"));
             Assert.Throws<NotSupportedException>(() => table.Insert(new Row { ["Code"] = "d", ["N"] = 1 }));
             Assert.Throws<NotSupportedException>(() => table.UpdateByPrimaryKey("a", new Row { ["N"] = 2 }));
-            var rows = db.GetTable("Coded").ReadAllRows();
+            var rows = db.GetTable("Coded").Rows.ToList();
             Assert.Equal(new[] { "a", "b", "c" }, rows.Select(r => (string)r["Code"]!).OrderBy(c => c));
             Assert.All(rows, r => Assert.Equal(1, r["N"]));
         }
@@ -430,7 +430,7 @@ public sealed class EngineReviewTests : IDisposable
     [Fact]
     public void Appending_pages_reads_the_header_and_the_free_page_map_once()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var allocator = new PageAllocator(db.File);
         allocator.AllocatePage();
         long before = db.File.ReadCount;

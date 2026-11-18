@@ -22,7 +22,7 @@ public sealed class CodecTests
         string path = Path.Combine(Path.GetTempPath(), $"codec_{Guid.NewGuid():N}.mdb");
         try
         {
-            using var db = Database.Create(path, JetVersion.Jet4);
+            using var db = Database.Create(path, FileFormat.Access2000);
             // Reach into PageFile via reflection.
             var pageFile = (PageFile)typeof(Database).GetField("_file",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
@@ -52,12 +52,12 @@ public sealed class CodecTests
         string path = Path.Combine(Path.GetTempPath(), $"plain_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+            using (var db = Database.Create(path, FileFormat.Access2000))
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             // No exception, no codec injected — the freshly-created file is unencrypted.
             using var reopen = Database.Open(path);
-            Assert.Contains("X", reopen.ListTables());
+            Assert.Contains("X", reopen.GetTableNames());
         }
         finally
         {
@@ -74,8 +74,8 @@ public sealed class CodecTests
         string path = Path.Combine(Path.GetTempPath(), $"enc_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+            using (var db = Database.Create(path, FileFormat.Access2000))
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             // Corrupt page 2's first two bytes (would be 0x02 0x01 in an unencrypted file).
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
@@ -103,11 +103,11 @@ public sealed class CodecTests
         string path = Path.Combine(Path.GetTempPath(), $"pw_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+            using (var db = Database.Create(path, FileFormat.Access2000))
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
-            using var reopen = Database.Open(path, "any-password");
-            Assert.Contains("X", reopen.ListTables());
+            using var reopen = Database.Open(path, new DatabaseOpenOptions { Password = "any-password" });
+            Assert.Contains("X", reopen.GetTableNames());
         }
         finally
         {

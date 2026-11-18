@@ -54,8 +54,9 @@ public sealed class Access97ReadOnlyTests : IDisposable
         Assert.Contains("Jackcess", refused.Message);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(50).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 50 };
+    private static Column[] ColumnsOf(params ColumnDefinition[] definitions) => definitions.Select(d => d.ToColumn("columns")).ToArray();
 
     private static DataTable Things(string name)
     {
@@ -84,11 +85,10 @@ public sealed class Access97ReadOnlyTests : IDisposable
     /// <summary>Each way a database is created, asked for an Access 97 one at the path given.</summary>
     public static readonly Dictionary<string, Action<string>> WaysToCreate = new()
     {
-        ["Database.Create"]            = path => Database.Create(path, JetVersion.Jet3).Dispose(),
-        ["DatabaseBuilder"]            = path => new DatabaseBuilder().WithFile(path).WithVersion(JetVersion.Jet3).Create().Dispose(),
-        ["CreateFromDataTable"]        = path => DatabaseImporter.CreateFromDataTable(path, Things("Things"), JetVersion.Jet3).Dispose(),
-        ["CreateFromDataSet"]          = path => DatabaseImporter.CreateFromDataSet(path, new DataSet { Tables = { Things("Things") } }, JetVersion.Jet3).Dispose(),
-        ["CreateFromCollection"]       = path => DatabaseImporter.CreateFromCollection(path, new[] { new Thing { Id = 1, Name = "one" } }, JetVersion.Jet3).Dispose(),
+        ["Database.Create"]            = path => Database.Create(path, FileFormat.Access97).Dispose(),
+        ["CreateFromDataTable"]        = path => DatabaseImporter.CreateFromDataTable(path, Things("Things"), FileFormat.Access97).Dispose(),
+        ["CreateFromDataSet"]          = path => DatabaseImporter.CreateFromDataSet(path, new DataSet { Tables = { Things("Things") } }, FileFormat.Access97).Dispose(),
+        ["CreateFromCollection"]       = path => DatabaseImporter.CreateFromCollection(path, new[] { new Thing { Id = 1, Name = "one" } }, FileFormat.Access97).Dispose(),
         ["PageFile, FileMode.Create"]  = path => new PageFile(path, JetFormat.Jet3, FileMode.Create).Dispose(),
         ["PageFile, FileMode.CreateNew"] = path => new PageFile(path, JetFormat.Jet3, FileMode.CreateNew).Dispose(),
         ["PageFile, FileMode.OpenOrCreate"] = path => new PageFile(path, JetFormat.Jet3, FileMode.OpenOrCreate, FileAccess.ReadWrite).Dispose(),
@@ -153,7 +153,6 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["create table with a primary key of two columns"] = db => db.CreateTable("New", new[] { Long("Id"), Long("N") }, new[] { "Id", "N" }),
         ["create table with indexes"] = db => db.CreateTable("New", new[] { Long("Id"), Long("N") }, new[] { "Id" }, new[] { new IndexDefinition("ByN", "N") }),
         ["create table with text"]  = db => db.CreateTable("New", new[] { Long("Id"), Text("Name") }),
-        ["table builder"]           = db => new TableBuilder("New").AddColumn(Long("Id")).WithPrimaryKey("Id").ToTable(db),
         ["import a DataTable"]      = db => db.ImportTable(Things("Things")),
         ["import a DataTable into a table"] = db => db.ImportTable(KeysAsDataTable(), options: new ImportOptions { AppendIfExists = true }),
         ["import a DataSet"]        = db => db.ImportTables(new DataSet { Tables = { Things("Things"), Things("More") } }),
@@ -204,17 +203,17 @@ public sealed class Access97ReadOnlyTests : IDisposable
 
         using (var db = Database.Open(path))
         {
-            Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+            Assert.Equal(FileFormat.Access97, db.File.Format.Version);
             AssertRefused(() => Changes[change](db));
             Assert.Equal(0, db.File.WriteCount);
 
             // The database is still one to read, and holds what it held.
-            Assert.Equal(new[] { "Keys", "LongRows" }, db.ListTables().OrderBy(name => name));
-            Assert.Equal(1500, db.GetTable("Keys").ReadAllRows().Count);
-            Assert.Equal(260, db.GetTable("LongRows").ReadAllRows().Count);
+            Assert.Equal(new[] { "Keys", "LongRows" }, db.GetTableNames().OrderBy(name => name));
+            Assert.Equal(1500, db.GetTable("Keys").Rows.Count());
+            Assert.Equal(260, db.GetTable("LongRows").Rows.Count());
             Assert.Equal(1500, db.GetTable("Keys").RowCount);
-            Assert.NotNull(db.GetTable("Keys").NewIndexCursor().FindRowByPrimaryKey(7));
-            Assert.Null(db.GetTable("Keys").NewIndexCursor().FindRowByPrimaryKey(5000));
+            Assert.NotNull(db.GetTable("Keys").FindRowByPrimaryKey(7));
+            Assert.Null(db.GetTable("Keys").FindRowByPrimaryKey(5000));
         }
 
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -245,23 +244,22 @@ public sealed class Access97ReadOnlyTests : IDisposable
         foreach (var open in new Func<Database>[]
                  {
                      () => Database.Open(path),
-                     () => Database.Open(path, JetVersion.Jet3),
-                     () => Database.Open(path, "a password the file does not need"),
-                     () => DatabaseBuilder.Open(path),
+                     () => Database.Open(path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access97 }),
+                     () => Database.Open(path, new DatabaseOpenOptions { Password = "a password the file does not need" }),
                  })
         {
             using var db = open();
             // A table without indexes: nothing else about it refuses a row.
-            var table = db.ListTables().Select(db.GetTable)
+            var table = db.GetTableNames().Select(db.GetTable)
                 .First(t => t.Columns.Any(c => c.DataType == DataType.Text) && t.Indexes.Count == 0 && !t.Definition.HasUnreadIndexes);
             var text = table.Columns.First(c => c.DataType == DataType.Text);
-            int rows = table.ReadAllRows().Count;
+            int rows = table.Rows.Count();
 
             AssertRefused(() => table.Insert(new Row { [text.Name] = "x" }));
             AssertRefused(() => db.CreateTable("New", new[] { Long("Id") }));
 
             Assert.Equal(0, db.File.WriteCount);
-            Assert.Equal(rows, table.ReadAllRows().Count);
+            Assert.Equal(rows, table.Rows.Count());
         }
 
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -276,44 +274,44 @@ public sealed class Access97ReadOnlyTests : IDisposable
 
         using var db = Database.Open(path);
 
-        Assert.Equal(1500, db.GetTable("Keys").ReadAllRows().Count);
+        Assert.Equal(1500, db.GetTable("Keys").Rows.Count());
         AssertRefused(() => db.GetTable("Keys").Insert(KeysRow(5000)));
     }
 
     // ── The file says what it is, not the caller ─────────────────────────────
 
     public static IEnumerable<object[]> OtherVersions()
-        => new[] { JetVersion.Jet4, JetVersion.Jet12, JetVersion.Jet14, JetVersion.Jet16, JetVersion.Jet17 }
+        => new[] { FileFormat.Access2000, FileFormat.Access2007, FileFormat.Access2010, FileFormat.Access2016, FileFormat.Access2019 }
             .Select(version => new object[] { version });
 
     public static IEnumerable<object[]> ChangesUnderOtherVersions()
-        => from version in new[] { JetVersion.Jet4, JetVersion.Jet12, JetVersion.Jet17 }
+        => from version in new[] { FileFormat.Access2000, FileFormat.Access2007, FileFormat.Access2019 }
            from change in new[] { "insert", "insert with text", "update", "delete", "create table", "import a DataTable", "write a page", "allocate a page" }
            select new object[] { version, change };
 
     /// <summary>
-    /// <see cref="Database.Open(string, JetVersion)"/> took the caller's word for the format: an Access 97 file
+    /// <see cref="Database.Open(string, FileFormat)"/> took the caller's word for the format: an Access 97 file
     /// opened as Jet4 was not one to refuse changes to, and was read in pages of the wrong size. What a file is
     /// is in its header, as Jackcess takes it; the version a caller names does not change it.
     /// </summary>
     [Theory]
     [MemberData(nameof(ChangesUnderOtherVersions))]
-    public void An_Access_97_file_opened_as_another_version_is_read_only_all_the_same(JetVersion said, string change)
+    public void An_Access_97_file_opened_as_another_version_is_read_only_all_the_same(FileFormat said, string change)
     {
         string path = CopyOfFixture();
         byte[] before = File.ReadAllBytes(path);
 
-        foreach (var open in new Func<Database>[] { () => Database.Open(path, said), () => DatabaseBuilder.Open(path, said) })
+        foreach (var open in new Func<Database>[] { () => Database.Open(path, new DatabaseOpenOptions { FallbackFormat = said }) })
         {
             using var db = open();
             AssertRefused(() => Changes[change](db));
             Assert.Equal(0, db.File.WriteCount);
-            Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+            Assert.Equal(FileFormat.Access97, db.File.Format.Version);
 
             // And it is read as the Access 97 file it is.
-            Assert.Equal(new[] { "Keys", "LongRows" }, db.ListTables().OrderBy(name => name));
-            Assert.Equal(1500, db.GetTable("Keys").ReadAllRows().Count);
-            Assert.NotNull(db.GetTable("Keys").NewIndexCursor().FindRowByPrimaryKey(7));
+            Assert.Equal(new[] { "Keys", "LongRows" }, db.GetTableNames().OrderBy(name => name));
+            Assert.Equal(1500, db.GetTable("Keys").Rows.Count());
+            Assert.NotNull(db.GetTable("Keys").FindRowByPrimaryKey(7));
         }
 
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -321,7 +319,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
 
     [Theory]
     [MemberData(nameof(OtherVersions))]
-    public void A_file_Access_97_wrote_opened_as_another_version_is_read_only_all_the_same(JetVersion said)
+    public void A_file_Access_97_wrote_opened_as_another_version_is_read_only_all_the_same(FileFormat said)
     {
         string path = NewPath();
         File.Copy(TestCorpus.File("V1997", "delV1997.mdb")!, path);
@@ -329,19 +327,19 @@ public sealed class Access97ReadOnlyTests : IDisposable
         byte[] before = File.ReadAllBytes(path);
 
         List<string> tables;
-        using (var asItIs = Database.Open(path)) tables = asItIs.ListTables().ToList();
+        using (var asItIs = Database.Open(path)) tables = asItIs.GetTableNames().ToList();
 
-        using (var db = Database.Open(path, said))
+        using (var db = Database.Open(path, new DatabaseOpenOptions { FallbackFormat = said }))
         {
-            Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
-            Assert.Equal(tables, db.ListTables());
+            Assert.Equal(FileFormat.Access97, db.File.Format.Version);
+            Assert.Equal(tables, db.GetTableNames());
 
             // A table without indexes: nothing else about it refuses a row.
-            var table = db.ListTables().Select(db.GetTable)
+            var table = db.GetTableNames().Select(db.GetTable)
                 .First(t => t.Columns.Any(c => c.DataType == DataType.Text) && t.Indexes.Count == 0 && !t.Definition.HasUnreadIndexes);
             var text = table.Columns.First(c => c.DataType == DataType.Text);
-            var rows = table.ReadAllRows();
-            var held = rows.First(row => row.ContainsKey(text.Name));
+            var rows = table.Rows.ToList();
+            var held = rows.First(row => !row.IsNull(text.Name));
 
             AssertRefused(() => table.Insert(new Row { [text.Name] = "x" }));
             AssertRefused(() => table.UpdateByPrimaryKey(1, new Row { [text.Name] = "x" }));
@@ -349,7 +347,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
             AssertRefused(() => db.CreateTable("New", new[] { Long("Id") }));
 
             Assert.Equal(0, db.File.WriteCount);
-            Assert.Equal(rows.Count, table.ReadAllRows().Count);
+            Assert.Equal(rows.Count, table.Rows.Count());
         }
 
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -395,12 +393,12 @@ public sealed class Access97ReadOnlyTests : IDisposable
         // Creating a database replaces what is at its path, whatever that was: only a new Access 97 one is refused.
         string path = CopyOfFixture();
 
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
             db.CreateTable("Things", new[] { Long("Id") }).Insert(new Row { ["Id"] = 1 });
 
         using var again = Database.Open(path);
-        Assert.Equal(JetVersion.Jet4, again.File.Format.Version);
-        Assert.Equal(new[] { "Things" }, again.ListTables());
+        Assert.Equal(FileFormat.Access2000, again.File.Format.Version);
+        Assert.Equal(new[] { "Things" }, again.GetTableNames());
     }
 
     [Fact]
@@ -408,20 +406,20 @@ public sealed class Access97ReadOnlyTests : IDisposable
     {
         // The other way about does no harm: the file is read as what it is, and is written to as before.
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
             db.CreateTable("Things", new[] { Long("Id"), Text("Name") }, primaryKey: "Id").Insert(new Row { ["Id"] = 1, ["Name"] = "one" });
 
-        using (var db = Database.Open(path, JetVersion.Jet3))
+        using (var db = Database.Open(path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access97 }))
         {
-            Assert.Equal(JetVersion.Jet4, db.File.Format.Version);
+            Assert.Equal(FileFormat.Access2000, db.File.Format.Version);
             var things = db.GetTable("Things");
-            Assert.Equal("one", things.NewIndexCursor().FindRowByPrimaryKey(1)!["Name"]);
+            Assert.Equal("one", things.FindRowByPrimaryKey(1)!["Name"]);
             things.Insert(new Row { ["Id"] = 2, ["Name"] = "two" });
             things.UpdateByPrimaryKey(1, new Row { ["Name"] = "uno" });
         }
 
         using var again = Database.Open(path);
-        Assert.Equal(new[] { "uno", "two" }, again.GetTable("Things").ReadAllRows().OrderBy(row => row["Id"]).Select(row => row["Name"]));
+        Assert.Equal(new[] { "uno", "two" }, again.GetTable("Things").Rows.OrderBy(row => row["Id"]).Select(row => row["Name"]));
     }
 
     [Fact]
@@ -429,7 +427,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
     {
         // A Jet4 file under a PageFile given Access 97's format: the pages are not Jet3 pages, and none is written.
         string path = NewPath();
-        Database.Create(path, JetVersion.Jet4).Dispose();
+        Database.Create(path, FileFormat.Access2000).Dispose();
         byte[] before = File.ReadAllBytes(path);
 
         using (var file = new PageFile(path, JetFormat.Jet3, FileMode.Open))
@@ -444,8 +442,8 @@ public sealed class Access97ReadOnlyTests : IDisposable
     public void No_row_is_encoded_for_Access_97()
     {
         // RowEncoder is a public class. It made a Jet3 row with two bytes where the format has one.
-        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new[] { Long("Id"), Text("Name") }));
-        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new TableDefinition("T", new[] { Long("Id"), Text("Name") })));
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, ColumnsOf(Long("Id"), Text("Name"))));
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new TableDefinition("T", ColumnsOf(Long("Id"), Text("Name")))));
 
         using var db = Database.Open(CopyOfFixture());
         AssertRefused(() => new RowEncoder(db.File.Format, db.GetTable("LongRows").Definition));
@@ -454,7 +452,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
     [Fact]
     public void No_table_definition_is_made_for_Access_97()
     {
-        AssertRefused(() => new TableDefinition("T", new[] { Long("Id"), Text("Name") }).Serialize(JetFormat.Jet3));
+        AssertRefused(() => new TableDefinition("T", ColumnsOf(Long("Id"), Text("Name"))).Serialize(JetFormat.Jet3));
     }
 
     [Fact]
@@ -462,7 +460,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
     {
         // The refusal is of Access 97's format alone.
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Things", new[] { Long("Id"), Text("Name") }, primaryKey: "Id");
             table.Insert(new Row { ["Id"] = 1, ["Name"] = "one" });
@@ -470,6 +468,6 @@ public sealed class Access97ReadOnlyTests : IDisposable
         }
 
         using var again = Database.Open(path);
-        Assert.Equal("uno", again.GetTable("Things").NewIndexCursor().FindRowByPrimaryKey(1)!["Name"]);
+        Assert.Equal("uno", again.GetTable("Things").FindRowByPrimaryKey(1)!["Name"]);
     }
 }

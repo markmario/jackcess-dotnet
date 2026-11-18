@@ -427,8 +427,8 @@ internal sealed class SystemCatalog
         int maskOffset = rowBytes.Length - maskSize;
         if (maskOffset < _format.SizeRowColumnCount) return null;
 
-        bool notNull = (rowBytes[maskOffset + targetCol.ColumnNumber / 8]
-                        & (1 << (targetCol.ColumnNumber % 8))) != 0;
+        bool notNull = (rowBytes[maskOffset + targetCol.Ordinal / 8]
+                        & (1 << (targetCol.Ordinal % 8))) != 0;
         if (!notNull) return null;
 
         // Determine this column's var-index. Either trust the on-disk TDEF value
@@ -571,7 +571,7 @@ internal sealed class SystemCatalog
         foreach (var c in all)
         {
             if (!c.DataType.IsVariableLength()) continue;
-            if (c.ColumnNumber == target.ColumnNumber) return idx;
+            if (c.Ordinal == target.Ordinal) return idx;
             idx++;
         }
         return idx;
@@ -593,18 +593,40 @@ internal sealed class SystemCatalog
         return result;
     }
 
+    /// <summary>The names of the system tables (MSys* and the others flagged so), in the order the catalog lists them.</summary>
+    public IReadOnlyList<string> GetSystemTableNames()
+    {
+        var result = new List<string>();
+        ForEachTableEntry((name, _, flags) =>
+        {
+            if ((flags & (SystemObjectFlag | AltSystemObjectFlag)) != 0) result.Add(name);
+        });
+        return result;
+    }
+
     /// <summary>
     /// Scans MSysObjects data pages and returns the TDEF page number for
     /// <paramref name="tableName"/>, or -1 if not found.
     /// </summary>
-    public int FindTableTdefPage(string tableName)
+    public int FindTableTdefPage(string tableName) => FindTable(tableName, out _);
+
+    /// <summary>
+    /// As <see cref="FindTableTdefPage"/>, with the table's name as the catalog spells it in
+    /// <paramref name="listedName"/> (null when there is no such table).
+    /// </summary>
+    public int FindTable(string tableName, out string? listedName)
     {
         int found = -1;
+        string? listed = null;
         ForEachTableEntry((name, tdefPage, _) =>
         {
             if (found < 0 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
-                found = tdefPage;
+            {
+                found  = tdefPage;
+                listed = name;
+            }
         });
+        listedName = listed;
         return found;
     }
 

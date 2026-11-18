@@ -204,7 +204,7 @@ internal static class ByteUtil
     public static string DecodeText(byte[] data, int offset, int length, JetFormat format)
     {
         if (length == 0) return string.Empty;
-        if (format.Version == JetVersion.Jet3)
+        if (format.Version == FileFormat.Access97)
             return format.TextEncoding.GetString(data, offset, length);
         return DecodeText(data, offset, length);
     }

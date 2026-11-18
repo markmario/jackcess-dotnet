@@ -22,14 +22,14 @@ public sealed class RefusalTypeTests : IDisposable
     private Table People(Database db)
         => db.CreateTable("People", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
         }, primaryKey: "Id");
 
     [Fact]
     public void A_row_the_database_will_not_take_is_a_constraint_violation_and_still_an_invalid_operation()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var people = People(db);
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
 
@@ -44,19 +44,22 @@ public sealed class RefusalTypeTests : IDisposable
         catch (InvalidOperationException) { caught = true; }
         Assert.True(caught);
 
-        Assert.Equal("Ada", Assert.Single(people.ReadAllRows())["Name"]);
+        Assert.Equal("Ada", Assert.Single(people.Rows)["Name"]);
     }
 
     [Fact]
     public void A_call_the_database_cannot_do_is_not_a_constraint_violation()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var people = People(db);
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
 
+        // A table that is not there is the caller's argument.
+        Assert.Throws<ArgumentException>(() => db.GetTable("Nobody"));
+        Assert.False(db.TryGetTable("Nobody", out _));
+
         // Assert.Throws takes the exact type: none of these is the derived one.
-        Assert.Throws<InvalidOperationException>(() => db.GetTable("Nobody"));
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("PEOPLE", new[] { new ColumnBuilder("Id", DataType.Long).Build() }));
+        Assert.Throws<InvalidOperationException>(() => db.CreateTable("PEOPLE", new[] { new ColumnDefinition("Id", DataType.Int32) }));
         Assert.Throws<InvalidOperationException>(() => people.UpdateByPrimaryKey(2, new Row { ["Name"] = "Bea" }));
         Assert.Throws<InvalidOperationException>(() => people.DeleteRow("Id", 2));
     }
@@ -64,12 +67,12 @@ public sealed class RefusalTypeTests : IDisposable
     [Fact]
     public void A_row_that_breaks_a_relationship_is_a_constraint_violation()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var people = People(db);
         var pets = db.CreateTable("Pets", new[]
         {
-            new ColumnBuilder("Id",    DataType.Long).Build(),
-            new ColumnBuilder("Owner", DataType.Long).Build(),
+            new ColumnDefinition("Id",    DataType.Int32),
+            new ColumnDefinition("Owner", DataType.Int32),
         }, primaryKey: "Id");
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
         pets.Insert(new Row { ["Id"] = 10, ["Owner"] = 7 });
@@ -90,7 +93,7 @@ public sealed class RefusalTypeTests : IDisposable
     [Fact]
     public void An_index_the_rows_do_not_allow_is_a_constraint_violation()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var people = People(db);
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
         people.Insert(new Row { ["Id"] = 2, ["Name"] = "Ada" });
@@ -105,11 +108,11 @@ public sealed class RefusalTypeTests : IDisposable
     [Fact]
     public void A_table_is_asked_for_without_an_exception_for_one_that_is_not_there()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         People(db).Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
 
         Assert.True(db.TryGetTable("people", out var found));   // by name, without regard to case, as GetTable finds it
-        Assert.Equal("Ada", Assert.Single(found!.ReadAllRows())["Name"]);
+        Assert.Equal("Ada", Assert.Single(found!.Rows.ToList())["Name"]);
 
         Assert.False(db.TryGetTable("Nobody", out var none));
         Assert.Null(none);
@@ -122,7 +125,7 @@ public sealed class RefusalTypeTests : IDisposable
     [Fact]
     public void A_file_the_password_does_not_open_is_refused_as_a_wrong_credential()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             People(db);
 
         // The catalog's page no longer reads as a table definition, which is how a file encrypted with another
@@ -133,7 +136,7 @@ public sealed class RefusalTypeTests : IDisposable
             stream.Write(new byte[] { 0xA7, 0x5C, 0x13, 0xE9 }, 0, 4);
         }
 
-        Assert.Throws<InvalidCredentialException>(() => Database.Open(_path, "not the password"));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(_path, new DatabaseOpenOptions { Password = "not the password" }));
         // Nothing is left holding the file.
         File.Delete(_path);
     }

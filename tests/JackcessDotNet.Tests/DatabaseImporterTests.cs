@@ -24,14 +24,14 @@ public sealed class DatabaseImporterTests : IDisposable
     [Theory]
     [InlineData(typeof(bool),           DataType.Boolean)]
     [InlineData(typeof(byte),           DataType.Byte)]
-    [InlineData(typeof(short),          DataType.Int)]
-    [InlineData(typeof(int),            DataType.Long)]
-    [InlineData(typeof(long),           DataType.Long)]
-    [InlineData(typeof(float),          DataType.Float)]
+    [InlineData(typeof(short),          DataType.Int16)]
+    [InlineData(typeof(int),            DataType.Int32)]
+    [InlineData(typeof(long),           DataType.Int32)]
+    [InlineData(typeof(float),          DataType.Single)]
     [InlineData(typeof(double),         DataType.Double)]
-    [InlineData(typeof(decimal),        DataType.Money)]
-    [InlineData(typeof(DateTime),       DataType.ShortDateTime)]
-    [InlineData(typeof(DateTimeOffset), DataType.ShortDateTime)]
+    [InlineData(typeof(decimal),        DataType.Currency)]
+    [InlineData(typeof(DateTime),       DataType.DateTime)]
+    [InlineData(typeof(DateTimeOffset), DataType.DateTime)]
     [InlineData(typeof(Guid),           DataType.Guid)]
     [InlineData(typeof(string),         DataType.Text)]
     [InlineData(typeof(byte[]),         DataType.Binary)]
@@ -49,7 +49,7 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void TypeMapper_Enum_UnwrapsToUnderlyingType()
     {
-        Assert.Equal(DataType.Long,  TypeMapper.MapClrType(typeof(IntBackedEnum)));
+        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum)));
         Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum)));
     }
 
@@ -72,7 +72,7 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         var col = TypeMapper.ColumnFromClrType("Blob", typeof(byte[]), maxLength: 4096);
         Assert.NotNull(col);
-        Assert.Equal(DataType.Ole, col!.DataType);
+        Assert.Equal(DataType.OleObject, col!.DataType);
     }
 
     [Fact]
@@ -81,7 +81,8 @@ public sealed class DatabaseImporterTests : IDisposable
         var col = TypeMapper.ColumnFromClrType("Name", typeof(string), maxLength: 30);
         Assert.NotNull(col);
         Assert.Equal(DataType.Text, col!.DataType);
-        Assert.Equal(60, col.Length);   // 30 chars × 2 bytes UTF-16
+        Assert.Equal(60, col.LengthInBytes);   // 30 chars × 2 bytes UTF-16
+        Assert.Equal(30, col.MaxLength);
     }
 
     // ── DataTable import ─────────────────────────────────────────────────────
@@ -101,12 +102,12 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(2, "Bob",   new DateTime(2024, 6, 1),  -5.00m, false);
         dt.Rows.Add(3, "Carol", new DateTime(2024, 7, 1),   0.00m, true);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
         var t   = reopen.GetTable("Customers");
-        var rows = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var rows = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
 
         Assert.Equal(3, rows.Count);
         Assert.Equal("Alice", rows[0]["Name"]);
@@ -127,11 +128,11 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, DBNull.Value);
         dt.Rows.Add(2, "Hello");
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
-        var rows = reopen.GetTable("Things").ReadAllRows()
+        var rows = reopen.GetTable("Things").Rows.ToList()
                           .OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Null(rows[0].GetValueOrDefault("Note"));
         Assert.Equal("Hello", rows[1]["Note"]);
@@ -144,12 +145,12 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Columns.Add("X", typeof(int));
         dt.Rows.Add(1);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, tableName: "ChosenName");
 
         using var reopen = Database.Open(_path);
-        Assert.Contains("ChosenName", reopen.ListTables());
-        Assert.DoesNotContain("ShouldBeIgnored", reopen.ListTables());
+        Assert.Contains("ChosenName", reopen.GetTableNames());
+        Assert.DoesNotContain("ShouldBeIgnored", reopen.GetTableNames());
     }
 
     [Fact]
@@ -167,7 +168,7 @@ public sealed class DatabaseImporterTests : IDisposable
             OnUnmappableColumn = (n, t) => { droppedName = n; droppedType = t; }
         };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: opts);
 
         Assert.Equal("Unhandled",          droppedName);
@@ -185,7 +186,7 @@ public sealed class DatabaseImporterTests : IDisposable
         var dt = new DataTable("OnlyBad");
         dt.Columns.Add("S", typeof(System.IO.Stream));
 
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         Assert.Throws<InvalidOperationException>(() => db.ImportTable(dt));
     }
 
@@ -199,13 +200,13 @@ public sealed class DatabaseImporterTests : IDisposable
         string bigText = new string('z', 1000);
         dt.Rows.Add(1, bigText);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Articles");
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Body").DataType);
-        var row = t.ReadAllRows().Single();
+        var row = t.Rows.Single();
         Assert.Equal(bigText, row["Body"]);
     }
 
@@ -229,15 +230,15 @@ public sealed class DatabaseImporterTests : IDisposable
         orders.Rows.Add(101, 1,  19.50m);
         orders.Rows.Add(102, 2,   5.00m);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTables(ds);
 
         using var reopen = Database.Open(_path);
-        var names = reopen.ListTables();
+        var names = reopen.GetTableNames();
         Assert.Contains("Customers", names);
         Assert.Contains("Orders",    names);
-        Assert.Equal(2, reopen.GetTable("Customers").ReadAllRows().Count);
-        Assert.Equal(3, reopen.GetTable("Orders"   ).ReadAllRows().Count);
+        Assert.Equal(2, reopen.GetTable("Customers").Rows.Count());
+        Assert.Equal(3, reopen.GetTable("Orders"   ).Rows.Count());
     }
 
     // ── IEnumerable<T> import (reflection path) ──────────────────────────────
@@ -261,12 +262,12 @@ public sealed class DatabaseImporterTests : IDisposable
             new CustomerPoco { Id = 3, Name = "Cy",  Joined = new DateTime(2024,3,1), Balance =  0m,  IsActive = true  },
         };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("CustomerPoco");
-        var saved = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal(3, saved.Count);
         Assert.Equal("Ann", saved[0]["Name"]);
         Assert.Equal(-5m,   saved[1]["Balance"]);
@@ -299,7 +300,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         int dropped = 0;
         var opts = new ImportOptions { OnUnmappableColumn = (_, _) => dropped++ };
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows, options: opts);
 
         Assert.Equal(1, dropped);   // only AlsoIgnore — IgnoreMe is [NotMapped] and never reaches the mapper
@@ -315,7 +316,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         var codeCol = t.Columns.Single(c => c.Name == "Code");
         Assert.Equal(DataType.Text, codeCol.DataType);
-        Assert.Equal(40, codeCol.Length);   // MaxLength=20 → 40 bytes UTF-16
+        Assert.Equal(40, codeCol.LengthInBytes);   // MaxLength=20 → 40 bytes UTF-16
     }
 
     private sealed class NullableValuesPoco
@@ -335,12 +336,12 @@ public sealed class DatabaseImporterTests : IDisposable
             new NullableValuesPoco { Id = 2, OptInt = null, OptDate = null,                   OptText = null },
         };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("NullableValuesPoco");
-        var saved = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal(42,  saved[0]["OptInt"]);
         Assert.Null(saved[1].GetValueOrDefault("OptInt"));
         Assert.Null(saved[1].GetValueOrDefault("OptDate"));
@@ -361,13 +362,13 @@ public sealed class DatabaseImporterTests : IDisposable
             new EnumPoco { Id = 1, Kind = IntBackedEnum.Beta },
             new EnumPoco { Id = 2, Kind = IntBackedEnum.Alpha },
         };
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("EnumPoco");
-        Assert.Equal(DataType.Long, t.Columns.Single(c => c.Name == "Kind").DataType);
-        var saved = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        Assert.Equal(DataType.Int32, t.Columns.Single(c => c.Name == "Kind").DataType);
+        var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal((int)IntBackedEnum.Beta,  saved[0]["Kind"]);
         Assert.Equal((int)IntBackedEnum.Alpha, saved[1]["Kind"]);
     }
@@ -384,22 +385,22 @@ public sealed class DatabaseImporterTests : IDisposable
         var ts = new DateTimeOffset(2024, 7, 4, 12, 0, 0, TimeSpan.FromHours(-5));
         var rows = new[] { new DateTimeOffsetPoco { Id = 1, When = ts } };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.GetTable("DateTimeOffsetPoco").ReadAllRows().Single();
+        var saved = reopen.GetTable("DateTimeOffsetPoco").Rows.Single();
         Assert.Equal(ts.UtcDateTime, saved["When"]);
     }
 
     [Fact]
     public void ImportTable_FromCollection_EmptyEnumerable_CreatesEmptyTable()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(Array.Empty<CustomerPoco>());
 
         using var reopen = Database.Open(_path);
-        Assert.Empty(reopen.GetTable("CustomerPoco").ReadAllRows());
+        Assert.Empty(reopen.GetTable("CustomerPoco").Rows.ToList());
     }
 
     // ── Static factories ─────────────────────────────────────────────────────
@@ -415,7 +416,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using (var db = DatabaseImporter.CreateFromDataTable(_path, dt))
         {
-            Assert.Equal(2, db.GetTable("Items").ReadAllRows().Count);
+            Assert.Equal(2, db.GetTable("Items").Rows.Count());
         }
         Assert.True(File.Exists(_path));
     }
@@ -430,7 +431,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using (var db = DatabaseImporter.CreateFromCollection(_path, rows))
         {
-            Assert.Equal(4, db.GetTable("CustomerPoco").ReadAllRows().Count);
+            Assert.Equal(4, db.GetTable("CustomerPoco").Rows.Count());
         }
         Assert.True(File.Exists(_path));
     }
@@ -446,7 +447,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using (var db = DatabaseImporter.CreateFromDataSet(_path, ds))
         {
-            Assert.Equal(2, db.GetTable("T1").ReadAllRows().Count);
+            Assert.Equal(2, db.GetTable("T1").Rows.Count());
         }
         Assert.True(File.Exists(_path));
     }
@@ -462,13 +463,13 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, new Uri("https://example.com/a"));
         dt.Rows.Add(2, new Uri("https://example.com/b"));
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Pages");
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Url").DataType);
-        var saved = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal("https://example.com/a", saved[0]["Url"]);
         Assert.Equal("https://example.com/b", saved[1]["Url"]);
     }
@@ -482,11 +483,11 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, DBNull.Value);
         dt.Rows.Add(2, new Uri("https://x"));
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
-        var rows = reopen.GetTable("Pages").ReadAllRows()
+        var rows = reopen.GetTable("Pages").Rows.ToList()
                           .OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Null(rows[0].GetValueOrDefault("Url"));
         Assert.Equal("https://x/", rows[1]["Url"]);   // Uri.ToString() canonicalises
@@ -506,7 +507,7 @@ public sealed class DatabaseImporterTests : IDisposable
             FallbackUnmappableToString = true,
             OnUnmappableColumn = (_, _) => callbackCount++,
         };
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: opts);
 
         Assert.Equal(1, callbackCount);
@@ -537,14 +538,14 @@ public sealed class DatabaseImporterTests : IDisposable
             new WithCustomPropertyPoco { Id = 3, Thing = null },
         };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows, options: new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("WithCustomPropertyPoco");
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Thing").DataType);
 
-        var saved = t.ReadAllRows().OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
+        var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal("thing#10", saved[0]["Thing"]);
         Assert.Equal("thing#20", saved[1]["Thing"]);
         Assert.Null(saved[2].GetValueOrDefault("Thing"));
@@ -560,12 +561,12 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Columns.Add("Url",  typeof(Uri));
         dt.Rows.Add(1, "A", new Uri("https://a"));
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Mixed");
-        Assert.Equal(DataType.Long, t.Columns.Single(c => c.Name == "Id").DataType);
+        Assert.Equal(DataType.Int32, t.Columns.Single(c => c.Name == "Id").DataType);
         Assert.Equal(DataType.Text, t.Columns.Single(c => c.Name == "Name").DataType);
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Url").DataType);
     }
@@ -575,23 +576,23 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void Coerce_NullAndDBNull_BecomeNull()
     {
-        Assert.Null(TypeMapper.CoerceForJet(null,         DataType.Long));
+        Assert.Null(TypeMapper.CoerceForJet(null,         DataType.Int32));
         Assert.Null(TypeMapper.CoerceForJet(DBNull.Value, DataType.Text));
     }
 
     [Fact]
     public void Coerce_Widens_IntToLong_AndNarrows_LongToInt()
     {
-        Assert.Equal((short)42, TypeMapper.CoerceForJet(42,       DataType.Int));
-        Assert.Equal(42,        TypeMapper.CoerceForJet(42L,      DataType.Long));
-        Assert.Equal(42m,       TypeMapper.CoerceForJet(42,       DataType.Money));
+        Assert.Equal((short)42, TypeMapper.CoerceForJet(42,       DataType.Int16));
+        Assert.Equal(42,        TypeMapper.CoerceForJet(42L,      DataType.Int32));
+        Assert.Equal(42m,       TypeMapper.CoerceForJet(42,       DataType.Currency));
     }
 
     [Fact]
     public void Coerce_DateTimeOffset_BecomesUtcDateTime()
     {
         var dto = new DateTimeOffset(2024, 7, 4, 12, 0, 0, TimeSpan.FromHours(5));
-        var asDt = (DateTime)TypeMapper.CoerceForJet(dto, DataType.ShortDateTime)!;
+        var asDt = (DateTime)TypeMapper.CoerceForJet(dto, DataType.DateTime)!;
         Assert.Equal(dto.UtcDateTime, asDt);
     }
 
@@ -606,9 +607,9 @@ public sealed class DatabaseImporterTests : IDisposable
 
     [Theory]
     [InlineData(typeof(sbyte),    DataType.Byte)]   // signed 8-bit folded into unsigned Byte
-    [InlineData(typeof(ushort),   DataType.Int)]
-    [InlineData(typeof(uint),     DataType.Long)]
-    [InlineData(typeof(ulong),    DataType.Long)]
+    [InlineData(typeof(ushort),   DataType.Int16)]
+    [InlineData(typeof(uint),     DataType.Int32)]
+    [InlineData(typeof(ulong),    DataType.Int32)]
     [InlineData(typeof(char),     DataType.Text)]
     public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType expected)
     {
@@ -623,11 +624,11 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Columns.Add("Id", typeof(int));
         dt.Columns.Add("V",  typeof(long));
         dt.Rows.Add(1, 123456789L);
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
-        Assert.Equal(123456789, reopen.GetTable("L").ReadAllRows().Single()["V"]);
+        Assert.Equal(123456789, reopen.GetTable("L").Rows.Single()["V"]);
     }
 
     // ── PK / AutoNumber attribute paths ──────────────────────────────────────
@@ -641,7 +642,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.PrimaryKey = new[] { dt.Columns["A"]! };
         dt.Rows.Add(1, 100);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, primaryKey: "B");
 
         using var reopen = Database.Open(_path);
@@ -658,7 +659,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.PrimaryKey = new[] { dt.Columns["A"]!, dt.Columns["B"]! };
         dt.Rows.Add(1, 2);
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
@@ -677,11 +678,11 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.AcceptChanges();
         dt.Rows[1].Delete();   // mark row "Id=2" Deleted
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
-        var ids = reopen.GetTable("T").ReadAllRows()
+        var ids = reopen.GetTable("T").Rows.ToList()
                           .Select(r => Convert.ToInt32(r["Id"])).OrderBy(i => i).ToList();
         Assert.Equal(new[] { 1, 3 }, ids);
     }
@@ -699,7 +700,7 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         var rows = new[] { new IdentityPoco { Id = 1, Name = "A" } };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
@@ -714,7 +715,7 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             Id = 1, Name = "A", Joined = new DateTime(2024,1,1), Balance = 10m, IsActive = true,
         }};
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows, primaryKey: "Name");
 
         using var reopen = Database.Open(_path);
@@ -725,11 +726,11 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTables_EmptyDataSet_CreatesNoTables()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTables(new DataSet());
 
         using var reopen = Database.Open(_path);
-        Assert.Empty(reopen.ListTables());
+        Assert.Empty(reopen.GetTableNames());
     }
 
     private sealed class ReadOnlyPropertyPoco
@@ -744,12 +745,12 @@ public sealed class DatabaseImporterTests : IDisposable
         // Get-only auto-properties have CanRead=true; the importer reads them.
         // (Get-only is fine for write — we only read via reflection.)
         var rows = new[] { new ReadOnlyPropertyPoco { Id = 1 } };
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("ReadOnlyPropertyPoco");
-        var saved = t.ReadAllRows().Single();
+        var saved = t.Rows.Single();
         Assert.Equal("computed", saved["Name"]);
     }
 
@@ -758,11 +759,11 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromDataTable_TableExists_DefaultThrows()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.CreateTable("Customers", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
         });
 
         var dt = new DataTable("Customers");
@@ -777,12 +778,12 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromDataTable_AppendIfExists_AddsRowsToExistingTable()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var existing = db.CreateTable("Customers", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             }, primaryKey: "Id");
             existing.Insert(new Row { ["Id"] = 1, ["Name"] = "Seed" });
         }
@@ -797,7 +798,7 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var rows = reopen.GetTable("Customers").ReadAllRows()
+        var rows = reopen.GetTable("Customers").Rows.ToList()
                          .OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal(3, rows.Count);
         Assert.Equal("Seed",  rows[0]["Name"]);
@@ -808,11 +809,11 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromDataTable_AppendIfExists_ExtraSourceColumnIsIgnored()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             });
 
         var dt = new DataTable("T");
@@ -825,7 +826,7 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var row = reopen.GetTable("T").ReadAllRows().Single();
+        var row = reopen.GetTable("T").Rows.Single();
         Assert.Equal("Alice", row["Name"]);
         // Target only has Id + Name; "Unrelated" never made it in.
         Assert.DoesNotContain(reopen.GetTable("T").Columns, c => c.Name == "Unrelated");
@@ -834,12 +835,12 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromDataTable_AppendIfExists_MissingSourceColumnStaysNull()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Note", DataType.Memo).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Note", DataType.Memo),
             });
 
         // Source only supplies Id + Name — Note should land as null in the new row.
@@ -852,7 +853,7 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var row = reopen.GetTable("T").ReadAllRows().Single();
+        var row = reopen.GetTable("T").Rows.Single();
         Assert.Equal("Alice", row["Name"]);
         Assert.Null(row.GetValueOrDefault("Note"));
     }
@@ -867,25 +868,25 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Columns.Add("Name", typeof(string));
         dt.Rows.Add(1, "Hello");
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        Assert.Contains("Brand-New", reopen.ListTables());
-        Assert.Single(reopen.GetTable("Brand-New").ReadAllRows());
+        Assert.Contains("Brand-New", reopen.GetTableNames());
+        Assert.Single(reopen.GetTable("Brand-New").Rows.ToList());
     }
 
     [Fact]
     public void ImportTable_FromCollection_TableExists_DefaultThrows()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.CreateTable("CustomerPoco", new[]
         {
-            new ColumnBuilder("Id",       DataType.Long).Build(),
-            new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-            new ColumnBuilder("Balance",  DataType.Money).Build(),
-            new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+            new ColumnDefinition("Id",       DataType.Int32),
+            new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("Joined",   DataType.DateTime),
+            new ColumnDefinition("Balance",  DataType.Currency),
+            new ColumnDefinition("IsActive", DataType.Boolean),
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
@@ -896,15 +897,15 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromCollection_AppendIfExists_AddsRows()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance",  DataType.Money).Build(),
-                new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Joined",   DataType.DateTime),
+                new ColumnDefinition("Balance",  DataType.Currency),
+                new ColumnDefinition("IsActive", DataType.Boolean),
             }, primaryKey: "Id");
         }
 
@@ -918,7 +919,7 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTable(rows, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.GetTable("CustomerPoco").ReadAllRows()
+        var saved = reopen.GetTable("CustomerPoco").Rows.ToList()
                          .OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal(2, saved.Count);
         Assert.Equal("A", saved[0]["Name"]);
@@ -931,11 +932,11 @@ public sealed class DatabaseImporterTests : IDisposable
         // Target column is Text (string). Source supplies an int. The append
         // path should coerce via TypeMapper.CoerceForJet, ending up with the
         // int's string representation in the Text column.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",    DataType.Long).Build(),
-                new ColumnBuilder("Label", DataType.Text).MaxLength(20).Build(),
+                new ColumnDefinition("Id",    DataType.Int32),
+                new ColumnDefinition("Label", DataType.Text) { MaxLength = 20 },
             });
 
         var dt = new DataTable("T");
@@ -947,7 +948,7 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var row = reopen.GetTable("T").ReadAllRows().Single();
+        var row = reopen.GetTable("T").Rows.Single();
         Assert.Equal(1,    row["Id"]);
         Assert.Equal("42", row["Label"]);
     }
@@ -957,15 +958,15 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         // Confirm the existing schema (PK, column lengths, etc.) is left
         // untouched after an append-only operation.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance",  DataType.Money).Build(),
-                new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Joined",   DataType.DateTime),
+                new ColumnDefinition("Balance",  DataType.Currency),
+                new ColumnDefinition("IsActive", DataType.Boolean),
             }, primaryKey: "Id");
         }
 
@@ -980,7 +981,7 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Contains(t.Indexes, ix => ix.IsPrimaryKey);
         // Schema intact (still 5 columns, Text length still 50).
         Assert.Equal(5,   t.Columns.Count);
-        Assert.Equal(100, t.Columns.Single(c => c.Name == "Name").Length);   // 50 chars × 2 bytes
+        Assert.Equal(100, t.Columns.Single(c => c.Name == "Name").LengthInBytes);   // 50 chars × 2 bytes
     }
 
     [Fact]
@@ -989,11 +990,11 @@ public sealed class DatabaseImporterTests : IDisposable
         // One existing table + one brand-new table in the same DataSet.
         // With AppendIfExists, the existing one should be appended and the
         // missing one should be created — net result is both populated.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.CreateTable("Existing", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build()
+                new ColumnDefinition("Id", DataType.Int32)
             }).Insert(new Row { ["Id"] = 999 });
         }
 
@@ -1011,8 +1012,8 @@ public sealed class DatabaseImporterTests : IDisposable
             db.ImportTables(ds, options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        Assert.Equal(3, reopen.GetTable("Existing").ReadAllRows().Count);   // 999 + 1 + 2
-        Assert.Single(reopen.GetTable("BrandNew").ReadAllRows());
+        Assert.Equal(3, reopen.GetTable("Existing").Rows.Count());   // 999 + 1 + 2
+        Assert.Single(reopen.GetTable("BrandNew").Rows.ToList());
     }
 
     // ── [Table] attribute support ────────────────────────────────────────────
@@ -1029,13 +1030,13 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         var rows = new[] { new TableAttributedPoco { Id = 1, Name = "Ada" } };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows);
 
         using var reopen = Database.Open(_path);
         // [Table("Customers")] renames the target table away from the CLR type name.
-        Assert.Contains("Customers", reopen.ListTables());
-        Assert.DoesNotContain("TableAttributedPoco", reopen.ListTables());
+        Assert.Contains("Customers", reopen.GetTableNames());
+        Assert.DoesNotContain("TableAttributedPoco", reopen.GetTableNames());
     }
 
     [Fact]
@@ -1043,14 +1044,14 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         var rows = new[] { new TableAttributedPoco { Id = 1, Name = "Ada" } };
 
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows, tableName: "People");
 
         using var reopen = Database.Open(_path);
         // The explicit parameter wins over [Table].
-        Assert.Contains("People",    reopen.ListTables());
-        Assert.DoesNotContain("Customers",          reopen.ListTables());
-        Assert.DoesNotContain("TableAttributedPoco", reopen.ListTables());
+        Assert.Contains("People",    reopen.GetTableNames());
+        Assert.DoesNotContain("Customers",          reopen.GetTableNames());
+        Assert.DoesNotContain("TableAttributedPoco", reopen.GetTableNames());
     }
 
     [Fact]
@@ -1059,12 +1060,12 @@ public sealed class DatabaseImporterTests : IDisposable
         // Seed an "Customers" table the long way, then import rows of a POCO
         // whose [Table] attribute points at that same name. With AppendIfExists,
         // the importer should resolve the target by attribute name and append.
-        using (var seed = Database.Create(_path, JetVersion.Jet4))
+        using (var seed = Database.Create(_path, FileFormat.Access2000))
         {
             seed.CreateTable("Customers", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             }, primaryKey: "Id");
         }
 
@@ -1073,7 +1074,7 @@ public sealed class DatabaseImporterTests : IDisposable
                 options: new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.GetTable("Customers").ReadAllRows();
+        var saved = reopen.GetTable("Customers").Rows.ToList();
         Assert.Single(saved);
         Assert.Equal("Ada", saved[0]["Name"]);
     }

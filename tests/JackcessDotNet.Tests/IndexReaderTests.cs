@@ -42,7 +42,7 @@ public sealed class IndexReaderTests
         using var db = Database.Open(path);
         int totalProbes = 0;
 
-        foreach (string tableName in db.ListTables(includeSystem: false))
+        foreach (string tableName in db.GetTableNames())
         {
             var table = db.GetTable(tableName);
 
@@ -51,13 +51,13 @@ public sealed class IndexReaderTests
                 if (ix.Columns.Count != 1) continue;
                 if (ix.RootPageNumber <= 0) continue;
                 var dt = ix.Columns[0].Column.DataType;
-                if (dt is not (DataType.Byte or DataType.Int or DataType.Long)) continue;
+                if (dt is not (DataType.Byte or DataType.Int16 or DataType.Int32)) continue;
 
                 string keyCol = ix.Columns[0].Column.Name;
 
                 // Ground truth via table scan.
                 var byKey = new Dictionary<int, Row>();
-                foreach (var r in table.NewCursor())
+                foreach (var r in table.CreateCursor())
                 {
                     if (!r.TryGetValue(keyCol, out var raw) || raw is null) continue;
                     int k;
@@ -66,7 +66,7 @@ public sealed class IndexReaderTests
                 }
                 if (byKey.Count == 0) continue;
 
-                var cursor = table.NewIndexCursor();
+                var cursor = table.CreateIndexCursor();
                 int probesThisIndex = 0;
                 foreach (var (key, expected) in byKey)
                 {
@@ -99,7 +99,7 @@ public sealed class IndexReaderTests
         using var db = Database.Open(path);
         int totalProbes = 0;
 
-        foreach (string tableName in db.ListTables(includeSystem: false))
+        foreach (string tableName in db.GetTableNames())
         {
             var table = db.GetTable(tableName);
 
@@ -112,7 +112,7 @@ public sealed class IndexReaderTests
                 string keyCol = ix.Columns[0].Column.Name;
 
                 var byKey = new Dictionary<string, Row>();
-                foreach (var r in table.NewCursor())
+                foreach (var r in table.CreateCursor())
                 {
                     if (!r.TryGetValue(keyCol, out var raw) || raw is null) continue;
                     string k = raw.ToString() ?? "";
@@ -122,7 +122,7 @@ public sealed class IndexReaderTests
 
                 // Cap per-index probes to keep the suite fast — some test tables
                 // have 66k+ rows and a linear scan inside the verifier per lookup is O(n²).
-                var cursor = table.NewIndexCursor();
+                var cursor = table.CreateIndexCursor();
                 int probesThisIndex = 0;
                 int hits = 0;
                 int cap = 0;
@@ -157,7 +157,7 @@ public sealed class IndexReaderTests
         using var db = Database.Open(path);
         int totalProbes = 0;
 
-        foreach (string tableName in db.ListTables(includeSystem: false))
+        foreach (string tableName in db.GetTableNames())
         {
             var table = db.GetTable(tableName);
 
@@ -171,7 +171,7 @@ public sealed class IndexReaderTests
                 foreach (var c in ix.Columns)
                 {
                     var dt = c.Column.DataType;
-                    if (dt is not (DataType.Byte or DataType.Int or DataType.Long or DataType.Text))
+                    if (dt is not (DataType.Byte or DataType.Int16 or DataType.Int32 or DataType.Text))
                     {
                         allOk = false; break;
                     }
@@ -179,7 +179,7 @@ public sealed class IndexReaderTests
                 if (!allOk) continue;
 
                 var probes = new List<(object?[] entry, Row expected)>();
-                foreach (var r in table.NewCursor())
+                foreach (var r in table.CreateCursor())
                 {
                     var entry = new object?[ix.Columns.Count];
                     bool complete = true;
@@ -196,7 +196,7 @@ public sealed class IndexReaderTests
                 }
                 if (probes.Count == 0) continue;
 
-                var cursor = new CursorBuilder(table).WithIndex(ix.Name).ToIndexCursor();
+                var cursor = table.CreateIndexCursor(ix.Name);
                 int hits = 0;
                 foreach (var (entry, expected) in probes)
                 {

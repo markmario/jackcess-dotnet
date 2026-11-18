@@ -19,12 +19,12 @@ public sealed class SchemaChangeUndoTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(20).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 20 };
 
     private void Create()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var child = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name") }, primaryKey: "Id");
         for (int k = 1; k <= 5; k++) parent.Insert(new Row { ["K"] = k, ["Name"] = $"parent {k}" });
@@ -76,13 +76,13 @@ public sealed class SchemaChangeUndoTests : IDisposable
     [Fact]
     public void A_long_value_column_whose_writing_fails_at_any_page_leaves_the_file_as_it_was()
     {
-        int failures = FailAtEveryWrite(db => db.GetTable("Child").AddColumn(new ColumnBuilder("Notes", DataType.Memo).Build()));
+        int failures = FailAtEveryWrite(db => db.GetTable("Child").AddColumn(new ColumnDefinition("Notes", DataType.Memo)));
 
         Assert.True(failures >= 2, $"only {failures} writes failed: the column's usage maps and the definition are at least two");
         using var after = Database.Open(_path);
         var child = after.GetTable("Child");
         child.Insert(new Row { ["Id"] = 900, ["K"] = 1, ["Notes"] = new string('n', 6_000) });
-        Assert.Equal(new string('n', 6_000), child.NewIndexCursor().FindRowByPrimaryKey(900)!["Notes"]);
+        Assert.Equal(new string('n', 6_000), child.FindRowByPrimaryKey(900)!["Notes"]);
     }
 
     [Fact]

@@ -22,13 +22,13 @@ public sealed class AutoNumberTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-        new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+        new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+        new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
     };
 
-    private static int[] Ids(Table table) => table.ReadAllRows().Select(r => (int)r["Id"]!).ToArray();
+    private static int[] Ids(Table table) => table.Rows.Select(r => (int)r["Id"]!).ToArray();
 
     // The counter as the file holds it, not as the engine reports it.
     private static int CounterOnDisk(Database db, Table table)
@@ -37,7 +37,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_Long_AutoNumber_counts_up_from_one_and_the_row_holds_its_number()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns());
 
         var rows = new[] { new Row { ["Txt"] = "a" }, new Row { ["Txt"] = "b" }, new Row { ["Txt"] = "c" } };
@@ -52,12 +52,12 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_AutoNumber_that_is_the_primary_key_is_found_by_its_number()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(new Row { ["Txt"] = "a" });
         table.Insert(new Row { ["Txt"] = "b" });
 
-        var found = table.NewIndexCursor().FindRowByPrimaryKey(2);
+        var found = table.FindRowByPrimaryKey(2);
 
         Assert.NotNull(found);
         Assert.Equal("b", found!["Txt"]);
@@ -66,7 +66,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void The_counter_is_in_the_table_definition_and_the_next_session_goes_on_from_it()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("T", Columns());
             table.Insert(new Row { ["Txt"] = "a" });
@@ -91,7 +91,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void Two_Table_objects_on_one_table_do_not_hand_out_the_same_number()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var first = db.CreateTable("T", Columns());
         var second = db.GetTable("T");
 
@@ -105,7 +105,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_deleted_row_s_number_is_not_handed_out_again()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns());
         table.Insert(new Row { ["Txt"] = "a" });
         table.Insert(new Row { ["Txt"] = "b" });
@@ -119,7 +119,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_number_the_row_brings_is_ignored_and_replaced_when_not_allowed()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns());
 
         var row = new Row { ["Id"] = 50, ["Txt"] = "a" };
@@ -133,7 +133,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_number_the_row_brings_is_written_when_allowed_and_the_counter_moves_up_to_it()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns());
         table.AllowAutoNumberInsert = true;
 
@@ -158,7 +158,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void The_database_decides_for_its_tables_unless_a_table_decides_for_itself()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.AllowAutoNumberInsert = true;
         var follows = db.CreateTable("Follows", Columns());
         var refuses = db.CreateTable("Refuses", Columns());
@@ -174,12 +174,12 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_Guid_AutoNumber_gets_a_new_guid_for_each_row()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-                new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+                new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+                new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
             });
 
             var first = new Row { ["Txt"] = "a" };
@@ -190,7 +190,7 @@ public sealed class AutoNumberTests : IDisposable
             var keys = new[] { Assert.IsType<Guid>(first["Key"]), Assert.IsType<Guid>(second["Key"]) };
             Assert.DoesNotContain(Guid.Empty, keys);
             Assert.NotEqual(keys[0], keys[1]);
-            Assert.Equal(keys, table.ReadAllRows().Select(r => (Guid)r["Key"]!));
+            Assert.Equal(keys, table.Rows.Select(r => (Guid)r["Key"]!));
         }
 
         using var reopened = Database.Open(_path);
@@ -200,11 +200,11 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_guid_the_row_brings_is_written_when_allowed()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         });
         table.AllowAutoNumberInsert = true;
         var mine = Guid.NewGuid();
@@ -212,13 +212,13 @@ public sealed class AutoNumberTests : IDisposable
         table.Insert(new Row { ["Key"] = mine, ["Txt"] = "a" });
         table.Insert(new Row { ["Key"] = mine.ToString("B"), ["Txt"] = "b" });   // as Access shows one
 
-        Assert.Equal(new[] { mine, mine }, table.ReadAllRows().Select(r => (Guid)r["Key"]!));
+        Assert.Equal(new[] { mine, mine }, table.Rows.Select(r => (Guid)r["Key"]!));
     }
 
     [Fact]
     public void An_insert_that_fails_loses_no_number_and_leaves_the_row_as_it_came()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("T", Columns());
             table.Insert(new Row { ["Txt"] = "a" });
@@ -242,7 +242,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_insert_that_fails_with_a_number_of_its_own_leaves_the_counter_where_it_was()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns());
         table.AllowAutoNumberInsert = true;
         table.Insert(new Row { ["Txt"] = "a" });
@@ -259,18 +259,18 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_update_leaves_the_AutoNumber_as_it_was_unless_allowed()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Key", DataType.Long).Build(),
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Key", DataType.Int32),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         }, primaryKey: "Key");
         table.Insert(new Row { ["Key"] = 10, ["Txt"] = "a" });
 
         table.UpdateByPrimaryKey(10, new Row { ["Id"] = 40, ["Txt"] = "b" });
 
-        var row = Assert.Single(table.ReadAllRows());
+        var row = Assert.Single(table.Rows);
         Assert.Equal(1, row["Id"]);
         Assert.Equal("b", row["Txt"]);
         Assert.Equal(1, table.LastAutoNumber);
@@ -278,7 +278,7 @@ public sealed class AutoNumberTests : IDisposable
         table.AllowAutoNumberInsert = true;
         table.UpdateByPrimaryKey(10, new Row { ["Id"] = 40 });
 
-        Assert.Equal(40, Assert.Single(table.ReadAllRows())["Id"]);
+        Assert.Equal(40, Assert.Single(table.Rows)["Id"]);
         Assert.Equal(40, table.LastAutoNumber);
     }
 
@@ -291,7 +291,7 @@ public sealed class AutoNumberTests : IDisposable
         source.Rows.Add(null, "A");
         source.Rows.Add(null, "B");
 
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(source);
 
         Assert.Equal(new[] { 10, 15 }, Ids(table));
@@ -321,7 +321,7 @@ public sealed class AutoNumberTests : IDisposable
             new Person { Name = "C" },
         };
 
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(people);
 
         Assert.Equal(new[] { 7, 8, 9 }, Ids(table));
@@ -340,7 +340,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void Rows_appended_to_a_table_are_numbered_by_the_table_unless_the_import_keeps_their_own()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(PeopleCountingFrom(1, "A", "B"));
 
         // A second batch that counts from 1 again: its numbers are the table's, not its own.
@@ -357,7 +357,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void Objects_appended_keeping_identity_keep_the_one_they_have_and_one_without_is_numbered()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(new[] { new Person { Name = "A" } });
 
         db.ImportTable(new[] { new Person { Id = 50, Name = "B" }, new Person { Name = "C" } },
@@ -369,7 +369,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_update_that_changes_the_primary_key_moves_the_row_s_index_entry_to_the_new_key()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(new Row { ["Txt"] = "one" });
         table.Insert(new Row { ["Txt"] = "two" });
@@ -383,21 +383,21 @@ public sealed class AutoNumberTests : IDisposable
         Assert.Null(index.FindRowByPrimaryKey(table.Definition, 1));
         Assert.NotNull(index.FindRowByPrimaryKey(table.Definition, 2));
 
-        Assert.Equal("one", table.NewIndexCursor().FindRowByPrimaryKey(40)!["Txt"]);
+        Assert.Equal("one", table.FindRowByPrimaryKey(40)!["Txt"]);
         Assert.Equal(40, table.LastAutoNumber);
     }
 
     [Fact]
     public void An_update_that_brings_null_for_an_AutoNumber_leaves_the_number_the_row_has()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(new Row { ["Txt"] = "one" });
         table.AllowAutoNumberInsert = true;
 
         table.UpdateByPrimaryKey(1, new Row { ["Id"] = null, ["Txt"] = "changed" });
 
-        var row = Assert.Single(table.ReadAllRows());
+        var row = Assert.Single(table.Rows);
         Assert.Equal(1, row["Id"]);
         Assert.Equal("changed", row["Txt"]);
         Assert.Equal(1, table.LastAutoNumber);
@@ -406,7 +406,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_update_to_a_primary_key_another_row_has_is_refused_and_changes_nothing()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(new Row { ["Txt"] = "one" });
         table.Insert(new Row { ["Txt"] = "two" });
@@ -415,9 +415,9 @@ public sealed class AutoNumberTests : IDisposable
         Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(1, new Row { ["Id"] = 2, ["Txt"] = "x" }));
 
         Assert.Equal(new[] { 1, 2 }, Ids(table));
-        var cursor = table.NewIndexCursor();
-        Assert.Equal("one", cursor.FindRowByPrimaryKey(1)!["Txt"]);
-        Assert.Equal("two", cursor.FindRowByPrimaryKey(2)!["Txt"]);
+        var cursor = table.CreateIndexCursor();
+        Assert.Equal("one", cursor.Table.FindRowByPrimaryKey(1)!["Txt"]);
+        Assert.Equal("two", cursor.Table.FindRowByPrimaryKey(2)!["Txt"]);
         Assert.Equal(2, table.LastAutoNumber);
     }
 
@@ -428,12 +428,12 @@ public sealed class AutoNumberTests : IDisposable
     [InlineData(false)]
     public void DBNull_for_an_AutoNumber_is_no_value_and_the_table_numbers_the_row(bool allowed)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         });
         table.AllowAutoNumberInsert = allowed;
 
@@ -444,7 +444,7 @@ public sealed class AutoNumberTests : IDisposable
 
         Assert.Equal(new object?[] { 1, 2 }, new[] { first["Id"], second["Id"] });
         Assert.Equal(new[] { 1, 2 }, Ids(table));
-        var keys = table.ReadAllRows().Select(r => (Guid)r["Key"]!).ToArray();
+        var keys = table.Rows.Select(r => (Guid)r["Key"]!).ToArray();
         Assert.Equal(new[] { Assert.IsType<Guid>(first["Key"]), Assert.IsType<Guid>(second["Key"]) }, keys);
         Assert.DoesNotContain(Guid.Empty, keys);
         Assert.NotEqual(keys[0], keys[1]);
@@ -456,13 +456,13 @@ public sealed class AutoNumberTests : IDisposable
     [InlineData(false)]
     public void An_update_that_brings_DBNull_for_an_AutoNumber_leaves_the_value_the_row_has(bool allowed)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Pk", DataType.Long).Build(),
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Pk", DataType.Int32),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         }, primaryKey: "Pk");
         var inserted = new Row { ["Pk"] = 10, ["Txt"] = "a" };
         table.Insert(inserted);
@@ -470,7 +470,7 @@ public sealed class AutoNumberTests : IDisposable
 
         table.UpdateByPrimaryKey(10, new Row { ["Id"] = DBNull.Value, ["Key"] = DBNull.Value, ["Txt"] = "b" });
 
-        var row = Assert.Single(table.ReadAllRows());
+        var row = Assert.Single(table.Rows);
         Assert.Equal(1, row["Id"]);
         Assert.Equal(inserted["Key"], row["Key"]);
         Assert.Equal("b", row["Txt"]);
@@ -479,7 +479,7 @@ public sealed class AutoNumberTests : IDisposable
 
     // ── An import's rows and the numbers they bring (review of qcatco/jackcess-dotnet#7) ──
 
-    private static string[] Names(Table table) => table.ReadAllRows().Select(r => (string)r["Name"]!).ToArray();
+    private static string[] Names(Table table) => table.Rows.Select(r => (string)r["Name"]!).ToArray();
 
     private static Person[] People(params int[] ids)
         => ids.Select((id, i) => new Person { Id = id, Name = ((char)('A' + i)).ToString() }).ToArray();
@@ -487,10 +487,10 @@ public sealed class AutoNumberTests : IDisposable
     // Every row is in the primary key under the number it holds, once.
     private static void AssertKeyFindsEveryRow(Table table)
     {
-        var rows = table.ReadAllRows();
+        var rows = table.Rows.ToList();
         Assert.Equal(rows.Count, rows.Select(r => r["Id"]).Distinct().Count());
         foreach (var row in rows)
-            Assert.Equal(row["Name"], table.NewIndexCursor().FindRowByPrimaryKey(row["Id"]!)!["Name"]);
+            Assert.Equal(row["Name"], table.FindRowByPrimaryKey(row["Id"]!)!["Name"]);
     }
 
     // The numbers the objects bring are kept and the rest are numbered past the highest, whatever the order:
@@ -502,7 +502,7 @@ public sealed class AutoNumberTests : IDisposable
     [InlineData(new[] { 0, 0, 3, 1 }, new[] { 4, 5, 3, 1 })]
     public void Imported_objects_keep_the_identities_they_bring_and_the_rest_are_numbered_past_them(int[] brought, int[] expected)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
 
         var table = db.ImportTable(People(brought));
 
@@ -517,7 +517,7 @@ public sealed class AutoNumberTests : IDisposable
     [InlineData(new[] { 3, 0 }, new[] { 1, 2, 3, 4 })]
     public void Objects_appended_keeping_identity_are_numbered_past_the_ones_the_batch_brings(int[] brought, int[] expected)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(People(0, 0));
 
         db.ImportTable(People(brought), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
@@ -529,7 +529,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_append_keeping_an_identity_a_row_of_the_table_has_is_refused_before_anything_is_written()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(People(0, 0));
         long length = new FileInfo(_path).Length;
 
@@ -547,11 +547,11 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void Two_imported_objects_that_bring_one_identity_for_the_primary_key_are_refused_before_any_row_is_written()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
 
         Assert.Throws<ConstraintViolationException>(() => db.ImportTable(People(4, 0, 4)));
 
-        Assert.Empty(db.GetTable("Person").ReadAllRows());
+        Assert.Empty(db.GetTable("Person").Rows.ToList());
     }
 
     // A DataTable's AutoIncrement column where some rows have a number and some have none.
@@ -571,7 +571,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void A_DataTable_s_rows_without_a_number_are_numbered_past_the_ones_its_other_rows_bring()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
 
         var table = db.ImportTable(PeopleNumbered(null, 1, null));
         Assert.Equal(new[] { 2, 1, 3 }, Ids(table));
@@ -586,7 +586,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_append_that_does_not_keep_identity_numbers_its_rows_afresh_whatever_the_database_allows()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         db.AllowAutoNumberInsert = true;
         var table = db.ImportTable(People(1));
 
@@ -604,7 +604,7 @@ public sealed class AutoNumberTests : IDisposable
     [Fact]
     public void An_append_that_keeps_identity_keeps_it_whatever_the_database_allows()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(People(1));
 
         var kept = db.ImportTable(People(40), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
@@ -621,10 +621,10 @@ public sealed class AutoNumberTests : IDisposable
         foreach (string file in TestCorpus.Files("*.mdb", "V2000", "V2003"))
         {
             using var db = Database.Open(file);
-            foreach (string name in db.ListTables())
+            foreach (string name in db.GetTableNames())
             {
                 var table = db.GetTable(name);
-                if (table.Columns.Any(c => c.IsAutoNumber && c.DataType == DataType.Long))
+                if (table.Columns.Any(c => c.IsAutoNumber && c.DataType == DataType.Int32))
                     data.Add(Path.GetFileName(Path.GetDirectoryName(file))! + "/" + Path.GetFileName(file), name);
             }
         }
@@ -640,9 +640,9 @@ public sealed class AutoNumberTests : IDisposable
         File.Copy(Path.Combine(TestCorpus.Root!, file), _path, overwrite: true);
         using var db = Database.Open(_path);
         var table = db.GetTable(tableName);
-        string id = table.Columns.First(c => c.IsAutoNumber && c.DataType == DataType.Long).Name;
+        string id = table.Columns.First(c => c.IsAutoNumber && c.DataType == DataType.Int32).Name;
         int before = table.LastAutoNumber;
-        Assert.True(before >= table.ReadAllRows().Select(r => (int)r[id]!).DefaultIfEmpty(0).Max());
+        Assert.True(before >= table.Rows.Select(r => (int)r[id]!).DefaultIfEmpty(0).Max());
 
         var row = new Row();
         table.Insert(row);

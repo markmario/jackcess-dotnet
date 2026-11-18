@@ -56,18 +56,25 @@ public sealed class PropertyMapTests
 
         using var db = Database.Open(path);
         var t = db.GetTable("TableIgnoreNulls1");
-        var props = t.Properties;
-
-        Assert.False(props.IsEmpty);
-
-        var tableProps = props.Default;
+        var tableProps = t.Properties;
         Assert.NotNull(tableProps);
-        Assert.True(tableProps.Properties.Count > 0, "table-level map should expose properties");
+        Assert.Equal("", tableProps.Name);
+        Assert.True(tableProps.Count > 0, "table-level map should expose properties");
+        Assert.Equal(tableProps.Count, tableProps.Count());
 
         // Check at least one well-known per-column property is decoded.
-        var rowMap = props.Get("row");
-        Assert.NotNull(rowMap);
-        Assert.NotNull(rowMap!["AllowZeroLength"]);
+        var rowMap = t.Columns.Single(c => c.Name == "row").Properties;
+        Assert.Equal("row", rowMap.Name);
+        Assert.NotNull(rowMap["AllowZeroLength"]);
+        Assert.True(rowMap.TryGetValue("allowzerolength", out var allow));
+        Assert.Equal(rowMap["AllowZeroLength"], allow);
+        Assert.Contains(rowMap, p => p.Name == "AllowZeroLength" && Equals(p.Value, allow));
+
+        // A property that is not there, and a column Access keeps none for.
+        Assert.False(rowMap.TryGetValue("NoSuchProperty", out var none));
+        Assert.Null(none);
+        Assert.Null(rowMap["NoSuchProperty"]);
+        Assert.Same(rowMap, t.Columns.Single(c => c.Name == "row").Properties);
     }
 
     [Fact]
@@ -76,9 +83,13 @@ public sealed class PropertyMapTests
         string path = Path.Combine(Path.GetTempPath(), $"prop_{Guid.NewGuid():N}.mdb");
         try
         {
-            using var db = Database.Create(path, JetVersion.Jet4);
-            var t = db.CreateTable("Foo", new[] { new ColumnBuilder("X", DataType.Long).Build() });
-            Assert.True(t.Properties.IsEmpty);
+            using var db = Database.Create(path, FileFormat.Access2000);
+            var t = db.CreateTable("Foo", new[] { new ColumnDefinition("X", DataType.Int32) });
+            Assert.Empty(t.Properties);
+            var column = t.Columns.Single().Properties;
+            Assert.Empty(column);
+            Assert.Equal("X", column.Name);
+            Assert.Same(column, t.Columns.Single().Properties);
         }
         finally
         {
@@ -96,16 +107,17 @@ public sealed class PropertyMapTests
         if (!File.Exists(path)) return;
 
         using var db = Database.Open(path);
-        foreach (var name in db.ListTables(includeSystem: false))
+        foreach (var name in db.GetTableNames())
         {
             var t = db.GetTable(name);
-            if (t.Properties.IsEmpty) continue;
+            var maps = new[] { t.Properties }.Concat(t.Columns.Select(c => c.Properties)).Where(map => map.Count > 0).ToList();
+            if (maps.Count == 0) continue;
             _output.WriteLine($"=== {name} ===");
-            foreach (var map in t.Properties)
+            foreach (var map in maps)
             {
                 _output.WriteLine($"  [{(string.IsNullOrEmpty(map.Name) ? "<table>" : map.Name)}] " +
-                                  $"{map.Properties.Count} prop(s)");
-                foreach (var p in map.Properties)
+                                  $"{map.Count} prop(s)");
+                foreach (var p in map)
                     _output.WriteLine($"    {p.Name} ({p.DataType}) = {(p.Value is byte[] b ? $"byte[{b.Length}]" : p.Value)}");
             }
         }

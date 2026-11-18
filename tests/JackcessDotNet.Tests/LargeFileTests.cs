@@ -20,11 +20,11 @@ public sealed class LargeFileTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> DocumentColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> DocumentColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(100).Build(),
-        new ColumnBuilder("Body", DataType.Memo).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 100 },
+        new ColumnDefinition("Body", DataType.Memo),
     };
 
     /// <summary>A memo of 3,000 characters, different for each row, so a mix-up shows.</summary>
@@ -36,7 +36,7 @@ public sealed class LargeFileTests : IDisposable
         // A memo this long is stored on its own long-value page, so 2,000 rows take some 2,000 of them, plus the
         // data pages: past the 1,600 pages one inline map covers, for the memo column's map at least.
         const int count = 2_000;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Documents", DocumentColumns());
             for (int i = 0; i < count; i++)
@@ -46,7 +46,7 @@ public sealed class LargeFileTests : IDisposable
         Assert.True(new FileInfo(_path).Length > 1_600L * 4096, "the file must pass one inline map's window");
         using (var db = Database.Open(_path))
         {
-            var rows = db.GetTable("Documents").ReadAllRows();
+            var rows = db.GetTable("Documents").Rows.ToList();
             Assert.Equal(count, rows.Count);
             for (int i = 0; i < count; i++)
             {
@@ -60,7 +60,7 @@ public sealed class LargeFileTests : IDisposable
     [Fact]
     public void Each_insert_reads_about_as_many_pages_however_large_the_table()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Documents", DocumentColumns());
 
         long ReadsFor(int from, int count)
@@ -85,9 +85,9 @@ public sealed class LargeFileTests : IDisposable
         // Jet addresses a row on its page with one byte, so a page of more than 255 rows has rows nothing can point
         // at. One-byte rows would otherwise fit about 400 to a page.
         const int count = 600;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var table = db.CreateTable("Tiny", new[] { new ColumnBuilder("B", DataType.Byte).Build() });
+            var table = db.CreateTable("Tiny", new[] { new ColumnDefinition("B", DataType.Byte) });
             for (int i = 0; i < count; i++)
                 table.Insert(new Row { ["B"] = (byte)(i % 256) });
         }
@@ -100,7 +100,7 @@ public sealed class LargeFileTests : IDisposable
             var owned = UsageMap.GetOwnedPages(db.File.ReadPage(def.UmapPageNumber), def.OwnedPagesRow, format, db.File);
             Assert.All(owned, page =>
                 Assert.InRange(ByteUtil.GetShort(db.File.ReadPage(page), format.OffsetDataNumRows), 1, 255));
-            Assert.Equal(count, table.ReadAllRows().Count);
+            Assert.Equal(count, table.Rows.Count());
         }
     }
 }

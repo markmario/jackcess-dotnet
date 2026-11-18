@@ -5,7 +5,7 @@ namespace JackcessDotNet;
 internal sealed class JetFormat
 {
     // ── Per-version row-encoding properties ───────────────────────────────────
-    public JetVersion Version { get; }
+    public FileFormat Version { get; }
     /// <summary>
     /// True for a format this library reads and does not write: Access 97's (Jet3), as in Jackcess, whose
     /// <c>JetFormat.READ_ONLY</c> this is. A file in it is opened for reading only, and creating one, or changing
@@ -178,7 +178,7 @@ internal sealed class JetFormat
         int OffsetIndexCompressedByteCount, int OffsetIndexEntryMask, int SizeIndexEntryMask,
         int SizeIndexCompressedByteCount = 2, bool IsReadOnly = false);
 
-    private JetFormat(JetVersion version, FormatSpec s)
+    private JetFormat(FileFormat version, FormatSpec s)
     {
         Version                     = version;
         PageSize                    = s.PageSize;
@@ -229,7 +229,7 @@ internal sealed class JetFormat
         IsReadOnly                       = s.IsReadOnly;
     }
 
-    public static JetFormat Jet3 { get; } = new(JetVersion.Jet3, new FormatSpec(
+    public static JetFormat Jet3 { get; } = new(FileFormat.Access97, new FormatSpec(
         PageSize:              2048,
         HasPageChecksum:       false,
         TextEncoding:          Encoding.GetEncoding(1252),
@@ -327,7 +327,7 @@ internal sealed class JetFormat
         OffsetIndexEntryMask:            27,
         SizeIndexEntryMask:              453);
 
-    public static JetFormat Jet4 { get; } = new(JetVersion.Jet4, _jet4Spec);
+    public static JetFormat Jet4 { get; } = new(FileFormat.Access2000, _jet4Spec);
 
     /// <summary>
     /// ACE 12 (Access 2007) format. Almost identical to Jet4 — same page size,
@@ -335,24 +335,24 @@ internal sealed class JetFormat
     /// open straight through Jet4-shaped parsing; encrypted files need a codec
     /// that isn't yet implemented and will fail at first read of an encrypted page.
     /// </summary>
-    public static JetFormat Jet12 { get; } = new(JetVersion.Jet12, _jet4Spec);
+    public static JetFormat Jet12 { get; } = new(FileFormat.Access2007, _jet4Spec);
     /// <summary>ACE 14 — same on-disk layout as Jet12 in practice (sort-order differs).</summary>
-    public static JetFormat Jet14 { get; } = new(JetVersion.Jet14, _jet4Spec);
+    public static JetFormat Jet14 { get; } = new(FileFormat.Access2010, _jet4Spec);
     /// <summary>ACE 16 — same on-disk layout as Jet12/14.</summary>
-    public static JetFormat Jet16 { get; } = new(JetVersion.Jet16, _jet4Spec);
+    public static JetFormat Jet16 { get; } = new(FileFormat.Access2016, _jet4Spec);
     /// <summary>ACE 17 — same on-disk layout as Jet12/14/16.</summary>
-    public static JetFormat Jet17 { get; } = new(JetVersion.Jet17, _jet4Spec);
+    public static JetFormat Jet17 { get; } = new(FileFormat.Access2019, _jet4Spec);
 
     /// <summary>The format of <paramref name="version"/>.</summary>
-    public static JetFormat For(JetVersion version) => version switch
+    public static JetFormat For(FileFormat version) => version switch
     {
-        JetVersion.Jet3  => Jet3,
-        JetVersion.Jet4  => Jet4,
-        JetVersion.Jet12 => Jet12,
-        JetVersion.Jet14 => Jet14,
-        JetVersion.Jet16 => Jet16,
-        JetVersion.Jet17 => Jet17,
-        _                => throw new NotSupportedException($"Unsupported JetVersion: {version}")
+        FileFormat.Access97  => Jet3,
+        FileFormat.Access2000  => Jet4,
+        FileFormat.Access2007 => Jet12,
+        FileFormat.Access2010 => Jet14,
+        FileFormat.Access2016 => Jet16,
+        FileFormat.Access2019 => Jet17,
+        _                => throw new NotSupportedException($"Unsupported FileFormat: {version}")
     };
 
     /// <summary>

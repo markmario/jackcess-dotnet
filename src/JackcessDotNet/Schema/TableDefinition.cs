@@ -273,7 +273,7 @@ internal sealed class TableDefinition
         for (short i = 0; i < Columns.Count; i++)
         {
             var column = Columns[i];
-            column.ColumnNumber     = i;
+            column.Ordinal     = i;
             column.IsVariableLength = column.DataType.IsVariableLength();
             column.HasStoredPlace   = true;
             if (column.IsVariableLength)
@@ -287,7 +287,7 @@ internal sealed class TableDefinition
                 fixedOffsets[column] = fixedOff;
                 column.FixedDataOffset  = fixedOff;
                 column.VarLenTableIndex = -1;
-                fixedOff += (short)column.Length;
+                fixedOff += (short)column.LengthInBytes;
             }
         }
         MaxColumnCount    = Columns.Count;
@@ -298,9 +298,9 @@ internal sealed class TableDefinition
         {
             page[pos++] = (byte)col.DataType;
             ByteUtil.PutInt  (page, pos, MagicTableNumber); pos += 4;
-            ByteUtil.PutShort(page, pos, (short)col.ColumnNumber); pos += 2;
+            ByteUtil.PutShort(page, pos, (short)col.Ordinal); pos += 2;
             ByteUtil.PutShort(page, pos, col.DataType.IsVariableLength() ? varIndexes[col] : (short)0); pos += 2;
-            ByteUtil.PutShort(page, pos, (short)col.ColumnNumber); pos += 2;
+            ByteUtil.PutShort(page, pos, (short)col.Ordinal); pos += 2;
 
             if (col.DataType is DataType.Text or DataType.Memo)
             {
@@ -311,8 +311,8 @@ internal sealed class TableDefinition
             }
             else
             {
-                page[pos++] = col.DataType == DataType.Numeric ? col.Precision : (byte)0x00;
-                page[pos++] = col.DataType == DataType.Numeric ? col.Scale     : (byte)0x00;
+                page[pos++] = col.DataType == DataType.Decimal ? col.Precision : (byte)0x00;
+                page[pos++] = col.DataType == DataType.Decimal ? col.Scale     : (byte)0x00;
                 ByteUtil.PutShort(page, pos, 0); pos += 2;
             }
 
@@ -326,7 +326,7 @@ internal sealed class TableDefinition
             page[pos++] = (byte)((col.DataType is DataType.Text or DataType.Memo) && col.IsCompressedUnicode ? 0x01 : 0x00);
             ByteUtil.PutInt  (page, pos, 0); pos += 4;
             ByteUtil.PutShort(page, pos, col.DataType.IsVariableLength() ? (short)0 : fixedOffsets[col]); pos += 2;
-            ByteUtil.PutShort(page, pos, col.DataType.IsLongValue()      ? (short)0 : (short)col.Length); pos += 2;
+            ByteUtil.PutShort(page, pos, col.DataType.IsLongValue()      ? (short)0 : (short)col.LengthInBytes); pos += 2;
         }
 
         // ── Column names (length-prefixed UTF-16LE) ───────────────────────────
@@ -358,7 +358,7 @@ internal sealed class TableDefinition
             {
                 if (c < index.Columns.Count)
                 {
-                    ByteUtil.PutShort(page, p, (short)index.Columns[c].Column.ColumnNumber); p += 2;
+                    ByteUtil.PutShort(page, p, (short)index.Columns[c].Column.Ordinal); p += 2;
                     page[p++] = index.Columns[c].Flags;
                 }
                 else
@@ -404,10 +404,10 @@ internal sealed class TableDefinition
         // Real format (see LvalUmapRef): 10 bytes per entry, column-number
         // prefixed, 0xFFFF terminated (the trailer below doubles as terminator).
         foreach (var col in Columns.Where(c => c.DataType.IsLongValue())
-                                   .OrderBy(c => c.ColumnNumber))
+                                   .OrderBy(c => c.Ordinal))
         {
             if (!LvalColumnUmapPages.TryGetValue(col.Name, out var lvalRef)) continue;
-            ByteUtil.PutShort(page, pos, (short)col.ColumnNumber); pos += 2;
+            ByteUtil.PutShort(page, pos, (short)col.Ordinal); pos += 2;
             page[pos++] = (byte)lvalRef.OwnedRow;
             ByteUtil.Put3ByteInt(page, pos, lvalRef.OwnedPage); pos += 3;
             page[pos++] = (byte)lvalRef.FreeRow;

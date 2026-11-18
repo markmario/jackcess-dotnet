@@ -1,7 +1,8 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// Cursor that supports key-based row lookup.
+/// Cursor that supports key-based row lookup, made by <see cref="Table.CreateIndexCursor()"/>. To find a row by
+/// its primary key, <see cref="Table.FindRowByPrimaryKey"/> does it in one call.
 ///
 /// Lookup strategy:
 ///   1. The primary key, when its keys are ones this library makes: through
@@ -16,6 +17,7 @@ public sealed class IndexCursor : Cursor
     private readonly TableDefinition _definition;
     private readonly PageFile        _file;
     private readonly string?         _indexName;
+    private readonly Index?          _index;
     private readonly bool            _isPrimaryKey;
 
     internal IndexCursor(Table table, PageFile file, TableDefinition definition, string? indexName)
@@ -25,30 +27,31 @@ public sealed class IndexCursor : Cursor
         _file         = file;
         _definition   = definition;
         _indexName    = indexName;
-        _isPrimaryKey = indexName is null
-                     || string.Equals(indexName, "PrimaryKey", StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(indexName, definition.PrimaryKeyColumnName, StringComparison.OrdinalIgnoreCase);
+
+        // A name is an index's name and nothing else, as in Jackcess's Table.getIndex: not the name of a column
+        // the primary key happens to be on, which another index may have for its own name. Only a cursor made
+        // with no name is for the primary key, whatever that index is called.
+        _index = indexName is null
+            ? definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)
+            : definition.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, indexName, StringComparison.OrdinalIgnoreCase))
+              ?? throw new ArgumentException(
+                  $"Table '{definition.Name}' has no index named '{indexName}'.", nameof(indexName));
+        _isPrimaryKey = indexName is null || _index!.IsPrimaryKey;
     }
 
     /// <summary>
-    /// Finds the first row whose primary key equals <paramref name="pkValue"/>.
-    /// Returns null if no such row exists.
+    /// The index the cursor was made for: the table's primary key for <see cref="Table.CreateIndexCursor()"/> -
+    /// null when the table has none, and the cursor then finds rows by reading the table - and the index of that
+    /// name for <see cref="Table.CreateIndexCursor(string)"/>. Jackcess's <c>getIndex</c>.
     /// </summary>
-    public Row? FindRowByPrimaryKey(object pkValue)
-    {
-        if (_definition.PrimaryKeyColumnName is null)
-            throw new InvalidOperationException(
-                $"Table '{_definition.Name}' has no primary key column. " +
-                "Use FindRowByEntry on a non-PK index, or use FindRow(column, value) for a column scan.");
-        return FindRow(_definition.PrimaryKeyColumnName, pkValue);
-    }
+    public Index? Index => _index;
 
     /// <summary>
-    /// Convenience: finds the first row where <paramref name="columnName"/> equals
-    /// <paramref name="value"/>. Uses the primary-key index leaf when possible,
-    /// otherwise falls back to a forward table scan from BeforeFirst.
+    /// Finds the first row where <paramref name="columnName"/> equals <paramref name="value"/>, or null when
+    /// there is none. Uses the primary key, or another index on the column alone, when its keys are ones this
+    /// library makes; otherwise reads the table from its first row.
     /// </summary>
-    public Row? FindRow(string columnName, object value)
+    public Row? FindRow(string columnName, object? value)
     {
         // Fast path #1: the primary key, through IndexWriter's own walk of the tree (prefix-compressed
         // pages and any depth), when its keys are ones IndexKeys makes.
@@ -62,7 +65,7 @@ public sealed class IndexCursor : Cursor
         if (path1Eligible)
         {
             var iw = new IndexWriter(_file, new PageAllocator(_file));
-            foreach (int rowPtr in iw.EnumerateRowPointersForKey(_definition, value))
+            foreach (int rowPtr in iw.EnumerateRowPointersForKey(_definition, value!))
             {
                 // pageNum is the upper 24 bits (3-byte LE page) and rowNum the low byte.
                 int pageNum = RowPointer.Page(rowPtr);
@@ -77,7 +80,7 @@ public sealed class IndexCursor : Cursor
                 try { r = ReadRowAt(pageNum, rowIdx); }
                 catch { continue; }
                 if (r is null) continue;
-                if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+                if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                     return r;
             }
             // fall through
@@ -88,23 +91,23 @@ public sealed class IndexCursor : Cursor
         if (TryFindMatchingDiskIndex(columnName, value, out var diskIx))
         {
             var reader = new IndexReader(_file, diskIx!);
-            foreach (int rowPtr in reader.FindRowPointers(value))
+            foreach (int rowPtr in reader.FindRowPointers(value!))
             {
                 int pageNum = RowPointer.Page(rowPtr);
                 int rowIdx  = RowPointer.Row(rowPtr);
                 Row? r = ReadRowAt(pageNum, rowIdx);
                 if (r is null) continue;
-                if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+                if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                     return r;
             }
             return null;
         }
 
         // Slow path: forward table scan.
-        BeforeFirst();
-        while (GetNextRow() is { } r)
+        MoveBeforeFirst();
+        while (NextRow() is { } r)
         {
-            if (r.TryGetValue(columnName, out var stored) && ValuesEqual(stored, value))
+            if (HasValue(r, columnName, out var stored) && ValuesEqual(stored, value))
                 return r;
         }
         return null;
@@ -118,7 +121,7 @@ public sealed class IndexCursor : Cursor
     /// search can trust: <see cref="IndexKeys.CanSearch"/>). Returns false when no such
     /// index is present (caller falls back to scan).
     /// </summary>
-    private bool TryFindMatchingDiskIndex(string columnName, object value, out Index? matched)
+    private bool TryFindMatchingDiskIndex(string columnName, object? value, out Index? matched)
     {
         foreach (var ix in _definition.Indexes)
         {
@@ -137,11 +140,12 @@ public sealed class IndexCursor : Cursor
     }
 
     /// <summary>
-    /// Composite-key lookup. Matches an entry whose values, in index-column declaration
-    /// order, equal <paramref name="entryValues"/>. Uses the B-tree walker when an
-    /// index is selected and all its column types are encodable; otherwise scans.
+    /// Finds the first row whose values in the index's columns, in the index's order, equal
+    /// <paramref name="entryValues"/>, or null when there is none: a lookup by a key of several columns. Uses
+    /// the index when its keys are ones this library makes; otherwise reads the table from its first row.
+    /// Jackcess's <c>findRowByEntry</c>.
     /// </summary>
-    public Row? FindRowByEntry(params object[] entryValues)
+    public Row? FindRowByEntry(params object?[] entryValues)
     {
         if (entryValues is null || entryValues.Length == 0)
             throw new ArgumentException("Entry values are required.", nameof(entryValues));
@@ -170,8 +174,8 @@ public sealed class IndexCursor : Cursor
         // Scan path: match the chosen index's columns, as its lookup would (an index whose keys
         // cannot be made: a text index in another sort order); with no index, positionally
         // against the table's columns in column-number order.
-        BeforeFirst();
-        while (GetNextRow() is { } r)
+        MoveBeforeFirst();
+        while (NextRow() is { } r)
         {
             if (ix is not null ? RowMatchesEntry(r, ix, entryValues) : MatchesLeadingColumns(r, entryValues))
                 return r;
@@ -184,7 +188,7 @@ public sealed class IndexCursor : Cursor
         for (int i = 0; i < entry.Length && i < _definition.Columns.Count; i++)
         {
             var col = _definition.Columns[i];
-            if (!row.TryGetValue(col.Name, out var stored) || !ValuesEqual(stored, entry[i]))
+            if (!HasValue(row, col.Name, out var stored) || !ValuesEqual(stored, entry[i]))
                 return false;
         }
         return true;
@@ -212,7 +216,7 @@ public sealed class IndexCursor : Cursor
         for (int i = 0; i < ix.Columns.Count; i++)
         {
             string col = ix.Columns[i].Column.Name;
-            if (!row.TryGetValue(col, out var stored) || !ValuesEqual(stored, entry[i]))
+            if (!HasValue(row, col, out var stored) || !ValuesEqual(stored, entry[i]))
                 return false;
         }
         return true;
@@ -239,4 +243,11 @@ public sealed class IndexCursor : Cursor
 
     private static bool ValuesEqual(object? stored, object? requested)
         => DataPageWriter.PrimaryKeysEqual(stored, requested);
+
+    /// <summary>
+    /// The row's value in <paramref name="column"/>, when it has one. A column that is null is never a match,
+    /// whatever is looked for: a null is not found by looking for null.
+    /// </summary>
+    private static bool HasValue(Row row, string column, out object? value)
+        => row.TryGetValue(column, out value) && value is not null;
 }

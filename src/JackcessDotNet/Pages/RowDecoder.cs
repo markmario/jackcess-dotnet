@@ -74,13 +74,13 @@ internal sealed class RowDecoder
             case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format);
             case DataType.Binary: return rowBytes.Slice(start, start + length);
             case DataType.Memo:   return DecodeMemoLvRef(rowBytes, start, length);
-            case DataType.Ole:    return DecodeOleLvRef (rowBytes, start, length);
+            case DataType.OleObject:    return DecodeOleLvRef (rowBytes, start, length);
         }
 
         // A type of one size, wherever the row keeps it.
         int size = col.DataType.GetFixedSize();
         if (size <= 0 || length < size) return null;
-        if (datesAsStored && col.DataType == DataType.ShortDateTime) return ByteUtil.GetDouble(rowBytes, start);
+        if (datesAsStored && col.DataType == DataType.DateTime) return ByteUtil.GetDouble(rowBytes, start);
         return ReadFixed(rowBytes, start, col);
     }
 
@@ -121,13 +121,13 @@ internal sealed class RowDecoder
             ? ByteUtil.GetShort(rowBytes, 0)
             : rowBytes[0];
 
-        if (col.ColumnNumber < 0 || col.ColumnNumber >= colCount) return false;
+        if (col.Ordinal < 0 || col.Ordinal >= colCount) return false;
 
         int maskSize = (colCount + 7) / 8;
         maskOffset   = rowBytes.Length - maskSize;
         if (maskOffset < _format.SizeRowColumnCount) return false;
 
-        notNull = (rowBytes[maskOffset + col.ColumnNumber / 8] & (1 << (col.ColumnNumber % 8))) != 0;
+        notNull = (rowBytes[maskOffset + col.Ordinal / 8] & (1 << (col.Ordinal % 8))) != 0;
         return true;
     }
 
@@ -136,7 +136,7 @@ internal sealed class RowDecoder
     {
         if (rowBytes is null || rowBytes.Length < _format.SizeRowColumnCount) return false;
         int colCount = _format.SizeRowColumnCount == 2 ? ByteUtil.GetShort(rowBytes, 0) : rowBytes[0];
-        return col.ColumnNumber >= colCount && colCount > 0;
+        return col.Ordinal >= colCount && colCount > 0;
     }
 
     /// <summary>
@@ -259,16 +259,16 @@ internal sealed class RowDecoder
         col.DataType switch
         {
             DataType.Byte         => row[offset],
-            DataType.Int          => ByteUtil.GetShort (row, offset),
-            DataType.Long         => ByteUtil.GetInt   (row, offset),
-            DataType.Float        => ByteUtil.GetFloat (row, offset),
+            DataType.Int16          => ByteUtil.GetShort (row, offset),
+            DataType.Int32         => ByteUtil.GetInt   (row, offset),
+            DataType.Single        => ByteUtil.GetFloat (row, offset),
             DataType.Double       => ByteUtil.GetDouble(row, offset),
-            DataType.ShortDateTime=> DecodeShortDateTime(row, offset),
-            DataType.Money        => Math.Round((decimal)ByteUtil.GetLong(row, offset) / 10000m, 4),
+            DataType.DateTime => DecodeShortDateTime(row, offset),
+            DataType.Currency        => Math.Round((decimal)ByteUtil.GetLong(row, offset) / 10000m, 4),
             DataType.Guid         => new Guid(row.Slice(offset, offset + 16)),
-            DataType.Numeric      => NumericCodec.Decode(row, offset, col.Scale),
-            DataType.BigInt       => ByteUtil.GetLong  (row, offset),
-            DataType.ExtendedDateTime => ExtendedDateTimeCodec.Decode(row, offset),
+            DataType.Decimal      => NumericCodec.Decode(row, offset, col.Scale),
+            DataType.Int64       => ByteUtil.GetLong  (row, offset),
+            DataType.DateTimeExtended => ExtendedDateTimeCodec.Decode(row, offset),
             _                     => null
         };
 

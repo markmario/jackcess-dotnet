@@ -39,8 +39,8 @@ public sealed class IndexAndRelationshipFlagTests
     [Fact]
     public void Index_IgnoreNullsFlag_Bit2()
     {
-        Assert.True (NewIndex(flags: 0x02).IgnoresNulls);
-        Assert.False(NewIndex(flags: 0x01).IgnoresNulls);
+        Assert.True (NewIndex(flags: 0x02).IgnoreNulls);
+        Assert.False(NewIndex(flags: 0x01).IgnoreNulls);
     }
 
     [Fact]
@@ -53,8 +53,8 @@ public sealed class IndexAndRelationshipFlagTests
     [Fact]
     public void Index_ToString_DescribesShape()
     {
-        var col = new ColumnBuilder("A", DataType.Long).Build();
-        col.ColumnNumber = 0;
+        var col = new ColumnDefinition("A", DataType.Int32).ToColumn("column");
+        col.Ordinal = 0;
         var idx = new Index(
             name: "PK", columns: new[] { new IndexColumn(col, 0x01) },
             rootPageNumber: 42, indexNumber: 0, flags: 0x80, indexType: 1);
@@ -67,7 +67,7 @@ public sealed class IndexAndRelationshipFlagTests
     [Fact]
     public void IndexColumn_AscendingBit0()
     {
-        var col = new ColumnBuilder("A", DataType.Long).Build();
+        var col = new ColumnDefinition("A", DataType.Int32).ToColumn("column");
         Assert.True (new IndexColumn(col, 0x01).IsAscending);
         Assert.False(new IndexColumn(col, 0x00).IsAscending);
     }
@@ -87,13 +87,16 @@ public sealed class IndexAndRelationshipFlagTests
         => Assert.True(NewRel(flags: 0x00001000).CascadeDeletes);
 
     [Fact] public void Relationship_CascadeNull_Bit13()
-        => Assert.True(NewRel(flags: 0x00002000).CascadeNull);
+        => Assert.True(NewRel(flags: 0x00002000).CascadeNullOnDelete);
 
     [Fact] public void Relationship_LeftOuterJoin_Bit24()
-        => Assert.True(NewRel(flags: 0x01000000).LeftOuterJoin);
+        => Assert.Equal(JoinType.LeftOuter, NewRel(flags: 0x01000000).JoinType);
 
     [Fact] public void Relationship_RightOuterJoin_Bit25()
-        => Assert.True(NewRel(flags: 0x02000000).RightOuterJoin);
+        => Assert.Equal(JoinType.RightOuter, NewRel(flags: 0x02000000).JoinType);
+
+    [Fact] public void Relationship_NeitherOuterJoinBit_IsAnInnerJoin()
+        => Assert.Equal(JoinType.Inner, NewRel(flags: 0x00001101).JoinType);
 
     [Fact] public void Relationship_MultipleFlagsCombine()
     {
@@ -101,8 +104,8 @@ public sealed class IndexAndRelationshipFlagTests
         Assert.True(r.IsOneToOne);
         Assert.True(r.CascadeUpdates);
         Assert.True(r.CascadeDeletes);
-        Assert.False(r.CascadeNull);
-        Assert.False(r.LeftOuterJoin);
+        Assert.False(r.CascadeNullOnDelete);
+        Assert.Equal(JoinType.Inner, r.JoinType);
     }
 
     [Fact] public void Relationship_ToString_DescribesShape()
@@ -122,8 +125,8 @@ public sealed class IndexAndRelationshipFlagTests
 
     private static Index NewIndex(byte flags = 0, byte indexType = 0)
     {
-        var col = new ColumnBuilder("A", DataType.Long).Build();
-        col.ColumnNumber = 0;
+        var col = new ColumnDefinition("A", DataType.Int32).ToColumn("column");
+        col.Ordinal = 0;
         return new Index(
             name: "I", columns: new[] { new IndexColumn(col, 0x01) },
             rootPageNumber: 1, indexNumber: 0, flags: flags, indexType: indexType);

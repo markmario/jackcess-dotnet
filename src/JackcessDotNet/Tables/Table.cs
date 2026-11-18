@@ -3,9 +3,9 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Represents an open user table and exposes row-insertion operations.
-/// Instances are created by <see cref="Database.CreateTable"/> or
-/// <see cref="Database.GetTable"/>.
+/// A table of an open database: its columns and indexes, its rows to read, and the operations that insert,
+/// update and delete them. Got from <see cref="Database.GetTable"/> or <see cref="Database.CreateTable"/>; a
+/// table is one object for as long as its database is open.
 /// </summary>
 public sealed class Table
 {
@@ -46,10 +46,12 @@ public sealed class Table
         // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
         _readAutoNumberColumns = definition.Columns
             .Where(c => c.IsAutoNumber && c.DataType != DataType.Complex)
-            .OrderBy(c => c.ColumnNumber)
+            .OrderBy(c => c.Ordinal)
             .ToArray();
         _readAtVersion = version;
         _writability   = null;
+        // Each column reads its properties through its table.
+        foreach (var column in definition.Columns) column.Owner = this;
     }
 
     // Reads the definition again when it has been changed since it was read.
@@ -65,7 +67,9 @@ public sealed class Table
 
     // ── Public properties ─────────────────────────────────────────────────────
 
+    /// <summary>The table's name, as the database's catalog spells it.</summary>
     public string                Name    => _definition.Name;
+    /// <summary>The table's columns, in the order of their positions in the table.</summary>
     public IReadOnlyList<Column> Columns => _definition.Columns;
     /// <summary>Indexes defined on this table (read from the on-disk TDEF).</summary>
     public IReadOnlyList<Index>  Indexes => _definition.Indexes;
@@ -119,10 +123,10 @@ public sealed class Table
         if (InsertRefusal is { } why) throw new NotSupportedException(why);
     }
 
-    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Long and Guid ones are.</summary>
+    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Int32 and Guid ones are.</summary>
     private string? WhyNotNumbered()
-        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Long or DataType.Guid)) is { } column
-            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
+        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Int32 or DataType.Guid)) is { } column
+            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Int32 (Long Integer) and Guid " +
               "AutoNumbers are generated. The table is left as it was."
             : null;
 
@@ -138,13 +142,16 @@ public sealed class Table
     }
 
     private PropertyMaps? _propertiesCache;
+
     /// <summary>
-    /// Property maps attached to this table in MSysObjects.LvProp. The
-    /// <c>Default</c> map holds table-level properties (Description, Caption, etc.);
-    /// per-column properties live in named maps keyed by column name.
-    /// Lazily decoded on first access; null bytes → empty <see cref="PropertyMaps"/>.
+    /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
+    /// (MSysObjects.LvProp) the first time they are asked for. Empty for a table Access keeps none for. A
+    /// column's properties are the column's: <see cref="Column.Properties"/>.
     /// </summary>
-    public PropertyMaps Properties
+    public PropertyMap Properties => PropertyMaps.Default;
+
+    /// <summary>The table's property maps: its own and one for each column that has properties.</summary>
+    internal PropertyMaps PropertyMaps
     {
         get
         {
@@ -156,16 +163,119 @@ public sealed class Table
         }
     }
 
-    // ── Cursor factories ──────────────────────────────────────────────────────
+    // The maps handed out for columns Access keeps no properties for, by column name.
+    private Dictionary<string, PropertyMap>? _noProperties;
 
-    /// <summary>Creates a sequential table-scan cursor (Jackcess-shape API).</summary>
-    public Cursor      NewCursor()                               => NewCursorInternal();
+    /// <summary>The properties of <paramref name="column"/>: the map the catalog has under its name, or an empty one.</summary>
+    internal PropertyMap PropertiesOf(Column column)
+    {
+        if (PropertyMaps.Get(column.Name) is { } map) return map;
+        _noProperties ??= new Dictionary<string, PropertyMap>(StringComparer.OrdinalIgnoreCase);
+        if (!_noProperties.TryGetValue(column.Name, out var none))
+            _noProperties[column.Name] = none = new PropertyMap(column.Name, 0x01);
+        return none;
+    }
 
-    /// <summary>Creates an index cursor that supports FindRow / FindRowByPrimaryKey.</summary>
-    public IndexCursor NewIndexCursor(string? indexName = null)  => NewIndexCursorInternal(indexName);
+    // ── Reading ───────────────────────────────────────────────────────────────
 
-    internal Cursor      NewCursorInternal()                       => new Cursor(this, _file, _definition);
-    internal IndexCursor NewIndexCursorInternal(string? indexName) => new IndexCursor(this, _file, _definition, indexName);
+    /// <summary>
+    /// The table's rows, in the order they are stored, which for a table only added to is the order they were
+    /// inserted in. Deleted rows are passed, and Memo and OLE values are read whole. Each row has an entry for
+    /// every column of the table, in the table's column order: <c>null</c> for a column with no value.
+    /// <para>
+    /// The rows are read as they are enumerated, a page at a time, so a table of any size can be gone through
+    /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
+    /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
+    /// are those of the pages as they were listed, and of each page as it was when it was reached: take the
+    /// list first.
+    /// </para>
+    /// </summary>
+    public IEnumerable<Row> Rows
+    {
+        get
+        {
+            var definition = _definition;
+            var format     = _file.Format;
+            var lvalReader = definition.LvalColumnUmapPages.Count > 0
+                ? new LvalReader(_file)
+                : null;
+            var decoder = new RowDecoder(format, definition.Columns, lvalReader);
+
+            byte[] umapPage  = _file.ReadPage(definition.UmapPageNumber);
+            var    ownedList = UsageMap.GetOwnedPages(umapPage, definition.OwnedPagesRow, format, _file);
+
+            // Each page is read once, and its rows given from that reading.
+            foreach (int pageNum in ownedList)
+            {
+                byte[] dp       = _file.ReadPage(pageNum);
+                int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
+
+                for (int r = 0; r < rowCount; r++)
+                {
+                    // Deleted rows are passed; an overflow row is read where its pointer leads.
+                    if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+
+                    // Every column has its entry, in the table's order: null for a column with no value.
+                    var row = new Row(definition.Columns.Count);
+                    foreach (var col in definition.Columns)
+                        row[col.Name] = decoder.Decode(rowBytes, col);
+                    yield return row;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Creates a cursor over the table's rows in the order they are stored, which can move both ways. For a
+    /// plain read of every row, <see cref="Rows"/>.
+    /// </summary>
+    public Cursor CreateCursor() => new Cursor(this, _file, _definition);
+
+    /// <summary>
+    /// Creates a cursor that finds rows through the table's primary key (<see cref="IndexCursor.FindRow"/>,
+    /// <see cref="IndexCursor.FindRowByEntry"/>).
+    /// </summary>
+    public IndexCursor CreateIndexCursor() => new IndexCursor(this, _file, _definition, indexName: null);
+
+    /// <summary>
+    /// Creates a cursor that finds rows through the index named <paramref name="indexName"/>, whatever the case
+    /// of its letters. The name is an index's name (<see cref="Indexes"/>), not a column's: a primary key is
+    /// asked for by its index's name, "PrimaryKey" in a table Access or this library made, or with
+    /// <see cref="CreateIndexCursor()"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The table has no index of that name.</exception>
+    public IndexCursor CreateIndexCursor(string indexName)
+        => new IndexCursor(this, _file, _definition, indexName ?? throw new ArgumentNullException(nameof(indexName)));
+
+    /// <summary>
+    /// The row whose primary key is <paramref name="primaryKey"/>, or null when the table has none: one value for
+    /// a key of one column, and for a key of several a value for each, in the key's order. The row is found
+    /// through the primary key's index when its keys are ones this library makes, and otherwise by reading the
+    /// table.
+    /// </summary>
+    /// <exception cref="ArgumentException">The number of values is not the number of columns in the primary key.</exception>
+    /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
+    public Row? FindRowByPrimaryKey(params object?[] primaryKey)
+    {
+        if (primaryKey is null) throw new ArgumentNullException(nameof(primaryKey));
+
+        var definition = _definition;
+        var keyColumns = definition.EffectivePrimaryKeyColumns;
+        if (keyColumns.Count == 0)
+            throw new InvalidOperationException(
+                $"Table '{definition.Name}' has no primary key. Use an index cursor's FindRowByEntry for another " +
+                "index, or its FindRow(column, value) to look in one column.");
+        if (primaryKey.Length != keyColumns.Count)
+            throw new ArgumentException(
+                $"The primary key of '{definition.Name}' has {keyColumns.Count} column(s) " +
+                $"({string.Join(", ", keyColumns)}); {primaryKey.Length} value(s) were given.", nameof(primaryKey));
+
+        if (keyColumns.Count == 1)
+            return new IndexCursor(this, _file, definition, indexName: null).FindRow(keyColumns[0], primaryKey[0]);
+
+        string? keyIndex = definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)?.Name;
+        return new IndexCursor(this, _file, definition, keyIndex).FindRowByEntry(primaryKey);
+    }
 
     // ── Row operations ────────────────────────────────────────────────────────
 
@@ -354,7 +464,7 @@ public sealed class Table
                 c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
             if (allowed)
                 highestGiven = _autoNumberColumns
-                    .Where(c => c.DataType == DataType.Long && newValues.ContainsKey(c.Name))
+                    .Where(c => c.DataType == DataType.Int32 && newValues.ContainsKey(c.Name))
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
@@ -510,7 +620,7 @@ public sealed class Table
     public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
     {
         var decimals = _definition.Columns
-            .Where(c => c.DataType == DataType.Numeric && !c.IsCalculated && c.Precision > 0)
+            .Where(c => c.DataType == DataType.Decimal && !c.IsCalculated && c.Precision > 0)
             .ToList();
         if (decimals.Count == 0) yield break;
 
@@ -521,7 +631,7 @@ public sealed class Table
             .OfType<Column>()
             .ToList();
 
-        // The rows in the order ReadAllRows returns them, which RowIndex counts in.
+        // The rows in the order Rows gives them, which RowIndex counts in.
         int rowIndex = -1;
         foreach (int pageNum in UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, format, _file))
         {
@@ -565,19 +675,22 @@ public sealed class Table
     /// from then on.
     /// </para>
     /// </summary>
-    /// <param name="column">The column to add (use <see cref="ColumnBuilder"/>). It is left as it was given.</param>
+    /// <param name="column">The column to add.</param>
     /// <returns>The table's new column.</returns>
-    /// <exception cref="ArgumentException">The table already has a column of that name, or 255 columns.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table already has a column of that name, or 255 columns; or the definition is not one a table can
+    /// have (<see cref="ColumnDefinition"/>). Nothing is changed.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
     /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
     /// or would run, over more than one page, which is all this library reads of one - so a table is never left
     /// that it could no longer write rows to. Nothing is changed.
     /// </exception>
-    public Column AddColumn(Column column)
+    public Column AddColumn(ColumnDefinition column)
     {
         if (column is null) throw new ArgumentNullException(nameof(column));
-        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column);
+        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column.ToColumn(nameof(column)));
         return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -617,43 +730,4 @@ public sealed class Table
 
     private Database Owner()
         => _owningDb ?? throw new InvalidOperationException($"Table '{Name}' was not opened from a database, so it cannot be changed.");
-
-    /// <summary>
-    /// Reads and decodes every non-deleted row in the table and returns them in
-    /// insertion order.  Follows LVAL page chains for Memo/OLE columns.
-    /// </summary>
-    public IReadOnlyList<Row> ReadAllRows()
-    {
-        var format     = _file.Format;
-        var lvalReader = _definition.LvalColumnUmapPages.Count > 0
-            ? new LvalReader(_file)
-            : null;
-        var decoder = new RowDecoder(format, _definition.Columns, lvalReader);
-
-        byte[] umapPage  = _file.ReadPage(_definition.UmapPageNumber);
-        var    ownedList = UsageMap.GetOwnedPages(umapPage, _definition.OwnedPagesRow, format, _file);
-
-        var result = new List<Row>();
-        foreach (int pageNum in ownedList)
-        {
-            byte[] dp       = _file.ReadPage(pageNum);
-            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
-
-            for (int r = 0; r < rowCount; r++)
-            {
-                // Deleted rows are passed; an overflow row is read where its pointer leads.
-                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
-
-                var row = new Row();
-                foreach (var col in _definition.Columns)
-                {
-                    object? val = decoder.Decode(rowBytes, col);
-                    if (val is not null)
-                        row[col.Name] = val;
-                }
-                result.Add(row);
-            }
-        }
-        return result;
-    }
 }

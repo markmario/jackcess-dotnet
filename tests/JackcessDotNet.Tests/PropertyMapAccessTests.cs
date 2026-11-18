@@ -17,7 +17,7 @@ public sealed class PropertyMapAccessTests
         Assert.True(maps.IsEmpty);
         Assert.Equal(0, maps.Count);
         Assert.NotNull(maps.Default);
-        Assert.True(maps.Default.IsEmpty);
+        Assert.Empty(maps.Default);
     }
 
     [Fact]
@@ -57,16 +57,6 @@ public sealed class PropertyMapAccessTests
         // Same value via differently-cased key.
         Assert.Equal("hi", colMap!["caption"]);
         Assert.Equal("hi", colMap!["CAPTION"]);
-    }
-
-    [Fact]
-    public void Property_RecordEquality_BasedOnFieldValues()
-    {
-        var p1 = new PropertyMap.Property("X", DataType.Text, "abc", false);
-        var p2 = new PropertyMap.Property("X", DataType.Text, "abc", false);
-        var p3 = new PropertyMap.Property("X", DataType.Text, "abd", false);
-        Assert.Equal(p1, p2);
-        Assert.NotEqual(p1, p3);
     }
 
     [Fact]

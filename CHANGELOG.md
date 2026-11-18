@@ -19,10 +19,56 @@ changed since 1.2.2.
 - **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
   format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
-  Extended columns, and foreign keys enforced on request.
+  Extended columns, and foreign keys enforced.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
   `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` and the build checks it. A broken rule of the database
   has its own exception, and `TryGetTable` was added.
+
+### Breaking changes to the public API
+
+Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds
+changes with them.
+
+- **`JetVersion` is `FileFormat`**, its members named for the Access version: `Jet3`, `Jet4`, `Jet12`, `Jet14`,
+  `Jet16`, `Jet17` are `Access97`, `Access2000`, `Access2007`, `Access2010`, `Access2016`, `Access2019`.
+  `Database.Create(path)` makes an Access 2000 file.
+- **`Database.Open(path, password)` and `Open(path, version)` are `Open(path, DatabaseOpenOptions)`**, with
+  `Password` and `FallbackFormat`.
+- **`Database.ListTables(bool)` is `GetTableNames()` and `GetSystemTableNames()`.**
+- **`Database.GetTable` throws `ArgumentException`** for a table that is not there (it threw
+  `InvalidOperationException`), and returns the same `Table` for a table for as long as the database is open.
+- **`Database.EnforceForeignKeys` is `true` by default** (it was `false`), as in Jackcess.
+- **`Table.ReadAllRows()` is `Table.Rows`**, read as it is enumerated; `Rows.ToList()` gives the list.
+- **`Table.NewCursor()` and `NewIndexCursor(name)` are `CreateCursor()`, `CreateIndexCursor()` and
+  `CreateIndexCursor(name)`.** The name is an index's name and nothing else: one that is no index of the table
+  throws `ArgumentException` (the cursor read the table instead), and the name of the primary key's column no
+  longer stands for the primary key. `IndexCursor.FindRowByPrimaryKey` is `Table.FindRowByPrimaryKey`, which
+  takes a key of several columns too.
+- **A cursor moves with `MoveNext()` and `MovePrevious()` and has `Current`**, in place of `GetNextRow()`,
+  `GetPreviousRow()` and `GetCurrentRow()`; `BeforeFirst()` and `AfterLast()` are `MoveBeforeFirst()` and
+  `MoveAfterLast()`.
+- **`DatabaseBuilder`, `CursorBuilder`, `TableBuilder` and `ColumnBuilder` are removed.** A column is described
+  by a `ColumnDefinition` - `new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 }` - and
+  `Database.CreateTable` and `Table.AddColumn` take definitions; `CreateTable`'s primary key is
+  `params string[]`. What the builder refused with `InvalidOperationException` as it was built, `CreateTable`
+  refuses with `ArgumentException`, as it does a primary key column that is not among the columns.
+- **`Row` no longer derives from `Dictionary<string, object?>`.** It implements `IDictionary` and
+  `IReadOnlyDictionary`, so the indexer, initialisers and `TryGetValue` are as they were; `Row.Set` and
+  `Row.FromValues` are removed, and `GetValue<T>` and `IsNull` added. **A row that is read has an entry for
+  every column, `null` for a column with no value** (it had no entry for one), so `ContainsKey` no longer says
+  whether a value is null.
+- **`DataType` members are renamed** (their values are not): `Int` is `Int16`, `Long` is `Int32`, `BigInt` is
+  `Int64`, `Float` is `Single`, `Numeric` is `Decimal`, `ShortDateTime` is `DateTime`, `Money` is `Currency`,
+  `Ole` is `OleObject`, `ExtendedDateTime` is `DateTimeExtended`.
+- **`Column.Length` is `LengthInBytes`** (with `MaxLength` in characters for Text beside it) and
+  **`ColumnNumber` is `Ordinal`**. `Table.Properties` is the table's own `PropertyMap` and a column's are
+  `Column.Properties`; `PropertyMaps` is internal, `PropertyMap` is the collection of its properties, and
+  `PropertyMap.Property` is a class, not a record.
+- **`Index.IgnoresNulls` is `IgnoreNulls`;** `IndexDefinition.DescendingColumns` is a collection to add to.
+- **`Relationship.FromTable`, `ToTable` and `ColumnPairs` are `FromTableName`, `ToTableName`,
+  `FromColumnNames` and `ToColumnNames`;** `CascadeNull` is `CascadeNullOnDelete`; `LeftOuterJoin` and
+  `RightOuterJoin` are `JoinType`. `RelationshipDefinition` has the same names, takes each side's columns as a
+  list, and `RelationshipJoinType` is `JoinType`.
 
 ### Added
 

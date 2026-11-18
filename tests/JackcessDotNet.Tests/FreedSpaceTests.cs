@@ -17,11 +17,11 @@ public sealed class FreedSpaceTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> BlobColumns(params string[] blobs)
+    private static IReadOnlyList<ColumnDefinition> BlobColumns(params string[] blobs)
     {
-        var columns = new List<Column> { new ColumnBuilder("Id", DataType.Long).Build() };
+        var columns = new List<ColumnDefinition> { new ColumnDefinition("Id", DataType.Int32) };
         foreach (var name in blobs.Length == 0 ? new[] { "Blob" } : blobs)
-            columns.Add(new ColumnBuilder(name, DataType.Ole).Build());
+            columns.Add(new ColumnDefinition(name, DataType.OleObject));
         return columns;
     }
 
@@ -47,7 +47,7 @@ public sealed class FreedSpaceTests : IDisposable
         // else may be on one. Ten 2,000-byte values go two to a page; deleting every second leaves five pages half
         // free. A 5,000-byte value is two chunks and takes two pages of its own, not the room on those; a 1,500-byte
         // value, one chunk, takes that room.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = db.CreateTable("T", BlobColumns());
             for (int i = 1; i <= 10; i++)
@@ -75,7 +75,7 @@ public sealed class FreedSpaceTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
-            var rows = db.GetTable("T").ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = db.GetTable("T").Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(15, rows.Count);
             for (int i = 1; i <= 9; i += 2)
                 Assert.Equal(Bytes(2_000, i), rows[i]["Blob"]);
@@ -94,7 +94,7 @@ public sealed class FreedSpaceTests : IDisposable
         // Ten 2,000-byte values go two to a page; deleting every second leaves five pages with 2,080 bytes free. A
         // 5,000-byte value is a full chunk, which needs a page of its own, and a 934-byte last one, which fits a freed
         // page. The freed pages were walked once, for the full chunk, and not again for the last.
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.ShareLongValuePages = true;
             var table = db.CreateTable("T", BlobColumns());
@@ -112,7 +112,7 @@ public sealed class FreedSpaceTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
-            var rows = db.GetTable("T").ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = db.GetTable("T").Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(10, rows.Count);
             for (int i = 1; i <= 9; i += 2)
                 Assert.Equal(Bytes(2_000, i), rows[i]["Blob"]);
@@ -128,7 +128,7 @@ public sealed class FreedSpaceTests : IDisposable
         // long values, the old values stay where they are - still sharing, still read - and no new chunk goes onto
         // their pages: each new chain has pages of its own.
         List<int> old;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.ShareLongValuePages = true;
             var table = db.CreateTable("T", BlobColumns());
@@ -153,7 +153,7 @@ public sealed class FreedSpaceTests : IDisposable
             foreach (int page in old)
                 Assert.True(db.File.ReadPage(page).AsSpan().SequenceEqual(before.AsSpan(page * 4096, 4096)), $"page {page}, of the earlier values, was written to");
 
-            var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+            var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(25, rows.Count);
             for (int i = 1; i <= 20; i++)
                 Assert.Equal(Bytes(5_000, i), rows[i]["Blob"]);
@@ -174,7 +174,7 @@ public sealed class FreedSpaceTests : IDisposable
             {
                 var reads = new long[3];
                 bool shared;
-                using (var db = Database.Create(path, JetVersion.Jet4))
+                using (var db = Database.Create(path, FileFormat.Access2000))
                 {
                     var table = db.CreateTable("T", BlobColumns("A", "B"));
                     table.Insert(new Row { ["Id"] = 1, ["A"] = Bytes(1_000_000, 1) });
@@ -191,7 +191,7 @@ public sealed class FreedSpaceTests : IDisposable
 
                 using (var db = Database.Open(path))
                 {
-                    var rows = db.GetTable("T").ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+                    var rows = db.GetTable("T").Rows.ToDictionary(r => (int)r["Id"]!);
                     Assert.Equal(deleteA ? 3 : 4, rows.Count);
                     if (!deleteA)
                         Assert.Equal(Bytes(1_000_000, 1), rows[1]["A"]);
@@ -218,7 +218,7 @@ public sealed class FreedSpaceTests : IDisposable
     {
         // No delete records another column's page as this column's, but the record is checked against the column's
         // usage map before anything goes onto the page.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var mine = db.CreateTable("Mine", BlobColumns());
         var other = db.CreateTable("Other", BlobColumns());
         other.Insert(new Row { ["Id"] = 1, ["Blob"] = Bytes(2_000, 1) });
@@ -230,8 +230,8 @@ public sealed class FreedSpaceTests : IDisposable
 
         Assert.Equal(1, RowsOn(db, othersPage));
         Assert.DoesNotContain(othersPage, LvalPages(db, mine, "Blob"));
-        Assert.Equal(Bytes(2_000, 1), other.ReadAllRows().Single()["Blob"]);
-        Assert.Equal(Bytes(1_500, 2), mine.ReadAllRows().Single()["Blob"]);
+        Assert.Equal(Bytes(2_000, 1), other.Rows.Single()["Blob"]);
+        Assert.Equal(Bytes(1_500, 2), mine.Rows.Single()["Blob"]);
         Assert.DoesNotContain(db.File.FreedLvalPages.Of(lval.OwnedPage, lval.OwnedRow), r => r.Key == othersPage);   // and the record is dropped
     }
 
@@ -239,7 +239,7 @@ public sealed class FreedSpaceTests : IDisposable
     public void A_freed_page_that_is_not_a_long_value_page_is_never_written_to()
     {
         // Another table's data page, listed in the column's map below the column's own last page and recorded as freed.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var mine = db.CreateTable("Mine", BlobColumns());
         var other = db.CreateTable("Other", BlobColumns());
         other.Insert(new Row { ["Id"] = 1 });
@@ -252,8 +252,8 @@ public sealed class FreedSpaceTests : IDisposable
         mine.Insert(new Row { ["Id"] = 2, ["Blob"] = Bytes(1_500, 2) });
 
         Assert.Equal(1, RowsOn(db, othersDataPage));
-        Assert.Single(other.ReadAllRows());
-        var rows = mine.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+        Assert.Single(other.Rows);
+        var rows = mine.Rows.ToDictionary(r => (int)r["Id"]!);
         Assert.Equal(Bytes(3_500, 1), rows[1]["Blob"]);
         Assert.Equal(Bytes(1_500, 2), rows[2]["Blob"]);
     }
@@ -262,7 +262,7 @@ public sealed class FreedSpaceTests : IDisposable
     public void A_freed_page_with_less_room_than_recorded_is_read_before_anything_goes_onto_it()
     {
         // A record says 4,000 bytes are free on a page that is full: the page is read first, and the value goes elsewhere.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", BlobColumns());
         table.Insert(new Row { ["Id"] = 1, ["Blob"] = Bytes(4_000, 1) });
         int full = LvalPages(db, table, "Blob").Single();
@@ -272,7 +272,7 @@ public sealed class FreedSpaceTests : IDisposable
         table.Insert(new Row { ["Id"] = 2, ["Blob"] = Bytes(2_000, 2) });
 
         Assert.Equal(1, RowsOn(db, full));
-        var rows = table.ReadAllRows().ToDictionary(r => (int)r["Id"]!);
+        var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
         Assert.Equal(Bytes(4_000, 1), rows[1]["Blob"]);
         Assert.Equal(Bytes(2_000, 2), rows[2]["Blob"]);
     }
@@ -282,7 +282,7 @@ public sealed class FreedSpaceTests : IDisposable
     {
         // A freed page passed over for a full chunk and then taken, as the column's last page, by the last chunk: its
         // record must say what is left, or a later write reads the page for room it does not have.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", BlobColumns());
         table.Insert(new Row { ["Id"] = 1, ["Blob"] = Bytes(2_000, 1) });
         table.Insert(new Row { ["Id"] = 2, ["Blob"] = Bytes(2_000, 2) });
@@ -295,7 +295,7 @@ public sealed class FreedSpaceTests : IDisposable
         int actual = ByteUtil.GetShort(db.File.ReadPage(page), JetFormat.OffsetDataFreeSpace);
         var record = Assert.Single(db.File.FreedLvalPages.Of(lval.OwnedPage, lval.OwnedRow), r => r.Key == page);
         Assert.Equal(actual, record.Value);
-        Assert.Equal(new[] { 1, 3 }, table.ReadAllRows().Select(r => (int)r["Id"]!).OrderBy(i => i));
+        Assert.Equal(new[] { 1, 3 }, table.Rows.Select(r => (int)r["Id"]!).OrderBy(i => i));
     }
 
     [Fact]
@@ -303,7 +303,7 @@ public sealed class FreedSpaceTests : IDisposable
     {
         // Access packs small rows onto long-value pages; one with 255 takes no more, however much room it has. Kept as
         // having room, it was read again by every write its room fitted.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", BlobColumns());
         var lval = table.Definition.LvalColumnUmapPages["Blob"];
         var allocator = new PageAllocator(db.File);
@@ -323,7 +323,7 @@ public sealed class FreedSpaceTests : IDisposable
 
         Assert.Equal(DataPageWriter.MaxRowsPerPage, RowsOn(db, page));
         Assert.DoesNotContain(db.File.FreedLvalPages.Of(lval.OwnedPage, lval.OwnedRow), r => r.Key == page);
-        Assert.Equal(Bytes(1_500, 1), table.ReadAllRows().Single()["Blob"]);
+        Assert.Equal(Bytes(1_500, 1), table.Rows.Single()["Blob"]);
     }
 
     // The corpus's one file of long values Access wrote (blobV2007.accdb) keeps them in a table with an index on
@@ -357,16 +357,16 @@ public sealed class FreedSpaceTests : IDisposable
     {
         (string, string, string, object)? best = null;
         int bestLength = 0;
-        foreach (var name in db.ListTables())
+        foreach (var name in db.GetTableNames())
         {
             var table = db.GetTable(name);
-            var rows = table.ReadAllRows();
+            var rows = table.Rows.ToList();
             var key = table.Columns.FirstOrDefault(c =>
-                (c.DataType == DataType.Long || c.DataType == DataType.Int || c.DataType == DataType.Text)
+                (c.DataType == DataType.Int32 || c.DataType == DataType.Int16 || c.DataType == DataType.Text)
                 && rows.All(r => r[c.Name] != null) && rows.Select(r => r[c.Name]).Distinct().Count() == rows.Count);
             if (key is null) continue;
             // An OLE column with usage maps of its own: an attachment field's hidden data column has none.
-            foreach (var column in table.Columns.Where(c => c.DataType == DataType.Ole && table.Definition.LvalColumnUmapPages.ContainsKey(c.Name)))
+            foreach (var column in table.Columns.Where(c => c.DataType == DataType.OleObject && table.Definition.LvalColumnUmapPages.ContainsKey(c.Name)))
             {
                 foreach (var row in rows)
                 {

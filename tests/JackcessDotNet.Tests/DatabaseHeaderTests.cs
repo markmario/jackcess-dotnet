@@ -30,11 +30,11 @@ public sealed class DatabaseHeaderTests
         string path = Path.Combine(Path.GetTempPath(), $"sig_{Guid.NewGuid():N}.mdb");
         try
         {
-            using (var db = Database.Create(path, JetVersion.Jet4))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+            using (var db = Database.Create(path, FileFormat.Access2000))
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             using var reopen = Database.Open(path);
-            Assert.Contains("X", reopen.ListTables());
+            Assert.Contains("X", reopen.GetTableNames());
         }
         finally
         {

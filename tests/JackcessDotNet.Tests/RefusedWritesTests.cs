@@ -25,14 +25,14 @@ public sealed class RefusedWritesTests : IDisposable
     private Table Create(Database db)
         => db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("B", DataType.Byte).Build(),
-            new ColumnBuilder("N", DataType.Int).Build(),
-            new ColumnBuilder("D", DataType.ShortDateTime).Build(),
-            new ColumnBuilder("G", DataType.Guid).Build(),
-            new ColumnBuilder("Blob", DataType.Ole).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("B", DataType.Byte),
+            new ColumnDefinition("N", DataType.Int16),
+            new ColumnDefinition("D", DataType.DateTime),
+            new ColumnDefinition("G", DataType.Guid),
+            new ColumnDefinition("Blob", DataType.OleObject),
+            new ColumnDefinition("Notes", DataType.Memo),
         }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name") });
 
     private static Row Whole(int id) => new()
@@ -55,14 +55,14 @@ public sealed class RefusedWritesTests : IDisposable
 
     private void AssertRowsAreWhereTheirIndexesHaveThem(Table table, params int[] ids)
     {
-        Assert.Equal(ids, table.ReadAllRows().Select(r => (int)r["Id"]!).OrderBy(i => i));
+        Assert.Equal(ids, table.Rows.Select(r => (int)r["Id"]!).OrderBy(i => i));
         Assert.Equal(ids.Length, table.RowCount);
         foreach (int id in ids)
         {
-            var byKey = table.NewIndexCursor().FindRowByPrimaryKey(id);
+            var byKey = table.FindRowByPrimaryKey(id);
             Assert.NotNull(byKey);
             Assert.Equal(new string((char)('a' + id), 9_000), byKey!["Notes"]);
-            var byName = table.NewIndexCursor("ByName").FindRow("Name", "name" + id);
+            var byName = table.CreateIndexCursor("ByName").FindRow("Name", "name" + id);
             Assert.NotNull(byName);
             Assert.Equal(id, byName!["Id"]);
             Assert.Equal(Whole(id)["Blob"], byName["Blob"]);
@@ -73,7 +73,7 @@ public sealed class RefusedWritesTests : IDisposable
     [MemberData(nameof(ValuesNoColumnHolds))]
     public void An_update_with_a_value_its_column_cannot_hold_changes_nothing(string column, object value)
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = Create(db);
             table.Insert(Whole(1));
@@ -94,7 +94,7 @@ public sealed class RefusedWritesTests : IDisposable
     [MemberData(nameof(ValuesNoColumnHolds))]
     public void An_insert_with_a_value_its_column_cannot_hold_changes_nothing(string column, object value)
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var table = Create(db);
             table.Insert(Whole(1));
@@ -127,7 +127,7 @@ public sealed class RefusedWritesTests : IDisposable
         // The merged row used to be made of the old one read and written again, and a value does not always come
         // back from that as it went: a Date/Time is a double, read to the millisecond, and one DateTime does not
         // hold is read as null. An update that names neither writes them back as they are.
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Create(db);
         table.Insert(Whole(1));
         var decoder = new RowDecoder(db.File.Format, table.Columns);
@@ -181,7 +181,7 @@ public sealed class RefusedWritesTests : IDisposable
         else                page[pointer.Value.Start] = 250;   // a row the page it names does not have
         db.File.WritePage(pointer.Value.Page, page);
 
-        var damaged = Assert.Throws<InvalidDataException>(() => table.ReadAllRows());
+        var damaged = Assert.Throws<InvalidDataException>(() => table.Rows.ToList());
         Assert.Contains(outsideTheFile ? "no such page" : "no such row", damaged.Message);
     }
 
@@ -201,7 +201,7 @@ public sealed class RefusedWritesTests : IDisposable
                 new[] { "AllNames", "BigNumTest", "BoolTest", "DecimalTest", "FloatTest", "IsRich", "LastFirst", "LastFirstLen", "MonthlySalary", "SalaryTest", "WeeklySalary" },
                 table.Columns.Where(c => c.IsCalculated).Select(c => c.Name).OrderBy(n => n, StringComparer.Ordinal));
 
-            var rows = table.ReadAllRows();
+            var rows = table.Rows.ToList();
             Assert.Equal(4, rows.Count);
             foreach (var row in rows)
             {
@@ -219,7 +219,7 @@ public sealed class RefusedWritesTests : IDisposable
             var delete = Assert.Throws<NotSupportedException>(() => table.DeleteRow("ID", 1));
             Assert.Contains("calculated", delete.Message);
 
-            Assert.Equal(4, table.ReadAllRows().Count);
+            Assert.Equal(4, table.Rows.Count());
         }
         Assert.Equal(before, File.ReadAllBytes(_path));
     }

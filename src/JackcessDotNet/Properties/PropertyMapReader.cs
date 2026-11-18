@@ -141,7 +141,7 @@ internal static class PropertyMapReader
     private static string DecodeName(byte[] buf, int pos, int len, JetFormat format)
     {
         // Property names use the database charset (cp1252 for Jet3, UTF-16LE for Jet4+).
-        return format.Version == JetVersion.Jet3
+        return format.Version == FileFormat.Access97
             ? format.TextEncoding.GetString(buf, pos, len)
             : Encoding.Unicode.GetString(buf, pos, len);
     }
@@ -153,22 +153,22 @@ internal static class PropertyMapReader
         {
             DataType.Boolean       => buf[pos] != 0,
             DataType.Byte          => buf[pos],
-            DataType.Int           => ByteUtil.GetShort (buf, pos),
-            DataType.Long          => ByteUtil.GetInt   (buf, pos),
-            DataType.Money         => Math.Round((decimal)ByteUtil.GetLong(buf, pos) / 10000m, 4),
-            DataType.Float         => ByteUtil.GetFloat (buf, pos),
+            DataType.Int16           => ByteUtil.GetShort (buf, pos),
+            DataType.Int32          => ByteUtil.GetInt   (buf, pos),
+            DataType.Currency         => Math.Round((decimal)ByteUtil.GetLong(buf, pos) / 10000m, 4),
+            DataType.Single         => ByteUtil.GetFloat (buf, pos),
             DataType.Double        => ByteUtil.GetDouble(buf, pos),
-            DataType.ShortDateTime => TryFromOADate(ByteUtil.GetDouble(buf, pos)),
+            DataType.DateTime => TryFromOADate(ByteUtil.GetDouble(buf, pos)),
             DataType.Guid          => new Guid(buf.Slice(pos, pos + Math.Min(16, len))),
-            DataType.Text          => format.Version == JetVersion.Jet3
+            DataType.Text          => format.Version == FileFormat.Access97
                                           ? format.TextEncoding.GetString(buf, pos, len)
                                           : Encoding.Unicode.GetString(buf, pos, len),
-            DataType.Memo          => format.Version == JetVersion.Jet3
+            DataType.Memo          => format.Version == FileFormat.Access97
                                           ? format.TextEncoding.GetString(buf, pos, len)
                                           : Encoding.Unicode.GetString(buf, pos, len),
             DataType.Binary        => buf.Slice(pos, pos + len),
-            DataType.Ole           => buf.Slice(pos, pos + len),
-            DataType.BigInt        => ByteUtil.GetLong  (buf, pos),
+            DataType.OleObject           => buf.Slice(pos, pos + len),
+            DataType.Int64        => ByteUtil.GetLong  (buf, pos),
             _                      => null,
         };
     }

@@ -207,13 +207,13 @@ internal sealed class TdefEditor
         var def = new byte[_format.SizeColumnHeader];
         def[0] = (byte)column.DataType;
         ByteUtil.PutInt(def, 1, MagicTableNumber);
-        ByteUtil.PutShort(def, _format.OffsetColumnNumber, (short)column.ColumnNumber);
+        ByteUtil.PutShort(def, _format.OffsetColumnNumber, (short)column.Ordinal);
         // Access gives a fixed-length column, here, the count of variable-length places there were when it was made.
         ByteUtil.PutShort(def, _format.OffsetColumnVarTableIndex, column.IsVariableLength ? column.VarLenTableIndex : (short)maxVar);
         ByteUtil.PutShort(def, _format.OffsetColumnVarTableIndex + 2, (short)columnId);
         if (column.DataType is DataType.Text or DataType.Memo)
             column.SortOrder.Write(def, _format.OffsetColumnSortOrder, _format);
-        else if (column.DataType == DataType.Numeric)
+        else if (column.DataType == DataType.Decimal)
         {
             def[_format.OffsetColumnPrecision] = column.Precision;
             def[_format.OffsetColumnScale]     = column.Scale;
@@ -227,7 +227,7 @@ internal sealed class TdefEditor
         def[_format.OffsetColumnFlags + 1] =
             (byte)(column.DataType is DataType.Text or DataType.Memo && column.IsCompressedUnicode ? 0x01 : 0x00);
         ByteUtil.PutShort(def, _format.OffsetColumnFixedDataOffset, column.IsVariableLength ? (short)0 : column.FixedDataOffset);
-        ByteUtil.PutShort(def, _format.OffsetColumnLength, isLong ? (short)0 : (short)column.Length);
+        ByteUtil.PutShort(def, _format.OffsetColumnLength, isLong ? (short)0 : (short)column.LengthInBytes);
 
         Insert(_columnNames, def);
         Insert(_columnNamesEnd + def.Length, name);
@@ -235,7 +235,7 @@ internal sealed class TdefEditor
         {
             var maps  = longValueMaps ?? throw new ArgumentNullException(nameof(longValueMaps));
             var entry = new byte[LvalEntrySize];
-            ByteUtil.PutShort(entry, 0, (short)column.ColumnNumber);
+            ByteUtil.PutShort(entry, 0, (short)column.Ordinal);
             entry[2] = (byte)maps.OwnedRow;
             ByteUtil.Put3ByteInt(entry, 3, maps.OwnedPage);
             entry[6] = (byte)maps.FreeRow;
@@ -243,7 +243,7 @@ internal sealed class TdefEditor
             Insert(_end + def.Length + name.Length - 2, entry);   // before the 0xFFFF that ends the definition
         }
 
-        ByteUtil.PutShort(_page, _format.TdefOffsetNumVarCols - 2, (short)(column.ColumnNumber + 1));
+        ByteUtil.PutShort(_page, _format.TdefOffsetNumVarCols - 2, (short)(column.Ordinal + 1));
         ByteUtil.PutShort(_page, _format.TdefOffsetNumVarCols, (short)(maxVar + (column.IsVariableLength ? 1 : 0)));
         ByteUtil.PutShort(_page, _format.TdefOffsetNumCols, (short)(_columnCount + 1));
         Parse();
@@ -270,7 +270,7 @@ internal sealed class TdefEditor
         int p = _format.SkipBeforeIndex;
         for (int c = 0; c < IndexDefinition.MaxColumns; c++)
         {
-            ByteUtil.PutShort(block, p, c < columns.Count ? (short)columns[c].Column.ColumnNumber : unchecked((short)0xFFFF));
+            ByteUtil.PutShort(block, p, c < columns.Count ? (short)columns[c].Column.Ordinal : unchecked((short)0xFFFF));
             block[p + 2] = c < columns.Count ? columns[c].Flags : (byte)0;
             p += 3;
         }

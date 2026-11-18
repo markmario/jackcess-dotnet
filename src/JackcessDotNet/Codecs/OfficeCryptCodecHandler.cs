@@ -383,7 +383,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         /// descriptor is NOT recomputed (it would require deriving the HMAC key
         /// from the master key and re-hashing the whole encrypted stream),
         /// so a re-encrypted file may be rejected by Office's integrity check.
-        /// Our own Database.Open(path, password) doesn't enforce HMAC, so the
+        /// Our own Database.Open does not enforce HMAC, so the
         /// round-trip through this library is lossless.
         /// </summary>
         public static byte[] EncryptPage(

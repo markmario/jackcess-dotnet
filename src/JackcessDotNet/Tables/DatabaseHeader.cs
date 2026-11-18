@@ -13,8 +13,8 @@ namespace JackcessDotNet;
 /// <para>
 /// Access makes no empty file in the format of Access 2016 or of Access 2019. It makes one in the 2010 format, and
 /// sets the version in the header when a table first has a column the older format lacks - 0x05 for a Large
-/// Number, 0x06 for a Date/Time Extended - changing nothing else in the header. <see cref="JetVersion.Jet16"/> and
-/// <see cref="JetVersion.Jet17"/> are therefore the Access 2010 file with that version, which is what Jackcess's
+/// Number, 0x06 for a Date/Time Extended - changing nothing else in the header. <see cref="FileFormat.Access2016"/> and
+/// <see cref="FileFormat.Access2019"/> are therefore the Access 2010 file with that version, which is what Jackcess's
 /// own empty files for them are.
 /// </para>
 /// </summary>
@@ -48,9 +48,9 @@ internal sealed class DatabaseHeader
 
         string resourceName = _format.Version switch
         {
-            JetVersion.Jet4  => "JackcessDotNet.Resources.empty2003.mdb",
-            JetVersion.Jet12 => "JackcessDotNet.Resources.empty2007.accdb",
-            JetVersion.Jet14 or JetVersion.Jet16 or JetVersion.Jet17 => "JackcessDotNet.Resources.empty2010.accdb",
+            FileFormat.Access2000  => "JackcessDotNet.Resources.empty2003.mdb",
+            FileFormat.Access2007 => "JackcessDotNet.Resources.empty2007.accdb",
+            FileFormat.Access2010 or FileFormat.Access2016 or FileFormat.Access2019 => "JackcessDotNet.Resources.empty2010.accdb",
             _ => throw new InvalidOperationException($"Unsupported format {_format.Version}.")
         };
 
@@ -61,8 +61,8 @@ internal sealed class DatabaseHeader
 
         file.ReplaceWith(stream);
 
-        if (_format.Version == JetVersion.Jet16) RaiseVersion(file, Version2016);
-        if (_format.Version == JetVersion.Jet17) RaiseVersion(file, Version2019);
+        if (_format.Version == FileFormat.Access2016) RaiseVersion(file, Version2016);
+        if (_format.Version == FileFormat.Access2019) RaiseVersion(file, Version2019);
     }
 
     /// <summary>

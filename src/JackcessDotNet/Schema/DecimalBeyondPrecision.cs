@@ -28,7 +28,7 @@ public sealed class DecimalBeyondPrecision
     public Column Column { get; }
 
     /// <summary>
-    /// The row's place among the table's rows, counted from 0, as <see cref="JackcessDotNet.Table.ReadAllRows"/>
+    /// The row's place among the table's rows, counted from 0, as <see cref="JackcessDotNet.Table.Rows"/>
     /// returns them and a cursor reads them. It is the row's place until rows are deleted or rewritten.
     /// </summary>
     public int RowIndex { get; }

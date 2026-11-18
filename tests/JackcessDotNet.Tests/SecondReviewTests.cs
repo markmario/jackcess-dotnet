@@ -37,9 +37,9 @@ public sealed class SecondReviewTests : IDisposable
         return path;
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
-    private static Column Text(string name, int chars) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Text(string name, int chars) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     private static object? Value(Row row, string column) => row.TryGetValue(column, out var value) ? value : null;
 
@@ -98,9 +98,9 @@ public sealed class SecondReviewTests : IDisposable
 
         AssertKeyHoldsEveryRow(file, tdef, root);
         Assert.Empty(JetPages.RuleBreaks(file, root, tdef));
-        var cursor = db.GetTable("Table14").NewIndexCursor();
-        Assert.Equal("changed", cursor.FindRowByPrimaryKey(updated)?["data"]);
-        Assert.Null(cursor.FindRowByPrimaryKey(deleted));
+        var cursor = db.GetTable("Table14").CreateIndexCursor();
+        Assert.Equal("changed", cursor.Table.FindRowByPrimaryKey(updated)?["data"]);
+        Assert.Null(cursor.Table.FindRowByPrimaryKey(deleted));
     }
 
     // ── Pages that share a prefix ───────────────────────────────────────────
@@ -111,7 +111,7 @@ public sealed class SecondReviewTests : IDisposable
     [Fact]
     public void A_key_sharing_no_prefix_with_a_packed_page_splits_it_until_every_page_fits()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Packed", new[] { Text("K", 255), Long("N") }, primaryKey: "K");
         string shared = "M" + new string('p', 245);
         for (int i = 0; i < 4000; i++)
@@ -139,15 +139,15 @@ public sealed class SecondReviewTests : IDisposable
         AssertKeyHoldsEveryRow(file, tdef, block.Root);
         var mapped = UsageMap.GetOwnedPages(file.ReadPage(block.UmapPage), block.UmapRow, file.Format, file);
         Assert.Equal(JetPages.TreePages(file, block.Root).Select(p => p.Number).OrderBy(n => n), mapped.OrderBy(n => n));
-        Assert.Equal(-1, table.NewIndexCursor().FindRowByPrimaryKey("A")?["N"]);
-        Assert.Equal(1234, table.NewIndexCursor().FindRowByPrimaryKey(shared + "1234")?["N"]);
+        Assert.Equal(-1, table.FindRowByPrimaryKey("A")?["N"]);
+        Assert.Equal(1234, table.FindRowByPrimaryKey(shared + "1234")?["N"]);
     }
 
     // The engine's pages store the bytes their keys share once, as Access's do.
     [Fact]
     public void The_engine_s_key_pages_store_a_shared_prefix_once()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Packed", new[] { Text("K", 100), Long("N") }, primaryKey: "K");
         for (int i = 0; i < 300; i++)
             table.Insert(new Row { ["K"] = "PRODUCTION01.001.001." + i.ToString("D4"), ["N"] = i });
@@ -165,7 +165,7 @@ public sealed class SecondReviewTests : IDisposable
     [Fact]
     public void A_table_an_earlier_version_registered_keeps_its_name()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Earlier", new[] { Long("Id") });
         var file = db.File;
         var row = JetPages.Rows(file, JetFormat.PageSystemCatalog).Single(r => (string?)Value(r.Values, "Name") == "Earlier");
@@ -179,7 +179,7 @@ public sealed class SecondReviewTests : IDisposable
 
         Assert.Throws<InvalidOperationException>(() => db.CreateTable("EARLIER", new[] { Long("Id") }));
         Assert.Equal(pages, file.PageCount);
-        Assert.Single(db.ListTables(), n => string.Equals(n, "Earlier", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(db.GetTableNames(), n => string.Equals(n, "Earlier", StringComparison.OrdinalIgnoreCase));
     }
 
     // ── FindRowByEntry ──────────────────────────────────────────────────────
@@ -197,9 +197,9 @@ public sealed class SecondReviewTests : IDisposable
         Assert.NotEqual(table.Columns[0].Name, column);
 
         int found = 0;
-        foreach (var row in table.ReadAllRows().Where(r => Value(r, column) is string s && s.Length > 0))
+        foreach (var row in table.Rows.Where(r => Value(r, column) is string s && s.Length > 0))
         {
-            var hit = table.NewIndexCursor("DataIndex").FindRowByEntry(row[column]!);
+            var hit = table.CreateIndexCursor("DataIndex").FindRowByEntry(row[column]!);
             Assert.NotNull(hit);
             Assert.Equal(row[column], hit![column]);
             found++;
@@ -215,7 +215,7 @@ public sealed class SecondReviewTests : IDisposable
     [Fact]
     public void A_deep_key_emptied_down_to_one_leaf_keeps_its_tree_whole()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Deep", new[] { Text("K", 200), Long("N") }, primaryKey: "K");
         for (int i = 0; i < 400; i++)
             table.Insert(new Row { ["K"] = $"{i:D4}" + new string((char)('a' + i % 26), 190), ["N"] = i });
@@ -254,7 +254,7 @@ public sealed class SecondReviewTests : IDisposable
     [Fact]
     public void A_root_that_collapses_into_a_node_takes_its_level()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Deep", new[] { Text("K", 200), Long("N") }, primaryKey: "K");
         for (int i = 0; i < 400; i++)
             table.Insert(new Row { ["K"] = $"{i:D4}" + new string((char)('a' + i % 26), 190), ["N"] = i });
@@ -283,7 +283,7 @@ public sealed class SecondReviewTests : IDisposable
     public void A_text_key_with_no_sort_order_is_kept_in_General_Legacy()
     {
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Coded", new[] { Text("Code", 10), Long("N") }, primaryKey: "Code");
             table.Insert(new Row { ["Code"] = "a", ["N"] = 1 });
@@ -293,8 +293,8 @@ public sealed class SecondReviewTests : IDisposable
         {
             var table = db.GetTable("Coded");
             table.Insert(new Row { ["Code"] = "b", ["N"] = 2 });
-            Assert.Equal(1, table.NewIndexCursor().FindRowByPrimaryKey("a")?["N"]);
-            Assert.Equal(2, table.NewIndexCursor().FindRowByPrimaryKey("b")?["N"]);
+            Assert.Equal(1, table.FindRowByPrimaryKey("a")?["N"]);
+            Assert.Equal(2, table.FindRowByPrimaryKey("b")?["N"]);
         }
     }
 
@@ -323,8 +323,8 @@ public sealed class SecondReviewTests : IDisposable
             columns = old.GetTable("Table2").Columns;
         Assert.Contains(columns, c => c.DataType == DataType.Text);
 
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
-        db.CreateTable("Copied", columns);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
+        db.CreateTable("Copied", ColumnDefinitions.Of(columns));
         byte[] tdef = db.File.ReadPage(TdefOf(db.File, "Copied"));
         for (int i = 0; i < columns.Count; i++)
             if (columns[i].DataType is DataType.Text or DataType.Memo)
@@ -336,7 +336,7 @@ public sealed class SecondReviewTests : IDisposable
     public void The_low_level_key_methods_refuse_a_text_key_in_another_order()
     {
         string path = NewPath();
-        using (var db = Database.Create(path, JetVersion.Jet4))
+        using (var db = Database.Create(path, FileFormat.Access2000))
         {
             var table = db.CreateTable("Coded", new[] { Text("Code", 10), Long("N") }, primaryKey: "Code");
             table.Insert(new Row { ["Code"] = "a", ["N"] = 1 });
@@ -358,11 +358,11 @@ public sealed class SecondReviewTests : IDisposable
     [Fact]
     public void A_table_its_definition_cannot_hold_is_refused_before_a_page_is_added()
     {
-        using var db = Database.Create(NewPath(), JetVersion.Jet4);
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
         int pages = db.File.PageCount;
 
         var eleven = Enumerable.Range(0, 11).Select(i => Long($"K{i}")).ToArray();
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToList()));
+        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
         Assert.Equal(pages, db.File.PageCount);
 
         var named = Enumerable.Range(0, 120).Select(i => Long($"{i:D3}" + new string('x', 60))).ToArray();

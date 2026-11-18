@@ -29,8 +29,8 @@ public sealed class IncompleteIndexTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name, int chars = 20) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name, int chars = 20) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     /// <summary>Declares a relationship as Access records one: a row of MSysRelationships for each pair of columns.</summary>
     private static void Relate(Database db, string name, string parent, string child, int flags, string parentColumn, string childColumn)
@@ -49,7 +49,7 @@ public sealed class IncompleteIndexTests : IDisposable
     /// </summary>
     private void ParentAndChild(int flags)
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
         var child  = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name") }, new[] { "Id" },
                                     new[] { new IndexDefinition("ChildK", "K") });
@@ -82,21 +82,21 @@ public sealed class IncompleteIndexTests : IDisposable
     private static void UpdateAsEarlierReleasesDid(Table table, string primaryKey, object key, Row newValues)
     {
         var indexes = table.IndexEntries;
-        Row before = table.ReadAllRows().Single(row => Equals(row[primaryKey], key));
+        Row before = table.Rows.Single(row => Equals(row[primaryKey], key));
         int was = PointerOf(table, primaryKey, key);
 
         table.UpdateByPrimaryKey(key, newValues);
 
-        Row after = table.ReadAllRows().Single(row => Equals(row[primaryKey], key));
+        Row after = table.Rows.Single(row => Equals(row[primaryKey], key));
         indexes.Remove(indexes.EntriesFor(after, enforce: false).Where(entry => !entry.Tree.IsPrimaryKey).ToList(), PointerOf(table, primaryKey, key));
         indexes.Add(indexes.EntriesFor(before, enforce: false).Where(entry => !entry.Tree.IsPrimaryKey).ToList(), was);
     }
 
     private static int PointerOf(Table table, string column, object value)
     {
-        var cursor = table.NewCursor();
-        while (cursor.GetNextRow() is { } row)
-            if (Equals(row[column], value)) return cursor.CurrentRowPointer;
+        var cursor = table.CreateCursor();
+        while (cursor.MoveNext())
+            if (Equals(cursor.Current![column], value)) return cursor.CurrentRowPointer;
         throw new InvalidOperationException($"No row of {table.Name} has {column} = {value}.");
     }
 
@@ -119,7 +119,7 @@ public sealed class IncompleteIndexTests : IDisposable
     private List<string> Rows(string table)
     {
         using var db = Database.Open(_path);
-        return db.GetTable(table).ReadAllRows()
+        return db.GetTable(table).Rows.ToList()
             .Select(row => string.Join(", ", row.OrderBy(v => v.Key, StringComparer.Ordinal).Select(v => $"{v.Key}={v.Value}")))
             .OrderBy(line => line, StringComparer.Ordinal)
             .ToList();
@@ -152,10 +152,10 @@ public sealed class IncompleteIndexTests : IDisposable
         using var db = Database.Open(_path);
         var child = db.GetTable("Child");
         Assert.Equal(7, child.RowCount);
-        Assert.Equal(7, child.ReadAllRows().Count);
+        Assert.Equal(7, child.Rows.Count());
         Assert.Equal(7, EntriesIn(db, child, "PrimaryKey"));
         Assert.Equal(6, EntriesIn(db, child, "ChildK"));
-        Assert.NotNull(child.NewIndexCursor().FindRowByPrimaryKey(5));
+        Assert.NotNull(child.FindRowByPrimaryKey(5));
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public sealed class IncompleteIndexTests : IDisposable
     [Fact]
     public void a_child_an_earlier_release_re_keyed_is_found_though_the_index_has_an_entry_for_every_row_by_count()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var child  = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name") }, new[] { "Id" },
@@ -251,7 +251,7 @@ public sealed class IncompleteIndexTests : IDisposable
     /// <summary>Parent(Id, Code), Code in a unique index a relationship refers to; parent 2 added as an earlier release added a row.</summary>
     private void ParentKeyedByAUniqueIndex()
     {
-        using var db = Database.Create(_path, JetVersion.Jet4);
+        using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("Id"), Long("Code") }, new[] { "Id" },
                                     new[] { new IndexDefinition("ParentCode", "Code") { IsUnique = true } });
         db.CreateTable("Child", new[] { Long("Id"), Long("Code") }, new[] { "Id" }, new[] { new IndexDefinition("ChildCode", "Code") });
@@ -293,7 +293,7 @@ public sealed class IncompleteIndexTests : IDisposable
     [Fact]
     public void a_duplicate_of_a_row_left_out_of_a_unique_index_is_refused()
     {
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K") }, primaryKey: "K");
             var child  = db.CreateTable("Child", new[] { Long("Id"), Long("K") }, new[] { "Id" },
@@ -321,7 +321,7 @@ public sealed class IncompleteIndexTests : IDisposable
     public void an_index_that_holds_every_row_is_checked_once_and_then_used_without_reading_the_table()
     {
         const int Parents = 2_000, ChildrenEach = 5;
-        using (var db = Database.Create(_path, JetVersion.Jet4))
+        using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
             var child  = db.CreateTable("Child", new[] { Long("Id"), Long("K"), Text("Name", 100) }, new[] { "Id" },
@@ -379,7 +379,7 @@ public sealed class IncompleteIndexTests : IDisposable
             using (db)
             {
                 db.VerifyIndexes = true;
-                foreach (string name in db.ListTables(includeSystem: true))
+                foreach (string name in db.GetTableNames().Concat(db.GetSystemTableNames()))
                 {
                     var table = db.GetTable(name);
                     if (table.Definition.HasUnreadIndexes) continue;

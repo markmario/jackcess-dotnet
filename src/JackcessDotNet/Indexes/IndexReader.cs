@@ -45,7 +45,7 @@ internal sealed class IndexReader
     /// <summary>
     /// True when <see cref="FindRowPointers"/> can resolve a key for this index.
     /// Single- and multi-column indexes are supported; each column must be one
-    /// of the encodable types (Byte/Int/Long/BigInt/ExtendedDateTime/Text), and a Text column must sort in
+    /// of the encodable types (Byte/Int16/Int32/Int64/DateTimeExtended/Text), and a Text column must sort in
     /// an order whose keys this library makes (<see cref="TextIndexCodes.For"/>): a
     /// key made in one order is not found among keys sorted in another.
     /// </summary>
@@ -54,7 +54,7 @@ internal sealed class IndexReader
 
     /// <summary>True when a key on <paramref name="column"/> can be made as Access made the index's.</summary>
     internal static bool CanResolve(Column column)
-        => column.DataType is DataType.Byte or DataType.Int or DataType.Long or DataType.BigInt or DataType.ExtendedDateTime
+        => column.DataType is DataType.Byte or DataType.Int16 or DataType.Int32 or DataType.Int64 or DataType.DateTimeExtended
         || column.DataType == DataType.Text && TextIndexCodes.For(column.SortOrder) is not null;
 
     /// <summary>

@@ -43,10 +43,15 @@ public sealed class Index
     internal int UsedPagesUmapPage { get; }
     internal int UsedPagesUmapRow  { get; }
 
+    /// <summary>Whether the index is the table's primary key.</summary>
     public bool IsPrimaryKey => IndexType == 1;
+    /// <summary>Whether the index is one Access keeps for a relationship, on either of its tables.</summary>
     public bool IsForeignKey => IndexType == 2;
+    /// <summary>Whether the index refuses a second row with the same values: a primary key always does.</summary>
     public bool IsUnique     => IsPrimaryKey || (Flags & 0x01) != 0;
-    public bool IgnoresNulls => (Flags & 0x02) != 0;
+    /// <summary>Whether the index holds no entry for a row whose index columns are all null.</summary>
+    public bool IgnoreNulls  => (Flags & 0x02) != 0;
+    /// <summary>Whether the index refuses a row with a null in any of its columns.</summary>
     public bool IsRequired   => (Flags & 0x08) != 0;
 
     internal Index(string name, IReadOnlyList<IndexColumn> columns, int rootPageNumber,
@@ -64,6 +69,7 @@ public sealed class Index
         UsedPagesUmapRow  = usedPagesUmapRow;
     }
 
+    /// <summary>The index as its name, kind, columns and root page.</summary>
     public override string ToString()
         => $"{Name} [{IndexType switch { 1 => "PK", 2 => "FK", _ => "IDX" }}] " +
            $"on ({string.Join(", ", Columns)}) root=p{RootPageNumber}";
@@ -89,6 +95,7 @@ public sealed class IndexColumn
         Flags  = flags;
     }
 
+    /// <summary>The column's name and the way it sorts.</summary>
     public override string ToString()
         => $"{Column.Name}{(IsAscending ? " ASC" : " DESC")}";
 }

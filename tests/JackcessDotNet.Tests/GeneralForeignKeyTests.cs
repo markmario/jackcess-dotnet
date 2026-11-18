@@ -24,9 +24,9 @@ public sealed class GeneralForeignKeyTests : IDisposable
             if (File.Exists(path)) File.Delete(path);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(255).Build();
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 255 };
 
     /// <summary>
     /// Parent(Code, Name) and Child(Id, Code, Name), Child.Code referring to Parent.Code with cascading updates and
@@ -38,7 +38,7 @@ public sealed class GeneralForeignKeyTests : IDisposable
         string path = Path.Combine(Path.GetTempPath(), $"gfk_{Guid.NewGuid():N}{(general ? ".accdb" : ".mdb")}");
         _paths.Add(path);
         if (general) File.Copy(TestCorpus.File("V2010", "common1V2010.accdb") ?? throw new FileNotFoundException("common1V2010.accdb"), path);
-        else Database.Create(path, JetVersion.Jet4).Dispose();
+        else Database.Create(path, FileFormat.Access2000).Dispose();
 
         using var db = Database.Open(path);
         var parent = db.CreateTable("Parent", new[] { Text("Code"), Text("Name") }, primaryKey: "Code");
@@ -71,7 +71,7 @@ public sealed class GeneralForeignKeyTests : IDisposable
     }
 
     private static List<string> Codes(Database db, string table)
-        => db.GetTable(table).ReadAllRows().Select(r => r.TryGetValue("Code", out var code) ? (string?)code ?? "(null)" : "(null)")
+        => db.GetTable(table).Rows.Select(r => r.TryGetValue("Code", out var code) ? (string?)code ?? "(null)" : "(null)")
             .OrderBy(c => c, StringComparer.Ordinal).ToList();
 
     private static void AssertIndexesHoldTheRows(Database db)

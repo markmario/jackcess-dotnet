@@ -8,7 +8,7 @@ namespace JackcessDotNet;
 /// <summary>
 /// High-level import helpers that turn a <see cref="DataTable"/>, <see cref="DataSet"/>,
 /// or any <c>IEnumerable&lt;T&gt;</c> into a fully-populated Access table without the
-/// caller having to spell out a <see cref="ColumnBuilder"/> per column.
+/// caller having to spell out a <see cref="ColumnDefinition"/> per column.
 ///
 /// Schema is inferred via <see cref="TypeMapper"/>:
 /// <list type="bullet">
@@ -40,7 +40,7 @@ public static class DatabaseImporter
     /// the disposal.
     /// </summary>
     public static Database CreateFromDataTable(
-        string path, DataTable table, JetVersion version = JetVersion.Jet4,
+        string path, DataTable table, FileFormat version = FileFormat.Access2000,
         string? tableName = null, string? primaryKey = null,
         ImportOptions? options = null)
     {
@@ -62,7 +62,7 @@ public static class DatabaseImporter
     /// <see cref="DataTable"/> in <paramref name="dataSet"/>.
     /// </summary>
     public static Database CreateFromDataSet(
-        string path, DataSet dataSet, JetVersion version = JetVersion.Jet4,
+        string path, DataSet dataSet, FileFormat version = FileFormat.Access2000,
         ImportOptions? options = null)
     {
         var db = Database.Create(path, version);
@@ -83,7 +83,7 @@ public static class DatabaseImporter
     /// <paramref name="items"/> as a single table.
     /// </summary>
     public static Database CreateFromCollection<T>(
-        string path, IEnumerable<T> items, JetVersion version = JetVersion.Jet4,
+        string path, IEnumerable<T> items, FileFormat version = FileFormat.Access2000,
         string? tableName = null, string? primaryKey = null,
         ImportOptions? options = null)
     {
@@ -144,7 +144,7 @@ public static class DatabaseImporter
             {
                 options.OnUnmappableColumn?.Invoke(dc.ColumnName, dc.DataType);
                 if (!options.FallbackUnmappableToString) continue;
-                col = new ColumnBuilder(dc.ColumnName, DataType.Memo).Build();
+                col = new ColumnDefinition(dc.ColumnName, DataType.Memo).ToColumn(nameof(table));
                 fellBack = true;
             }
             columns.Add(col);
@@ -156,7 +156,7 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
 
-        var t = db.CreateTable(name, columns, primaryKey: pk);
+        var t = db.CreateTableOf(name, columns, primaryKey: pk);
 
         // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the
         // new table takes them as given, and its counter ends at the highest: rows added later, here or in
@@ -241,7 +241,7 @@ public static class DatabaseImporter
 
         string? pk  = primaryKey ?? pkFromAttr;
 
-        var t = db.CreateTable(name, columns, primaryKey: pk);
+        var t = db.CreateTableOf(name, columns, primaryKey: pk);
 
         // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
         // number - is numbered by the table.
@@ -269,13 +269,13 @@ public static class DatabaseImporter
 
     /// <summary>
     /// Case-insensitive check for whether <paramref name="db"/> already has a
-    /// table named <paramref name="name"/>. <see cref="Database.ListTables"/>
+    /// table named <paramref name="name"/>. <see cref="Database.GetTableNames"/>
     /// already returns the case as it appears in MSysObjects, so we compare
     /// with <see cref="StringComparison.OrdinalIgnoreCase"/>.
     /// </summary>
     private static bool TableExists(Database db, string name)
     {
-        foreach (var existing in db.ListTables())
+        foreach (var existing in db.GetTableNames())
             if (string.Equals(existing, name, StringComparison.OrdinalIgnoreCase))
                 return true;
         return false;
@@ -348,7 +348,7 @@ public static class DatabaseImporter
         try
         {
             var identity = keepIdentity
-                ? target.Columns.FirstOrDefault(c => c.IsAutoNumber && c.DataType == DataType.Long)
+                ? target.Columns.FirstOrDefault(c => c.IsAutoNumber && c.DataType == DataType.Int32)
                 : null;
             if (identity is not null)
             {
@@ -512,7 +512,7 @@ public static class DatabaseImporter
             {
                 options.OnUnmappableColumn?.Invoke(colName, p.PropertyType);
                 if (!options.FallbackUnmappableToString) continue;
-                col = new ColumnBuilder(colName, DataType.Memo).Build();
+                col = new ColumnDefinition(colName, DataType.Memo).ToColumn("items");
                 fellBack = true;
             }
             columns.Add(col);

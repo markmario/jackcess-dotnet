@@ -18,10 +18,10 @@ internal static class IndexKeys
 
     /// <summary>True for the column types <see cref="Encode"/> can write a key for.</summary>
     public static bool CanEncode(DataType type)
-        => type is DataType.Byte or DataType.Int or DataType.Long or DataType.Money
-                or DataType.Float or DataType.Double or DataType.ShortDateTime
+        => type is DataType.Byte or DataType.Int16 or DataType.Int32 or DataType.Currency
+                or DataType.Single or DataType.Double or DataType.DateTime
                 or DataType.Boolean or DataType.Text or DataType.Memo or DataType.Guid
-                or DataType.BigInt or DataType.ExtendedDateTime;
+                or DataType.Int64 or DataType.DateTimeExtended;
 
     /// <summary>
     /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
@@ -185,20 +185,20 @@ internal static class IndexKeys
             case DataType.Byte:
                 bytes = new[] { Convert.ToByte(value) };
                 break;
-            case DataType.Int:
+            case DataType.Int16:
                 bytes = SignFlipped(BigEndian(Convert.ToInt16(value)));
                 break;
-            case DataType.Long:
+            case DataType.Int32:
                 bytes = SignFlipped(BigEndian(Convert.ToInt32(value)));
                 break;
-            case DataType.Money:
+            case DataType.Currency:
                 // The number the row stores: ten-thousandths, in eight bytes.
                 bytes = SignFlipped(BigEndian(MoneyUnits(Convert.ToDecimal(value))));
                 break;
-            case DataType.BigInt:
+            case DataType.Int64:
                 bytes = SignFlipped(BigEndian(Convert.ToInt64(value)));
                 break;
-            case DataType.ExtendedDateTime:
+            case DataType.DateTimeExtended:
                 // The 42 bytes the row stores, in 8-byte segments each followed by a length byte: 9 for a
                 // segment with more after it, and after the last, which is filled out with zeros, the bytes it
                 // has of the value - 2. Text, so the keys sort as the dates do.
@@ -221,14 +221,14 @@ internal static class IndexKeys
                 // No is the greater: Yes is 0x00 and No 0xFF, and the other way round descending. A Yes/No
                 // column holds no null, and its value is read as the row encoder reads it (RowValues).
                 return new[] { ascending ? AscStartFlag : DescStartFlag, RowValues.ToBoolean(value) == ascending ? (byte)0x00 : (byte)0xFF };
-            case DataType.Float:
+            case DataType.Single:
                 bytes = BitConverter.GetBytes(Convert.ToSingle(value));
                 if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
                 return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
             case DataType.Double:
                 bytes = BigEndian(BitConverter.DoubleToInt64Bits(Convert.ToDouble(value)));
                 return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
-            case DataType.ShortDateTime:
+            case DataType.DateTime:
                 // The double the row stores: days since 30 December 1899. A date read from a row comes as that
                 // double itself, since a DateTime does not hold every double Access can have written.
                 double days = value is DateTime date ? date.ToOADate() : Convert.ToDouble(value);

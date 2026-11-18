@@ -39,16 +39,16 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
     private List<string> Rows(string table)
     {
         using var db = Database.Open(_path);
-        return db.GetTable(table).ReadAllRows()
+        return db.GetTable(table).Rows.ToList()
             .OrderBy(row => (int)row["Id"]!)
-            .Select(row => $"{row["Id"]} of {(row.TryGetValue("K", out var k) ? k : "none")}")
+            .Select(row => $"{row["Id"]} of {row["K"] ?? "none"}")
             .ToList();
     }
 
     private List<int> Parents()
     {
         using var db = Database.Open(_path);
-        return db.GetTable("Parent").ReadAllRows().Select(row => (int)row["K"]!).OrderBy(k => k).ToList();
+        return db.GetTable("Parent").Rows.Select(row => (int)row["K"]!).OrderBy(k => k).ToList();
     }
 
     /// <summary>
@@ -61,9 +61,9 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
         var child   = db.GetTable(table);
         var index   = child.Indexes.First(ix => !ix.IsPrimaryKey && ix.Columns.Count == 1 && ix.Columns[0].Column.Name == "K");
         var entries = new IndexWriter(db.File, new PageAllocator(db.File)).RowPointersForKey(index.RootPageNumber, IndexKeys.Encode(index.Columns, new object?[] { k }));
-        var cursor  = child.NewCursor();
+        var cursor  = child.CreateCursor();
         var ids     = new Dictionary<int, int>();
-        while (cursor.GetNextRow() is { } row) ids[cursor.CurrentRowPointer] = (int)row["Id"]!;
+        while (cursor.MoveNext()) ids[cursor.CurrentRowPointer] = (int)cursor.Current!["Id"]!;
         return entries.Select(pointer => ids.TryGetValue(pointer, out int id) ? id.ToString() : "no row").OrderBy(id => id, StringComparer.Ordinal).ToList();
     }
 

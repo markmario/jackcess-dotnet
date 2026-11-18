@@ -43,7 +43,7 @@ public sealed class AccessMadeIndexTests : IDisposable
 
         var proved = new SortedSet<string>();
         var refused = new SortedSet<string>();
-        foreach (var table in db.ListTables().Select(db.GetTable).Where(t => t.Indexes.Count > 0))
+        foreach (var table in db.GetTableNames().Select(db.GetTable).Where(t => t.Indexes.Count > 0))
         {
             var types = table.Indexes.SelectMany(ix => ix.Columns)
                 .Select(c => $"{c.Column.DataType}{(c.IsAscending ? "" : " descending")}").ToList();
@@ -58,13 +58,13 @@ public sealed class AccessMadeIndexTests : IDisposable
             }
         }
 
-        foreach (string type in new[] { "Byte", "Int", "Long", "Money", "Float", "Double", "ShortDateTime", "Boolean", "Text", "Memo", "Guid" })
+        foreach (string type in new[] { "Byte", "Int16", "Int32", "Currency", "Single", "Double", "DateTime", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type, proved);
         // (The corpus has no descending index on an Integer or a Date/Time column; ACE makes those in
         // qcatco/exportmdb.interop's EngineIndexesInAccessTests.)
-        foreach (string type in new[] { "Byte", "Long", "Money", "Float", "Double", "Boolean", "Text", "Memo", "Guid" })
+        foreach (string type in new[] { "Byte", "Int32", "Currency", "Single", "Double", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type + " descending", proved);
-        Assert.Equal(new[] { "Numeric" }, refused);
+        Assert.Equal(new[] { "Decimal" }, refused);
     }
 
     // The four bytes before an index block's columns and before a logical index's numbers: Access writes 1923 and
@@ -92,7 +92,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             try { db = Database.Open(file); }
             catch (Exception e) when (e is NotSupportedException or UnauthorizedAccessException) { continue; }
             using (db)
-                foreach (var table in db.ListTables().Select(db.GetTable).Where(t => t.Indexes.Count > 0 && !t.Definition.HasUnreadIndexes))
+                foreach (var table in db.GetTableNames().Select(db.GetTable).Where(t => t.Indexes.Count > 0 && !t.Definition.HasUnreadIndexes))
                     foreach (var (block, slot) in Magics(db, table))
                     {
                         Assert.True(block == 1923 && slot == 1625, $"{Path.GetFileName(file)} {table.Name}: {block}, {slot}");
@@ -101,8 +101,8 @@ public sealed class AccessMadeIndexTests : IDisposable
         }
         if (TestCorpus.Root is not null) Assert.True(accessIndexes > 100, $"only {accessIndexes} indexes of Access's were looked at");
 
-        using var made = Database.Create(_path, JetVersion.Jet4);
-        var keyed = made.CreateTable("Keyed", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
+        using var made = Database.Create(_path, FileFormat.Access2000);
+        var keyed = made.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
         Assert.Equal(new[] { (1923, 1625) }, Magics(made, keyed));
     }
 
@@ -115,7 +115,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         foreach (string file in TestCorpus.Files("*.mdb", "V1997"))
         {
             using var db = Database.Open(file);
-            foreach (var table in db.ListTables().Select(db.GetTable).Where(t => !t.Definition.HasUnreadIndexes))
+            foreach (var table in db.GetTableNames().Select(db.GetTable).Where(t => !t.Definition.HasUnreadIndexes))
                 foreach (var index in table.Indexes)
                 {
                     Assert.NotEmpty(index.Columns);
@@ -137,7 +137,7 @@ public sealed class AccessMadeIndexTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
-            Column[] Columns() => new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Grp", DataType.Long).Build() };
+            ColumnDefinition[] Columns() => new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Grp", DataType.Int32) };
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Plain", Columns()));
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Keyed", Columns(), primaryKey: "Id"));
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Indexed", Columns(), new[] { "Id" }, new[] { new IndexDefinition("ByGrp", "Grp") }));
@@ -164,13 +164,13 @@ public sealed class AccessMadeIndexTests : IDisposable
         if (db is null) return;
         var table = db.GetTable(tableName);
         var type = table.Columns.Single(c => c.Name == "data").DataType;
-        var accessRows = table.ReadAllRows().Select(r => (string)r["name"]!).ToList();
+        var accessRows = table.Rows.Select(r => (string)r["name"]!).ToList();
 
         object? ValueOf(int i) => i % 9 == 0 ? null : type switch
         {
-            DataType.Float         => (object)((i - 100) * 0.37f),
-            DataType.ShortDateTime => new DateTime(1899, 12, 30).AddDays(i - 100).AddMilliseconds(i * 7919 % 86_400_000),
-            DataType.Money         => (i - 100) * 1234.5678m,
+            DataType.Single         => (object)((i - 100) * 0.37f),
+            DataType.DateTime => new DateTime(1899, 12, 30).AddDays(i - 100).AddMilliseconds(i * 7919 % 86_400_000),
+            DataType.Currency         => (i - 100) * 1234.5678m,
             DataType.Boolean       => i % 2 == 0,
             DataType.Memo          => i % 4 == 0 ? new string('m', 300) + i : $"memo {i % 30}",   // beyond a key's 255 characters, and short
             _                      => throw new InvalidOperationException($"{tableName}.data is {type}"),
@@ -201,13 +201,13 @@ public sealed class AccessMadeIndexTests : IDisposable
 
         string[] words = { "résumé", "Æther", "naïve", "Zürich", "日本", "a-b", "O'Brien", "ß", "Ελληνικά", "\U0001F600", "テスト" };
         var kept = new List<string>();
-        foreach (string tableName in db.ListTables())
+        foreach (string tableName in db.GetTableNames())
         {
             var table = db.GetTable(tableName);
             var data = table.Columns.SingleOrDefault(c => c.Name == "data");
             if (data is null || data.DataType is not (DataType.Text or DataType.Memo) || table.Indexes.Count != 2) continue;
             Assert.True(data.SortOrder.IsGeneral && table.Columns.Single(c => c.Name == "name").SortOrder.IsGeneral);
-            var accessRows = table.ReadAllRows().Select(r => (string)r["name"]!).ToList();
+            var accessRows = table.Rows.Select(r => (string)r["name"]!).ToList();
             if (accessRows.Count > 2000) continue;   // the tables of every character: looked up whole elsewhere
 
             string ValueOf(int i) => data.DataType == DataType.Memo && i % 4 == 0
@@ -255,7 +255,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             if (column)
             {
                 int second = pos + index.IndexDataNumber * 52 + 4 + 3;
-                Assert.Equal(index.Columns[1].Column.ColumnNumber, ByteUtil.GetShort(p, second));
+                Assert.Equal(index.Columns[1].Column.Ordinal, ByteUtil.GetShort(p, second));
                 ByteUtil.PutShort(p, second, 99);
             }
             else
@@ -270,9 +270,9 @@ public sealed class AccessMadeIndexTests : IDisposable
         using var reopened = Database.Open(_path);
         var crafted = reopened.GetTable("Table12");
         Assert.True(crafted.Definition.HasUnreadIndexes);
-        var rows = crafted.ReadAllRows();
+        var rows = crafted.Rows.ToList();
         Assert.Equal(10, rows.Count);
-        Assert.NotNull(crafted.NewIndexCursor().FindRow("row", rows[3]["row"]!));
+        Assert.NotNull(crafted.CreateIndexCursor().FindRow("row", rows[3]["row"]!));
         var before = IndexChecks.AllPages(reopened);
 
         Assert.Throws<NotSupportedException>(() => crafted.Insert(new Row { ["row"] = "another", ["data1"] = "x", ["data2"] = 1 }));
@@ -309,7 +309,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         for (int i = 0; i < 300; i++)
             table.Insert(new Row { ["id"] = 1000 + i, ["data"] = $"row {i}" });
 
-        int accessRow = (int)table.ReadAllRows()[0]["id"]!;
+        int accessRow = (int)table.Rows.ToList()[0]["id"]!;
         table.DeleteRow("id", accessRow);                 // a row Access wrote, with the entries Access wrote for it
         for (int i = 0; i < 300; i += 2)
             table.DeleteRow("id", 1000 + i);
@@ -326,13 +326,13 @@ public sealed class AccessMadeIndexTests : IDisposable
         for (int i = 0; i < 50; i++)
             table.Insert(new Row { ["id"] = 1000 + i, ["data"] = $"row {i}" });
 
-        int accessRow = (int)table.ReadAllRows()[0]["id"]!;
+        int accessRow = (int)table.Rows.ToList()[0]["id"]!;
         table.UpdateByPrimaryKey(accessRow, new Row { ["data"] = "changed" });
         for (int i = 0; i < 50; i += 3)
             table.UpdateByPrimaryKey(1000 + i, new Row { ["id"] = 5000 + i });   // the key itself: every tree's entry is re-keyed
 
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "Table2", expectedRows: 53);
-        var rows = db.GetTable("Table2").ReadAllRows();
+        var rows = db.GetTable("Table2").Rows.ToList();
         Assert.Equal("changed", rows.Single(r => (int)r["id"]! == accessRow)["data"]);
         Assert.Equal("row 3", rows.Single(r => (int)r["id"]! == 5003)["data"]);
         Assert.DoesNotContain(rows, r => (int)r["id"]! == 1003);
@@ -348,7 +348,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         using var db = Open("V2003", "indexCodesV2003.mdb");
         if (db is null) return;
         var table = db.GetTable(tableName);
-        int before = table.ReadAllRows().Count;
+        int before = table.Rows.Count();
 
         for (int i = 0; i < 400; i++)
             table.Insert(new Row { ["row"] = $"new{i:D4}", ["data1"] = i % 5 == 0 ? null : $"d{i % 11}", ["data2"] = i % 3 == 0 ? null : (object)(i - 200) });
@@ -368,7 +368,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         var table = db.GetTable("Table13");   // a GUID column with a unique index, beside the primary key
         Assert.True(table.Indexes.Single(ix => ix.Name == "data").IsUnique);
         table.AllowAutoNumberInsert = true;   // the column is an AutoNumber: the row brings a GUID the table has
-        var taken = table.ReadAllRows().First(r => r["data"] is not null)["data"]!;
+        var taken = table.Rows.First(r => r["data"] is not null)["data"]!;
         var before = IndexChecks.AllPages(db);
 
         var refused = Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["name"] = "a new name", ["data"] = taken }));
@@ -388,7 +388,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         var table = db.GetTable("Table14");   // 66,429 rows; both its indexes are trees of several levels
         Assert.True(IndexChecks.Height(db, table.Indexes.Single(ix => ix.Name == "data").RootPageNumber) >= 2);
         Assert.True(IndexChecks.Height(db, table.Indexes.Single(ix => ix.IsPrimaryKey).RootPageNumber) >= 1);
-        var first = table.ReadAllRows().Take(40).Select(r => (string)r["name"]!).ToList();
+        var first = table.Rows.Take(40).Select(r => (string)r["name"]!).ToList();
 
         for (int i = 0; i < 3_000; i++)
             table.Insert(new Row { ["name"] = $"engine row {i:D5}", ["data"] = $"{(char)('a' + i % 26)}{i * 7919 % 10007}" });
@@ -408,7 +408,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         using var db = Open("V2003", "indexCodesV2003.mdb");
         if (db is null) return;
         var table = db.GetTable(tableName);
-        int before = table.ReadAllRows().Count;
+        int before = table.Rows.Count();
         double[] numbers = { 0d, -0.5, 0.5, -1e300, 1e300, 4.9e-324, -4.9e-324, 1d / 3, -1d / 3, 12345.678, -12345.678, double.MaxValue, double.MinValue };
 
         for (int i = 0; i < numbers.Length; i++)
@@ -449,9 +449,9 @@ public sealed class AccessMadeIndexTests : IDisposable
             var table = db.GetTable(tableName);
             Assert.Throws<NotSupportedException>(() => table.Validate(new Row()));   // it is one of those tables
 
-            var all = table.ReadAllRows();
+            var all = table.Rows.ToList();
             Assert.Equal(rows, all.Count);
-            Assert.Equal(rows, table.NewCursor().Count());
+            Assert.Equal(rows, table.CreateCursor().Count());
             Assert.Equal(rows, table.RowCount);   // blobV2007: 8 of its 11 were read while rows Access had moved to another page were passed over
             _ = table.Properties;
 
@@ -459,7 +459,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             foreach (var row in all.Take(5))
             {
                 var column = table.Columns.First(c => row.TryGetValue(c.Name, out var v) && v is string or int or short);
-                Assert.NotNull(table.NewIndexCursor().FindRow(column.Name, row[column.Name]!));
+                Assert.NotNull(table.CreateIndexCursor().FindRow(column.Name, row[column.Name]!));
             }
         }
 
@@ -476,7 +476,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         using var db = Open("V2003", "indexCodesV2003.mdb");
         if (db is null) return;
         var table = db.GetTable(tableName);
-        var row = table.ReadAllRows()[0];
+        var row = table.Rows.ToList()[0];
         var before = IndexChecks.AllPages(db);
 
         Assert.Throws<NotSupportedException>(() => table.Insert(new Row { ["name"] = "another" }));
