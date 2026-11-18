@@ -176,14 +176,31 @@ public sealed class CreateRelationshipTests : IDisposable
     }
 
     [Fact]
-    public void A_relationship_shares_a_plain_index_on_its_foreign_key_and_no_unique_one()
+    public void A_relationship_shares_a_plain_index_on_its_foreign_key()
     {
-        using var db = ParentAndChild(new IndexDefinition("ByK", "K"), new IndexDefinition("UniqueCodeAndId", "Code") { IsRequired = false });
+        // An index on the foreign key that ignores nulls comes first: it is passed over for the plain one.
+        using var db = ParentAndChild(new IndexDefinition("IgnoringNulls", "K") { IgnoreNulls = true }, new IndexDefinition("ByK", "K"));
         var child = db.GetTable("Child");
         int byK = child.Indexes.Single(ix => ix.Name == "ByK").RootPageNumber;
 
         db.CreateRelationship(ByK());
         Assert.Equal(byK, child.Indexes.Single(ix => ix.Name == "ParentChild").RootPageNumber);
+        Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Child", expectedRows: 42));
+    }
+
+    // As Access was seen to do: the foreign key's index shares no tree but a plain index's.
+    [Fact]
+    public void A_relationship_builds_its_own_index_when_the_one_on_its_foreign_key_is_not_plain()
+    {
+        using var db = ParentAndChild(new IndexDefinition("IgnoringNulls", "K") { IgnoreNulls = true });
+        var child = db.GetTable("Child");
+        int ignoring = child.Indexes.Single(ix => ix.Name == "IgnoringNulls").RootPageNumber;
+
+        db.CreateRelationship(ByK());
+        var foreignKey = child.Indexes.Single(ix => ix.Name == "ParentChild");
+        Assert.NotEqual(ignoring, foreignKey.RootPageNumber);
+        Assert.False(foreignKey.IgnoresNulls);
+        // The rows with no K have an entry in the relationship's index, and none in the one that ignores nulls.
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Child", expectedRows: 42));
     }
 
