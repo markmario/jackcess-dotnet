@@ -290,13 +290,18 @@ public sealed class RowEncoder
     /// </summary>
     internal void EnsureWritable()
     {
+        if (WhyNotWritable() is { } why) throw new NotSupportedException(why);
+    }
+
+    /// <summary>What <see cref="EnsureWritable"/> refuses the table with, or null when its definition is one to write rows by.</summary>
+    internal string? WhyNotWritable()
+    {
         string? why = _unreadColumns
             ? "its definition runs past its first page, and the columns on the pages after it were not read"
             : _columns.FirstOrDefault(c => c.IsCalculated) is { } calculated
                 ? $"its column {calculated.Name} is calculated, and this library works no expression out"
                 : _layout.WhyNotWritable;
-        if (why is not null)
-            throw new NotSupportedException($"No row of this table is written: {why}. Nothing was changed.");
+        return why is null ? null : $"No row of this table is written: {why}. Nothing was changed.";
     }
 
     private void WriteFixedValue(byte[] buffer, int offset, Column col, object value, int size)

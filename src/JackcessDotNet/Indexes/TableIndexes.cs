@@ -100,21 +100,28 @@ internal sealed class TableIndexes
     /// </summary>
     public void EnsureCanBeKept()
     {
+        if (WhyNotKept() is { } why) throw new NotSupportedException(why);
+    }
+
+    /// <summary>
+    /// What <see cref="EnsureCanBeKept"/> refuses the table with, or null when every index can be kept. It is
+    /// worked out from the table's definition as it was read: nothing of the file is read or changed.
+    /// </summary>
+    public string? WhyNotKept()
+    {
         if (_table.HasUnreadIndexes)
-            throw new NotSupportedException(
-                $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which runs over " +
-                "more than one page or names an index column or block it has not. The table is left as it was.");
+            return $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which runs over " +
+                   "more than one page or names an index column or block it has not. The table is left as it was.";
         foreach (var tree in Trees)
         {
             if (tree.Columns.Count == 0 || tree.Target.RootPage <= 0)
-                throw new NotSupportedException(
-                    $"{_table.Name}'s {Describe(tree)} cannot be kept: its definition gives it no column or no page. " +
-                    "The table is left as it was.");
+                return $"{_table.Name}'s {Describe(tree)} cannot be kept: its definition gives it no column or no page. " +
+                       "The table is left as it was.";
             foreach (var column in tree.Columns)
                 if (!IndexKeys.CanEncode(column.Column))
-                    throw new NotSupportedException(
-                        $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(column.Column)}. The table is left as it was.");
+                    return $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(column.Column)}. The table is left as it was.";
         }
+        return null;
     }
 
     /// <summary>

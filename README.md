@@ -79,6 +79,9 @@ Limits to know about:
   changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
   order or any other sort order, or a column type it makes no key for. It still reads such a table.
   See [Text index keys](#text-index-keys-sort-orders-and-limits).
+- A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
+  throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
+  asks each before it writes to any.
 
 ## Building and testing
 

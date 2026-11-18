@@ -67,6 +67,40 @@ public sealed class Table
     private byte[] ReadDefinitionPage() => _file.ReadPage(_definition.TdefPageNumber);
 
     /// <summary>
+    /// Why the table takes no new row, whatever the row holds, or <c>null</c> when it takes rows: the message of
+    /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate"/> throw for it,
+    /// which they throw by asking this. The table has an index whose keys this library does not write as Access
+    /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
+    /// rows cannot be written by - a calculated column, columns that run past its first page, or two columns in
+    /// one place. Such a table is still read.
+    /// <para>
+    /// A caller about to write to several tables can ask each first, and so write to none when one of them
+    /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
+    /// that takes rows can still refuse a row for what the row holds: <see cref="Validate"/> checks one.
+    /// </para>
+    /// </summary>
+    public string? InsertRefusal
+        => _indexes.WhyNotKept()
+        ?? WhyNotNumbered()
+        ?? (_writability ??= new RowEncoder(_file.Format, _definition)).WhyNotWritable();
+
+    // What says whether rows can be written by the table's definition, worked out once.
+    private RowEncoder? _writability;
+
+    /// <summary>The one refusal of a table that takes no row: what <see cref="InsertRefusal"/> answers, thrown.</summary>
+    private void EnsureTakesRows()
+    {
+        if (InsertRefusal is { } why) throw new NotSupportedException(why);
+    }
+
+    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Long and Guid ones are.</summary>
+    private string? WhyNotNumbered()
+        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Long or DataType.Guid)) is { } column
+            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
+              "AutoNumbers are generated. The table is left as it was."
+            : null;
+
+    /// <summary>
     /// Moves the Long auto-number counter up to <paramref name="value"/> when it is behind it, so no row numbered
     /// from now on is given a number up to it. An import calls it with the highest number its rows bring, before
     /// it writes any of them.
@@ -125,13 +159,13 @@ public sealed class Table
     /// the row is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The table has an AutoNumber column that is neither Long nor Guid, or an index whose keys this library does
-    /// not write as Access does. Nothing is written.
+    /// The table takes no row (<see cref="InsertRefusal"/>), or the row has a value in an indexed text column that
+    /// no key is made for. Nothing is written.
     /// </exception>
     public void Insert(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        _indexes.EnsureCanBeKept();
+        EnsureTakesRows();
 
         var given = AutoNumberValuesIn(row);
         int? lastAutoNumber;
@@ -184,16 +218,12 @@ public sealed class Table
     /// <summary>
     /// Puts each AutoNumber column's value in <paramref name="row"/> and returns what the table's Long counter
     /// becomes once the row is written (null when the table has no Long AutoNumber). Nothing is written here.
+    /// Every AutoNumber column is a Long or a Guid: a table with another is refused before this
+    /// (<see cref="EnsureTakesRows"/>).
     /// </summary>
     private int? FillAutoNumbers(Row row)
     {
         if (_autoNumberColumns.Count == 0) return null;
-
-        foreach (var column in _autoNumberColumns)
-            if (column.DataType is not (DataType.Long or DataType.Guid))
-                throw new NotSupportedException(
-                    $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
-                    "AutoNumbers are generated. The table is left as it was.");
 
         bool allowed = AutoNumberInsertAllowed;
         int? last = null;
@@ -233,7 +263,7 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
-    /// column, <see cref="NotSupportedException"/> for a table with an index that cannot be kept,
+    /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="InvalidOperationException"/> for a null a primary key or required index does not take or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
@@ -244,10 +274,8 @@ public sealed class Table
     public void Validate(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        _indexes.EnsureCanBeKept();
-        var encoder = new RowEncoder(_file.Format, _definition);
-        encoder.EnsureWritable();
-        encoder.Validate(row);
+        EnsureTakesRows();
+        new RowEncoder(_file.Format, _definition).Validate(row);
 
         var asWritten = row;
         if (_autoNumberColumns.Count > 0)
