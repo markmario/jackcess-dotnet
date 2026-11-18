@@ -64,6 +64,13 @@ public sealed class Table
 
     private byte[] ReadDefinitionPage() => _file.ReadPage(_definition.TdefPageNumber);
 
+    /// <summary>
+    /// Moves the Long auto-number counter up to <paramref name="value"/> when it is behind it, so no row numbered
+    /// from now on is given a number up to it. An import calls it with the highest number its rows bring, before
+    /// it writes any of them.
+    /// </summary>
+    internal void RaiseLastAutoNumber(int value) => _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, value);
+
     private PropertyMaps? _propertiesCache;
     /// <summary>
     /// Property maps attached to this table in MSysObjects.LvProp. The
@@ -173,7 +180,8 @@ public sealed class Table
         int? last = null;
         foreach (var column in _autoNumberColumns)
         {
-            object? given = allowed && row.TryGetValue(column.Name, out var value) ? value : null;
+            // DBNull, as a DataRow holds an empty cell, is no value to bring: the table numbers the row.
+            object? given = allowed && row.TryGetValue(column.Name, out var value) && value is not DBNull ? value : null;
             if (column.DataType == DataType.Guid)
             {
                 row[column.Name] = given switch
@@ -229,10 +237,10 @@ public sealed class Table
         int? highestGiven = null;
         if (newValues is not null && _autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
         {
-            // A null is not a number to bring: the column keeps the one it has, whether or not a row may bring
-            // its own. Access holds no AutoNumber as null.
+            // A null, or DBNull, is not a number to bring: the column keeps the one it has, whether or not a row
+            // may bring its own. Access holds no AutoNumber as null.
             bool allowed = AutoNumberInsertAllowed;
-            newValues = new Row(newValues.Where(v => (allowed && v.Value is not null) || !_autoNumberColumns.Any(c =>
+            newValues = new Row(newValues.Where(v => (allowed && v.Value is not (null or DBNull)) || !_autoNumberColumns.Any(c =>
                 c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
             if (allowed)
                 highestGiven = _autoNumberColumns

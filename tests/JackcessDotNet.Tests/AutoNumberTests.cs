@@ -421,6 +421,200 @@ public sealed class AutoNumberTests : IDisposable
         Assert.Equal(2, table.LastAutoNumber);
     }
 
+    // DBNull is how a DataRow holds an empty cell. For an AutoNumber it is no value, as null is: with rows allowed
+    // to bring their own, an insert tried to read it as a number, or a GUID, and threw.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DBNull_for_an_AutoNumber_is_no_value_and_the_table_numbers_the_row(bool allowed)
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
+            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
+            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+        });
+        table.AllowAutoNumberInsert = allowed;
+
+        var first = new Row { ["Id"] = DBNull.Value, ["Key"] = DBNull.Value, ["Txt"] = "a" };
+        var second = new Row { ["Id"] = DBNull.Value, ["Key"] = DBNull.Value, ["Txt"] = "b" };
+        table.Insert(first);
+        table.Insert(second);
+
+        Assert.Equal(new object?[] { 1, 2 }, new[] { first["Id"], second["Id"] });
+        Assert.Equal(new[] { 1, 2 }, Ids(table));
+        var keys = table.ReadAllRows().Select(r => (Guid)r["Key"]!).ToArray();
+        Assert.Equal(new[] { Assert.IsType<Guid>(first["Key"]), Assert.IsType<Guid>(second["Key"]) }, keys);
+        Assert.DoesNotContain(Guid.Empty, keys);
+        Assert.NotEqual(keys[0], keys[1]);
+        Assert.Equal(2, table.LastAutoNumber);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void An_update_that_brings_DBNull_for_an_AutoNumber_leaves_the_value_the_row_has(bool allowed)
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnBuilder("Pk", DataType.Long).Build(),
+            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
+            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
+            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+        }, primaryKey: "Pk");
+        var inserted = new Row { ["Pk"] = 10, ["Txt"] = "a" };
+        table.Insert(inserted);
+        table.AllowAutoNumberInsert = allowed;
+
+        table.UpdateByPrimaryKey(10, new Row { ["Id"] = DBNull.Value, ["Key"] = DBNull.Value, ["Txt"] = "b" });
+
+        var row = Assert.Single(table.ReadAllRows());
+        Assert.Equal(1, row["Id"]);
+        Assert.Equal(inserted["Key"], row["Key"]);
+        Assert.Equal("b", row["Txt"]);
+        Assert.Equal(1, table.LastAutoNumber);
+    }
+
+    // ── An import's rows and the numbers they bring (review of qcatco/jackcess-dotnet#7) ──
+
+    private static string[] Names(Table table) => table.ReadAllRows().Select(r => (string)r["Name"]!).ToArray();
+
+    private static Person[] People(params int[] ids)
+        => ids.Select((id, i) => new Person { Id = id, Name = ((char)('A' + i)).ToString() }).ToArray();
+
+    // Every row is in the primary key under the number it holds, once.
+    private static void AssertKeyFindsEveryRow(Table table)
+    {
+        var rows = table.ReadAllRows();
+        Assert.Equal(rows.Count, rows.Select(r => r["Id"]).Distinct().Count());
+        foreach (var row in rows)
+            Assert.Equal(row["Name"], table.NewIndexCursor().FindRowByPrimaryKey(row["Id"]!)!["Name"]);
+    }
+
+    // The numbers the objects bring are kept and the rest are numbered past the highest, whatever the order:
+    // 0 then 1 gave both rows 1, the first numbered before the second's number was seen.
+    [Theory]
+    [InlineData(new[] { 0, 1 }, new[] { 2, 1 })]
+    [InlineData(new[] { 1, 0 }, new[] { 1, 2 })]
+    [InlineData(new[] { 0, 5, 0 }, new[] { 6, 5, 7 })]
+    [InlineData(new[] { 0, 0, 3, 1 }, new[] { 4, 5, 3, 1 })]
+    public void Imported_objects_keep_the_identities_they_bring_and_the_rest_are_numbered_past_them(int[] brought, int[] expected)
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+
+        var table = db.ImportTable(People(brought));
+
+        Assert.Equal(expected, Ids(table));
+        Assert.Equal(expected.Max(), table.LastAutoNumber);
+        AssertKeyFindsEveryRow(table);
+    }
+
+    [Theory]
+    [InlineData(new[] { 0, 10, 0 }, new[] { 1, 2, 11, 10, 12 })]
+    [InlineData(new[] { 0, 3 }, new[] { 1, 2, 4, 3 })]
+    [InlineData(new[] { 3, 0 }, new[] { 1, 2, 3, 4 })]
+    public void Objects_appended_keeping_identity_are_numbered_past_the_ones_the_batch_brings(int[] brought, int[] expected)
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.ImportTable(People(0, 0));
+
+        db.ImportTable(People(brought), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+
+        Assert.Equal(expected, Ids(table));
+        AssertKeyFindsEveryRow(table);
+    }
+
+    [Fact]
+    public void An_append_keeping_an_identity_a_row_of_the_table_has_is_refused_before_anything_is_written()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.ImportTable(People(0, 0));
+        long length = new FileInfo(_path).Length;
+
+        var refused = Assert.Throws<InvalidOperationException>(() => db.ImportTable(People(0, 9, 2),
+            options: new ImportOptions { AppendIfExists = true, KeepIdentity = true }));
+
+        Assert.Contains("brings 2", refused.Message);
+        Assert.Equal(new[] { 1, 2 }, Ids(table));
+        Assert.Equal(new[] { "A", "B" }, Names(table));
+        Assert.Equal(2, table.LastAutoNumber);
+        Assert.Equal(length, new FileInfo(_path).Length);
+        Assert.Null(table.AllowAutoNumberInsert);
+    }
+
+    [Fact]
+    public void Two_imported_objects_that_bring_one_identity_for_the_primary_key_are_refused_before_any_row_is_written()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+
+        Assert.Throws<InvalidOperationException>(() => db.ImportTable(People(4, 0, 4)));
+
+        Assert.Empty(db.GetTable("Person").ReadAllRows());
+    }
+
+    // A DataTable's AutoIncrement column where some rows have a number and some have none.
+    private static DataTable PeopleNumbered(params int?[] ids)
+    {
+        var source = new DataTable("People");
+        source.Columns.Add(new DataColumn("Id", typeof(int)) { AutoIncrement = true });
+        source.Columns.Add("Name", typeof(string));
+        for (int i = 0; i < ids.Length; i++)
+        {
+            var row = source.Rows.Add(null, ((char)('A' + i)).ToString());
+            row["Id"] = ids[i] is { } id ? id : DBNull.Value;
+        }
+        return source;
+    }
+
+    [Fact]
+    public void A_DataTable_s_rows_without_a_number_are_numbered_past_the_ones_its_other_rows_bring()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+
+        var table = db.ImportTable(PeopleNumbered(null, 1, null));
+        Assert.Equal(new[] { 2, 1, 3 }, Ids(table));
+
+        db.ImportTable(PeopleNumbered(null, 10), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        Assert.Equal(new[] { 2, 1, 3, 11, 10 }, Ids(table));
+        Assert.Equal(11, table.LastAutoNumber);
+    }
+
+    // KeepIdentity = false is the append's own choice: the database letting rows bring their numbers does not
+    // undo it. Appending an object with identity 1 to a table that has 1 wrote a second 1.
+    [Fact]
+    public void An_append_that_does_not_keep_identity_numbers_its_rows_afresh_whatever_the_database_allows()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        db.AllowAutoNumberInsert = true;
+        var table = db.ImportTable(People(1));
+
+        var appended = db.ImportTable(People(1, 2), options: new ImportOptions { AppendIfExists = true, KeepIdentity = false });
+        Assert.Equal(new[] { 1, 2, 3 }, Ids(table));
+        Assert.Null(appended.AllowAutoNumberInsert);
+
+        db.ImportTable(PeopleCountingFrom(1, "X"), tableName: "Person", options: new ImportOptions { AppendIfExists = true });
+        Assert.Equal(new[] { 1, 2, 3, 4 }, Ids(table));
+        AssertKeyFindsEveryRow(table);
+    }
+
+    // The other way about: the database refuses, the append keeps. Either way the table the append hands back is
+    // left to follow its database, as it did before.
+    [Fact]
+    public void An_append_that_keeps_identity_keeps_it_whatever_the_database_allows()
+    {
+        using var db = Database.Create(_path, JetVersion.Jet4);
+        var table = db.ImportTable(People(1));
+
+        var kept = db.ImportTable(People(40), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        var numbered = db.ImportTable(People(40), options: new ImportOptions { AppendIfExists = true, KeepIdentity = false });
+
+        Assert.Equal(new[] { 1, 40, 41 }, Ids(table));
+        Assert.Null(kept.AllowAutoNumberInsert);
+        Assert.Null(numbered.AllowAutoNumberInsert);
+    }
+
     public static TheoryData<string, string> AccessTablesWithALongAutoNumber()
     {
         var data = new TheoryData<string, string>();

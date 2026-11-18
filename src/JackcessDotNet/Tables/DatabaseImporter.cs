@@ -158,11 +158,10 @@ public static class DatabaseImporter
 
         var t = db.CreateTable(name, columns, primaryKey: pk);
 
-        // Stream rows. An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to
-        // them - so the new table takes them as given, and its counter ends at the highest: rows added later,
-        // here or in Access, are numbered on from it.
-        t.AllowAutoNumberInsert = true;
-        try
+        // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the
+        // new table takes them as given, and its counter ends at the highest: rows added later, here or in
+        // Access, are numbered on from it.
+        IEnumerable<Row> Rows()
         {
             foreach (DataRow dr in table.Rows)
             {
@@ -176,13 +175,10 @@ public static class DatabaseImporter
                     if (stringFallback[i] && raw is not null) raw = raw.ToString();
                     row[columns[i].Name] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
                 }
-                t.Insert(row);
+                yield return row;
             }
         }
-        finally
-        {
-            t.AllowAutoNumberInsert = null;
-        }
+        InsertRows(t, Rows(), keepIdentity: true);
 
         return t;
     }
@@ -249,8 +245,7 @@ public static class DatabaseImporter
 
         // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
         // number - is numbered by the table.
-        t.AllowAutoNumberInsert = true;
-        try
+        IEnumerable<Row> Rows()
         {
             foreach (var item in items)
             {
@@ -263,13 +258,10 @@ public static class DatabaseImporter
                     if (stringFallback[i] && raw is not null) raw = raw.ToString();
                     row[columnNames[i]] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
                 }
-                t.Insert(row);
+                yield return row;
             }
         }
-        finally
-        {
-            t.AllowAutoNumberInsert = null;
-        }
+        InsertRows(t, Rows(), keepIdentity: true);
         return t;
     }
 
@@ -299,7 +291,6 @@ public static class DatabaseImporter
     /// </summary>
     private static void AppendDataTableRows(Table target, DataTable source, ImportOptions options)
     {
-        using var identity = KeepIdentity.On(target, options);
         var targetByName = target.Columns.ToDictionary(
             c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
 
@@ -312,52 +303,110 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"DataTable '{source.TableName}' has no columns that match the existing target table '{target.Name}'.");
 
-        foreach (DataRow dr in source.Rows)
+        IEnumerable<Row> Rows()
         {
-            if (dr.RowState == DataRowState.Deleted) continue;
-            var row = new Row();
-            foreach (var (src, tgt) in pairs)
+            foreach (DataRow dr in source.Rows)
             {
-                object? raw = dr[src];
-                if (raw == DBNull.Value) raw = null;
+                if (dr.RowState == DataRowState.Deleted) continue;
+                var row = new Row();
+                foreach (var (src, tgt) in pairs)
+                {
+                    object? raw = dr[src];
+                    if (raw == DBNull.Value) raw = null;
 
-                // FallbackUnmappableToString carries over to append: if the
-                // source value's CLR type doesn't map to a Jet type at all and
-                // the target column is text-shaped, use ToString().
-                if (raw is not null && options.FallbackUnmappableToString
-                    && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
-                    && TypeMapper.MapClrType(raw.GetType()) is null)
-                    raw = raw.ToString();
+                    // FallbackUnmappableToString carries over to append: if the
+                    // source value's CLR type doesn't map to a Jet type at all and
+                    // the target column is text-shaped, use ToString().
+                    if (raw is not null && options.FallbackUnmappableToString
+                        && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
+                        && TypeMapper.MapClrType(raw.GetType()) is null)
+                        raw = raw.ToString();
 
-                row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
+                    row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
+                }
+                yield return row;
             }
-            target.Insert(row);
+        }
+        InsertRows(target, Rows(), options.KeepIdentity);
+    }
+
+    /// <summary>
+    /// Inserts the rows of one import. For as long as it takes, the table itself says whether a row may bring its
+    /// own AutoNumber - <paramref name="keepIdentity"/>, whichever way it is, and whatever
+    /// <see cref="Database.AllowAutoNumberInsert"/> says: an append that asked for its rows to be numbered afresh
+    /// is not to keep their numbers because the database lets other callers bring theirs. The table is then put
+    /// back as it was.
+    /// <para>
+    /// Rows that keep their numbers are counted before any is written, so the outcome does not depend on their
+    /// order: see <see cref="ReserveSuppliedIdentities"/>.
+    /// </para>
+    /// </summary>
+    private static void InsertRows(Table target, IEnumerable<Row> rows, bool keepIdentity)
+    {
+        bool? before = target.AllowAutoNumberInsert;
+        target.AllowAutoNumberInsert = keepIdentity;
+        try
+        {
+            var identity = keepIdentity
+                ? target.Columns.FirstOrDefault(c => c.IsAutoNumber && c.DataType == DataType.Long)
+                : null;
+            if (identity is not null)
+            {
+                // Read whole, where rows without an identity to keep are written as they come.
+                var batch = rows.ToList();
+                ReserveSuppliedIdentities(target, identity, batch);
+                rows = batch;
+            }
+
+            foreach (var row in rows)
+                target.Insert(row);
+        }
+        finally
+        {
+            target.AllowAutoNumberInsert = before;
         }
     }
 
     /// <summary>
-    /// Lets the rows of one append bring their own AutoNumber values, when the options ask for it, and puts the
-    /// table back as it was afterwards.
+    /// Accounts for every number the rows of <paramref name="batch"/> bring for <paramref name="identity"/>,
+    /// before any of them is written. The table's counter moves up to the highest, so a row that brings none is
+    /// numbered past them all, wherever in the batch it comes: objects with identities 0 and 1 were given 1 and 1,
+    /// the first numbered before the second's number was seen.
+    /// <para>
+    /// When the column is the table's primary key, a number two rows bring, or one a row of the table already
+    /// has, is refused here, with nothing written: the key allows it once. A column that is not the key may
+    /// repeat a number, as it may in Access.
+    /// </para>
     /// </summary>
-    private readonly struct KeepIdentity : IDisposable
+    /// <exception cref="InvalidOperationException">A supplied number would be in the primary key twice.</exception>
+    private static void ReserveSuppliedIdentities(Table target, Column identity, IReadOnlyList<Row> batch)
     {
-        private readonly Table? _table;
-        private readonly bool? _before;
+        var supplied = batch
+            .Where(row => row.TryGetValue(identity.Name, out var value) && value is not null)
+            .Select(row => Convert.ToInt32(row[identity.Name], System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
+        if (supplied.Count == 0) return;
 
-        private KeepIdentity(Table table)
+        var key = target.Definition.EffectivePrimaryKeyColumns;
+        if (key.Count == 1 && string.Equals(key[0], identity.Name, StringComparison.OrdinalIgnoreCase))
         {
-            _table = table;
-            _before = table.AllowAutoNumberInsert;
-            table.AllowAutoNumberInsert = true;
+            var seen = new HashSet<int>();
+            foreach (int number in supplied)
+                if (!seen.Add(number))
+                    throw new InvalidOperationException(
+                        $"Two rows to import into '{target.Name}' bring {number} for its primary key " +
+                        $"'{identity.Name}'. Nothing was written.");
+
+            if (target.RowCount > 0)
+                foreach (var existing in target.NewCursor())
+                    if (existing.TryGetValue(identity.Name, out var value) && value is int number && seen.Contains(number))
+                        throw new InvalidOperationException(
+                            $"A row to import into '{target.Name}' brings {number} for its primary key " +
+                            $"'{identity.Name}', which a row of the table already has. Nothing was written. " +
+                            $"Leave {nameof(ImportOptions)}.{nameof(ImportOptions.KeepIdentity)} off to have the table number the rows.");
         }
 
-        public static KeepIdentity On(Table target, ImportOptions options)
-            => options.KeepIdentity ? new KeepIdentity(target) : default;
-
-        public void Dispose()
-        {
-            if (_table is not null) _table.AllowAutoNumberInsert = _before;
-        }
+        target.RaiseLastAutoNumber(supplied.Max());
     }
 
     /// <summary>
@@ -368,7 +417,6 @@ public static class DatabaseImporter
     /// </summary>
     private static void AppendCollectionRows<T>(Table target, IEnumerable<T> items, ImportOptions options)
     {
-        using var identity = KeepIdentity.On(target, options);
         var targetByName = target.Columns.ToDictionary(
             c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
 
@@ -388,26 +436,30 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"Type '{typeof(T).Name}' has no properties that match the existing target table '{target.Name}'.");
 
-        foreach (var item in items)
+        IEnumerable<Row> Rows()
         {
-            if (item is null) continue;
-            var row = new Row();
-            foreach (var (prop, tgt) in pairs)
+            foreach (var item in items)
             {
-                object? raw = prop.GetValue(item);
+                if (item is null) continue;
+                var row = new Row();
+                foreach (var (prop, tgt) in pairs)
+                {
+                    object? raw = prop.GetValue(item);
 
-                // An identity property still at 0 is an object the database has yet to number.
-                if (tgt.IsAutoNumber && IsUnnumbered(raw)) continue;
+                    // An identity property still at 0 is an object the database has yet to number.
+                    if (tgt.IsAutoNumber && IsUnnumbered(raw)) continue;
 
-                if (raw is not null && options.FallbackUnmappableToString
-                    && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
-                    && TypeMapper.MapClrType(raw.GetType()) is null)
-                    raw = raw.ToString();
+                    if (raw is not null && options.FallbackUnmappableToString
+                        && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
+                        && TypeMapper.MapClrType(raw.GetType()) is null)
+                        raw = raw.ToString();
 
-                row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
+                    row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
+                }
+                yield return row;
             }
-            target.Insert(row);
         }
+        InsertRows(target, Rows(), options.KeepIdentity);
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -524,8 +576,11 @@ public sealed class ImportOptions
     /// that each count from the same number cannot then collide.</para>
     /// <para>Set it to <c>true</c> when other tables refer to the source's values - the tables of a
     /// <see cref="DataSet"/> appended one after another - so a child row still finds its parent. A value another
-    /// row of the table already has is then the caller's to avoid. A typed object's identity property still at 0
-    /// is numbered by the table either way.</para>
+    /// row of the table already has is refused before anything is written when the column is the table's primary
+    /// key, and is otherwise the caller's to avoid. A row that brings no value - a typed object's identity
+    /// property still at 0, a null - is numbered by the table, past every value the batch brings, so the result
+    /// does not depend on the order of the rows.</para>
+    /// <para>It decides for the append whatever <see cref="Database.AllowAutoNumberInsert"/> says.</para>
     /// <para>A table the import creates always keeps the source's values: nothing is there to collide with.</para>
     /// </summary>
     public bool KeepIdentity { get; init; }
