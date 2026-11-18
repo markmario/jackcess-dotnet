@@ -628,9 +628,6 @@ public sealed class IndexWriter
     internal static int MaxKeyLength(JetFormat format)
         => (format.PageSize - format.OffsetIndexEntryMask - format.SizeIndexEntryMask) / 3 - NodeTrailerLen;
 
-    // Jet4 keeps a page's height above the leaves in the byte after the shared-prefix length.
-    private bool HasLevelByte => _format.OffsetIndexEntryMask - _format.OffsetIndexCompressedByteCount > 2;
-
     private IndexPage Read(int number)
     {
         byte[] raw = ReadRaw(number);
@@ -641,7 +638,7 @@ public sealed class IndexWriter
         var page = new IndexPage(number, isLeaf, raw)
         {
             Tdef  = ByteUtil.GetInt(raw, OffsetTdefPage),
-            Level = HasLevelByte ? raw[_format.OffsetIndexCompressedByteCount + 2] : 0,
+            Level = raw[_format.OffsetIndexLevel],
             Prev  = Link(ByteUtil.GetInt(raw, _format.OffsetPrevIndexPage)),
             Next  = Link(ByteUtil.GetInt(raw, _format.OffsetNextIndexPage)),
             Tail  = isLeaf ? 0 : Link(ByteUtil.GetInt(raw, _format.OffsetChildTailIndexPage)),
@@ -649,7 +646,7 @@ public sealed class IndexWriter
 
         // Entries end where the mask has a bit set; the first is stored in full and
         // the rest without the prefix they share with it.
-        int prefixLen  = ByteUtil.GetUShort(raw, _format.OffsetIndexCompressedByteCount);
+        int prefixLen  = IndexReader.ReadPrefixLength(raw, _format);
         int trailerLen = isLeaf ? LeafTrailerLen : NodeTrailerLen;
         byte[]? prefix = null;
         int start = 0;
@@ -732,8 +729,9 @@ public sealed class IndexWriter
         ByteUtil.PutInt  (page, _format.OffsetNextIndexPage,       p.Next);
         ByteUtil.PutInt  (page, _format.OffsetChildTailIndexPage,  p.IsLeaf ? 0 : p.Tail);
         int shared = SharedPrefix(p.Entries);
+        // Two bytes in every format this library writes; the level is the byte after them.
         ByteUtil.PutShort(page, _format.OffsetIndexCompressedByteCount, (short)shared);
-        if (HasLevelByte) page[_format.OffsetIndexCompressedByteCount + 2] = (byte)p.Level;
+        page[_format.OffsetIndexLevel] = (byte)p.Level;
         if (!Fits(p))
             throw new InvalidOperationException(
                 $"Index page {p.Number} holds {Size(p.IsLeaf, p.Entries)} bytes of entries; it has room for {_format.PageSize - EntriesStart}.");
