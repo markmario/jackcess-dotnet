@@ -161,7 +161,11 @@ public sealed class Access97ReadOnlyTests : IDisposable
         // What the public operations come down to, and what the foreign-key enforcer calls.
         ["rewrite a row in place"]  = db => db.GetTable("Keys").RewriteRowAt(FirstRowOf(db, "Keys"), new Row { ["K10"] = 1 }),
         ["delete a row in place"]   = db => db.GetTable("Keys").DeleteRowAt(FirstRowOf(db, "Keys")),
-        ["raise the AutoNumber"]    = db => db.GetTable("Keys").RaiseLastAutoNumber(9000),
+        ["insert through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).InsertRow(db.GetTable("Keys").Definition, KeysRow(5000)),
+        ["update through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).UpdateRowByPrimaryKey(db.GetTable("Keys").Definition, 7, new Row { ["K10"] = 1 }),
+        ["delete through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).DeleteRow(db.GetTable("Keys").Definition, "Id", 7),
+        ["count a row through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).IncrementTdefRowCount(db.GetTable("Keys").Definition.TdefPageNumber),
+        ["raise the AutoNumber"]    =db => db.GetTable("Keys").RaiseLastAutoNumber(9000),
         ["write a page"]            = db => db.File.WritePage(1, new byte[db.File.Format.PageSize]),
         ["write a page past the end"] = db => db.File.WritePage(db.File.PageCount, new byte[db.File.Format.PageSize]),
         ["allocate a page"]         = db => new PageAllocator(db.File).AllocatePage(),
@@ -274,6 +278,169 @@ public sealed class Access97ReadOnlyTests : IDisposable
 
         Assert.Equal(1500, db.GetTable("Keys").ReadAllRows().Count);
         AssertRefused(() => db.GetTable("Keys").Insert(KeysRow(5000)));
+    }
+
+    // ── The file says what it is, not the caller ─────────────────────────────
+
+    public static IEnumerable<object[]> OtherVersions()
+        => new[] { JetVersion.Jet4, JetVersion.Jet12, JetVersion.Jet14, JetVersion.Jet16, JetVersion.Jet17 }
+            .Select(version => new object[] { version });
+
+    public static IEnumerable<object[]> ChangesUnderOtherVersions()
+        => from version in new[] { JetVersion.Jet4, JetVersion.Jet12, JetVersion.Jet17 }
+           from change in new[] { "insert", "insert with text", "update", "delete", "create table", "import a DataTable", "write a page", "allocate a page" }
+           select new object[] { version, change };
+
+    /// <summary>
+    /// <see cref="Database.Open(string, JetVersion)"/> took the caller's word for the format: an Access 97 file
+    /// opened as Jet4 was not one to refuse changes to, and was read in pages of the wrong size. What a file is
+    /// is in its header, as Jackcess takes it; the version a caller names does not change it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ChangesUnderOtherVersions))]
+    public void An_Access_97_file_opened_as_another_version_is_read_only_all_the_same(JetVersion said, string change)
+    {
+        string path = CopyOfFixture();
+        byte[] before = File.ReadAllBytes(path);
+
+        foreach (var open in new Func<Database>[] { () => Database.Open(path, said), () => DatabaseBuilder.Open(path, said) })
+        {
+            using var db = open();
+            AssertRefused(() => Changes[change](db));
+            Assert.Equal(0, db.File.WriteCount);
+            Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+
+            // And it is read as the Access 97 file it is.
+            Assert.Equal(new[] { "Keys", "LongRows" }, db.ListTables().OrderBy(name => name));
+            Assert.Equal(1500, db.GetTable("Keys").ReadAllRows().Count);
+            Assert.NotNull(db.GetTable("Keys").NewIndexCursor().FindRowByPrimaryKey(7));
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Theory]
+    [MemberData(nameof(OtherVersions))]
+    public void A_file_Access_97_wrote_opened_as_another_version_is_read_only_all_the_same(JetVersion said)
+    {
+        string path = NewPath();
+        File.Copy(TestCorpus.File("V1997", "delV1997.mdb")!, path);
+        File.SetAttributes(path, FileAttributes.Normal);
+        byte[] before = File.ReadAllBytes(path);
+
+        List<string> tables;
+        using (var asItIs = Database.Open(path)) tables = asItIs.ListTables().ToList();
+
+        using (var db = Database.Open(path, said))
+        {
+            Assert.Equal(JetVersion.Jet3, db.File.Format.Version);
+            Assert.Equal(tables, db.ListTables());
+
+            // A table without indexes: nothing else about it refuses a row.
+            var table = db.ListTables().Select(db.GetTable)
+                .First(t => t.Columns.Any(c => c.DataType == DataType.Text) && t.Indexes.Count == 0 && !t.Definition.HasUnreadIndexes);
+            var text = table.Columns.First(c => c.DataType == DataType.Text);
+            var rows = table.ReadAllRows();
+            var held = rows.First(row => row.ContainsKey(text.Name));
+
+            AssertRefused(() => table.Insert(new Row { [text.Name] = "x" }));
+            AssertRefused(() => table.UpdateByPrimaryKey(1, new Row { [text.Name] = "x" }));
+            AssertRefused(() => table.DeleteRow(text.Name, held[text.Name]!));
+            AssertRefused(() => db.CreateTable("New", new[] { Long("Id") }));
+
+            Assert.Equal(0, db.File.WriteCount);
+            Assert.Equal(rows.Count, table.ReadAllRows().Count);
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Theory]
+    [InlineData(FileMode.Open)]
+    [InlineData(FileMode.OpenOrCreate)]
+    public void A_page_file_opened_on_an_Access_97_file_as_Jet4_writes_nothing(FileMode mode)
+    {
+        // Under every Database is a PageFile, and it is a public class: it too goes by the file.
+        string path = CopyOfFixture();
+        byte[] before = File.ReadAllBytes(path);
+
+        using (var file = new PageFile(path, JetFormat.Jet4, mode))
+        {
+            AssertRefused(() => file.WritePage(1, new byte[JetFormat.Jet4.PageSize]));
+            AssertRefused(() => file.ReplaceWith(new MemoryStream(new byte[JetFormat.Jet4.PageSize])));
+            AssertRefused(() => new PageAllocator(file).AllocatePage());
+            Assert.Equal(0, file.WriteCount);
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void A_Jet4_database_can_be_created_where_an_Access_97_file_was()
+    {
+        // Creating a database replaces what is at its path, whatever that was: only a new Access 97 one is refused.
+        string path = CopyOfFixture();
+
+        using (var db = Database.Create(path, JetVersion.Jet4))
+            db.CreateTable("Things", new[] { Long("Id") }).Insert(new Row { ["Id"] = 1 });
+
+        using var again = Database.Open(path);
+        Assert.Equal(JetVersion.Jet4, again.File.Format.Version);
+        Assert.Equal(new[] { "Things" }, again.ListTables());
+    }
+
+    [Fact]
+    public void A_Jet4_database_opened_as_Access_97_is_the_Jet4_database_it_is()
+    {
+        // The other way about does no harm: the file is read as what it is, and is written to as before.
+        string path = NewPath();
+        using (var db = Database.Create(path, JetVersion.Jet4))
+            db.CreateTable("Things", new[] { Long("Id"), Text("Name") }, primaryKey: "Id").Insert(new Row { ["Id"] = 1, ["Name"] = "one" });
+
+        using (var db = Database.Open(path, JetVersion.Jet3))
+        {
+            Assert.Equal(JetVersion.Jet4, db.File.Format.Version);
+            var things = db.GetTable("Things");
+            Assert.Equal("one", things.NewIndexCursor().FindRowByPrimaryKey(1)!["Name"]);
+            things.Insert(new Row { ["Id"] = 2, ["Name"] = "two" });
+            things.UpdateByPrimaryKey(1, new Row { ["Name"] = "uno" });
+        }
+
+        using var again = Database.Open(path);
+        Assert.Equal(new[] { "uno", "two" }, again.GetTable("Things").ReadAllRows().OrderBy(row => row["Id"]).Select(row => row["Name"]));
+    }
+
+    [Fact]
+    public void A_page_file_said_to_be_Access_97_s_is_not_written_to_whatever_the_file_is()
+    {
+        // A Jet4 file under a PageFile given Access 97's format: the pages are not Jet3 pages, and none is written.
+        string path = NewPath();
+        Database.Create(path, JetVersion.Jet4).Dispose();
+        byte[] before = File.ReadAllBytes(path);
+
+        using (var file = new PageFile(path, JetFormat.Jet3, FileMode.Open))
+            AssertRefused(() => file.WritePage(1, new byte[JetFormat.Jet3.PageSize]));
+
+        Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // ── Nothing makes an Access 97 row or table definition ───────────────────
+
+    [Fact]
+    public void No_row_is_encoded_for_Access_97()
+    {
+        // RowEncoder is a public class. It made a Jet3 row with two bytes where the format has one.
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new[] { Long("Id"), Text("Name") }));
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new TableDefinition("T", new[] { Long("Id"), Text("Name") })));
+
+        using var db = Database.Open(CopyOfFixture());
+        AssertRefused(() => new RowEncoder(db.File.Format, db.GetTable("LongRows").Definition));
+    }
+
+    [Fact]
+    public void No_table_definition_is_made_for_Access_97()
+    {
+        AssertRefused(() => new TableDefinition("T", new[] { Long("Id"), Text("Name") }).Serialize(JetFormat.Jet3));
     }
 
     [Fact]

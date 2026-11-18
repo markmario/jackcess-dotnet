@@ -279,10 +279,17 @@ public sealed class Database : IDisposable
     /// reading only, as Jackcess opens one: its tables and rows are read, and every change to it - a row
     /// inserted, updated or deleted, a table created or imported - is refused with
     /// <see cref="NotSupportedException"/> before anything is written.
+    /// <para>
+    /// The file's own header says what format it is in, as Jackcess takes it, and that is the format it is
+    /// opened in: <paramref name="version"/> is used only for a file whose header does not say - one without the
+    /// signature of an Access database. So an Access 97 file is read as one, and is read-only, whatever
+    /// <paramref name="version"/> is given, and a Jet4 file opened as <see cref="JetVersion.Jet3"/> is the Jet4
+    /// file it is, read and written as any other.
+    /// </para>
     /// </summary>
     public static Database Open(string path, JetVersion version)
     {
-        JetFormat format = version switch
+        JetFormat format = PageFile.FormatOf(path) ?? version switch
         {
             JetVersion.Jet3  => JetFormat.Jet3,
             JetVersion.Jet4  => JetFormat.Jet4,

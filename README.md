@@ -395,7 +395,12 @@ An Access 97 (Jet 3) file is read and never written, as in Java Jackcess, whose 
 (`JetFormat.READ_ONLY`; `JetFormat.IsReadOnly` here). `Database.Open` opens one for reading only - a file marked
 read-only, or on a read-only share, opens like any other - and everything that would change it is refused with
 `NotSupportedException` before anything is written: inserting, updating or deleting a row, creating or importing
-a table. `Database.Create(path, JetVersion.Jet3)` is refused the same way, and makes no file. Earlier versions
+a table. `Database.Create(path, JetVersion.Jet3)` is refused the same way, and makes no file. What a file is, is
+what its own header says, as in Jackcess: an Access 97 file opened with `Database.Open(path, JetVersion.Jet4)`
+is still read as an Access 97 file and still read-only, and a Jet 4 file opened as `JetVersion.Jet3` is the Jet 4
+file it is, read and written like any other. The version a caller names is used only for a file whose header
+does not say. No row or table definition is made in Access 97's format either: `RowEncoder` and
+`TableDefinition.Serialize` refuse it. Earlier versions
 wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data and its count of
 variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back as null
 (qcatco/exportmdb.interop#67).
