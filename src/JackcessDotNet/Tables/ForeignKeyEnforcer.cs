@@ -345,6 +345,43 @@ internal sealed class ForeignKeyEnforcer
         }
     }
 
+    // ── A relationship about to be created ───────────────────────────────────
+
+    /// <summary>
+    /// The first row of <paramref name="child"/> that refers to no row of <paramref name="parent"/> by
+    /// <paramref name="relationship"/>, as a refusal names it, or null when every row refers to a parent or to
+    /// nothing: what Access looks for before it gives a relationship referential integrity ("Existing data in
+    /// table ... violates referential integrity rules"). Keys are matched as an insert's are
+    /// (<see cref="CheckInsert"/>): a foreign key that is all null refers to nothing, and a row may refer to itself.
+    /// Both tables are read once, the parent's keys held while the child is read; nothing is changed.
+    /// </summary>
+    internal static string? FirstOrphan(Relationship relationship, Table parent, Table child)
+    {
+        var types = ParentColumns(relationship, parent);
+        var childColumns = relationship.ColumnPairs
+            .Select(pair => child.Columns.First(c => c.Name.Equals(pair.ToColumn, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var parents = parent.NewCursor();
+        parents.ColumnsToRead  = types;
+        parents.ValuesAsStored = true;
+        foreach (var row in parents)
+            keys.Add(Convert.ToBase64String(KeyOf(types, types.Select(c => row.TryGetValue(c.Name, out var value) ? value : null))));
+
+        var children = child.NewCursor();
+        children.ColumnsToRead  = childColumns;
+        children.ValuesAsStored = true;
+        foreach (var row in children)
+        {
+            object?[] values = childColumns.Select(c => Stored(c, row.TryGetValue(c.Name, out var value) ? value : null)).ToArray();
+            if (values.All(v => v is null)) continue;
+            if (!keys.Contains(Convert.ToBase64String(KeyOf(types, values))))
+                return $"'{child.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{parent.Name}'";
+        }
+        return null;
+    }
+
     // ── Keys ─────────────────────────────────────────────────────────────────
 
     /// <summary>The parent table's columns of the relationship: both sides' values are compared as that column's type.</summary>

@@ -155,6 +155,113 @@ public sealed class SystemCatalog
         }
     }
 
+    // ── Relationships ────────────────────────────────────────────────────────
+
+    private const short CatalogTypeRelationship = 8;
+
+    /// <summary>What registering a relationship needs, read and checked before anything is written.</summary>
+    internal sealed class RelationshipEntry
+    {
+        internal RelationshipEntry(TableDefinition catalog, int containerId, int objectId, byte[]? owner, TableDefinition? aces)
+        {
+            Catalog     = catalog;
+            ContainerId = containerId;
+            ObjectId    = objectId;
+            Owner       = owner;
+            Aces        = aces;
+        }
+
+        internal TableDefinition  Catalog     { get; }
+        internal int              ContainerId { get; }
+        internal int              ObjectId    { get; }
+        internal byte[]?          Owner       { get; }
+        internal TableDefinition? Aces        { get; }
+    }
+
+    /// <summary>The names of the relationships the catalog lists: the objects in its Relationships container.</summary>
+    internal IReadOnlyList<string> RelationshipNames()
+        => ReadRows(BuildCatalogTableDef(), ColName, ColType)
+            .Where(r => Value(r, ColType) is short type && type == CatalogTypeRelationship)
+            .Select(r => Value(r, ColName) as string)
+            .OfType<string>()
+            .ToList();
+
+    /// <summary>
+    /// Reads what a relationship named <paramref name="name"/> is registered with, and refuses, before anything
+    /// is written, one this library cannot register as Access would: a database with no Relationships container,
+    /// a name a relationship already has, in any case, or one no catalog key is made for, or a catalog with an
+    /// index whose keys it cannot write. A relationship is an object of the catalog like a table: Access gives it
+    /// an id of its own, counted up from the lowest number an id can be - Jackcess's "synthetic" ids - since it
+    /// has no definition page to be known by.
+    /// </summary>
+    internal RelationshipEntry PrepareRelationship(string name)
+    {
+        var catalogDef = BuildCatalogTableDef();
+        var catalog    = ReadRows(catalogDef, ColId, ColName, ColType, ColParentId, ColOwner);
+
+        var container = catalog.FirstOrDefault(r =>
+                Value(r, ColType) is short type && type == CatalogTypeContainer
+                && Value(r, ColParentId) is int parent && parent == DatabaseParentId
+                && Value(r, ColName) is string containerName && containerName == "Relationships")
+            ?? throw new NotSupportedException("The database has no Relationships container to register a relationship in. Nothing was changed.");
+        int containerId = (int)Value(container, ColId)!;
+
+        if (catalog.Any(r => Value(r, ColType) is short type && type == CatalogTypeRelationship
+                          && Value(r, ColName) is string existing
+                          && string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException($"There is already a relationship named '{name}' in this database. Nothing was changed.");
+
+        // The ids Access gives objects that have no page count up from int.MinValue: the next is one past the
+        // highest negative id there is.
+        var negative = catalog.Select(r => Value(r, ColId)).OfType<int>().Where(id => id < 0).ToList();
+        int objectId = negative.Count == 0 ? int.MinValue : negative.Max() + 1;
+        if (objectId >= 0)
+            throw new InvalidOperationException("The database has no id left for another relationship. Nothing was changed.");
+
+        int acesTdef = FindTableTdefPage("MSysACEs");
+        var acesDef  = acesTdef >= 0 ? BuildTableDef("MSysACEs", acesTdef) : null;
+
+        EnsureKeysCanBeWritten(catalogDef);
+        var nameColumn = catalogDef.Columns.First(c => c.Name == ColName);
+        if (!IndexKeys.CanEncode(nameColumn, name))
+            throw new NotSupportedException($"A relationship cannot be named '{name}': {IndexKeys.WhyNot(nameColumn, name)}. Nothing was changed.");
+        if (acesDef is not null) EnsureKeysCanBeWritten(acesDef);
+
+        return new RelationshipEntry(catalogDef, containerId, objectId, AdminOwner(catalog), acesDef);
+    }
+
+    /// <summary>
+    /// Registers a relationship as Access registers one it creates: a row in MSysObjects - its id, its name,
+    /// Type 8, the dates, ParentId the Relationships container, Flags 0 and the Admin user as owner - with its
+    /// entries in MSysObjects' indexes, and the permissions the container passes on, in MSysACEs.
+    /// </summary>
+    internal void InsertRelationshipEntry(RelationshipEntry entry, string name)
+    {
+        var now = DateTime.Now;
+        var row = new Row
+        {
+            [ColId]         = entry.ObjectId,
+            [ColName]       = name,
+            [ColType]       = CatalogTypeRelationship,
+            [ColDateCreate] = now,
+            [ColDateUpdate] = now,
+            [ColParentId]   = entry.ContainerId,
+            [ColFlags]      = 0
+        };
+        if (entry.Owner is not null) row[ColOwner] = entry.Owner;
+
+        int rowPtr = _writer.InsertRow(entry.Catalog, row);
+        _writer.IncrementTdefRowCount(JetFormat.PageSystemCatalog);
+        AddIndexEntries(entry.Catalog, row, rowPtr);
+
+        if (entry.Aces is not null)
+            InsertAccessControlEntries(entry.Aces, entry.ContainerId, entry.ObjectId, entry.Owner);
+    }
+
+    /// <summary>The name the catalog has for table <paramref name="name"/>, as it spells it, or null when there is no such table.</summary>
+    internal string? TableNameAsListed(string name)
+        => GetTableNames(includeSystem: true).FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
     /// The Admin user's SID, which Access makes a new table's owner. A file keeps its
     /// SIDs encoded with a key of its own; the Admin user's is the system objects'
