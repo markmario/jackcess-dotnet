@@ -1,43 +1,36 @@
 #nullable enable
 JackcessDotNet.Column
 JackcessDotNet.Column.AllowZeroLength.get -> bool
-JackcessDotNet.Column.ColumnNumber.get -> int
 JackcessDotNet.Column.DataType.get -> JackcessDotNet.DataType
 JackcessDotNet.Column.IsAutoNumber.get -> bool
 JackcessDotNet.Column.IsCalculated.get -> bool
 JackcessDotNet.Column.IsCompressedUnicode.get -> bool
 JackcessDotNet.Column.IsRequired.get -> bool
 JackcessDotNet.Column.IsVariableLength.get -> bool
-JackcessDotNet.Column.Length.get -> int
+JackcessDotNet.Column.LengthInBytes.get -> int
+JackcessDotNet.Column.MaxLength.get -> int
 JackcessDotNet.Column.Name.get -> string!
+JackcessDotNet.Column.Ordinal.get -> int
 JackcessDotNet.Column.Precision.get -> byte
+JackcessDotNet.Column.Properties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Column.Scale.get -> byte
 override JackcessDotNet.Column.ToString() -> string!
-JackcessDotNet.ColumnBuilder
-JackcessDotNet.ColumnBuilder.AutoNumber(bool autoNumber = true) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.AutoNumber(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.BigInt(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Boolean(string! name) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.Build() -> JackcessDotNet.Column!
-JackcessDotNet.ColumnBuilder.ColumnBuilder(string! name, JackcessDotNet.DataType dataType) -> void
-static JackcessDotNet.ColumnBuilder.DateTime(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Double(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.ExtendedDateTime(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Guid(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Int(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Long(string! name) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.MaxLength(int maxChars) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Memo(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Money(string! name) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Numeric(string! name, byte precision = 18, byte scale = 0) -> JackcessDotNet.ColumnBuilder!
-static JackcessDotNet.ColumnBuilder.Text(string! name, int maxChars = 50) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.ToColumn() -> JackcessDotNet.Column!
-JackcessDotNet.ColumnBuilder.WithAllowZeroLength(bool allow = true) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.WithAutoNumber(bool autoNumber = true) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.WithLength(int length) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.WithMaxChars(int maxChars) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.WithNumericScale(byte precision, byte scale) -> JackcessDotNet.ColumnBuilder!
-JackcessDotNet.ColumnBuilder.WithRequired(bool required = true) -> JackcessDotNet.ColumnBuilder!
+JackcessDotNet.ColumnDefinition
+JackcessDotNet.ColumnDefinition.AllowZeroLength.get -> bool
+JackcessDotNet.ColumnDefinition.AllowZeroLength.set -> void
+JackcessDotNet.ColumnDefinition.ColumnDefinition(string! name, JackcessDotNet.DataType dataType) -> void
+JackcessDotNet.ColumnDefinition.DataType.get -> JackcessDotNet.DataType
+JackcessDotNet.ColumnDefinition.IsAutoNumber.get -> bool
+JackcessDotNet.ColumnDefinition.IsAutoNumber.set -> void
+JackcessDotNet.ColumnDefinition.IsRequired.get -> bool
+JackcessDotNet.ColumnDefinition.IsRequired.set -> void
+JackcessDotNet.ColumnDefinition.MaxLength.get -> int?
+JackcessDotNet.ColumnDefinition.MaxLength.set -> void
+JackcessDotNet.ColumnDefinition.Name.get -> string!
+JackcessDotNet.ColumnDefinition.Precision.get -> byte
+JackcessDotNet.ColumnDefinition.Precision.set -> void
+JackcessDotNet.ColumnDefinition.Scale.get -> byte
+JackcessDotNet.ColumnDefinition.Scale.set -> void
 JackcessDotNet.ColumnValueTooLongException
 JackcessDotNet.ColumnValueTooLongException.ColumnName.get -> string!
 JackcessDotNet.ColumnValueTooLongException.ColumnValueTooLongException(string! columnName, int maxLength, int length) -> void
@@ -55,22 +48,22 @@ JackcessDotNet.Cursor.MoveNext() -> bool
 JackcessDotNet.Cursor.MovePrevious() -> bool
 JackcessDotNet.Cursor.Table.get -> JackcessDotNet.Table!
 JackcessDotNet.DataType
-JackcessDotNet.DataType.BigInt = 19 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Binary = 9 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Boolean = 1 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Byte = 2 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Complex = 18 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Currency = 5 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.DateTime = 8 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.DateTimeExtended = 20 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Decimal = 16 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Double = 7 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.ExtendedDateTime = 20 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Float = 6 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Guid = 15 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Int = 3 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Long = 4 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Int16 = 3 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Int32 = 4 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Int64 = 19 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Memo = 12 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Money = 5 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Numeric = 16 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.Ole = 11 -> JackcessDotNet.DataType
-JackcessDotNet.DataType.ShortDateTime = 8 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.OleObject = 11 -> JackcessDotNet.DataType
+JackcessDotNet.DataType.Single = 6 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Text = 10 -> JackcessDotNet.DataType
 JackcessDotNet.Database
 JackcessDotNet.Database.AllowAutoNumberInsert.get -> bool
@@ -78,9 +71,8 @@ JackcessDotNet.Database.AllowAutoNumberInsert.set -> void
 static JackcessDotNet.Database.Create(string! path) -> JackcessDotNet.Database!
 static JackcessDotNet.Database.Create(string! path, JackcessDotNet.FileFormat format) -> JackcessDotNet.Database!
 JackcessDotNet.Database.CreateRelationship(JackcessDotNet.RelationshipDefinition! definition) -> JackcessDotNet.Relationship!
-JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns, System.Collections.Generic.IReadOnlyList<string!>! primaryKeyColumns) -> JackcessDotNet.Table!
-JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns, System.Collections.Generic.IReadOnlyList<string!>? primaryKeyColumns, System.Collections.Generic.IReadOnlyList<JackcessDotNet.IndexDefinition!>! indexes) -> JackcessDotNet.Table!
-JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>! columns, string? primaryKey = null) -> JackcessDotNet.Table!
+JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, System.Collections.Generic.IEnumerable<string!>? primaryKey, System.Collections.Generic.IEnumerable<JackcessDotNet.IndexDefinition!>! indexes) -> JackcessDotNet.Table!
+JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, params string![]! primaryKey) -> JackcessDotNet.Table!
 JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
@@ -145,7 +137,7 @@ JackcessDotNet.ImportOptions.OnUnmappableColumn.get -> System.Action<string!, Sy
 JackcessDotNet.ImportOptions.OnUnmappableColumn.init -> void
 JackcessDotNet.Index
 JackcessDotNet.Index.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.IndexColumn!>!
-JackcessDotNet.Index.IgnoresNulls.get -> bool
+JackcessDotNet.Index.IgnoreNulls.get -> bool
 JackcessDotNet.Index.IsForeignKey.get -> bool
 JackcessDotNet.Index.IsPrimaryKey.get -> bool
 JackcessDotNet.Index.IsRequired.get -> bool
@@ -162,8 +154,7 @@ JackcessDotNet.IndexCursor.FindRowByEntry(params object?[]! entryValues) -> Jack
 JackcessDotNet.IndexCursor.Index.get -> JackcessDotNet.Index?
 JackcessDotNet.IndexDefinition
 JackcessDotNet.IndexDefinition.Columns.get -> System.Collections.Generic.IReadOnlyList<string!>!
-JackcessDotNet.IndexDefinition.DescendingColumns.get -> System.Collections.Generic.IReadOnlyCollection<string!>!
-JackcessDotNet.IndexDefinition.DescendingColumns.set -> void
+JackcessDotNet.IndexDefinition.DescendingColumns.get -> System.Collections.Generic.ICollection<string!>!
 JackcessDotNet.IndexDefinition.IgnoreNulls.get -> bool
 JackcessDotNet.IndexDefinition.IgnoreNulls.set -> void
 JackcessDotNet.IndexDefinition.IndexDefinition(string! name, params string![]! columns) -> void
@@ -174,72 +165,55 @@ JackcessDotNet.IndexDefinition.IsUnique.set -> void
 const JackcessDotNet.IndexDefinition.MaxColumns = 10 -> int
 const JackcessDotNet.IndexDefinition.MaxIndexesPerTable = 32 -> int
 JackcessDotNet.IndexDefinition.Name.get -> string!
+JackcessDotNet.JoinType
+JackcessDotNet.JoinType.Inner = 0 -> JackcessDotNet.JoinType
+JackcessDotNet.JoinType.LeftOuter = 1 -> JackcessDotNet.JoinType
+JackcessDotNet.JoinType.RightOuter = 2 -> JackcessDotNet.JoinType
 JackcessDotNet.PropertyMap
-JackcessDotNet.PropertyMap.IsEmpty.get -> bool
+JackcessDotNet.PropertyMap.Count.get -> int
+JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.PropertyMap.Property!>!
 JackcessDotNet.PropertyMap.Name.get -> string!
-JackcessDotNet.PropertyMap.Properties.get -> System.Collections.Generic.IReadOnlyCollection<JackcessDotNet.PropertyMap.Property!>!
 JackcessDotNet.PropertyMap.Property
-JackcessDotNet.PropertyMap.Property.<Clone>$() -> JackcessDotNet.PropertyMap.Property!
 JackcessDotNet.PropertyMap.Property.DataType.get -> JackcessDotNet.DataType
-JackcessDotNet.PropertyMap.Property.DataType.init -> void
-JackcessDotNet.PropertyMap.Property.Deconstruct(out string! Name, out JackcessDotNet.DataType DataType, out object? Value, out bool IsDdl) -> void
-JackcessDotNet.PropertyMap.Property.Equals(JackcessDotNet.PropertyMap.Property? other) -> bool
-override JackcessDotNet.PropertyMap.Property.Equals(object? obj) -> bool
-override JackcessDotNet.PropertyMap.Property.GetHashCode() -> int
 JackcessDotNet.PropertyMap.Property.IsDdl.get -> bool
-JackcessDotNet.PropertyMap.Property.IsDdl.init -> void
 JackcessDotNet.PropertyMap.Property.Name.get -> string!
-JackcessDotNet.PropertyMap.Property.Name.init -> void
-JackcessDotNet.PropertyMap.Property.Property(string! Name, JackcessDotNet.DataType DataType, object? Value, bool IsDdl) -> void
 override JackcessDotNet.PropertyMap.Property.ToString() -> string!
 JackcessDotNet.PropertyMap.Property.Value.get -> object?
-JackcessDotNet.PropertyMap.Property.Value.init -> void
-static JackcessDotNet.PropertyMap.Property.operator !=(JackcessDotNet.PropertyMap.Property? left, JackcessDotNet.PropertyMap.Property? right) -> bool
-static JackcessDotNet.PropertyMap.Property.operator ==(JackcessDotNet.PropertyMap.Property? left, JackcessDotNet.PropertyMap.Property? right) -> bool
 override JackcessDotNet.PropertyMap.ToString() -> string!
+JackcessDotNet.PropertyMap.TryGetValue(string! name, out object? value) -> bool
 JackcessDotNet.PropertyMap.this[string! propertyName].get -> object?
-JackcessDotNet.PropertyMaps
-JackcessDotNet.PropertyMaps.Count.get -> int
-JackcessDotNet.PropertyMaps.Default.get -> JackcessDotNet.PropertyMap!
-JackcessDotNet.PropertyMaps.Get(string! name) -> JackcessDotNet.PropertyMap?
-JackcessDotNet.PropertyMaps.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.PropertyMap!>!
-JackcessDotNet.PropertyMaps.IsEmpty.get -> bool
-JackcessDotNet.PropertyMaps.PropertyMaps() -> void
 JackcessDotNet.Relationship
 JackcessDotNet.Relationship.CascadeDeletes.get -> bool
-JackcessDotNet.Relationship.CascadeNull.get -> bool
+JackcessDotNet.Relationship.CascadeNullOnDelete.get -> bool
 JackcessDotNet.Relationship.CascadeUpdates.get -> bool
-JackcessDotNet.Relationship.ColumnPairs.get -> System.Collections.Generic.IReadOnlyList<(string! FromColumn, string! ToColumn)>!
-JackcessDotNet.Relationship.FromTable.get -> string!
+JackcessDotNet.Relationship.FromColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+JackcessDotNet.Relationship.FromTableName.get -> string!
 JackcessDotNet.Relationship.HasReferentialIntegrity.get -> bool
 JackcessDotNet.Relationship.IsOneToOne.get -> bool
-JackcessDotNet.Relationship.LeftOuterJoin.get -> bool
+JackcessDotNet.Relationship.JoinType.get -> JackcessDotNet.JoinType
 JackcessDotNet.Relationship.Name.get -> string!
-JackcessDotNet.Relationship.RightOuterJoin.get -> bool
+JackcessDotNet.Relationship.ToColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
 override JackcessDotNet.Relationship.ToString() -> string!
-JackcessDotNet.Relationship.ToTable.get -> string!
+JackcessDotNet.Relationship.ToTableName.get -> string!
 JackcessDotNet.RelationshipDefinition
 JackcessDotNet.RelationshipDefinition.CascadeDeletes.get -> bool
 JackcessDotNet.RelationshipDefinition.CascadeDeletes.set -> void
-JackcessDotNet.RelationshipDefinition.CascadeNull.get -> bool
-JackcessDotNet.RelationshipDefinition.CascadeNull.set -> void
+JackcessDotNet.RelationshipDefinition.CascadeNullOnDelete.get -> bool
+JackcessDotNet.RelationshipDefinition.CascadeNullOnDelete.set -> void
 JackcessDotNet.RelationshipDefinition.CascadeUpdates.get -> bool
 JackcessDotNet.RelationshipDefinition.CascadeUpdates.set -> void
-JackcessDotNet.RelationshipDefinition.ColumnPairs.get -> System.Collections.Generic.IReadOnlyList<(string! FromColumn, string! ToColumn)>!
-JackcessDotNet.RelationshipDefinition.FromTable.get -> string!
+JackcessDotNet.RelationshipDefinition.FromColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+JackcessDotNet.RelationshipDefinition.FromTableName.get -> string!
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.get -> bool
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.set -> void
-JackcessDotNet.RelationshipDefinition.JoinType.get -> JackcessDotNet.RelationshipJoinType
+JackcessDotNet.RelationshipDefinition.JoinType.get -> JackcessDotNet.JoinType
 JackcessDotNet.RelationshipDefinition.JoinType.set -> void
 JackcessDotNet.RelationshipDefinition.Name.get -> string?
 JackcessDotNet.RelationshipDefinition.Name.set -> void
-JackcessDotNet.RelationshipDefinition.RelationshipDefinition(string! fromTable, string! fromColumn, string! toTable, string! toColumn) -> void
-JackcessDotNet.RelationshipDefinition.RelationshipDefinition(string! fromTable, string! toTable, params (string! FromColumn, string! ToColumn)[]! columnPairs) -> void
-JackcessDotNet.RelationshipDefinition.ToTable.get -> string!
-JackcessDotNet.RelationshipJoinType
-JackcessDotNet.RelationshipJoinType.Inner = 0 -> JackcessDotNet.RelationshipJoinType
-JackcessDotNet.RelationshipJoinType.LeftOuter = 1 -> JackcessDotNet.RelationshipJoinType
-JackcessDotNet.RelationshipJoinType.RightOuter = 2 -> JackcessDotNet.RelationshipJoinType
+JackcessDotNet.RelationshipDefinition.RelationshipDefinition(string! fromTableName, System.Collections.Generic.IEnumerable<string!>! fromColumnNames, string! toTableName, System.Collections.Generic.IEnumerable<string!>! toColumnNames) -> void
+JackcessDotNet.RelationshipDefinition.RelationshipDefinition(string! fromTableName, string! fromColumnName, string! toTableName, string! toColumnName) -> void
+JackcessDotNet.RelationshipDefinition.ToColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+JackcessDotNet.RelationshipDefinition.ToTableName.get -> string!
 JackcessDotNet.Row
 JackcessDotNet.Row.Add(string! columnName, object? value) -> void
 JackcessDotNet.Row.Clear() -> void
@@ -257,7 +231,7 @@ JackcessDotNet.Row.Values.get -> System.Collections.Generic.ICollection<object?>
 JackcessDotNet.Row.this[string! columnName].get -> object?
 JackcessDotNet.Row.this[string! columnName].set -> void
 JackcessDotNet.Table
-JackcessDotNet.Table.AddColumn(JackcessDotNet.Column! column) -> JackcessDotNet.Column!
+JackcessDotNet.Table.AddColumn(JackcessDotNet.ColumnDefinition! column) -> JackcessDotNet.Column!
 JackcessDotNet.Table.AddIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.Index!
 JackcessDotNet.Table.AllowAutoNumberInsert.get -> bool?
 JackcessDotNet.Table.AllowAutoNumberInsert.set -> void
@@ -273,16 +247,8 @@ JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.InsertRefusal.get -> string?
 JackcessDotNet.Table.LastAutoNumber.get -> int
 JackcessDotNet.Table.Name.get -> string!
-JackcessDotNet.Table.Properties.get -> JackcessDotNet.PropertyMaps!
+JackcessDotNet.Table.Properties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.Table.UpdateByPrimaryKey(object! primaryKeyValue, JackcessDotNet.Row! newValues) -> void
 JackcessDotNet.Table.Validate(JackcessDotNet.Row! row) -> void
-JackcessDotNet.TableBuilder
-JackcessDotNet.TableBuilder.AddColumn(JackcessDotNet.Column! column) -> JackcessDotNet.TableBuilder!
-JackcessDotNet.TableBuilder.AddColumn(JackcessDotNet.ColumnBuilder! builder) -> JackcessDotNet.TableBuilder!
-JackcessDotNet.TableBuilder.AddColumn(string! name, JackcessDotNet.DataType type, System.Action<JackcessDotNet.ColumnBuilder!>? configure = null) -> JackcessDotNet.TableBuilder!
-JackcessDotNet.TableBuilder.TableBuilder(string! name) -> void
-JackcessDotNet.TableBuilder.ToTable(JackcessDotNet.Database! db) -> JackcessDotNet.Table!
-JackcessDotNet.TableBuilder.WithIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.TableBuilder!
-JackcessDotNet.TableBuilder.WithPrimaryKey(string! columnName) -> JackcessDotNet.TableBuilder!

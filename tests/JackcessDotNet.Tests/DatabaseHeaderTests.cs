@@ -31,7 +31,7 @@ public sealed class DatabaseHeaderTests
         try
         {
             using (var db = Database.Create(path, FileFormat.Access2000))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             using var reopen = Database.Open(path);
             Assert.Contains("X", reopen.GetTableNames());

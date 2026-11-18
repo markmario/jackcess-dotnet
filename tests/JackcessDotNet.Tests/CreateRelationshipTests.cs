@@ -20,8 +20,8 @@ public sealed class CreateRelationshipTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name, int chars = 20) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name, int chars = 20) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     /// <summary>
     /// Parent(K, Code, Name) keyed by K, Code unique; Child(Id, K, Code, Name) keyed by Id: parents 1 to 5, and
@@ -90,11 +90,13 @@ public sealed class CreateRelationshipTests : IDisposable
         using var reopened = Database.Open(_path);
         var relationship = Assert.Single(reopened.GetRelationships());
         Assert.Equal("ParentChild", relationship.Name);
-        Assert.Equal(("Parent", "Child"), (relationship.FromTable, relationship.ToTable));
-        Assert.Equal(new[] { ("K", "K") }, relationship.ColumnPairs);
+        Assert.Equal(("Parent", "Child"), (relationship.FromTableName, relationship.ToTableName));
+        Assert.Equal(new[] { "K" }, relationship.FromColumnNames);
+        Assert.Equal(new[] { "K" }, relationship.ToColumnNames);
         Assert.Equal(0x1100, relationship.Flags);
         Assert.True(relationship.HasReferentialIntegrity && relationship.CascadeUpdates && relationship.CascadeDeletes);
-        Assert.False(relationship.CascadeNull || relationship.IsOneToOne || relationship.LeftOuterJoin || relationship.RightOuterJoin);
+        Assert.False(relationship.CascadeNullOnDelete || relationship.IsOneToOne);
+        Assert.Equal(JoinType.Inner, relationship.JoinType);
 
         // The catalog lists it as Access lists a relationship: Type 8, in the Relationships container, with the
         // next of the ids Access gives objects that have no page.
@@ -199,7 +201,7 @@ public sealed class CreateRelationshipTests : IDisposable
         db.CreateRelationship(ByK());
         var foreignKey = child.Indexes.Single(ix => ix.Name == "ParentChild");
         Assert.NotEqual(ignoring, foreignKey.RootPageNumber);
-        Assert.False(foreignKey.IgnoresNulls);
+        Assert.False(foreignKey.IgnoreNulls);
         // The rows with no K have an entry in the relationship's index, and none in the one that ignores nulls.
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Child", expectedRows: 42));
     }
@@ -232,7 +234,7 @@ public sealed class CreateRelationshipTests : IDisposable
         var also = db.CreateRelationship(new RelationshipDefinition("One", "Id", "Other", "Also") { Name = "AlsoOne", HasReferentialIntegrity = true });
         Assert.True(also.IsOneToOne);
         var alsoKey = other.Indexes.Single(ix => ix.Name == "AlsoOne");
-        Assert.True(alsoKey.IsUnique && !alsoKey.IgnoresNulls);
+        Assert.True(alsoKey.IsUnique && !alsoKey.IgnoreNulls);
         Assert.NotEqual(other.Indexes.Single(ix => ix.Name == "UniqueAlso").RootPageNumber, alsoKey.RootPageNumber);
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Other", expectedRows: 1));
 
@@ -249,8 +251,8 @@ public sealed class CreateRelationshipTests : IDisposable
         var childIndexes  = db.GetTable("Child").Indexes.Select(ix => ix.Name).ToList();
 
         // The children refer to codes by another case, and two to nothing: nothing is checked.
-        var relationship = db.CreateRelationship(new RelationshipDefinition("Parent", "Name", "Child", "Name") { JoinType = RelationshipJoinType.LeftOuter });
-        var right = db.CreateRelationship(new RelationshipDefinition("Parent", "Name", "Child", "Name") { JoinType = RelationshipJoinType.RightOuter });
+        var relationship = db.CreateRelationship(new RelationshipDefinition("Parent", "Name", "Child", "Name") { JoinType = JoinType.LeftOuter });
+        var right = db.CreateRelationship(new RelationshipDefinition("Parent", "Name", "Child", "Name") { JoinType = JoinType.RightOuter });
 
         Assert.Equal(0x01000002, relationship.Flags);
         Assert.Equal(0x02000002, right.Flags);
@@ -275,9 +277,9 @@ public sealed class CreateRelationshipTests : IDisposable
         city.Insert(new Row { ["Id"] = 1, ["Country"] = "nz", ["Code"] = 1 });   // text is matched as its index holds it
         city.Insert(new Row { ["Id"] = 2, ["Country"] = "AU", ["Code"] = 1 });
 
-        var definition = new RelationshipDefinition("Region", "City", ("Country", "Country"), ("Code", "Code"))
+        var definition = new RelationshipDefinition("Region", new[] { "Country", "Code" }, "City", new[] { "Country", "Code" })
         {
-            Name = "RegionCity", HasReferentialIntegrity = true, CascadeNull = true,
+            Name = "RegionCity", HasReferentialIntegrity = true, CascadeNullOnDelete = true,
         };
         db.CreateRelationship(definition);
 
@@ -509,7 +511,7 @@ public sealed class CreateRelationshipTests : IDisposable
         AssertRefusedAndUnchanged<InvalidOperationException>(new RelationshipDefinition("Parent", "K", "Child", "Nothing"));
         AssertRefusedAndUnchanged<ArgumentException>(new RelationshipDefinition("Parent", "K", "Child", "K") { CascadeDeletes = true });
         AssertRefusedAndUnchanged<ArgumentException>(
-            new RelationshipDefinition("Parent", "Child", ("K", "K"), ("K", "Id")) { HasReferentialIntegrity = true });
+            new RelationshipDefinition("Parent", new[] { "K", "K" }, "Child", new[] { "K", "Id" }) { HasReferentialIntegrity = true });
     }
 
     [Fact]
@@ -517,9 +519,9 @@ public sealed class CreateRelationshipTests : IDisposable
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var amount = new ColumnBuilder("Amount", DataType.Numeric).Build();
+            var amount = new ColumnDefinition("Amount", DataType.Decimal);
             db.CreateTable("Price", new[] { Long("Id"), amount }, primaryKey: "Id");
-            db.CreateTable("Sale", new[] { Long("Id"), new ColumnBuilder("Amount", DataType.Numeric).Build(), Long("Price") }, primaryKey: "Id");
+            db.CreateTable("Sale", new[] { Long("Id"), new ColumnDefinition("Amount", DataType.Decimal), Long("Price") }, primaryKey: "Id");
         }
 
         // A Decimal column has no unique index to refer to (none can be made), and is no foreign key's index either.

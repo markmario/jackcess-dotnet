@@ -7,7 +7,7 @@ namespace JackcessDotNet;
 /// A table's definition says it, column by column: whether the value is among the row's fixed-length values or its
 /// variable-length ones (<see cref="Column.IsVariableLength"/>, a flag of the column, not a property of its type),
 /// its offset among the first (<see cref="Column.FixedDataOffset"/>) or its place in the table of offsets of the
-/// second (<see cref="Column.VarLenTableIndex"/>), and its number (<see cref="Column.ColumnNumber"/>), which is its
+/// second (<see cref="Column.VarLenTableIndex"/>), and its number (<see cref="Column.Ordinal"/>), which is its
 /// bit in the row's null mask. None of these can be worked out from the columns in order. Access leaves a deleted
 /// column's number, its room among the fixed-length values and its place among the variable-length ones behind, and
 /// gives a later column the room; it gives a Yes/No column, whose value is its null-mask bit, no room at all; and
@@ -56,7 +56,7 @@ internal sealed class RowLayout
         var variable     = new List<Column>();
 
         int packedOffset = 0, packedIndex = 0;
-        foreach (var column in columns.OrderBy(c => c.ColumnNumber))
+        foreach (var column in columns.OrderBy(c => c.Ordinal))
         {
             bool isVariable = stored ? column.IsVariableLength : column.DataType.IsVariableLength();
             int  size       = isVariable ? 0 : FixedSizeOf(column);
@@ -69,7 +69,7 @@ internal sealed class RowLayout
             {
                 _places[column] = new Place(false, stored ? column.FixedDataOffset : packedOffset, -1, size);
                 // A new table's Yes/No column is given a byte it never uses, as this library always has.
-                packedOffset += column.Length;
+                packedOffset += column.LengthInBytes;
                 fixedColumns.Add(column);
             }
         }
@@ -78,7 +78,7 @@ internal sealed class RowLayout
         VariableColumns = variable.OrderBy(c => _places[c].VarIndex).ToList();
         // A Yes/No column takes no room, wherever the definition says it is.
         FixedDataSize   = fixedColumns.Where(c => _places[c].FixedSize > 0).Select(c => _places[c].FixedOffset + _places[c].FixedSize).DefaultIfEmpty(0).Max();
-        MaxColumnCount  = Math.Max(maxColumnCount ?? 0, columns.Count == 0 ? 0 : columns.Max(c => c.ColumnNumber) + 1);
+        MaxColumnCount  = Math.Max(maxColumnCount ?? 0, columns.Count == 0 ? 0 : columns.Max(c => c.Ordinal) + 1);
         MaxVarColumnCount = Math.Max(maxVarColumnCount ?? 0, variable.Count == 0 ? 0 : variable.Max(c => _places[c].VarIndex) + 1);
 
         WhyNotWritable = FindFault(format, columns);
@@ -93,7 +93,7 @@ internal sealed class RowLayout
         if (_places.TryGetValue(column, out var place)) return place;
         // A column object from another reading of the same definition: found by its number.
         foreach (var known in _places)
-            if (known.Key.ColumnNumber == column.ColumnNumber && known.Key.DataType == column.DataType)
+            if (known.Key.Ordinal == column.Ordinal && known.Key.DataType == column.DataType)
                 return known.Value;
         return null;
     }
@@ -106,15 +106,15 @@ internal sealed class RowLayout
     {
         if (column.DataType == DataType.Boolean) return 0;
         int size = column.DataType.GetFixedSize();
-        return size > 0 ? size : Math.Max(column.Length, 0);
+        return size > 0 ? size : Math.Max(column.LengthInBytes, 0);
     }
 
     private string? FindFault(JetFormat format, IReadOnlyList<Column> columns)
     {
         var numbers = new HashSet<int>();
         foreach (var column in columns)
-            if (column.ColumnNumber < 0 || !numbers.Add(column.ColumnNumber))
-                return $"its definition gives the column number {column.ColumnNumber} to more than one column, or to none";
+            if (column.Ordinal < 0 || !numbers.Add(column.Ordinal))
+                return $"its definition gives the column number {column.Ordinal} to more than one column, or to none";
 
         var indexes = new HashSet<int>();
         foreach (var column in VariableColumns)

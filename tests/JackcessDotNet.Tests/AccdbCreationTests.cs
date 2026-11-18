@@ -36,12 +36,12 @@ public sealed class AccdbCreationTests : IDisposable
         new object[] { FileFormat.Access2019, (byte)0x06, (byte)0x00, true },
     };
 
-    private static Column[] People() => new[]
+    private static ColumnDefinition[] People() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(60).Build(),
-        new ColumnBuilder("Born", DataType.ShortDateTime).Build(),
-        new ColumnBuilder("Notes", DataType.Memo).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 60 },
+        new ColumnDefinition("Born", DataType.DateTime),
+        new ColumnDefinition("Notes", DataType.Memo),
     };
 
     private static readonly string[] Names = { "résumé", "Æther", "naïve", "Zürich", "日本", "smörgåsbord", "a-b", "O'Brien", "ß", "Ελληνικά" };
@@ -91,7 +91,7 @@ public sealed class AccdbCreationTests : IDisposable
                 new[] { new IndexDefinition("ByName", "Name"), new IndexDefinition("ByBorn", "Born") { IsUnique = true } });
             for (int i = 1; i <= 1500; i++)
                 table.Insert(Person(i));
-            db.CreateTable("Other", new[] { new ColumnBuilder("K", DataType.Text).MaxLength(20).Build() }, primaryKey: "K")
+            db.CreateTable("Other", new[] { new ColumnDefinition("K", DataType.Text) { MaxLength = 20 } }, primaryKey: "K")
                 .Insert(new Row { ["K"] = "é" });
         }
 
@@ -135,7 +135,7 @@ public sealed class AccdbCreationTests : IDisposable
     {
         string path = NewPath();
         using (var db = Database.Create(path, FileFormat.Access2000))
-            db.CreateTable("Old", new[] { new ColumnBuilder("Id", DataType.Long).Build() });
+            db.CreateTable("Old", new[] { new ColumnDefinition("Id", DataType.Int32) });
 
         using (var db = Database.Create(path, FileFormat.Access2010))
         {

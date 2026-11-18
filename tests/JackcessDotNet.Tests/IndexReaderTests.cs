@@ -51,7 +51,7 @@ public sealed class IndexReaderTests
                 if (ix.Columns.Count != 1) continue;
                 if (ix.RootPageNumber <= 0) continue;
                 var dt = ix.Columns[0].Column.DataType;
-                if (dt is not (DataType.Byte or DataType.Int or DataType.Long)) continue;
+                if (dt is not (DataType.Byte or DataType.Int16 or DataType.Int32)) continue;
 
                 string keyCol = ix.Columns[0].Column.Name;
 
@@ -171,7 +171,7 @@ public sealed class IndexReaderTests
                 foreach (var c in ix.Columns)
                 {
                     var dt = c.Column.DataType;
-                    if (dt is not (DataType.Byte or DataType.Int or DataType.Long or DataType.Text))
+                    if (dt is not (DataType.Byte or DataType.Int16 or DataType.Int32 or DataType.Text))
                     {
                         allOk = false; break;
                     }

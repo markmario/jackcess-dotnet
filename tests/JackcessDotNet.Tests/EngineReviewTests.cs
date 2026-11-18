@@ -37,7 +37,7 @@ public sealed class EngineReviewTests : IDisposable
         return path;
     }
 
-    private static Column[] OneColumn() => new[] { new ColumnBuilder("Id", DataType.Long).Build() };
+    private static ColumnDefinition[] OneColumn() => new[] { new ColumnDefinition("Id", DataType.Int32) };
 
     private static object? Value(Row row, string column) => row.TryGetValue(column, out var value) ? value : null;
 
@@ -102,9 +102,9 @@ public sealed class EngineReviewTests : IDisposable
         {
             var table = db.CreateTable("Ünïcødé Made", new[]
             {
-                new ColumnBuilder("Code", DataType.Text).MaxLength(20).Build(),
-                new ColumnBuilder("Notes", DataType.Memo).Build(),
-                new ColumnBuilder("N", DataType.Long).Build(),
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
+                new ColumnDefinition("Notes", DataType.Memo),
+                new ColumnDefinition("N", DataType.Int32),
             }, primaryKey: "Code");
             for (int i = 0; i < codes.Length; i++)
                 table.Insert(new Row { ["Code"] = codes[i], ["N"] = i });
@@ -144,9 +144,9 @@ public sealed class EngineReviewTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
         db.CreateTable("Texts", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("Notes", DataType.Memo),
         });
 
         byte[] tdef = db.File.ReadPage(TdefOf(db.File, "Texts"));
@@ -284,7 +284,7 @@ public sealed class EngineReviewTests : IDisposable
     public void A_split_made_through_one_table_object_does_not_mislead_another()
     {
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
-        db.CreateTable("Keyed", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
+        db.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
         var first = db.GetTable("Keyed");
         var second = db.GetTable("Keyed");
 
@@ -344,8 +344,8 @@ public sealed class EngineReviewTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Keyed", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 20 },
         }, primaryKey: "Id");
         for (int i = 1; i <= 1200; i++)
             table.Insert(new Row { ["Id"] = i, ["Txt"] = $"v{i}" });
@@ -383,8 +383,8 @@ public sealed class EngineReviewTests : IDisposable
         {
             var table = db.CreateTable("Coded", new[]
             {
-                new ColumnBuilder("Code", DataType.Text).MaxLength(10).Build(),
-                new ColumnBuilder("N", DataType.Long).Build(),
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 10 },
+                new ColumnDefinition("N", DataType.Int32),
             }, primaryKey: "Code");
             foreach (var code in new[] { "a", "b", "c" })
                 table.Insert(new Row { ["Code"] = code, ["N"] = 1 });

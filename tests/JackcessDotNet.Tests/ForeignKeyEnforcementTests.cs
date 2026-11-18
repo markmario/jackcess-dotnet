@@ -37,8 +37,8 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
 
         var t = db.CreateTable("Things", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
         }, primaryKey: "Id");
         t.Insert(new Row { ["Id"] = 1, ["Name"] = "A" });
 
@@ -66,9 +66,9 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
 
         // Find any child→parent constraint to attack.
         var rel = rels.First();
-        var (parentCol, childCol) = rel.ColumnPairs[0];
+        var (parentCol, childCol) = (rel.FromColumnNames[0], rel.ToColumnNames[0]);
 
-        var childTable = db.GetTable(rel.ToTable);
+        var childTable = db.GetTable(rel.ToTableName);
         // Build a row carrying obviously-bogus values for the FK columns.
         var bad = new Row();
         foreach (var col in childTable.Columns)
@@ -97,12 +97,12 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         if (rels.Count == 0) return;
 
         // Find a single-column relationship we can satisfy easily.
-        var rel = rels.FirstOrDefault(r => r.ColumnPairs.Count == 1);
+        var rel = rels.FirstOrDefault(r => r.FromColumnNames.Count == 1);
         if (rel is null) return;
 
-        var (parentCol, childCol) = rel.ColumnPairs[0];
-        var parentTable = db.GetTable(rel.FromTable);
-        var childTable  = db.GetTable(rel.ToTable);
+        var (parentCol, childCol) = (rel.FromColumnNames[0], rel.ToColumnNames[0]);
+        var parentTable = db.GetTable(rel.FromTableName);
+        var childTable  = db.GetTable(rel.ToTableName);
 
         // Get a known-good parent PK value.
         object? validParentValue = parentTable.CreateCursor()
@@ -150,8 +150,8 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
         if (rels.Count == 0) return;
 
         var rel = rels.First();
-        var (_, childCol) = rel.ColumnPairs[0];
-        var childTable = db.GetTable(rel.ToTable);
+        string childCol = rel.ToColumnNames[0];
+        var childTable = db.GetTable(rel.ToTableName);
 
         var bad = new Row();
         foreach (var col in childTable.Columns)
@@ -188,8 +188,8 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
 
         var t = db.CreateTable("X", new[]
         {
-            new ColumnBuilder("Id",  DataType.Long).Build(),
-            new ColumnBuilder("Ref", DataType.Long).Build(),
+            new ColumnDefinition("Id",  DataType.Int32),
+            new ColumnDefinition("Ref", DataType.Int32),
         }, primaryKey: "Id");
 
         t.Insert(new Row { ["Id"] = 1, ["Ref"] = null });
@@ -200,26 +200,26 @@ public sealed class ForeignKeyEnforcementTests : IDisposable
 
     private static object? DummyValueFor(Column col) => col.DataType switch
     {
-        DataType.Long      => 0,
-        DataType.Int       => (short)0,
+        DataType.Int32      => 0,
+        DataType.Int16       => (short)0,
         DataType.Byte      => (byte)0,
         DataType.Double    => 0.0,
-        DataType.Float     => 0.0f,
-        DataType.Money     => 0m,
-        DataType.Numeric   => 0m,
+        DataType.Single     => 0.0f,
+        DataType.Currency     => 0m,
+        DataType.Decimal   => 0m,
         DataType.Boolean   => false,
         DataType.Text      => "",
         DataType.Memo      => "",
         DataType.Binary    => Array.Empty<byte>(),
         DataType.Guid      => Guid.Empty,
-        DataType.ShortDateTime => DateTime.Now,
+        DataType.DateTime => DateTime.Now,
         _                  => null,
     };
 
     private static object SentinelForType(DataType dt) => dt switch
     {
-        DataType.Long => unchecked((int)0xCAFEF00D),
-        DataType.Int  => unchecked((short)0xC0DE),
+        DataType.Int32 => unchecked((int)0xCAFEF00D),
+        DataType.Int16  => unchecked((short)0xC0DE),
         DataType.Text => "[[unmatched-fk-sentinel]]",
         DataType.Guid => new Guid("DEADBEEF-1234-5678-9ABC-DEF012345678"),
         _             => 0xC0FFEE,

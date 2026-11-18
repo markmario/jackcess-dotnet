@@ -25,14 +25,14 @@ public sealed class RefusedWritesTests : IDisposable
     private Table Create(Database db)
         => db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("B", DataType.Byte).Build(),
-            new ColumnBuilder("N", DataType.Int).Build(),
-            new ColumnBuilder("D", DataType.ShortDateTime).Build(),
-            new ColumnBuilder("G", DataType.Guid).Build(),
-            new ColumnBuilder("Blob", DataType.Ole).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("B", DataType.Byte),
+            new ColumnDefinition("N", DataType.Int16),
+            new ColumnDefinition("D", DataType.DateTime),
+            new ColumnDefinition("G", DataType.Guid),
+            new ColumnDefinition("Blob", DataType.OleObject),
+            new ColumnDefinition("Notes", DataType.Memo),
         }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name") });
 
     private static Row Whole(int id) => new()

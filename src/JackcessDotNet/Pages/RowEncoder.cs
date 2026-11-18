@@ -127,7 +127,7 @@ internal sealed class RowEncoder
             var place = _layout.PlaceOf(col)!.Value;
             if (keptFixedValues is not null && keptFixedValues.TryGetValue(col, out var keptBytes))
             {
-                nullMask.MarkNotNull(col.ColumnNumber);
+                nullMask.MarkNotNull(col.Ordinal);
                 Array.Copy(keptBytes, 0, buffer, fixedDataStart + place.FixedOffset, Math.Min(keptBytes.Length, place.FixedSize));
                 continue;
             }
@@ -138,13 +138,13 @@ internal sealed class RowEncoder
             if (col.DataType == DataType.Boolean)
             {
                 if (RowValues.ToBoolean(value))
-                    nullMask.MarkNotNull(col.ColumnNumber);
+                    nullMask.MarkNotNull(col.Ordinal);
                 continue;
             }
 
             if (value != null)
             {
-                nullMask.MarkNotNull(col.ColumnNumber);
+                nullMask.MarkNotNull(col.Ordinal);
                 WriteFixedValue(buffer, fixedDataStart + place.FixedOffset, col, value, place.FixedSize);
             }
         }
@@ -184,7 +184,7 @@ internal sealed class RowEncoder
 
                 if (varData is not null || toPages is not null)
                 {
-                    nullMask.MarkNotNull(col.ColumnNumber);
+                    nullMask.MarkNotNull(col.Ordinal);
                     int length = varData?.Length ?? LongValueReferenceSize;
 
                     remaining -= length;
@@ -307,23 +307,23 @@ internal sealed class RowEncoder
             case DataType.Byte:
                 buffer[offset] = Convert.ToByte(value);
                 return;
-            case DataType.Int:
+            case DataType.Int16:
                 Util.ByteUtil.PutShort(buffer, offset, Convert.ToInt16(value));
                 return;
-            case DataType.Long:
+            case DataType.Int32:
                 Util.ByteUtil.PutInt(buffer, offset, Convert.ToInt32(value));
                 return;
-            case DataType.Float:
+            case DataType.Single:
                 Util.ByteUtil.PutFloat(buffer, offset, Convert.ToSingle(value));
                 return;
             case DataType.Double:
                 Util.ByteUtil.PutDouble(buffer, offset, Convert.ToDouble(value));
                 return;
-            case DataType.ShortDateTime:
+            case DataType.DateTime:
                 // A row rewritten with its dates as stored brings the double itself for a date it does not change.
                 Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : ((DateTime)value).ToOADate());
                 return;
-            case DataType.Money:
+            case DataType.Currency:
                 decimal dec = Convert.ToDecimal(value);
                 long scaled = (long)Math.Round(dec * 10000m, 0, MidpointRounding.AwayFromZero);
                 Util.ByteUtil.PutLong(buffer, offset, scaled);
@@ -332,13 +332,13 @@ internal sealed class RowEncoder
                 var guidBytes = (value is Guid guid ? guid : Guid.Parse(Convert.ToString(value)!)).ToByteArray();
                 Util.ByteUtil.PutBytes(buffer, offset, guidBytes);
                 return;
-            case DataType.Numeric:
+            case DataType.Decimal:
                 Util.ByteUtil.PutBytes(buffer, offset, NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name));
                 return;
-            case DataType.BigInt:
+            case DataType.Int64:
                 Util.ByteUtil.PutLong(buffer, offset, Convert.ToInt64(value));
                 return;
-            case DataType.ExtendedDateTime:
+            case DataType.DateTimeExtended:
                 Util.ByteUtil.PutBytes(buffer, offset, ExtendedDateTimeCodec.Encode((DateTime)value));
                 return;
             case DataType.Text:
@@ -379,14 +379,14 @@ internal sealed class RowEncoder
             if (!row.TryGetValue(col.Name, out var value) || RowValues.IsNull(value)) continue;
 
             // A Decimal with more digits than its column holds, and Binary longer than a column of one length.
-            if (col.DataType == DataType.Numeric)
+            if (col.DataType == DataType.Decimal)
                 NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name);
-            if (col.DataType == DataType.Binary && !col.IsVariableLength && value is byte[] binary && binary.Length > col.Length)
+            if (col.DataType == DataType.Binary && !col.IsVariableLength && value is byte[] binary && binary.Length > col.LengthInBytes)
                 throw new ArgumentOutOfRangeException(nameof(row), binary.Length,
-                    $"The Binary column '{col.Name}' holds {col.Length} bytes; {binary.Length} were given.");
-            if (col.DataType != DataType.Text || col.Length <= 0) continue;
+                    $"The Binary column '{col.Name}' holds {col.LengthInBytes} bytes; {binary.Length} were given.");
+            if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
-            int maxChars = col.Length / 2;
+            int maxChars = col.LengthInBytes / 2;
             string text = Convert.ToString(value) ?? string.Empty;
             if (text.Length > maxChars)
                 throw new ColumnValueTooLongException(col.Name, maxChars, text.Length);

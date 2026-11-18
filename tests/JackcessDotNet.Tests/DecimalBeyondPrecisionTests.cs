@@ -21,12 +21,12 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"dec_{Guid.NewGuid():N}.mdb");
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Decimal(string name, byte precision, byte scale) => ColumnBuilder.Numeric(name, precision, scale).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Decimal(string name, byte precision, byte scale) => new ColumnDefinition(name, DataType.Decimal) { Precision = precision, Scale = scale };
 
     /// <summary>Prices(Id, Price DECIMAL(5,2), Quantity DECIMAL(18,0)), Id its primary key unless <paramref name="keyed"/> is false.</summary>
     private Table Prices(Database db, bool keyed = true)
-        => db.CreateTable("Prices", new[] { Long("Id"), Decimal("Price", 5, 2), Decimal("Quantity", 18, 0) }, keyed ? "Id" : null);
+        => db.CreateTable("Prices", new[] { Long("Id"), Decimal("Price", 5, 2), Decimal("Quantity", 18, 0) }, keyed ? new[] { "Id" } : Array.Empty<string>());
 
     /// <summary>
     /// Writes <paramref name="meant"/> over the one value in the file that is <paramref name="standIn"/> in a column
@@ -200,7 +200,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
                 foreach (string name in db.GetTableNames())
                 {
                     var table = db.GetTable(name);
-                    var decimals = table.Columns.Where(c => c.DataType == DataType.Numeric && !c.IsCalculated).ToList();
+                    var decimals = table.Columns.Where(c => c.DataType == DataType.Decimal && !c.IsCalculated).ToList();
                     if (decimals.Count == 0) continue;
 
                     seen.Add($"{Path.GetFileName(file)}:{name}");

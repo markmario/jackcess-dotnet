@@ -371,7 +371,7 @@ internal sealed class DataPageWriter
             object? existing = decoder.Decode(rowBytes, col);
             if (existing is not null)
                 merged[col.Name] = existing;
-            object? keyed = col.DataType == DataType.ShortDateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+            object? keyed = col.DataType == DataType.DateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
             if (keyed is not null)
                 old[col.Name] = keyed;
             if (keepStoredDates && keyed is double)
@@ -442,7 +442,7 @@ internal sealed class DataPageWriter
         // indexed (read before its pages are freed).
         var values = new Row();
         foreach (var col in table.Columns)
-            if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.ColumnNumber == col.ColumnNumber)))
+            if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.Ordinal == col.Ordinal)))
                 && decoder.DecodeForKey(rowBytes, col) is { } stored)
                 values[col.Name] = stored;
 

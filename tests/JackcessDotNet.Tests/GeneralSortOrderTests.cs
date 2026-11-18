@@ -36,10 +36,10 @@ public sealed class GeneralSortOrderTests : IDisposable
         return path;
     }
 
-    private static Column[] CodeAndNumber() => new[]
+    private static ColumnDefinition[] CodeAndNumber() => new[]
     {
-        new ColumnBuilder("Code", DataType.Text).MaxLength(255).Build(),
-        new ColumnBuilder("N", DataType.Long).Build(),
+        new ColumnDefinition("Code", DataType.Text) { MaxLength = 255 },
+        new ColumnDefinition("N", DataType.Int32),
     };
 
     private static int TdefOf(PageFile file, string table)
@@ -150,12 +150,12 @@ public sealed class GeneralSortOrderTests : IDisposable
 
     private static Table CreateIndexed(Database db) => db.CreateTable("Indexed", new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Code", DataType.Text).MaxLength(255).Build(),
-        new ColumnBuilder("Family", DataType.Text).MaxLength(255).Build(),
-        new ColumnBuilder("Given", DataType.Text).MaxLength(255).Build(),
-        new ColumnBuilder("Notes", DataType.Memo).Build(),
-        new ColumnBuilder("Free", DataType.Text).MaxLength(255).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Code", DataType.Text) { MaxLength = 255 },
+        new ColumnDefinition("Family", DataType.Text) { MaxLength = 255 },
+        new ColumnDefinition("Given", DataType.Text) { MaxLength = 255 },
+        new ColumnDefinition("Notes", DataType.Memo),
+        new ColumnDefinition("Free", DataType.Text) { MaxLength = 255 },
     }, new[] { "Id" }, new[]
     {
         new IndexDefinition("ByCode", "Code") { IsUnique = true },
@@ -271,17 +271,17 @@ public sealed class GeneralSortOrderTests : IDisposable
             table.Insert(new Row { ["Id"] = i, ["Code"] = $"{Words[i % Words.Length]} {i:D3}", ["Family"] = Words[i % 5], ["Notes"] = Words[i % 3] });
 
         var columns = table.Columns;
-        List<string> State() => columns.Select(c => $"{c.Name} {c.SortOrder} {c.ColumnNumber} {c.FixedDataOffset} {c.VarLenTableIndex}").ToList();
+        List<string> State() => columns.Select(c => $"{c.Name} {c.SortOrder} {c.Ordinal} {c.FixedDataOffset} {c.VarLenTableIndex}").ToList();
         var before = State();
         Assert.All(columns.Where(c => c.DataType is DataType.Text or DataType.Memo), c => Assert.Equal(sourceOrder, c.SortOrder));
 
         // Refused: a key column the table has not, and a name no key is made for.
-        Assert.Throws<InvalidOperationException>(() => target.CreateTable("Refused", columns, primaryKey: "NoSuchColumn"));
-        Assert.Throws<NotSupportedException>(() => target.CreateTable("データ", columns, primaryKey: "Id"));
+        Assert.Throws<InvalidOperationException>(() => target.CreateTable("Refused", ColumnDefinitions.Of(columns), primaryKey: "NoSuchColumn"));
+        Assert.Throws<NotSupportedException>(() => target.CreateTable("データ", ColumnDefinitions.Of(columns), primaryKey: "Id"));
         Assert.Equal(before, State());
 
         // Made, with the columns in another order than the source has them.
-        var copy = target.CreateTable("Copy", columns.Reverse().ToList(), new[] { "Id" }, new[] { new IndexDefinition("ByCode", "Code") });
+        var copy = target.CreateTable("Copy", ColumnDefinitions.Of(columns.Reverse()), new[] { "Id" }, new[] { new IndexDefinition("ByCode", "Code") });
         Assert.Equal(before, State());
         Assert.All(copy.Columns, c => Assert.DoesNotContain(columns, own => ReferenceEquals(own, c)));
         Assert.All(copy.Columns.Where(c => c.DataType is DataType.Text or DataType.Memo), c => Assert.Equal(targetOrder, c.SortOrder));
@@ -311,8 +311,8 @@ public sealed class GeneralSortOrderTests : IDisposable
         {
             var table = db.CreateTable("Notes", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                new ColumnBuilder("Note", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("Note", DataType.Text) { MaxLength = 50 },
             }, primaryKey: "Id");
             table.Insert(new Row { ["Id"] = 1, ["Note"] = "データ" });
         }

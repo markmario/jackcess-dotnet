@@ -19,14 +19,14 @@ public sealed class AddIndexTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Code", DataType.Text).MaxLength(40).Build(),
-        new ColumnBuilder("Grp", DataType.Long).Build(),
-        new ColumnBuilder("Seq", DataType.Int).Build(),
-        new ColumnBuilder("Note", DataType.Memo).Build(),
-        new ColumnBuilder("Amount", DataType.Numeric).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Code", DataType.Text) { MaxLength = 40 },
+        new ColumnDefinition("Grp", DataType.Int32),
+        new ColumnDefinition("Seq", DataType.Int16),
+        new ColumnDefinition("Note", DataType.Memo),
+        new ColumnDefinition("Amount", DataType.Decimal),
     };
 
     // Every third row has no group and no sequence: an index that ignores nulls holds no entry for it.
@@ -55,7 +55,7 @@ public sealed class AddIndexTests : IDisposable
             var table = db.GetTable("Rows");
             var byCode = table.AddIndex(new IndexDefinition("ByCode", "Code") { IsUnique = true });
             table.AddIndex(new IndexDefinition("ByGroup", "Grp"));
-            table.AddIndex(new IndexDefinition("ByGroupAndSeq", "Grp", "Seq") { DescendingColumns = new[] { "Seq" }, IgnoreNulls = true });
+            table.AddIndex(new IndexDefinition("ByGroupAndSeq", "Grp", "Seq") { DescendingColumns = { "Seq" }, IgnoreNulls = true });
             table.AddIndex(new IndexDefinition("ByNote", "Note"));
 
             Assert.True(byCode.IsUnique);
@@ -68,7 +68,7 @@ public sealed class AddIndexTests : IDisposable
         using var reopened = Database.Open(_path);
         var read = reopened.GetTable("Rows");
         Assert.Equal("Grp ASC, Seq DESC", string.Join(", ", read.Indexes.Single(ix => ix.Name == "ByGroupAndSeq").Columns));
-        Assert.True(read.Indexes.Single(ix => ix.Name == "ByGroupAndSeq").IgnoresNulls);
+        Assert.True(read.Indexes.Single(ix => ix.Name == "ByGroupAndSeq").IgnoreNulls);
         Assert.Equal(1_234, read.CreateIndexCursor("ByCode").FindRow("Code", "code 001234")?["Id"]);
         Assert.Equal(5, IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Rows", expectedRows: 5_000));
     }
@@ -229,7 +229,7 @@ public sealed class AddIndexTests : IDisposable
         AssertRefusedAndUnchanged<ArgumentException>(table => table.AddIndex(new IndexDefinition("primarykey", "Grp")));
         AssertRefusedAndUnchanged<InvalidOperationException>(table => table.AddIndex(new IndexDefinition("ByNothing", "Nowhere")));
         AssertRefusedAndUnchanged<ArgumentException>(
-            table => table.AddIndex(new IndexDefinition("Descending", "Grp") { DescendingColumns = new[] { "Seq" } }));
+            table => table.AddIndex(new IndexDefinition("Descending", "Grp") { DescendingColumns = { "Seq" } }));
     }
 
     // As Access refuses them: with such a name allowed, an index could take the name Access gives a

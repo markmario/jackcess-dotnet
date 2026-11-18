@@ -65,10 +65,10 @@ public sealed class InsertRefusalTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                ColumnBuilder.AutoNumber("Id").Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("When", DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Notes", DataType.Memo).Build(),
+                new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("When", DataType.DateTime),
+                new ColumnDefinition("Notes", DataType.Memo),
             }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name"), new IndexDefinition("ByWhen", "When") });
         byte[] before = File.ReadAllBytes(_path);
 
@@ -88,7 +88,7 @@ public sealed class InsertRefusalTests : IDisposable
     // Tables Access made that the engine does not write to, each for a reason of its own.
     [Theory]
     [InlineData("V2007", "blobV2007.accdb", "Table1", "Complex column, whose keys this library does not write")]   // an index on an attachment column
-    [InlineData("V2003", "indexCodesV2003.mdb", "Table7", "Numeric column, whose keys this library does not write")] // a Decimal index
+    [InlineData("V2003", "indexCodesV2003.mdb", "Table7", "Decimal column, whose keys this library does not write")] // a Decimal index
     [InlineData("V1997", "common1V1997.mdb", "Table1", "Access 97 (Jet 3) files are read-only in this library")]   // an Access 97 file: that before any other reason
     [InlineData("V2000", "common2V2000.mdb", "MSP_PROJECTS", "were not all read from its definition")]            // a definition over several pages
     [InlineData("V2010", "calcFieldV2010.accdb", "Table1", "is calculated")]
@@ -106,8 +106,8 @@ public sealed class InsertRefusalTests : IDisposable
         {
             db.CreateTable("Coded", new[]
             {
-                new ColumnBuilder("N", DataType.Long).Build(),
-                new ColumnBuilder("Code", DataType.Text).MaxLength(10).Build(),
+                new ColumnDefinition("N", DataType.Int32),
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 10 },
             }, new[] { "N" }, new[] { new IndexDefinition("ByCode", "Code") })
               .Insert(new Row { ["N"] = 1, ["Code"] = "a" });
 
@@ -129,8 +129,8 @@ public sealed class InsertRefusalTests : IDisposable
         {
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                new ColumnBuilder("Small", DataType.Int).Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("Small", DataType.Int16),
             }).Insert(new Row { ["Id"] = 1, ["Small"] = (short)2 });
 
             var (tdef, page, columnDefs) = DefinitionOf(db, "T");
@@ -145,7 +145,7 @@ public sealed class InsertRefusalTests : IDisposable
     public void A_table_whose_definition_puts_two_columns_in_one_place_says_what_insert_throws()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build(), new ColumnBuilder("B", DataType.Long).Build() }, primaryKey: "A")
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32), new ColumnDefinition("B", DataType.Int32) }, primaryKey: "A")
               .Insert(new Row { ["A"] = 1, ["B"] = 2 });
 
         // As a damaged definition would have it: B over the end of A.
@@ -158,7 +158,7 @@ public sealed class InsertRefusalTests : IDisposable
     public void A_table_whose_columns_were_not_all_read_says_what_insert_throws()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build() }).Insert(new Row { ["A"] = 1 });
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32) }).Insert(new Row { ["A"] = 1 });
 
         AssertRefuses("T", "runs past its first page", table => table.Definition.HasUnreadColumns = true);
     }

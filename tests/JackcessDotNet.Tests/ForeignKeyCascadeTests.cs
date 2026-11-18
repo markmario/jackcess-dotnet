@@ -36,7 +36,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     protected abstract bool IndexForeignKeys { get; }
 
     /// <summary>A table with a primary key and, when <see cref="IndexForeignKeys"/>, an index on each of <paramref name="keys"/>.</summary>
-    private Table Create(Database db, string name, IReadOnlyList<Column> columns, string primaryKey, params string[][] keys)
+    private Table Create(Database db, string name, IReadOnlyList<ColumnDefinition> columns, string primaryKey, params string[][] keys)
         => db.CreateTable(name, columns, new[] { primaryKey },
             IndexForeignKeys ? keys.Select((key, i) => new IndexDefinition($"{name}Key{i}", key)).ToList() : new List<IndexDefinition>());
 
@@ -52,9 +52,9 @@ public abstract class ForeignKeyCascadeTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
-    private static Column Text(string name, int chars = 20) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Text(string name, int chars = 20) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     /// <summary>Declares a relationship as Access records one: a row of MSysRelationships for each pair of columns.</summary>
     private static void Relate(Database db, string name, string parent, string child, int flags,
@@ -345,7 +345,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
-        var child  = Create(db, "Child", new[] { new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(), Long("K"), Text("Name") }, "Id", On("K"));
+        var child  = Create(db, "Child", new[] { new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true }, Long("K"), Text("Name") }, "Id", On("K"));
         Relate(db, "ParentChild", "Parent", "Child", CascadeUpdates, ("K", "K"));
         parent.Insert(new Row { ["K"] = 1, ["Name"] = "p1" });
         parent.Insert(new Row { ["K"] = 2, ["Name"] = "p2" });
@@ -408,7 +408,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Long("K"), Text("Name") }, primaryKey: "K");
-            var child  = Create(db, "Child", new[] { Long("Id"), new ColumnBuilder("K", DataType.Long).AutoNumber().Build(), Text("Name") }, "Id", On("K"));
+            var child  = Create(db, "Child", new[] { Long("Id"), new ColumnDefinition("K", DataType.Int32) { IsAutoNumber = true }, Text("Name") }, "Id", On("K"));
             Relate(db, "ParentChild", "Parent", "Child", CascadeNull | CascadeUpdates, ("K", "K"));
             parent.Insert(new Row { ["K"] = 1, ["Name"] = "p1" });
             parent.Insert(new Row { ["K"] = 2, ["Name"] = "p2" });
@@ -535,7 +535,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// </summary>
     private void Keyed(DataType type, int flags, params object?[] values)
     {
-        Column Key() => type == DataType.Text ? Text("K") : new ColumnBuilder("K", type).Build();
+        ColumnDefinition Key() => type == DataType.Text ? Text("K") : new ColumnDefinition("K", type);
         using var db = Database.Create(_path, FileFormat.Access2000);
         var parent = Create(db, "Parent", new[] { Long("Id"), Key() }, "Id", On("K"));
         var child  = Create(db, "Child", new[] { Long("Id"), Key() }, "Id", On("K"));
@@ -575,10 +575,10 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     {
         const float Next = 1.00000012f;
 
-        Keyed(DataType.Float, flags: 0, 1f);
+        Keyed(DataType.Single, flags: 0, 1f);
         Refused(db => db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["K"] = Next }));
 
-        Keyed(DataType.Float, CascadeUpdates, 1f);
+        Keyed(DataType.Single, CascadeUpdates, 1f);
         Enforcing(db => db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["K"] = Next }));
         Assert.Equal(Next, (float)KeyOfChild(10)!);
     }
@@ -613,15 +613,15 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         var odd   = new DateTime(2009, 7, 6, 2, 57, 46).AddTicks(5_678);
         var other = new DateTime(2023, 3, 15, 2, 57, 46).AddTicks(1_234);
 
-        Keyed(DataType.ShortDateTime, flags: 0, odd, other);
+        Keyed(DataType.DateTime, flags: 0, odd, other);
         Refused(db => db.GetTable("Parent").DeleteRow("Id", 1));
         Refused(db => db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["K"] = new DateTime(2020, 1, 2) }));
 
-        Keyed(DataType.ShortDateTime, CascadeDeletes, odd, other);
+        Keyed(DataType.DateTime, CascadeDeletes, odd, other);
         Enforcing(db => db.GetTable("Parent").DeleteRow("Id", 1));
         Assert.Equal(new[] { 20 }, Rows("Child").Select(row => int.Parse(row.Split(',')[0].Substring(3))));
 
-        Keyed(DataType.ShortDateTime, CascadeUpdates, odd, other);
+        Keyed(DataType.DateTime, CascadeUpdates, odd, other);
         Enforcing(db => db.GetTable("Parent").UpdateByPrimaryKey(1, new Row { ["K"] = new DateTime(2020, 1, 2) }));
         Assert.Equal(new DateTime(2020, 1, 2), KeyOfChild(10));
     }
@@ -632,9 +632,9 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         var odd = new DateTime(2009, 7, 6, 2, 57, 46).AddTicks(5_678);
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var dated   = Create(db, "Dated", new[] { Long("Id"), new ColumnBuilder("K", DataType.ShortDateTime).Build() }, "Id", On("K"));
+            var dated   = Create(db, "Dated", new[] { Long("Id"), new ColumnDefinition("K", DataType.DateTime) }, "Id", On("K"));
             var counted = db.CreateTable("Counted", new[] { Long("N") }, primaryKey: "N");
-            var child   = Create(db, "Child", new[] { Long("Id"), new ColumnBuilder("K", DataType.ShortDateTime).Build(), Long("N") }, "Id", On("K"), On("N"));
+            var child   = Create(db, "Child", new[] { Long("Id"), new ColumnDefinition("K", DataType.DateTime), Long("N") }, "Id", On("K"), On("N"));
             Relate(db, "DatedChild", "Dated", "Child", 0, ("K", "K"));
             Relate(db, "CountedChild", "Counted", "Child", CascadeUpdates, ("N", "N"));
             dated.Insert(new Row { ["Id"] = 1, ["K"] = odd });
@@ -692,7 +692,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         // Access's index on the foreign key has an entry for a null, and the parent's null finds it.
         void NullAndNot(int flags)
         {
-            Keyed(DataType.Long, flags, null, 20);   // parent 1 and child 10 have no K; parent 2 and child 20 have 20
+            Keyed(DataType.Int32, flags, null, 20);   // parent 1 and child 10 have no K; parent 2 and child 20 have 20
         }
 
         NullAndNot(CascadeDeletes);
@@ -720,12 +720,12 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     public static TheoryData<DataType, object, object> KeyTypes => new()
     {
         { DataType.Byte, (byte)7, (byte)200 },
-        { DataType.Int, (short)-5, (short)300 },
-        { DataType.Long, -70000, 70000 },
-        { DataType.Money, 1.2345m, -9.5m },
-        { DataType.Float, 1.1f, -2.5f },
+        { DataType.Int16, (short)-5, (short)300 },
+        { DataType.Int32, -70000, 70000 },
+        { DataType.Currency, 1.2345m, -9.5m },
+        { DataType.Single, 1.1f, -2.5f },
         { DataType.Double, 0.1, 1.0000000000000002 },
-        { DataType.ShortDateTime, new DateTime(2009, 7, 6, 2, 57, 46).AddTicks(5_678), new DateTime(2020, 1, 2, 3, 4, 5) },
+        { DataType.DateTime, new DateTime(2009, 7, 6, 2, 57, 46).AddTicks(5_678), new DateTime(2020, 1, 2, 3, 4, 5) },
         { DataType.Boolean, true, false },
         { DataType.Text, "abc", "Straße" },
         { DataType.Memo, "a memo", "another memo" },
@@ -1259,10 +1259,10 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// </summary>
     [Theory]
     [InlineData(DataType.Text)]
-    [InlineData(DataType.Long)]
+    [InlineData(DataType.Int32)]
     public void Insert_FindsItsParentThroughThePrimaryKey_HoweverLargeTheParent(DataType keyType)
     {
-        Column Key() => keyType == DataType.Text ? Text("K", 20) : Long("K");
+        ColumnDefinition Key() => keyType == DataType.Text ? Text("K", 20) : Long("K");
         object KeyOf(int i) => keyType == DataType.Text ? "Key" + i : i;
         object InAnotherCase(int i) => keyType == DataType.Text ? "KEY" + i : i;
         const int Small = 50, Large = 5_000;
@@ -1386,7 +1386,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var parent = db.CreateTable("Parent", new[] { Text("K", 20), Text("Name") }, primaryKey: "K");
-            var columns = new List<Column> { Long("Id"), Text("K", 20) };
+            var columns = new List<ColumnDefinition> { Long("Id"), Text("K", 20) };
             for (int i = 1; i <= 8; i++) columns.Add(Text("T" + i, 255));
             var child = Create(db, "Child", columns, "Id", On("K"));
             Relate(db, "ParentChild", "Parent", "Child", CascadeUpdates, ("K", "K"));
@@ -1465,7 +1465,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
         using (var db = Database.Open(_path))
         {
             var table1 = db.GetTable("Table1");
-            Assert.Equal(1, table1.Columns.Min(c => c.ColumnNumber));
+            Assert.Equal(1, table1.Columns.Min(c => c.Ordinal));
             Assert.Equal(4, table1.Columns.Where(c => !c.IsVariableLength).Min(c => c.FixedDataOffset));
         }
         var expected = Rows("Table1").Select(row => row.Replace("otherfk2=11", "otherfk2=45")).OrderBy(row => row, StringComparer.Ordinal).ToList();

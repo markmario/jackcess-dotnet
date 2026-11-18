@@ -22,10 +22,10 @@ public sealed class AutoNumberTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-        new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+        new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+        new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
     };
 
     private static int[] Ids(Table table) => table.Rows.Select(r => (int)r["Id"]!).ToArray();
@@ -178,8 +178,8 @@ public sealed class AutoNumberTests : IDisposable
         {
             var table = db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-                new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+                new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+                new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
             });
 
             var first = new Row { ["Txt"] = "a" };
@@ -203,8 +203,8 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         });
         table.AllowAutoNumberInsert = true;
         var mine = Guid.NewGuid();
@@ -262,9 +262,9 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Key", DataType.Long).Build(),
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Key", DataType.Int32),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         }, primaryKey: "Key");
         table.Insert(new Row { ["Key"] = 10, ["Txt"] = "a" });
 
@@ -431,9 +431,9 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         });
         table.AllowAutoNumberInsert = allowed;
 
@@ -459,10 +459,10 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Pk", DataType.Long).Build(),
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Key", DataType.Guid).AutoNumber().Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("Pk", DataType.Int32),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true },
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 10 },
         }, primaryKey: "Pk");
         var inserted = new Row { ["Pk"] = 10, ["Txt"] = "a" };
         table.Insert(inserted);
@@ -624,7 +624,7 @@ public sealed class AutoNumberTests : IDisposable
             foreach (string name in db.GetTableNames())
             {
                 var table = db.GetTable(name);
-                if (table.Columns.Any(c => c.IsAutoNumber && c.DataType == DataType.Long))
+                if (table.Columns.Any(c => c.IsAutoNumber && c.DataType == DataType.Int32))
                     data.Add(Path.GetFileName(Path.GetDirectoryName(file))! + "/" + Path.GetFileName(file), name);
             }
         }
@@ -640,7 +640,7 @@ public sealed class AutoNumberTests : IDisposable
         File.Copy(Path.Combine(TestCorpus.Root!, file), _path, overwrite: true);
         using var db = Database.Open(_path);
         var table = db.GetTable(tableName);
-        string id = table.Columns.First(c => c.IsAutoNumber && c.DataType == DataType.Long).Name;
+        string id = table.Columns.First(c => c.IsAutoNumber && c.DataType == DataType.Int32).Name;
         int before = table.LastAutoNumber;
         Assert.True(before >= table.Rows.Select(r => (int)r[id]!).DefaultIfEmpty(0).Max());
 

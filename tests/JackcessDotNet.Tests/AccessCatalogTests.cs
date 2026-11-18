@@ -37,7 +37,7 @@ public sealed class AccessCatalogTests : IDisposable
         return path;
     }
 
-    private static Column[] OneColumn() => new[] { new ColumnBuilder("Id", DataType.Long).Build() };
+    private static ColumnDefinition[] OneColumn() => new[] { new ColumnDefinition("Id", DataType.Int32) };
 
     // Access-made files of the corpus whose tables Access created under the Admin user with the Tables
     // container's permissions, from Access 2000 to 2010.
@@ -168,8 +168,8 @@ public sealed class AccessCatalogTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Keyed", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 20 },
         }, primaryKey: "Id");
         var keys = Enumerable.Range(1, 5000).Select(i => (int)((i * 7919L) % 100003)).ToList();
         foreach (int key in keys)
@@ -197,8 +197,8 @@ public sealed class AccessCatalogTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Pair", new[]
         {
-            new ColumnBuilder("A", DataType.Long).Build(),
-            new ColumnBuilder("B", DataType.Text).MaxLength(10).Build(),
+            new ColumnDefinition("A", DataType.Int32),
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 10 },
         }, new[] { "A", "B" });
         table.Insert(new Row { ["A"] = 5, ["B"] = "b" });
 
@@ -211,7 +211,7 @@ public sealed class AccessCatalogTests : IDisposable
     public void A_GUID_key_is_written_as_Access_writes_one()
     {
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
-        var table = db.CreateTable("Guids", new[] { new ColumnBuilder("G", DataType.Guid).Build() }, primaryKey: "G");
+        var table = db.CreateTable("Guids", new[] { new ColumnDefinition("G", DataType.Guid) }, primaryKey: "G");
         table.Insert(new Row { ["G"] = Guid.Parse("01020304-0506-0708-090a-0b0c0d0e0f10") });
 
         var file = db.File;
@@ -230,8 +230,8 @@ public sealed class AccessCatalogTests : IDisposable
 
         var table = db.CreateTable("Grows", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Notes", DataType.Memo),
         }, primaryKey: "Id");
         for (int i = 0; i < 40; i++)
             table.Insert(new Row { ["Id"] = i, ["Notes"] = new string('n', 6000) });
@@ -249,8 +249,8 @@ public sealed class AccessCatalogTests : IDisposable
         int blankEnd = file.PageCount;
         var table = db.CreateTable("Big", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Notes", DataType.Memo),
         });
         for (int i = 0; file.PageCount < 700; i++)
             table.Insert(new Row { ["Id"] = i, ["Notes"] = new string((char)('a' + i % 26), 8000) });
@@ -295,9 +295,9 @@ public sealed class AccessCatalogTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
         var table = db.CreateTable("Texts", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Txt", DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Txt", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("Notes", DataType.Memo),
         });
         table.Insert(new Row { ["Id"] = 1, ["Txt"] = "café", ["Notes"] = "naïve" });
 
@@ -327,7 +327,7 @@ public sealed class AccessCatalogTests : IDisposable
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
 
         Assert.Throws<NotSupportedException>(() =>
-            db.CreateTable("Decimals", new[] { new ColumnBuilder("D", DataType.Numeric).Build() }, primaryKey: "D"));
+            db.CreateTable("Decimals", new[] { new ColumnDefinition("D", DataType.Decimal) }, primaryKey: "D"));
         Assert.Empty(db.GetTableNames());
     }
 }

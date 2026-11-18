@@ -20,11 +20,11 @@ public sealed class LargeFileTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> DocumentColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> DocumentColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(100).Build(),
-        new ColumnBuilder("Body", DataType.Memo).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 100 },
+        new ColumnDefinition("Body", DataType.Memo),
     };
 
     /// <summary>A memo of 3,000 characters, different for each row, so a mix-up shows.</summary>
@@ -87,7 +87,7 @@ public sealed class LargeFileTests : IDisposable
         const int count = 600;
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var table = db.CreateTable("Tiny", new[] { new ColumnBuilder("B", DataType.Byte).Build() });
+            var table = db.CreateTable("Tiny", new[] { new ColumnDefinition("B", DataType.Byte) });
             for (int i = 0; i < count; i++)
                 table.Insert(new Row { ["B"] = (byte)(i % 256) });
         }

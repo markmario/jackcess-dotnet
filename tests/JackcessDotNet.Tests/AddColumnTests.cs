@@ -18,23 +18,23 @@ public sealed class AddColumnTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column Col(string name, DataType type) => new ColumnBuilder(name, type).Build();
+    private static ColumnDefinition Col(string name, DataType type) => new ColumnDefinition(name, type);
 
     private static readonly DateTime When = new(2026, 11, 18, 9, 30, 0);
     private static readonly Guid Key = new("0f8fad5b-d9cb-469f-a165-70867728950e");
 
     // One of every kind of place a row has for a value: fixed-length, variable-length, long, and the null mask.
-    private static (Column Column, object Value)[] NewColumns() => new (Column, object)[]
+    private static (ColumnDefinition Column, object Value)[] NewColumns() => new (ColumnDefinition, object)[]
     {
-        (Col("Whole", DataType.Long), 42),
-        (new ColumnBuilder("Words", DataType.Text).MaxLength(30).Build(), "added later"),
+        (Col("Whole", DataType.Int32), 42),
+        (new ColumnDefinition("Words", DataType.Text) { MaxLength = 30 }, "added later"),
         (Col("Notes", DataType.Memo), new string('n', 9_000)),
         (Col("Flag", DataType.Boolean), true),
         (Col("Real", DataType.Double), 2.5),
-        (Col("Seen", DataType.ShortDateTime), When),
+        (Col("Seen", DataType.DateTime), When),
         (Col("Ref", DataType.Guid), Key),
         (Col("Small", DataType.Byte), (byte)7),
-        (Col("Cost", DataType.Money), 12.34m),
+        (Col("Cost", DataType.Currency), 12.34m),
     };
 
     private Database CreateWithRows(int rows)
@@ -42,8 +42,8 @@ public sealed class AddColumnTests : IDisposable
         var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Things", new[]
         {
-            Col("Id", DataType.Long),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(40).Build(),
+            Col("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 40 },
             Col("Note", DataType.Memo),
         }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name") });
         for (int i = 1; i <= rows; i++)
@@ -80,7 +80,7 @@ public sealed class AddColumnTests : IDisposable
             }
             Assert.Equal(new[] { "Id", "Name", "Note" }.Concat(NewColumns().Select(c => c.Column.Name)), table.Columns.Select(c => c.Name));
             // Each new column has a number, and a place in a row, of its own.
-            Assert.Equal(Enumerable.Range(0, 12), table.Columns.Select(c => c.ColumnNumber));
+            Assert.Equal(Enumerable.Range(0, 12), table.Columns.Select(c => c.Ordinal));
             Assert.Null(table.InsertRefusal);
 
             AssertOldRowsReadTheNewColumnsAsNull(table, 50);
@@ -124,7 +124,7 @@ public sealed class AddColumnTests : IDisposable
     {
         using var db = CreateWithRows(3);
         var earlier = db.GetTable("Things");
-        db.GetTable("Things").AddColumn(Col("Whole", DataType.Long));
+        db.GetTable("Things").AddColumn(Col("Whole", DataType.Int32));
 
         Assert.Contains("Whole", earlier.Columns.Select(c => c.Name));
         earlier.Insert(new Row { ["Id"] = 4, ["Name"] = "four", ["Whole"] = 44 });
@@ -187,12 +187,12 @@ public sealed class AddColumnTests : IDisposable
         using var db = Database.Open(_path);
         var table = db.GetTable("Table1");
         var before = table.Rows.ToList();
-        Assert.Equal(new[] { 0, 2, 3, 5 }, table.Columns.Select(c => c.ColumnNumber));
+        Assert.Equal(new[] { 0, 2, 3, 5 }, table.Columns.Select(c => c.Ordinal));
 
-        var whole = table.AddColumn(Col("Whole", DataType.Long));
-        var words = table.AddColumn(new ColumnBuilder("Words", DataType.Text).MaxLength(20).Build());
-        Assert.Equal(6, whole.ColumnNumber);
-        Assert.Equal(7, words.ColumnNumber);
+        var whole = table.AddColumn(Col("Whole", DataType.Int32));
+        var words = table.AddColumn(new ColumnDefinition("Words", DataType.Text) { MaxLength = 20 });
+        Assert.Equal(6, whole.Ordinal);
+        Assert.Equal(7, words.Ordinal);
         Assert.Null(table.InsertRefusal);
 
         table.Insert(new Row { ["id"] = 77, ["id2"] = 78, ["data"] = "d", ["data2"] = "d2", ["Whole"] = 79, ["Words"] = "w" });
@@ -213,8 +213,8 @@ public sealed class AddColumnTests : IDisposable
     public void An_AutoNumber_column_is_added_to_a_table_with_no_rows_and_numbers_the_rows_that_follow()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = db.CreateTable("Empty", new[] { new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build() });
-        table.AddColumn(new ColumnBuilder("Id", DataType.Long).AutoNumber().Build());
+        var table = db.CreateTable("Empty", new[] { new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 } });
+        table.AddColumn(new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true });
 
         var first = new Row { ["Name"] = "one" };
         var second = new Row { ["Name"] = "two" };
@@ -244,7 +244,7 @@ public sealed class AddColumnTests : IDisposable
     public void A_column_whose_name_the_table_has_is_refused_and_nothing_changes()
     {
         CreateWithRows(5).Dispose();
-        AssertRefusedAndUnchanged<ArgumentException>(db => db.GetTable("Things").AddColumn(Col("NAME", DataType.Long)));
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.GetTable("Things").AddColumn(Col("NAME", DataType.Int32)));
     }
 
     [Fact]
@@ -252,7 +252,7 @@ public sealed class AddColumnTests : IDisposable
     {
         CreateWithRows(5).Dispose();
         AssertRefusedAndUnchanged<NotSupportedException>(
-            db => db.GetTable("Things").AddColumn(new ColumnBuilder("Auto", DataType.Long).AutoNumber().Build()));
+            db => db.GetTable("Things").AddColumn(new ColumnDefinition("Auto", DataType.Int32) { IsAutoNumber = true }));
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public sealed class AddColumnTests : IDisposable
             NotSupportedException? refused = null;
             while (refused is null && added < 250)
             {
-                var column = Col(new string((char)('a' + added % 26), 50) + added.ToString("D4"), DataType.Long);
+                var column = Col(new string((char)('a' + added % 26), 50) + added.ToString("D4"), DataType.Int32);
                 var pages = IndexChecks.AllPages(db);
                 try { table.AddColumn(column); added++; }
                 catch (NotSupportedException e)
@@ -306,6 +306,6 @@ public sealed class AddColumnTests : IDisposable
         string? source = TestCorpus.File("V1997", "indexV1997.mdb");
         if (source is null) return;
         File.Copy(source, _path, overwrite: true);
-        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("Table1").AddColumn(Col("Whole", DataType.Long)));
+        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("Table1").AddColumn(Col("Whole", DataType.Int32)));
     }
 }

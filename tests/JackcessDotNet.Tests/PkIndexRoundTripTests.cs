@@ -24,11 +24,11 @@ public sealed class PkIndexRoundTripTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> ArticlesCols() => new[]
+    private static IReadOnlyList<ColumnDefinition> ArticlesCols() => new[]
     {
-        new ColumnBuilder("Id",    DataType.Long).Build(),
-        new ColumnBuilder("Title", DataType.Text).MaxLength(80).Build(),
-        new ColumnBuilder("Body",  DataType.Memo).Build(),
+        new ColumnDefinition("Id",    DataType.Int32),
+        new ColumnDefinition("Title", DataType.Text) { MaxLength = 80 },
+        new ColumnDefinition("Body",  DataType.Memo),
     };
 
     [Fact]

@@ -157,19 +157,19 @@ public sealed class OfficeCryptTests
 
     private static object? DummyValueFor(Column col) => col.DataType switch
     {
-        DataType.Long          => 1,
-        DataType.Int           => (short)1,
+        DataType.Int32          => 1,
+        DataType.Int16           => (short)1,
         DataType.Byte          => (byte)1,
         DataType.Double        => 1.0,
-        DataType.Float         => 1.0f,
-        DataType.Money         => 1m,
-        DataType.Numeric       => 1m,
+        DataType.Single         => 1.0f,
+        DataType.Currency         => 1m,
+        DataType.Decimal       => 1m,
         DataType.Boolean       => true,
         DataType.Text          => "x",
         DataType.Memo          => "x",
         DataType.Binary        => new byte[] { 1 },
         DataType.Guid          => Guid.NewGuid(),
-        DataType.ShortDateTime => new DateTime(2024, 1, 1),
+        DataType.DateTime => new DateTime(2024, 1, 1),
         _                      => null,
     };
 

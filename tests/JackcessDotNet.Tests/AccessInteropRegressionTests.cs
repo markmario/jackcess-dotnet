@@ -211,8 +211,8 @@ public sealed class AccessInteropRegressionTests : IDisposable
         {
             var t = db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                new ColumnBuilder("M", DataType.Memo).Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("M", DataType.Memo),
             });
             t.Insert(new Row { ["Id"] = 1, ["M"] = value });
         }

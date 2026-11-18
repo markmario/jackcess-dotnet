@@ -58,13 +58,13 @@ public sealed class AccessMadeIndexTests : IDisposable
             }
         }
 
-        foreach (string type in new[] { "Byte", "Int", "Long", "Money", "Float", "Double", "ShortDateTime", "Boolean", "Text", "Memo", "Guid" })
+        foreach (string type in new[] { "Byte", "Int16", "Int32", "Currency", "Single", "Double", "DateTime", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type, proved);
         // (The corpus has no descending index on an Integer or a Date/Time column; ACE makes those in
         // qcatco/exportmdb.interop's EngineIndexesInAccessTests.)
-        foreach (string type in new[] { "Byte", "Long", "Money", "Float", "Double", "Boolean", "Text", "Memo", "Guid" })
+        foreach (string type in new[] { "Byte", "Int32", "Currency", "Single", "Double", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type + " descending", proved);
-        Assert.Equal(new[] { "Numeric" }, refused);
+        Assert.Equal(new[] { "Decimal" }, refused);
     }
 
     // The four bytes before an index block's columns and before a logical index's numbers: Access writes 1923 and
@@ -102,7 +102,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         if (TestCorpus.Root is not null) Assert.True(accessIndexes > 100, $"only {accessIndexes} indexes of Access's were looked at");
 
         using var made = Database.Create(_path, FileFormat.Access2000);
-        var keyed = made.CreateTable("Keyed", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
+        var keyed = made.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
         Assert.Equal(new[] { (1923, 1625) }, Magics(made, keyed));
     }
 
@@ -137,7 +137,7 @@ public sealed class AccessMadeIndexTests : IDisposable
 
         using (var db = Database.Open(_path))
         {
-            Column[] Columns() => new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Grp", DataType.Long).Build() };
+            ColumnDefinition[] Columns() => new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Grp", DataType.Int32) };
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Plain", Columns()));
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Keyed", Columns(), primaryKey: "Id"));
             Assert.Throws<NotSupportedException>(() => db.CreateTable("Indexed", Columns(), new[] { "Id" }, new[] { new IndexDefinition("ByGrp", "Grp") }));
@@ -168,9 +168,9 @@ public sealed class AccessMadeIndexTests : IDisposable
 
         object? ValueOf(int i) => i % 9 == 0 ? null : type switch
         {
-            DataType.Float         => (object)((i - 100) * 0.37f),
-            DataType.ShortDateTime => new DateTime(1899, 12, 30).AddDays(i - 100).AddMilliseconds(i * 7919 % 86_400_000),
-            DataType.Money         => (i - 100) * 1234.5678m,
+            DataType.Single         => (object)((i - 100) * 0.37f),
+            DataType.DateTime => new DateTime(1899, 12, 30).AddDays(i - 100).AddMilliseconds(i * 7919 % 86_400_000),
+            DataType.Currency         => (i - 100) * 1234.5678m,
             DataType.Boolean       => i % 2 == 0,
             DataType.Memo          => i % 4 == 0 ? new string('m', 300) + i : $"memo {i % 30}",   // beyond a key's 255 characters, and short
             _                      => throw new InvalidOperationException($"{tableName}.data is {type}"),
@@ -255,7 +255,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             if (column)
             {
                 int second = pos + index.IndexDataNumber * 52 + 4 + 3;
-                Assert.Equal(index.Columns[1].Column.ColumnNumber, ByteUtil.GetShort(p, second));
+                Assert.Equal(index.Columns[1].Column.Ordinal, ByteUtil.GetShort(p, second));
                 ByteUtil.PutShort(p, second, 99);
             }
             else

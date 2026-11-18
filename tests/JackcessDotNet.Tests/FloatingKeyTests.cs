@@ -25,8 +25,8 @@ public sealed class FloatingKeyTests : IDisposable
     {
         new object[] { DataType.Double, 0.0, -0.0 },
         new object[] { DataType.Double, 1.0, NextAfterOne },
-        new object[] { DataType.Float, 0.0f, -0.0f },
-        new object[] { DataType.Float, 1.0f, NextSingleAfterOne },
+        new object[] { DataType.Single, 0.0f, -0.0f },
+        new object[] { DataType.Single, 1.0f, NextSingleAfterOne },
     };
 
     private static long Bits(object value) => value is float f
@@ -46,10 +46,10 @@ public sealed class FloatingKeyTests : IDisposable
             if (File.Exists(_path)) File.Delete(_path);
             object named = byTheSecond ? second : first, other = byTheSecond ? first : second;
             using var db = Database.Create(_path, FileFormat.Access2000);
-            var table = db.CreateTable("T", new[] { new ColumnBuilder("K", type).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
+            var table = db.CreateTable("T", new[] { new ColumnDefinition("K", type), new ColumnDefinition("Name", DataType.Text) }, primaryKey: "K");
             table.Insert(new Row { ["K"] = first, ["Name"] = "first" });
             table.Insert(new Row { ["K"] = second, ["Name"] = "second" });
-            table.Insert(new Row { ["K"] = type == DataType.Float ? 7.5f : 7.5, ["Name"] = "another" });
+            table.Insert(new Row { ["K"] = type == DataType.Single ? 7.5f : 7.5, ["Name"] = "another" });
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 3);
 
             Assert.Equal(byTheSecond ? "second" : "first", table.FindRowByPrimaryKey(named)!["Name"]);
@@ -64,7 +64,7 @@ public sealed class FloatingKeyTests : IDisposable
             names = Names(table);
             Assert.False(names.ContainsKey(Bits(named)));
             Assert.Equal(byTheSecond ? "first" : "second", names[Bits(other)]);
-            Assert.Equal("another", names[Bits(type == DataType.Float ? 7.5f : (object)7.5)]);
+            Assert.Equal("another", names[Bits(type == DataType.Single ? 7.5f : (object)7.5)]);
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 2);
             Assert.Null(table.FindRowByPrimaryKey(named));
             Assert.NotNull(table.FindRowByPrimaryKey(other));
@@ -75,14 +75,14 @@ public sealed class FloatingKeyTests : IDisposable
     public void A_key_given_as_another_number_type_still_finds_its_row()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var longs = db.CreateTable("L", new[] { new ColumnBuilder("K", DataType.Long).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
+        var longs = db.CreateTable("L", new[] { new ColumnDefinition("K", DataType.Int32), new ColumnDefinition("Name", DataType.Text) }, primaryKey: "K");
         longs.Insert(new Row { ["K"] = 5, ["Name"] = "five" });
         longs.UpdateByPrimaryKey(5L, new Row { ["Name"] = "by a long" });
         longs.UpdateByPrimaryKey((short)5, new Row { ["Name"] = "by a short" });
         longs.UpdateByPrimaryKey(5.0, new Row { ["Name"] = "by a double" });
         Assert.Equal("by a double", longs.Rows.Single()["Name"]);
 
-        var doubles = db.CreateTable("D", new[] { new ColumnBuilder("K", DataType.Double).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
+        var doubles = db.CreateTable("D", new[] { new ColumnDefinition("K", DataType.Double), new ColumnDefinition("Name", DataType.Text) }, primaryKey: "K");
         doubles.Insert(new Row { ["K"] = 2.0, ["Name"] = "two" });
         doubles.Insert(new Row { ["K"] = 0.5, ["Name"] = "half" });
         doubles.UpdateByPrimaryKey(2, new Row { ["Name"] = "by an int" });
@@ -90,7 +90,7 @@ public sealed class FloatingKeyTests : IDisposable
         doubles.UpdateByPrimaryKey(0.5m, new Row { ["Name"] = "by a decimal" });
         Assert.Equal(new[] { "by a decimal", "by an int" }, doubles.Rows.Select(r => (string)r["Name"]!).OrderBy(n => n));
 
-        var money = db.CreateTable("M", new[] { new ColumnBuilder("K", DataType.Money).Build(), new ColumnBuilder("Name", DataType.Text).Build() }, primaryKey: "K");
+        var money = db.CreateTable("M", new[] { new ColumnDefinition("K", DataType.Currency), new ColumnDefinition("Name", DataType.Text) }, primaryKey: "K");
         money.Insert(new Row { ["K"] = 1.25m, ["Name"] = "a" });
         money.Insert(new Row { ["K"] = 1.2501m, ["Name"] = "b" });
         money.UpdateByPrimaryKey(1.2501m, new Row { ["Name"] = "changed" });

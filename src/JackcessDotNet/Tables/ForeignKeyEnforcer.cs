@@ -67,13 +67,13 @@ internal sealed class ForeignKeyEnforcer
         // One whose child table is gone has no rows to keep. One whose parent table is gone is kept: nothing can
         // satisfy it, as before.
         _relationships = database.GetRelationships()
-            .Where(r => r.HasReferentialIntegrity && r.ColumnPairs.Count > 0 && tables.Contains(r.ToTable))
+            .Where(r => r.HasReferentialIntegrity && r.ColumnPairs.Count > 0 && tables.Contains(r.ToTableName))
             .ToList();
     }
 
     /// <summary>True when a relationship with referential integrity has <paramref name="table"/> on either side.</summary>
     internal bool Involves(Table table)
-        => _relationships.Any(r => IsTable(r.FromTable, table.Name) || IsTable(r.ToTable, table.Name));
+        => _relationships.Any(r => IsTable(r.FromTableName, table.Name) || IsTable(r.ToTableName, table.Name));
 
     // ── Insert ───────────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ internal sealed class ForeignKeyEnforcer
     /// </summary>
     internal void CheckInsert(Table child, Row row)
     {
-        foreach (var relationship in _relationships.Where(r => IsTable(r.ToTable, child.Name)))
+        foreach (var relationship in _relationships.Where(r => IsTable(r.ToTableName, child.Name)))
         {
             // As the row will store them: a Yes/No given no value, or null, is stored No, and refers to a parent
             // whose key is No.
@@ -94,7 +94,7 @@ internal sealed class ForeignKeyEnforcer
 
             // A row may refer to itself: Access adds it. By a key that is null in part, too: Access holds a null in
             // the foreign key to match a null in the key, so (1, null) refers to a row whose key is (1, null).
-            if (IsTable(relationship.FromTable, child.Name))
+            if (IsTable(relationship.FromTableName, child.Name))
             {
                 var types = ParentColumns(relationship, child);
                 var own = relationship.ColumnPairs.Select(pair => StoredIn(child, row, pair.FromColumn));
@@ -103,7 +103,7 @@ internal sealed class ForeignKeyEnforcer
 
             if (!ParentExists(relationship, values))
                 throw Violation(relationship,
-                    $"'{child.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{relationship.FromTable}'");
+                    $"'{child.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{relationship.FromTableName}'");
         }
     }
 
@@ -115,7 +115,7 @@ internal sealed class ForeignKeyEnforcer
     private bool ParentExists(Relationship relationship, object?[] values)
     {
         // No such table: nothing can be referred to.
-        if (!_database.TryGetTable(relationship.FromTable, out var parent)) return false;
+        if (!_database.TryGetTable(relationship.FromTableName, out var parent)) return false;
 
         var types = ParentColumns(relationship, parent);
         byte[] key = KeyOf(types, values);
@@ -238,23 +238,23 @@ internal sealed class ForeignKeyEnforcer
         // (whose parent it is following).
         foreach (var relationship in _relationships)
         {
-            if (ReferenceEquals(relationship, cascade) || !IsTable(relationship.ToTable, rows.Table.Name)) continue;
+            if (ReferenceEquals(relationship, cascade) || !IsTable(relationship.ToTableName, rows.Table.Name)) continue;
             if (!relationship.ColumnPairs.Any(pair => changed.ContainsKey(pair.ToColumn))) continue;
 
             object?[] values = relationship.ColumnPairs.Select(pair => rows.Value(row, pair.ToColumn)).ToArray();
             if (values.All(v => v is null)) continue;
             if (!changes.ParentExists(relationship, values))
                 throw Violation(relationship,
-                    $"'{rows.Table.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{relationship.FromTable}'");
+                    $"'{rows.Table.Name}' ({ChildColumnNames(relationship)}) = ({Show(values)}) has no matching row in '{relationship.FromTableName}'");
         }
 
         // As a parent: the rows that referred to the old key follow it, or forbid the change.
         foreach (var relationship in _relationships)
         {
-            if (!IsTable(relationship.FromTable, rows.Table.Name)) continue;
+            if (!IsTable(relationship.FromTableName, rows.Table.Name)) continue;
             if (!relationship.ColumnPairs.Any(pair => changed.ContainsKey(pair.FromColumn))) continue;
 
-            var children = changes.RowsOf(relationship.ToTable);
+            var children = changes.RowsOf(relationship.ToTableName);
             object?[] oldValues = relationship.ColumnPairs.Select(pair => rows.Value(before, pair.FromColumn)).ToArray();
             byte[] oldKey = KeyOf(changes.ParentColumns(relationship), oldValues);
             var referring = children.Referring(relationship, oldKey, oldValues);
@@ -262,7 +262,7 @@ internal sealed class ForeignKeyEnforcer
 
             if (!relationship.CascadeUpdates)
                 throw Violation(relationship,
-                    $"'{rows.Table.Name}' ({ParentColumnNames(relationship)}) cannot be changed while rows of '{relationship.ToTable}' refer to it");
+                    $"'{rows.Table.Name}' ({ParentColumnNames(relationship)}) cannot be changed while rows of '{relationship.ToTableName}' refer to it");
 
             foreach (var child in referring)
             {
@@ -321,17 +321,17 @@ internal sealed class ForeignKeyEnforcer
 
         foreach (var relationship in _relationships)
         {
-            if (!IsTable(relationship.FromTable, rows.Table.Name)) continue;
+            if (!IsTable(relationship.FromTableName, rows.Table.Name)) continue;
 
-            var children = changes.RowsOf(relationship.ToTable);
+            var children = changes.RowsOf(relationship.ToTableName);
             object?[] values = relationship.ColumnPairs.Select(pair => rows.Value(row, pair.FromColumn)).ToArray();
             byte[] key = KeyOf(changes.ParentColumns(relationship), values);
             var referring = children.Referring(relationship, key, values);
             if (referring.Count == 0) continue;
 
-            if (!relationship.CascadeDeletes && !relationship.CascadeNull)
+            if (!relationship.CascadeDeletes && !relationship.CascadeNullOnDelete)
                 throw Violation(relationship,
-                    $"the row of '{rows.Table.Name}' cannot be deleted while rows of '{relationship.ToTable}' refer to it");
+                    $"the row of '{rows.Table.Name}' cannot be deleted while rows of '{relationship.ToTableName}' refer to it");
 
             foreach (var child in referring)
             {
@@ -492,13 +492,13 @@ internal sealed class ForeignKeyEnforcer
             return column.DataType switch
             {
                 DataType.Byte          => Convert.ToByte(value),
-                DataType.Int           => Convert.ToInt16(value),
-                DataType.Long          => Convert.ToInt32(value),
-                DataType.BigInt        => Convert.ToInt64(value),
-                DataType.Float        => Convert.ToSingle(value),
+                DataType.Int16           => Convert.ToInt16(value),
+                DataType.Int32          => Convert.ToInt32(value),
+                DataType.Int64        => Convert.ToInt64(value),
+                DataType.Single        => Convert.ToSingle(value),
                 DataType.Double        => Convert.ToDouble(value),
-                DataType.Money         => IndexKeys.MoneyUnits(Convert.ToDecimal(value)) / 10000m,
-                DataType.ShortDateTime => value is DateTime date ? date.ToOADate() : value,
+                DataType.Currency         => IndexKeys.MoneyUnits(Convert.ToDecimal(value)) / 10000m,
+                DataType.DateTime => value is DateTime date ? date.ToOADate() : value,
                 DataType.Guid          => value is Guid ? value : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!),
                 _                      => value,
             };
@@ -524,7 +524,7 @@ internal sealed class ForeignKeyEnforcer
     /// </summary>
     private static object? AsRead(Column column, object? stored)
     {
-        if (column.DataType != DataType.ShortDateTime || stored is not double days) return stored;
+        if (column.DataType != DataType.DateTime || stored is not double days) return stored;
         try { return DateTime.FromOADate(days); }
         catch (ArgumentException) { return null; }
     }
@@ -588,7 +588,7 @@ internal sealed class ForeignKeyEnforcer
         internal IReadOnlyList<Column> ParentColumns(Relationship relationship)
         {
             if (!_parentColumns.TryGetValue(relationship, out var columns))
-                _parentColumns[relationship] = columns = ForeignKeyEnforcer.ParentColumns(relationship, Table(relationship.FromTable));
+                _parentColumns[relationship] = columns = ForeignKeyEnforcer.ParentColumns(relationship, Table(relationship.FromTableName));
             return columns;
         }
 
@@ -607,8 +607,8 @@ internal sealed class ForeignKeyEnforcer
             foreach (var relationship in _enforcer._relationships)
                 foreach (var (from, to) in relationship.ColumnPairs)
                 {
-                    if (IsTable(relationship.FromTable, table.Name)) tracked.Add(from);
-                    if (IsTable(relationship.ToTable, table.Name)) tracked.Add(to);
+                    if (IsTable(relationship.FromTableName, table.Name)) tracked.Add(from);
+                    if (IsTable(relationship.ToTableName, table.Name)) tracked.Add(to);
                 }
             foreach (string column in table.Definition.EffectivePrimaryKeyColumns) tracked.Add(column);
             if (alsoTrack is not null) tracked.Add(alsoTrack);
@@ -621,10 +621,10 @@ internal sealed class ForeignKeyEnforcer
         /// </summary>
         internal bool ParentExists(Relationship relationship, object?[] values)
         {
-            if (!_rows.TryGetValue(relationship.FromTable, out var parent))
+            if (!_rows.TryGetValue(relationship.FromTableName, out var parent))
             {
                 // No such table: nothing can be referred to.
-                if (!TryTable(relationship.FromTable, out var table)) return false;
+                if (!TryTable(relationship.FromTableName, out var table)) return false;
                 parent = RowsOf(table);
             }
             return parent.Referred(relationship, KeyOf(ParentColumns(relationship), values), values).Count > 0;
@@ -735,7 +735,7 @@ internal sealed class ForeignKeyEnforcer
         internal bool IsRequired(string column)
         {
             var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
-            return asked.IsRequired || Table.Properties.Get(asked.Name)?["Required"] is true;
+            return asked.IsRequired || Table.PropertyMaps.Get(asked.Name)?["Required"] is true;
         }
 
         // ── Reading rows ─────────────────────────────────────────────────────

@@ -12,9 +12,9 @@ namespace JackcessDotNet;
 ///   using var db = Database.Create("MyFile.mdb");
 ///   var table = db.CreateTable("Customers", new[]
 ///   {
-///       new ColumnBuilder("Id",   DataType.Long ).AutoNumber().Build(),
-///       new ColumnBuilder("Name", DataType.Text ).MaxLength(100).Build(),
-///   });
+///       new ColumnDefinition("Id",   DataType.Int32) { IsAutoNumber = true },
+///       new ColumnDefinition("Name", DataType.Text)  { MaxLength = 100 },
+///   }, "Id");
 ///   var row = new Row { ["Name"] = "Alice" };
 ///   table.Insert(row);          // row["Id"] is now 1
 /// </code>
@@ -614,53 +614,83 @@ public sealed class Database : IDisposable
     // ── Table operations ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a new user table, writes its TDEF and usage-map pages, registers
-    /// it in MSysObjects, and returns a <see cref="Table"/> ready for inserts.
+    /// Creates a table: writes its definition, registers it in the catalog, and returns the <see cref="Table"/>,
+    /// ready for rows. The key's index is kept as rows are inserted, updated and deleted.
+    /// <code>
+    ///   db.CreateTable("Loose", columns);                       // no primary key
+    ///   db.CreateTable("People", columns, "Id");                // a key of one column
+    ///   db.CreateTable("Lines", columns, "Order", "Line");      // a key of several, in key order
+    /// </code>
     /// </summary>
-    /// <param name="name">Table name (must be unique in the database).</param>
-    /// <param name="columns">Column definitions (use <see cref="ColumnBuilder"/>).</param>
+    /// <param name="name">The table's name, which no other table of the database has.</param>
+    /// <param name="columns">The table's columns, in their order: at least one.</param>
     /// <param name="primaryKey">
-    ///   Optional name of the primary-key column. Its index is kept as rows are
-    ///   inserted, deleted and updated.
+    /// The names of the primary key's columns, in key order: none for a table without a primary key, and at most
+    /// <see cref="IndexDefinition.MaxColumns"/>.
     /// </param>
-    public Table CreateTable(string name, IReadOnlyList<Column> columns, string? primaryKey = null)
-        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey }, Array.Empty<IndexDefinition>());
-
-    /// <summary>
-    /// Composite-PK overload. Creates a table with a multi-column primary key
-    /// (up to 10 columns — Jet's hard limit). Pass the column names in the
-    /// order they should appear in the index.
-    /// </summary>
-    public Table CreateTable(string name, IReadOnlyList<Column> columns,
-                             IReadOnlyList<string> primaryKeyColumns)
-    {
-        if (primaryKeyColumns is null || primaryKeyColumns.Count == 0)
-            throw new ArgumentException(
-                "primaryKeyColumns must contain at least one column.", nameof(primaryKeyColumns));
-        return CreateTableCore(name, columns, primaryKeyColumns, Array.Empty<IndexDefinition>());
-    }
+    /// <exception cref="ArgumentException">
+    /// The name is empty, there are no columns, or a column's definition is not one a table can have
+    /// (<see cref="ColumnDefinition"/>). Nothing is created.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The primary key is on a column whose keys this library does not write as Access does, or the database
+    /// is an Access 97 file, which is only read. Nothing is created.
+    /// </exception>
+    public Table CreateTable(string name, IEnumerable<ColumnDefinition> columns, params string[] primaryKey)
+        => CreateTableCore(name, ColumnsOf(columns), KeyOf(primaryKey, nameof(primaryKey)), Array.Empty<IndexDefinition>());
 
     /// <summary>
     /// Creates a table with indexes beside its primary key: single- or multi-column, unique or not. Every index is
     /// kept as rows are inserted, updated and deleted, and a unique index refuses a duplicate before anything of
     /// the row is written.
     /// </summary>
-    /// <param name="name">Table name (must be unique in the database).</param>
-    /// <param name="columns">Column definitions (use <see cref="ColumnBuilder"/>).</param>
-    /// <param name="primaryKeyColumns">The primary key's columns, in key order; null or empty for no primary key.</param>
+    /// <param name="name">The table's name, which no other table of the database has.</param>
+    /// <param name="columns">The table's columns, in their order: at least one.</param>
+    /// <param name="primaryKey">The names of the primary key's columns, in key order; null or empty for no primary key.</param>
     /// <param name="indexes">The table's other indexes.</param>
+    /// <exception cref="ArgumentException">
+    /// The name is empty, there are no columns, a column's definition is not one a table can have
+    /// (<see cref="ColumnDefinition"/>), or two indexes have one name. Nothing is created.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
     ///   or Complex column, or text in a sort order other than General - Legacy and General; or the database is
     ///   an Access 97 file, which is only read. Nothing is created.
     /// </exception>
-    public Table CreateTable(string name, IReadOnlyList<Column> columns,
-                             IReadOnlyList<string>? primaryKeyColumns,
-                             IReadOnlyList<IndexDefinition> indexes)
+    public Table CreateTable(string name, IEnumerable<ColumnDefinition> columns,
+                             IEnumerable<string>? primaryKey,
+                             IEnumerable<IndexDefinition> indexes)
     {
         if (indexes is null) throw new ArgumentNullException(nameof(indexes));
-        return CreateTableCore(name, columns, primaryKeyColumns is { Count: > 0 } ? primaryKeyColumns : null, indexes);
+        return CreateTableCore(name, ColumnsOf(columns), KeyOf(primaryKey, nameof(primaryKey)), indexes.ToList());
     }
+
+    /// <summary>The columns a table is asked to have, each checked: what refuses a definition refuses the table.</summary>
+    private static IReadOnlyList<Column> ColumnsOf(IEnumerable<ColumnDefinition> columns)
+    {
+        if (columns is null) throw new ArgumentNullException(nameof(columns));
+        return columns
+            .Select(column => (column ?? throw new ArgumentException("A column definition must not be null.", nameof(columns)))
+                .ToColumn(nameof(columns)))
+            .ToList();
+    }
+
+    /// <summary>The primary key's columns, or null for none.</summary>
+    private static IReadOnlyList<string>? KeyOf(IEnumerable<string>? primaryKey, string parameterName)
+    {
+        var key = primaryKey?.ToList();
+        if (key is null || key.Count == 0) return null;
+        if (key.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("A primary key column name must not be empty.", parameterName);
+        return key;
+    }
+
+    /// <summary>
+    /// Creates a table of columns already made - an import's, mapped from another source - as
+    /// <see cref="CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> does.
+    /// </summary>
+    internal Table CreateTableOf(string name, IReadOnlyList<Column> columns, string? primaryKey)
+        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey }, Array.Empty<IndexDefinition>());
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
                                   IReadOnlyList<string>? pkColumns,
@@ -787,14 +817,14 @@ public sealed class Database : IDisposable
     /// <exception cref="NotSupportedException">The file is an .mdb, which has no such column. Nothing is changed.</exception>
     internal static byte? FormatVersionFor(string whatWasNotDone, IReadOnlyList<Column> columns, JetFormat format)
     {
-        var newest = columns.Where(c => c.DataType is DataType.BigInt or DataType.ExtendedDateTime)
+        var newest = columns.Where(c => c.DataType is DataType.Int64 or DataType.DateTimeExtended)
                             .OrderByDescending(c => c.DataType).FirstOrDefault();
         if (newest is null) return null;
         if (format.Version is FileFormat.Access97 or FileFormat.Access2000)
             throw new NotSupportedException(
                 $"{whatWasNotDone}: its column '{newest.Name}' is a {newest.DataType}, which an .mdb file " +
                 "(Access 2000-2003) does not have. Create the database as an .accdb, FileFormat.Access2007 or later.");
-        return newest.DataType == DataType.ExtendedDateTime ? DatabaseHeader.Version2019 : DatabaseHeader.Version2016;
+        return newest.DataType == DataType.DateTimeExtended ? DatabaseHeader.Version2019 : DatabaseHeader.Version2016;
     }
 
     /// <summary>An index a new table is to have: checked, with its columns found, and no pages yet.</summary>
@@ -824,7 +854,7 @@ public sealed class Database : IDisposable
                                                   IReadOnlyList<IndexDefinition> secondary)
     {
         for (short i = 0; i < columns.Count; i++)
-            columns[i].ColumnNumber = i;
+            columns[i].Ordinal = i;
 
         Column Find(string column, string what)
         {

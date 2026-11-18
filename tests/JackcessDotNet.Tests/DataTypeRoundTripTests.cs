@@ -17,17 +17,17 @@ public sealed class DataTypeRoundTripTests : IDisposable
         => _path = Path.Combine(Path.GetTempPath(), $"dt_{Guid.NewGuid():N}.mdb");
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
-    private Row Roundtrip(DataType dt, object? value, Action<ColumnBuilder>? configure = null)
+    private Row Roundtrip(DataType dt, object? value, Action<ColumnDefinition>? configure = null)
     {
-        ColumnBuilder cb = new ColumnBuilder("V", dt);
-        configure?.Invoke(cb);
+        var column = new ColumnDefinition("V", dt);
+        configure?.Invoke(column);
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var t = db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                cb.Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                column,
             });
             t.Insert(new Row { ["Id"] = 1, ["V"] = value });
         }
@@ -52,27 +52,27 @@ public sealed class DataTypeRoundTripTests : IDisposable
 
     [Fact] public void Int_RoundTrip()
     {
-        var r = Roundtrip(DataType.Int, (short)-12345);
+        var r = Roundtrip(DataType.Int16, (short)-12345);
         Assert.Equal((short)-12345, r["V"]);
     }
 
     [Fact] public void Int_BoundaryValues_RoundTrip()
     {
-        var r = Roundtrip(DataType.Int, short.MinValue);
+        var r = Roundtrip(DataType.Int16, short.MinValue);
         Assert.Equal(short.MinValue, r["V"]);
         Dispose(); File.Delete(_path); /* fresh */
     }
 
     [Fact] public void Long_PositiveAndNegative_RoundTrip()
     {
-        Assert.Equal(2147000000, Roundtrip(DataType.Long, 2147000000)["V"]);
+        Assert.Equal(2147000000, Roundtrip(DataType.Int32, 2147000000)["V"]);
         Dispose(); File.Delete(_path);
-        Assert.Equal(-1, Roundtrip(DataType.Long, -1)["V"]);
+        Assert.Equal(-1, Roundtrip(DataType.Int32, -1)["V"]);
     }
 
     [Fact] public void Float_RoundTrip_Within6SigFigs()
     {
-        var r = Roundtrip(DataType.Float, 3.14159f);
+        var r = Roundtrip(DataType.Single, 3.14159f);
         Assert.InRange((float)r["V"]!, 3.1415f, 3.1416f);
     }
 
@@ -85,20 +85,20 @@ public sealed class DataTypeRoundTripTests : IDisposable
 
     [Fact] public void Money_RoundTrip_RetainsFourDecimals()
     {
-        var r = Roundtrip(DataType.Money, 12345.6789m);
+        var r = Roundtrip(DataType.Currency, 12345.6789m);
         Assert.Equal(12345.6789m, r["V"]);
     }
 
     [Fact] public void Money_Negative_RoundTrip()
     {
-        var r = Roundtrip(DataType.Money, -7.5m);
+        var r = Roundtrip(DataType.Currency, -7.5m);
         Assert.Equal(-7.5m, r["V"]);
     }
 
     [Fact] public void ShortDateTime_RoundTrip()
     {
         var dt = new DateTime(2024, 6, 15, 12, 30, 45);
-        var r = Roundtrip(DataType.ShortDateTime, dt);
+        var r = Roundtrip(DataType.DateTime, dt);
         Assert.Equal(dt, r["V"]);
     }
 
@@ -124,7 +124,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
 
     [Fact] public void Text_AsciiOnly_RoundTrip()
     {
-        var r = Roundtrip(DataType.Text, "Hello, world!", cb => cb.MaxLength(50));
+        var r = Roundtrip(DataType.Text, "Hello, world!", column => column.MaxLength = 50);
         Assert.Equal("Hello, world!", r["V"]);
     }
 
@@ -132,7 +132,7 @@ public sealed class DataTypeRoundTripTests : IDisposable
     {
         // Empty string: row decode returns null (no notNull bit set / zero length).
         // Test exists to document the behaviour rather than fix it.
-        var r = Roundtrip(DataType.Text, "", cb => cb.MaxLength(50));
+        var r = Roundtrip(DataType.Text, "", column => column.MaxLength = 50);
         // Either null or empty is acceptable depending on the encoder's null treatment.
         Assert.True(r["V"] is null or "", $"Expected null or empty; got '{r["V"]}'");
     }
@@ -140,26 +140,26 @@ public sealed class DataTypeRoundTripTests : IDisposable
     [Fact] public void Text_Unicode_RoundTrip()
     {
         // Characters outside Latin-1 force UTF-16LE storage (no compression marker).
-        var r = Roundtrip(DataType.Text, "日本語テスト", cb => cb.MaxLength(50));
+        var r = Roundtrip(DataType.Text, "日本語テスト", column => column.MaxLength = 50);
         Assert.Equal("日本語テスト", r["V"]);
     }
 
     [Fact] public void Binary_RoundTrip()
     {
         var bytes = new byte[] { 0x00, 0x01, 0xFE, 0xFF, 0x42 };
-        var r = Roundtrip(DataType.Binary, bytes, cb => cb.WithLength(255));
+        var r = Roundtrip(DataType.Binary, bytes, column => column.MaxLength = 255);
         Assert.Equal(bytes, (byte[])r["V"]!);
     }
 
     [Fact] public void Numeric_RoundTrip_WithScale()
     {
-        var r = Roundtrip(DataType.Numeric, 123.45m, cb => cb.WithNumericScale(18, 2));
+        var r = Roundtrip(DataType.Decimal, 123.45m, column => column.Scale = 2);
         Assert.Equal(123.45m, r["V"]);
     }
 
     [Fact] public void Numeric_RoundTrip_Negative()
     {
-        var r = Roundtrip(DataType.Numeric, -99.99m, cb => cb.WithNumericScale(18, 2));
+        var r = Roundtrip(DataType.Decimal, -99.99m, column => column.Scale = 2);
         Assert.Equal(-99.99m, r["V"]);
     }
 
@@ -176,8 +176,8 @@ public sealed class DataTypeRoundTripTests : IDisposable
         {
             var t = db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                new ColumnBuilder("V",  DataType.Memo).Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("V",  DataType.Memo),
             });
             t.Insert(new Row { ["Id"] = 1 });   // no V
         }

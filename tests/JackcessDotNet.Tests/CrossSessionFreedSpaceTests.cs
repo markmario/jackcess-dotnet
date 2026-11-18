@@ -18,10 +18,10 @@ public sealed class CrossSessionFreedSpaceTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] BlobColumns() => new[]
+    private static ColumnDefinition[] BlobColumns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Blob", DataType.Ole).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Blob", DataType.OleObject),
     };
 
     private static byte[] Bytes(int length, int seed)

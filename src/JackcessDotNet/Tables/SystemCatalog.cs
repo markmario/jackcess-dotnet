@@ -427,8 +427,8 @@ internal sealed class SystemCatalog
         int maskOffset = rowBytes.Length - maskSize;
         if (maskOffset < _format.SizeRowColumnCount) return null;
 
-        bool notNull = (rowBytes[maskOffset + targetCol.ColumnNumber / 8]
-                        & (1 << (targetCol.ColumnNumber % 8))) != 0;
+        bool notNull = (rowBytes[maskOffset + targetCol.Ordinal / 8]
+                        & (1 << (targetCol.Ordinal % 8))) != 0;
         if (!notNull) return null;
 
         // Determine this column's var-index. Either trust the on-disk TDEF value
@@ -571,7 +571,7 @@ internal sealed class SystemCatalog
         foreach (var c in all)
         {
             if (!c.DataType.IsVariableLength()) continue;
-            if (c.ColumnNumber == target.ColumnNumber) return idx;
+            if (c.Ordinal == target.Ordinal) return idx;
             idx++;
         }
         return idx;

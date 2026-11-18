@@ -25,8 +25,8 @@ public sealed class TrustedIndexTests : IDisposable
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"trusted_{Guid.NewGuid():N}.mdb");
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name, int chars = 20) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name, int chars = 20) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     private void CopyOf(string asset) => File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", asset), _path, overwrite: true);
 

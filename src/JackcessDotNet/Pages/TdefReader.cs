@@ -95,7 +95,7 @@ internal static class TdefReader
                 precision:      page[p + format.OffsetColumnPrecision],
                 scale:          page[p + format.OffsetColumnScale]);
 
-            col.ColumnNumber = colNum;
+            col.Ordinal = colNum;
             // The column's flag says where a row keeps the value, not its type: Access keeps a Long, a Date/Time,
             // a Replication ID or a Decimal among the variable-length values when the flag says so, and Text or
             // Binary among the fixed-length ones. Its place there is the definition's too (RowLayout).
@@ -176,7 +176,7 @@ internal static class TdefReader
         // memo write into such files.)
         var lvalUmapPages = new Dictionary<string, LvalUmapRef>(StringComparer.OrdinalIgnoreCase);
         var lvalColsByNumber = columns.Where(c => c.DataType.IsLongValue())
-                                      .ToDictionary(c => (int)c.ColumnNumber);
+                                      .ToDictionary(c => (int)c.Ordinal);
         while (lvalColsByNumber.Count > 0 && pos + 10 <= page.Length)
         {
             int colNum = ByteUtil.GetUShort(page, pos);
@@ -244,7 +244,7 @@ internal static class TdefReader
                 byte  cFlags = page[p + 2];
                 p += 3;
                 if (colNum == ColumnUnused) continue;
-                var col = columns.FirstOrDefault(x => x.ColumnNumber == colNum);
+                var col = columns.FirstOrDefault(x => x.Ordinal == colNum);
                 if (col is null)             // tolerant of unknown column numbers, for reading
                 {
                     incomplete = true;
@@ -343,14 +343,14 @@ internal static class TdefReader
         new Column(
             name:           name,
             dataType:       src.DataType,
-            length:         src.Length,
+            length:         src.LengthInBytes,
             isRequired:     src.IsRequired,
             isAutoNumber:   src.IsAutoNumber,
             allowZeroLength:src.AllowZeroLength,
             precision:      src.Precision,
             scale:          src.Scale)
         {
-            ColumnNumber     = src.ColumnNumber,
+            Ordinal          = src.Ordinal,
             FixedDataOffset  = src.FixedDataOffset,
             VarLenTableIndex = src.VarLenTableIndex,
             IsVariableLength = src.IsVariableLength,

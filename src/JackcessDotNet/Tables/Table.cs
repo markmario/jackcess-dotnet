@@ -46,10 +46,12 @@ public sealed class Table
         // rows that hold its values, counted separately. Complex columns are not written, so it is left alone.
         _readAutoNumberColumns = definition.Columns
             .Where(c => c.IsAutoNumber && c.DataType != DataType.Complex)
-            .OrderBy(c => c.ColumnNumber)
+            .OrderBy(c => c.Ordinal)
             .ToArray();
         _readAtVersion = version;
         _writability   = null;
+        // Each column reads its properties through its table.
+        foreach (var column in definition.Columns) column.Owner = this;
     }
 
     // Reads the definition again when it has been changed since it was read.
@@ -121,10 +123,10 @@ public sealed class Table
         if (InsertRefusal is { } why) throw new NotSupportedException(why);
     }
 
-    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Long and Guid ones are.</summary>
+    /// <summary>Why the table's AutoNumber columns cannot be filled, or null when they can: only Int32 and Guid ones are.</summary>
     private string? WhyNotNumbered()
-        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Long or DataType.Guid)) is { } column
-            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Long and Guid " +
+        => _autoNumberColumns.FirstOrDefault(c => c.DataType is not (DataType.Int32 or DataType.Guid)) is { } column
+            ? $"{Name}.{column.Name} is an AutoNumber of type {column.DataType}; only Int32 (Long Integer) and Guid " +
               "AutoNumbers are generated. The table is left as it was."
             : null;
 
@@ -140,13 +142,16 @@ public sealed class Table
     }
 
     private PropertyMaps? _propertiesCache;
+
     /// <summary>
-    /// Property maps attached to this table in MSysObjects.LvProp. The
-    /// <c>Default</c> map holds table-level properties (Description, Caption, etc.);
-    /// per-column properties live in named maps keyed by column name.
-    /// Lazily decoded on first access; null bytes → empty <see cref="PropertyMaps"/>.
+    /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
+    /// (MSysObjects.LvProp) the first time they are asked for. Empty for a table Access keeps none for. A
+    /// column's properties are the column's: <see cref="Column.Properties"/>.
     /// </summary>
-    public PropertyMaps Properties
+    public PropertyMap Properties => PropertyMaps.Default;
+
+    /// <summary>The table's property maps: its own and one for each column that has properties.</summary>
+    internal PropertyMaps PropertyMaps
     {
         get
         {
@@ -156,6 +161,19 @@ public sealed class Table
             _propertiesCache = PropertyMapReader.Read(bytes, _file.Format);
             return _propertiesCache;
         }
+    }
+
+    // The maps handed out for columns Access keeps no properties for, by column name.
+    private Dictionary<string, PropertyMap>? _noProperties;
+
+    /// <summary>The properties of <paramref name="column"/>: the map the catalog has under its name, or an empty one.</summary>
+    internal PropertyMap PropertiesOf(Column column)
+    {
+        if (PropertyMaps.Get(column.Name) is { } map) return map;
+        _noProperties ??= new Dictionary<string, PropertyMap>(StringComparer.OrdinalIgnoreCase);
+        if (!_noProperties.TryGetValue(column.Name, out var none))
+            _noProperties[column.Name] = none = new PropertyMap(column.Name, 0x01);
+        return none;
     }
 
     // ── Reading ───────────────────────────────────────────────────────────────
@@ -440,7 +458,7 @@ public sealed class Table
                 c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
             if (allowed)
                 highestGiven = _autoNumberColumns
-                    .Where(c => c.DataType == DataType.Long && newValues.ContainsKey(c.Name))
+                    .Where(c => c.DataType == DataType.Int32 && newValues.ContainsKey(c.Name))
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
@@ -596,7 +614,7 @@ public sealed class Table
     public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
     {
         var decimals = _definition.Columns
-            .Where(c => c.DataType == DataType.Numeric && !c.IsCalculated && c.Precision > 0)
+            .Where(c => c.DataType == DataType.Decimal && !c.IsCalculated && c.Precision > 0)
             .ToList();
         if (decimals.Count == 0) yield break;
 
@@ -651,19 +669,22 @@ public sealed class Table
     /// from then on.
     /// </para>
     /// </summary>
-    /// <param name="column">The column to add (use <see cref="ColumnBuilder"/>). It is left as it was given.</param>
+    /// <param name="column">The column to add.</param>
     /// <returns>The table's new column.</returns>
-    /// <exception cref="ArgumentException">The table already has a column of that name, or 255 columns.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table already has a column of that name, or 255 columns; or the definition is not one a table can
+    /// have (<see cref="ColumnDefinition"/>). Nothing is changed.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
     /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
     /// or would run, over more than one page, which is all this library reads of one - so a table is never left
     /// that it could no longer write rows to. Nothing is changed.
     /// </exception>
-    public Column AddColumn(Column column)
+    public Column AddColumn(ColumnDefinition column)
     {
         if (column is null) throw new ArgumentNullException(nameof(column));
-        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column);
+        string name = SchemaChange.AddColumn(Owner(), _file, _definition, column.ToColumn(nameof(column)));
         return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 

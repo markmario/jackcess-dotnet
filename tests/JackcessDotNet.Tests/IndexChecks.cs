@@ -33,7 +33,7 @@ internal static class IndexChecks
             foreach (var (page, row, values) in rows)
             {
                 var key = index.Columns.Select(c => values.TryGetValue(c.Column.Name, out var v) ? v : null).ToArray();
-                if (index.IgnoresNulls && key.All(v => v is null)) continue;
+                if (index.IgnoreNulls && key.All(v => v is null)) continue;
                 expected.Add($"{Convert.ToHexString(IndexKeys.Encode(index.Columns, key))} -> {page}/{row}");
             }
             var actual = JetPages.LeafEntries(file, index.RootPageNumber).Select(e => $"{e.Hex} -> {e.RowPage}/{e.Row}").ToList();

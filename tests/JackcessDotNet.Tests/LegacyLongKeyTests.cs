@@ -62,7 +62,7 @@ public sealed class LegacyLongKeyTests : IDisposable
         foreach (var (page, row, values) in rows)
         {
             var key = index.Columns.Select(c => values.TryGetValue(c.Column.Name, out var v) ? v : null).ToArray();
-            if (index.IgnoresNulls && key.All(v => v is null)) continue;
+            if (index.IgnoreNulls && key.All(v => v is null)) continue;
             string whole = Convert.ToHexString(IndexKeys.EncodeWhole(index.Columns, key));
             string cut = Convert.ToHexString(IndexKeys.Encode(index.Columns, key));
             var own = entries.Where(e => e.RowPage == page && e.Row == row).Select(e => e.Hex).ToList();
@@ -213,11 +213,11 @@ public sealed class LegacyLongKeyTests : IDisposable
     {
         var table = db.CreateTable("Kept", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Code", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("A", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("B", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Code", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("Notes", DataType.Memo),
         }, new[] { "Id" }, new[]
         {
             new IndexDefinition("ByCode", "Code") { IsUnique = true },
@@ -314,9 +314,9 @@ public sealed class LegacyLongKeyTests : IDisposable
     /// </summary>
     private static void ParentAndChildWithWholeKeys(Database db, int flags)
     {
-        Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(255).Build();
+        ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 255 };
         var parent = db.CreateTable("Parent", new[] { Text("Code"), Text("Name") }, primaryKey: "Code");
-        var child = db.CreateTable("Child", new[] { new ColumnBuilder("Id", DataType.Long).Build(), Text("Code"), Text("Name") },
+        var child = db.CreateTable("Child", new[] { new ColumnDefinition("Id", DataType.Int32), Text("Code"), Text("Name") },
             new[] { "Id" }, new[] { new IndexDefinition("ChildCode", "Code") });
         db.GetTable("MSysRelationships").Insert(new Row
         {

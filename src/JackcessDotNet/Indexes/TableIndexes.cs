@@ -55,7 +55,7 @@ internal sealed class TableIndexes
             IsPrimaryKey    = sharing.Any(ix => ix.IsPrimaryKey);
             IsUnique        = sharing.Any(ix => ix.IsUnique);
             RefusesNulls    = IsPrimaryKey || sharing.Any(ix => ix.IsRequired);
-            IgnoresNulls    = first.IgnoresNulls;
+            IgnoreNulls    = first.IgnoreNulls;
         }
 
         /// <summary>The tree's block among the definition's index blocks: what tells it from the table's other trees.</summary>
@@ -66,7 +66,7 @@ internal sealed class TableIndexes
         public bool                       IsPrimaryKey { get; }
         public bool                       IsUnique     { get; }
         public bool                       RefusesNulls { get; }
-        public bool                       IgnoresNulls { get; }
+        public bool                       IgnoreNulls { get; }
     }
 
     /// <summary>A row's entry in one tree: its key, and whether a unique index compares it with other rows'.</summary>
@@ -153,7 +153,7 @@ internal sealed class TableIndexes
                     $"{_table.Name}'s {Describe(tree)} does not take a null: the row has none for {string.Join(", ", missing)}. " +
                     "The table is left as it was.");
             }
-            if (nulls == values.Length && tree.IgnoresNulls) continue;
+            if (nulls == values.Length && tree.IgnoreNulls) continue;
 
             // A value Access keys by the characters around it has no key here, whichever index it is in.
             for (int i = 0; i < values.Length; i++)
@@ -262,7 +262,7 @@ internal sealed class TableIndexes
             && t.Columns.Count == columns.Count
             && t.Columns.Select(c => c.Column.Name).SequenceEqual(columns, StringComparer.OrdinalIgnoreCase)
             && t.Columns.All(c => IndexKeys.CanEncode(c.Column)));
-        if (tree is null || (tree.IgnoresNulls && values.All(v => v is null))) return null;
+        if (tree is null || (tree.IgnoreNulls && values.All(v => v is null))) return null;
 
         Entry entry;
         try
@@ -366,7 +366,7 @@ internal sealed class TableIndexes
                 {
                     var tree   = trees[t];
                     var values = ValuesIn(tree, row, out int nulls);
-                    if (nulls == values.Length && tree.IgnoresNulls) continue;
+                    if (nulls == values.Length && tree.IgnoreNulls) continue;
 
                     bool keyed = true;
                     for (int i = 0; keyed && i < values.Length; i++)

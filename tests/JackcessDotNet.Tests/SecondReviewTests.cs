@@ -37,9 +37,9 @@ public sealed class SecondReviewTests : IDisposable
         return path;
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
-    private static Column Text(string name, int chars) => new ColumnBuilder(name, DataType.Text).MaxLength(chars).Build();
+    private static ColumnDefinition Text(string name, int chars) => new ColumnDefinition(name, DataType.Text) { MaxLength = chars };
 
     private static object? Value(Row row, string column) => row.TryGetValue(column, out var value) ? value : null;
 
@@ -324,7 +324,7 @@ public sealed class SecondReviewTests : IDisposable
         Assert.Contains(columns, c => c.DataType == DataType.Text);
 
         using var db = Database.Create(NewPath(), FileFormat.Access2000);
-        db.CreateTable("Copied", columns);
+        db.CreateTable("Copied", ColumnDefinitions.Of(columns));
         byte[] tdef = db.File.ReadPage(TdefOf(db.File, "Copied"));
         for (int i = 0; i < columns.Count; i++)
             if (columns[i].DataType is DataType.Text or DataType.Memo)
@@ -362,7 +362,7 @@ public sealed class SecondReviewTests : IDisposable
         int pages = db.File.PageCount;
 
         var eleven = Enumerable.Range(0, 11).Select(i => Long($"K{i}")).ToArray();
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToList()));
+        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
         Assert.Equal(pages, db.File.PageCount);
 
         var named = Enumerable.Range(0, 120).Select(i => Long($"{i:D3}" + new string('x', 60))).ToArray();

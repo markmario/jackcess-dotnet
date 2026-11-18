@@ -20,11 +20,11 @@ public sealed class ReviewFindingsTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> Columns() => new[]
+    private static IReadOnlyList<ColumnDefinition> Columns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(100).Build(),
-        new ColumnBuilder("Body", DataType.Memo).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 100 },
+        new ColumnDefinition("Body", DataType.Memo),
     };
 
     private static List<int> LvalPages(Database db, Table table, string column)
@@ -66,9 +66,9 @@ public sealed class ReviewFindingsTests : IDisposable
         {
             var table = db.CreateTable("People", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(5).Build(),
-                new ColumnBuilder("Body", DataType.Memo).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 5 },
+                new ColumnDefinition("Body", DataType.Memo),
             }, primaryKey: "Id");
             table.Insert(new Row { ["Id"] = 1, ["Name"] = "abc", ["Body"] = body });
             table.Insert(new Row { ["Id"] = 2, ["Name"] = "def" });
@@ -112,9 +112,9 @@ public sealed class ReviewFindingsTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Notes", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("A",  DataType.Memo).Build(),
-            new ColumnBuilder("B",  DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("A",  DataType.Memo),
+            new ColumnDefinition("B",  DataType.Memo),
         });
         table.Insert(new Row { ["Id"] = 1, ["A"] = new string('я', 3_000) });
         table.DeleteRow("Id", 1);
@@ -126,10 +126,10 @@ public sealed class ReviewFindingsTests : IDisposable
         Assert.Equal(new string('ж', 1_000), table.Rows.Single()["B"]);
     }
 
-    private static IReadOnlyList<Column> BlobColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> BlobColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Blob", DataType.Ole).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Blob", DataType.OleObject),
     };
 
     private static byte[] Bytes(int length, int seed)

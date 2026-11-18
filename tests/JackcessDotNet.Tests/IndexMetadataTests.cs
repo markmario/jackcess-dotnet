@@ -101,8 +101,8 @@ public sealed class IndexMetadataTests
             {
                 db.CreateTable("Foo", new[]
                 {
-                    new ColumnBuilder("Id",   DataType.Long).Build(),
-                    new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+                    new ColumnDefinition("Id",   DataType.Int32),
+                    new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
                 }, primaryKey: "Id");
             }
 
@@ -134,8 +134,8 @@ public sealed class IndexMetadataTests
             {
                 db.CreateTable("Foo", new[]
                 {
-                    new ColumnBuilder("Id",   DataType.Long).Build(),
-                    new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+                    new ColumnDefinition("Id",   DataType.Int32),
+                    new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
                 });
             }
 

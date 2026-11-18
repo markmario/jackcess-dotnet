@@ -17,11 +17,11 @@ public sealed class FreedSpaceTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> BlobColumns(params string[] blobs)
+    private static IReadOnlyList<ColumnDefinition> BlobColumns(params string[] blobs)
     {
-        var columns = new List<Column> { new ColumnBuilder("Id", DataType.Long).Build() };
+        var columns = new List<ColumnDefinition> { new ColumnDefinition("Id", DataType.Int32) };
         foreach (var name in blobs.Length == 0 ? new[] { "Blob" } : blobs)
-            columns.Add(new ColumnBuilder(name, DataType.Ole).Build());
+            columns.Add(new ColumnDefinition(name, DataType.OleObject));
         return columns;
     }
 
@@ -362,11 +362,11 @@ public sealed class FreedSpaceTests : IDisposable
             var table = db.GetTable(name);
             var rows = table.Rows.ToList();
             var key = table.Columns.FirstOrDefault(c =>
-                (c.DataType == DataType.Long || c.DataType == DataType.Int || c.DataType == DataType.Text)
+                (c.DataType == DataType.Int32 || c.DataType == DataType.Int16 || c.DataType == DataType.Text)
                 && rows.All(r => r[c.Name] != null) && rows.Select(r => r[c.Name]).Distinct().Count() == rows.Count);
             if (key is null) continue;
             // An OLE column with usage maps of its own: an attachment field's hidden data column has none.
-            foreach (var column in table.Columns.Where(c => c.DataType == DataType.Ole && table.Definition.LvalColumnUmapPages.ContainsKey(c.Name)))
+            foreach (var column in table.Columns.Where(c => c.DataType == DataType.OleObject && table.Definition.LvalColumnUmapPages.ContainsKey(c.Name)))
             {
                 foreach (var row in rows)
                 {

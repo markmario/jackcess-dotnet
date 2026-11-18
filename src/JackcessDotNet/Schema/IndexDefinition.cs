@@ -2,11 +2,12 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// An index to give a table when it is created, beside its primary key: its name, its columns in key order, and
-/// whether it refuses duplicates. Pass it to <see cref="Database.CreateTable(string, IReadOnlyList{Column}, IReadOnlyList{string}?, IReadOnlyList{IndexDefinition})"/>
-/// or <see cref="TableBuilder.WithIndex(IndexDefinition)"/>. The index is kept as rows are inserted, updated and
-/// deleted, as Access keeps one.
+/// whether it refuses duplicates. Pass it to <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, IEnumerable{string}?, IEnumerable{IndexDefinition})"/>
+/// or <see cref="Table.AddIndex"/>. The index is kept as rows are inserted, updated and deleted, as Access keeps
+/// one; the index the table then has is an <see cref="Index"/>.
 /// <code>
 ///   new IndexDefinition("ByName", "LastName", "FirstName") { IsUnique = true }
+///   new IndexDefinition("Latest", "Customer", "Date") { DescendingColumns = { "Date" } }
 /// </code>
 /// </summary>
 public sealed class IndexDefinition
@@ -42,8 +43,11 @@ public sealed class IndexDefinition
     /// <summary>The names of the index's columns, in key order.</summary>
     public IReadOnlyList<string> Columns { get; }
 
-    /// <summary>The columns, of <see cref="Columns"/>, that sort descending; the rest sort ascending.</summary>
-    public IReadOnlyCollection<string> DescendingColumns { get; set; } = Array.Empty<string>();
+    /// <summary>
+    /// The columns, of <see cref="Columns"/>, that sort descending, to add to; the rest sort ascending. A name
+    /// here that is not one of the index's columns is refused when the index is made.
+    /// </summary>
+    public ICollection<string> DescendingColumns { get; } = new List<string>();
 
     /// <summary>
     /// True for an index that refuses a second row with the same values. As in Access, a row with a null in

@@ -1,50 +1,105 @@
+using System.Collections;
+
 namespace JackcessDotNet;
 
 /// <summary>
-/// A named collection of typed (name → value) properties attached to a
-/// catalog object — typically a table or a column.
+/// The properties Access keeps for a table or for one of its columns, by name: what
+/// <see cref="Table.Properties"/> and <see cref="Column.Properties"/> return, as in Jackcess. It is the
+/// collection of its properties, in the order the file lists them.
 ///
 /// Access stores well-known property names like:
 ///   "Description", "Caption", "Format", "DefaultValue", "ValidationRule",
 ///   "InputMask", "Required", "AllowZeroLength", "DecimalPlaces"
 ///
-/// This is the lightweight read-side model. Mutation works in memory but
-/// is not yet persisted back to disk (see <see cref="Table.Properties"/>
-/// for the entry point).
+/// Properties are read; this library does not write them.
 /// </summary>
-public sealed class PropertyMap
+public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
 {
     /// <summary>
-    /// PropertyMap name: the empty string for "default" (table-level) properties,
-    /// or the column name for per-column properties.
+    /// The name of what the properties belong to: the empty string for a table's own properties, the column's
+    /// name for a column's.
     /// </summary>
     public string Name { get; }
 
     /// <summary>Block-type byte from the on-disk stream (0x00 default, 0x01 column).</summary>
     internal byte Type { get; }
 
-    private readonly Dictionary<string, Property> _props = new(StringComparer.OrdinalIgnoreCase);
+    // By name, whatever its case, and in the order they were read.
+    private readonly Dictionary<string, Property> _byName = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<Property> _inOrder = new();
 
     internal PropertyMap(string name, byte type) { Name = name; Type = type; }
 
-    /// <summary>Returns the value of <paramref name="propertyName"/>, or null if absent.</summary>
+    /// <summary>
+    /// The value of the property named <paramref name="propertyName"/>, whatever the case of its letters, or
+    /// null when there is none (<see cref="TryGetValue"/> tells a property that is not there from one whose
+    /// value is null).
+    /// </summary>
     public object? this[string propertyName]
-        => _props.TryGetValue(propertyName, out var p) ? p.Value : null;
+        => _byName.TryGetValue(propertyName, out var p) ? p.Value : null;
 
-    /// <summary>Enumerates the contained properties in insertion order.</summary>
-    public IReadOnlyCollection<Property> Properties => _props.Values;
+    /// <summary>The value of the property named <paramref name="name"/> when there is one.</summary>
+    /// <returns>Whether there is a property of that name; <paramref name="value"/> is its value.</returns>
+    public bool TryGetValue(string name, out object? value)
+    {
+        if (_byName.TryGetValue(name, out var p))
+        {
+            value = p.Value;
+            return true;
+        }
+        value = null;
+        return false;
+    }
 
-    /// <summary>True when no properties are attached.</summary>
-    public bool IsEmpty => _props.Count == 0;
+    /// <summary>The number of properties: 0 for a table or column Access keeps none for.</summary>
+    public int Count => _inOrder.Count;
 
-    internal void Add(Property prop) => _props[prop.Name] = prop;
+    /// <summary>The properties, in the order the file lists them.</summary>
+    public IEnumerator<Property> GetEnumerator() => _inOrder.GetEnumerator();
 
+    IEnumerator IEnumerable.GetEnumerator() => _inOrder.GetEnumerator();
+
+    internal void Add(Property prop)
+    {
+        // A name the file lists twice keeps its place and takes the later value.
+        if (_byName.TryGetValue(prop.Name, out var earlier))
+            _inOrder[_inOrder.IndexOf(earlier)] = prop;
+        else
+            _inOrder.Add(prop);
+        _byName[prop.Name] = prop;
+    }
+
+    /// <summary>The map's name ("&lt;default&gt;" for a table's own) and its properties.</summary>
     public override string ToString()
-        => $"{(string.IsNullOrEmpty(Name) ? "<default>" : Name)} {{ {string.Join(", ", _props.Values)} }}";
+        => $"{(string.IsNullOrEmpty(Name) ? "<default>" : Name)} {{ {string.Join(", ", _inOrder)} }}";
 
     /// <summary>One named, typed property within a <see cref="PropertyMap"/>.</summary>
-    public sealed record Property(string Name, DataType DataType, object? Value, bool IsDdl)
+    public sealed class Property
     {
+        internal Property(string name, DataType dataType, object? value, bool isDdl)
+        {
+            Name     = name;
+            DataType = dataType;
+            Value    = value;
+            IsDdl    = isDdl;
+        }
+
+        /// <summary>The property's name.</summary>
+        public string Name { get; }
+
+        /// <summary>The type the property's value is stored as.</summary>
+        public DataType DataType { get; }
+
+        /// <summary>The property's value, read as a column of <see cref="DataType"/> is read; null when it has none.</summary>
+        public object? Value { get; }
+
+        /// <summary>
+        /// Whether Access marks the property as one set through data-definition statements (DDL) rather than
+        /// through its own interface. Jackcess's <c>isDdl</c>.
+        /// </summary>
+        public bool IsDdl { get; }
+
+        /// <summary>The property as "name(type)=value".</summary>
         public override string ToString() => $"{Name}({DataType})={Value}";
     }
 }
@@ -53,7 +108,7 @@ public sealed class PropertyMap
 /// All property maps attached to a single catalog object (its default map plus
 /// one map per column-with-properties). Keyed by map name (case-insensitive).
 /// </summary>
-public sealed class PropertyMaps : System.Collections.Generic.IEnumerable<PropertyMap>
+internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<PropertyMap>
 {
     private readonly Dictionary<string, PropertyMap> _maps =
         new(StringComparer.OrdinalIgnoreCase);

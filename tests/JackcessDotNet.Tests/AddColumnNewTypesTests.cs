@@ -18,13 +18,13 @@ public sealed class AddColumnNewTypesTests : IDisposable
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
     }
 
-    private static Column Col(string name, DataType type) => new ColumnBuilder(name, type).Build();
+    private static ColumnDefinition Col(string name, DataType type) => new ColumnDefinition(name, type);
 
     private string CreateWithRows(string fileName, FileFormat version)
     {
         string path = Path.Combine(_dir, fileName);
         using var db = Database.Create(path, version);
-        var table = db.CreateTable("Things", new[] { Col("Id", DataType.Long) });
+        var table = db.CreateTable("Things", new[] { Col("Id", DataType.Int32) });
         for (int i = 1; i <= 3; i++) table.Insert(new Row { ["Id"] = i });
         return path;
     }
@@ -37,8 +37,8 @@ public sealed class AddColumnNewTypesTests : IDisposable
     }
 
     [Theory]
-    [InlineData(DataType.BigInt)]
-    [InlineData(DataType.ExtendedDateTime)]
+    [InlineData(DataType.Int64)]
+    [InlineData(DataType.DateTimeExtended)]
     public void Neither_is_added_to_a_table_of_an_mdb_and_nothing_is_changed(DataType type)
     {
         string path = CreateWithRows("old.mdb", FileFormat.Access2000);
@@ -63,7 +63,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("Things");
-            table.AddColumn(Col("Big", DataType.BigInt));
+            table.AddColumn(Col("Big", DataType.Int64));
             table.Insert(new Row { ["Id"] = 4, ["Big"] = long.MaxValue });
             table.Insert(new Row { ["Id"] = 5, ["Big"] = long.MinValue });
         }
@@ -87,7 +87,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("Things");
-            table.AddColumn(Col("Seen", DataType.ExtendedDateTime));
+            table.AddColumn(Col("Seen", DataType.DateTimeExtended));
             table.Insert(new Row { ["Id"] = 4, ["Seen"] = when });
         }
 
@@ -111,7 +111,7 @@ public sealed class AddColumnNewTypesTests : IDisposable
         using (var db = Database.Open(path))
         {
             db.File.WritesBeforeFailure = writesBeforeFailure;
-            Assert.ThrowsAny<Exception>(() => db.CreateTable("Newer", new[] { Col("Id", DataType.Long), Col("Big", DataType.BigInt) }));
+            Assert.ThrowsAny<Exception>(() => db.CreateTable("Newer", new[] { Col("Id", DataType.Int32), Col("Big", DataType.Int64) }));
             db.File.WritesBeforeFailure = null;
         }
 

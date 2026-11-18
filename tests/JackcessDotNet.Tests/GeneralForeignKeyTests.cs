@@ -24,9 +24,9 @@ public sealed class GeneralForeignKeyTests : IDisposable
             if (File.Exists(path)) File.Delete(path);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(255).Build();
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 255 };
 
     /// <summary>
     /// Parent(Code, Name) and Child(Id, Code, Name), Child.Code referring to Parent.Code with cascading updates and

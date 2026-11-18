@@ -49,10 +49,11 @@ public sealed class RelationshipTests
         // Sanity: each relationship has at least one column pair with non-empty endpoints.
         foreach (var r in rels)
         {
-            Assert.False(string.IsNullOrEmpty(r.FromTable));
-            Assert.False(string.IsNullOrEmpty(r.ToTable));
-            Assert.True(r.ColumnPairs.Count > 0);
-            foreach (var (from, to) in r.ColumnPairs)
+            Assert.False(string.IsNullOrEmpty(r.FromTableName));
+            Assert.False(string.IsNullOrEmpty(r.ToTableName));
+            Assert.True(r.FromColumnNames.Count > 0);
+            Assert.Equal(r.FromColumnNames.Count, r.ToColumnNames.Count);
+            foreach (var (from, to) in r.FromColumnNames.Zip(r.ToColumnNames))
             {
                 Assert.False(string.IsNullOrEmpty(from));
                 Assert.False(string.IsNullOrEmpty(to));

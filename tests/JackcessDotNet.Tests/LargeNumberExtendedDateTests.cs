@@ -32,21 +32,21 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     private static readonly long?[] Numbers = AccessLargeNumberExtendedDateTests.Numbers;
     private static readonly DateTime?[] Dates = AccessLargeNumberExtendedDateTests.Dates.Select(AccessLargeNumberExtendedDateTests.Date).ToArray();
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        ColumnBuilder.Long("Id").Build(),
-        ColumnBuilder.BigInt("N").Build(),
-        ColumnBuilder.ExtendedDateTime("D").Build(),
-        ColumnBuilder.Text("Txt", 20).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("N", DataType.Int64),
+        new ColumnDefinition("D", DataType.DateTimeExtended),
+        new ColumnDefinition("Txt", DataType.Text) { MaxLength = 20 },
     };
 
     private static IndexDefinition[] Indexes() => new[]
     {
         new IndexDefinition("NAsc", "N"),
-        new IndexDefinition("NDesc", "N") { DescendingColumns = new[] { "N" } },
+        new IndexDefinition("NDesc", "N") { DescendingColumns = { "N" } },
         new IndexDefinition("DAsc", "D"),
-        new IndexDefinition("DDesc", "D") { DescendingColumns = new[] { "D" } },
-        new IndexDefinition("NThenD", "N", "D") { DescendingColumns = new[] { "D" } },
+        new IndexDefinition("DDesc", "D") { DescendingColumns = { "D" } },
+        new IndexDefinition("NThenD", "N", "D") { DescendingColumns = { "D" } },
     };
 
     private static Row RowOf(int id, long? number, DateTime? date) => new() { ["Id"] = id, ["N"] = number, ["D"] = date, ["Txt"] = "row " + id };
@@ -121,10 +121,10 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     public void Their_keys_are_the_ones_Access_writes()
     {
         // A Large Number: eight bytes, the most significant first, the sign bit turned over.
-        Assert.Equal("7F7FFFFFFFFFFFFFFF", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.BigInt, ascending: true, -1L)));
-        Assert.Equal("7F8000000000000001", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.BigInt, ascending: true, 1)));
-        Assert.Equal("807FFFFFFFFFFFFFFE", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.BigInt, ascending: false, 1L)));
-        Assert.Equal("00", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.BigInt, ascending: true, null)));
+        Assert.Equal("7F7FFFFFFFFFFFFFFF", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Int64, ascending: true, -1L)));
+        Assert.Equal("7F8000000000000001", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Int64, ascending: true, 1)));
+        Assert.Equal("807FFFFFFFFFFFFFFE", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Int64, ascending: false, 1L)));
+        Assert.Equal("00", Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Int64, ascending: true, null)));
 
         // An extended date: its 42 bytes, eight at a time with a 9 after each, the last two filled out with
         // zeros and followed by a 2. Descending, every byte but those 9s is turned over.
@@ -137,9 +137,9 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
             expected.Add(9);
         }
         expected.AddRange(new byte[] { (byte)'7', 0, 0, 0, 0, 0, 0, 0, 2 });
-        Assert.Equal(expected.ToArray(), IndexKeys.EncodeColumn(DataType.ExtendedDateTime, ascending: true, value));
+        Assert.Equal(expected.ToArray(), IndexKeys.EncodeColumn(DataType.DateTimeExtended, ascending: true, value));
 
-        byte[] descending = IndexKeys.EncodeColumn(DataType.ExtendedDateTime, ascending: false, value);
+        byte[] descending = IndexKeys.EncodeColumn(DataType.DateTimeExtended, ascending: false, value);
         Assert.Equal(0x80, descending[0]);
         for (int i = 1; i < expected.Count; i++)
             Assert.Equal(i % 9 == 0 && i != expected.Count - 1 ? (byte)9 : (byte)~expected[i], descending[i]);
@@ -168,10 +168,10 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("T");
-            Assert.Equal(DataType.BigInt, table.Columns[1].DataType);
-            Assert.Equal(8, table.Columns[1].Length);
-            Assert.Equal(DataType.ExtendedDateTime, table.Columns[2].DataType);
-            Assert.Equal(42, table.Columns[2].Length);
+            Assert.Equal(DataType.Int64, table.Columns[1].DataType);
+            Assert.Equal(8, table.Columns[1].LengthInBytes);
+            Assert.Equal(DataType.DateTimeExtended, table.Columns[2].DataType);
+            Assert.Equal(42, table.Columns[2].LengthInBytes);
 
             var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
             Assert.Equal(Numbers.Length + 1000, rows.Count);
@@ -224,7 +224,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     {
         string path = NewPath();
         using var db = Database.Create(path, FileFormat.Access2019);
-        var table = db.CreateTable("Keyed", new[] { ColumnBuilder.BigInt("K").Build(), ColumnBuilder.ExtendedDateTime("At").Build() },
+        var table = db.CreateTable("Keyed", new[] { new ColumnDefinition("K", DataType.Int64), new ColumnDefinition("At", DataType.DateTimeExtended) },
             new[] { "K" }, new[] { new IndexDefinition("OneAt", "At") { IsUnique = true } });
         var at = new DateTime(2026, 11, 18, 9, 30, 0);
         table.Insert(new Row { ["K"] = long.MaxValue, ["At"] = at });
@@ -277,14 +277,14 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     // Access gives the file the version of the format that has the column when a table first gets one, and
     // never takes it back down: 05 00 for a Large Number, 06 00 for a Date/Time Extended.
     [Theory]
-    [InlineData(FileFormat.Access2007, DataType.BigInt, 0x05)]
-    [InlineData(FileFormat.Access2010, DataType.BigInt, 0x05)]
-    [InlineData(FileFormat.Access2016, DataType.BigInt, 0x05)]
-    [InlineData(FileFormat.Access2019, DataType.BigInt, 0x06)]
-    [InlineData(FileFormat.Access2007, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(FileFormat.Access2010, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(FileFormat.Access2016, DataType.ExtendedDateTime, 0x06)]
-    [InlineData(FileFormat.Access2019, DataType.ExtendedDateTime, 0x06)]
+    [InlineData(FileFormat.Access2007, DataType.Int64, 0x05)]
+    [InlineData(FileFormat.Access2010, DataType.Int64, 0x05)]
+    [InlineData(FileFormat.Access2016, DataType.Int64, 0x05)]
+    [InlineData(FileFormat.Access2019, DataType.Int64, 0x06)]
+    [InlineData(FileFormat.Access2007, DataType.DateTimeExtended, 0x06)]
+    [InlineData(FileFormat.Access2010, DataType.DateTimeExtended, 0x06)]
+    [InlineData(FileFormat.Access2016, DataType.DateTimeExtended, 0x06)]
+    [InlineData(FileFormat.Access2019, DataType.DateTimeExtended, 0x06)]
     public void A_table_with_such_a_column_makes_the_file_one_of_the_format_that_has_it(FileFormat created, DataType type, byte version)
     {
         string path = NewPath();
@@ -292,10 +292,10 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         {
             // A table without one leaves the version as it was.
             byte[] asCreated = db.File.ReadPage(0).AsSpan(0x14, 2).ToArray();
-            db.CreateTable("Plain", new[] { ColumnBuilder.Long("Id").Build() });
+            db.CreateTable("Plain", new[] { new ColumnDefinition("Id", DataType.Int32) });
             Assert.Equal(asCreated, db.File.ReadPage(0).AsSpan(0x14, 2).ToArray());
 
-            db.CreateTable("Newer", new[] { ColumnBuilder.Long("Id").Build(), new ColumnBuilder("V", type).Build() });
+            db.CreateTable("Newer", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("V", type) });
             Assert.Equal(new byte[] { version, 0x00 }, db.File.ReadPage(0).AsSpan(0x14, 2).ToArray());
         }
 
@@ -307,8 +307,8 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     }
 
     [Theory]
-    [InlineData(DataType.BigInt)]
-    [InlineData(DataType.ExtendedDateTime)]
+    [InlineData(DataType.Int64)]
+    [InlineData(DataType.DateTimeExtended)]
     public void An_mdb_has_no_such_column_and_the_table_is_refused_with_nothing_written(DataType type)
     {
         string path = NewPath(".mdb");
@@ -316,7 +316,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         var before = IndexChecks.AllPages(db);
 
         var refused = Assert.Throws<NotSupportedException>(() =>
-            db.CreateTable("Newer", new[] { ColumnBuilder.Long("Id").Build(), new ColumnBuilder("V", type).Build() }));
+            db.CreateTable("Newer", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("V", type) }));
 
         Assert.Contains(".mdb", refused.Message);
         Assert.Equal(before, IndexChecks.AllPages(db));
@@ -339,7 +339,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         Assert.Equal(long.MinValue, exported.Rows[0]["N"]);
         Assert.Equal(DateTime.MaxValue, exported.Rows[0]["D"]);
 
-        Assert.Equal(5L, TypeMapper.CoerceForJet(5, DataType.BigInt));
-        Assert.Throws<InvalidOperationException>(() => ColumnBuilder.BigInt("N").WithAutoNumber());
+        Assert.Equal(5L, TypeMapper.CoerceForJet(5, DataType.Int64));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("Numbered", new[] { new ColumnDefinition("N", DataType.Int64) { IsAutoNumber = true } }));
     }
 }

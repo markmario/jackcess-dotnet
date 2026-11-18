@@ -22,10 +22,10 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         {
             db.CreateTable("Orders", new[]
             {
-                new ColumnBuilder("CustomerId", DataType.Long).Build(),
-                new ColumnBuilder("OrderId",    DataType.Long).Build(),
-                new ColumnBuilder("Total",      DataType.Money).Build(),
-            }, primaryKeyColumns: new[] { "CustomerId", "OrderId" });
+                new ColumnDefinition("CustomerId", DataType.Int32),
+                new ColumnDefinition("OrderId",    DataType.Int32),
+                new ColumnDefinition("Total",      DataType.Currency),
+            }, primaryKey: new[] { "CustomerId", "OrderId" });
         }
 
         using var reopen = Database.Open(_path);
@@ -43,10 +43,10 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         {
             var t = db.CreateTable("Orders", new[]
             {
-                new ColumnBuilder("CustomerId", DataType.Long).Build(),
-                new ColumnBuilder("OrderId",    DataType.Long).Build(),
-                new ColumnBuilder("Total",      DataType.Money).Build(),
-            }, primaryKeyColumns: new[] { "CustomerId", "OrderId" });
+                new ColumnDefinition("CustomerId", DataType.Int32),
+                new ColumnDefinition("OrderId",    DataType.Int32),
+                new ColumnDefinition("Total",      DataType.Currency),
+            }, primaryKey: new[] { "CustomerId", "OrderId" });
 
             for (int c = 1; c <= 3; c++)
                 for (int o = 100; o < 105; o++)
@@ -77,9 +77,9 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         {
             var t = db.CreateTable("Orders", new[]
             {
-                new ColumnBuilder("CustomerId", DataType.Long).Build(),
-                new ColumnBuilder("OrderId",    DataType.Long).Build(),
-            }, primaryKeyColumns: new[] { "CustomerId", "OrderId" });
+                new ColumnDefinition("CustomerId", DataType.Int32),
+                new ColumnDefinition("OrderId",    DataType.Int32),
+            }, primaryKey: new[] { "CustomerId", "OrderId" });
 
             t.Insert(new Row { ["CustomerId"] = 1, ["OrderId"] = 100 });
             t.Insert(new Row { ["CustomerId"] = 1, ["OrderId"] = 101 });   // dup CustomerId, OK
@@ -91,12 +91,22 @@ public sealed class CompositePrimaryKeyTests : IDisposable
     }
 
     [Fact]
-    public void CreateTable_Rejects_EmptyCompositeKey()
+    public void CreateTable_WithNoKeyColumns_MakesATableWithNoPrimaryKey()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        Assert.Throws<ArgumentException>(() => db.CreateTable("X",
-            new[] { new ColumnBuilder("Id", DataType.Long).Build() },
-            primaryKeyColumns: Array.Empty<string>()));
+        var columns = new[] { new ColumnDefinition("Id", DataType.Int32) };
+
+        Assert.Empty(db.CreateTable("None", columns).Indexes);
+        Assert.Empty(db.CreateTable("Empty", columns, primaryKey: Array.Empty<string>()).Indexes);
+        Assert.Empty(db.CreateTable("Null", columns, (string[])null!).Indexes);
+        Assert.Empty(db.CreateTable("EmptyWithIndexes", columns, Array.Empty<string>(), Array.Empty<IndexDefinition>()).Indexes);
+        Assert.Empty(db.CreateTable("NullWithIndexes", columns, null, Array.Empty<IndexDefinition>()).Indexes);
+
+        // A key column with no name is the caller's mistake, and makes no table.
+        Assert.Throws<ArgumentException>(() => db.CreateTable("Blank", columns, ""));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("NullName", columns, new string[] { null! }));
+        Assert.DoesNotContain("Blank", db.GetTableNames());
+        Assert.DoesNotContain("NullName", db.GetTableNames());
     }
 
     [Fact]
@@ -105,11 +115,11 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
 
         var columns = Enumerable.Range(0, 11)
-            .Select(i => new ColumnBuilder($"C{i}", DataType.Long).Build()).ToArray();
+            .Select(i => new ColumnDefinition($"C{i}", DataType.Int32)).ToArray();
         var pkNames = columns.Select(c => c.Name).ToArray();
 
         Assert.Throws<InvalidOperationException>(
-            () => db.CreateTable("TooMany", columns, primaryKeyColumns: pkNames));
+            () => db.CreateTable("TooMany", columns, primaryKey: pkNames));
     }
 
     [Fact]
@@ -122,10 +132,10 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         {
             var t = db.CreateTable("Sessions", new[]
             {
-                new ColumnBuilder("UserId",     DataType.Text).MaxLength(20).Build(),
-                new ColumnBuilder("LoginEpoch", DataType.Long).Build(),
-                new ColumnBuilder("UserAgent",  DataType.Text).MaxLength(100).Build(),
-            }, primaryKeyColumns: new[] { "UserId", "LoginEpoch" });
+                new ColumnDefinition("UserId",     DataType.Text) { MaxLength = 20 },
+                new ColumnDefinition("LoginEpoch", DataType.Int32),
+                new ColumnDefinition("UserAgent",  DataType.Text) { MaxLength = 100 },
+            }, primaryKey: new[] { "UserId", "LoginEpoch" });
 
             t.Insert(new Row { ["UserId"] = "alice", ["LoginEpoch"] = 1000, ["UserAgent"] = "Chrome" });
             t.Insert(new Row { ["UserId"] = "alice", ["LoginEpoch"] = 2000, ["UserAgent"] = "Firefox" });
@@ -150,10 +160,10 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("Orders", new[]
         {
-            new ColumnBuilder("CustomerId", DataType.Long).Build(),
-            new ColumnBuilder("OrderId",    DataType.Long).Build(),
-            new ColumnBuilder("Total",      DataType.Money).Build(),
-        }, primaryKeyColumns: new[] { "CustomerId", "OrderId" });
+            new ColumnDefinition("CustomerId", DataType.Int32),
+            new ColumnDefinition("OrderId",    DataType.Int32),
+            new ColumnDefinition("Total",      DataType.Currency),
+        }, primaryKey: new[] { "CustomerId", "OrderId" });
 
         t.Insert(new Row { ["CustomerId"] = 1, ["OrderId"] = 100, ["Total"] = 5m  });
         t.Insert(new Row { ["CustomerId"] = 1, ["OrderId"] = 101, ["Total"] = 10m });
@@ -172,9 +182,9 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("A", DataType.Long).Build(),
-            new ColumnBuilder("B", DataType.Long).Build(),
-        }, primaryKeyColumns: new[] { "A", "B" });
+            new ColumnDefinition("A", DataType.Int32),
+            new ColumnDefinition("B", DataType.Int32),
+        }, primaryKey: new[] { "A", "B" });
 
         var refused = Assert.Throws<ConstraintViolationException>(() => t.Insert(new Row { ["A"] = 1, ["B"] = null }));
         Assert.Contains("primary key does not take a null", refused.Message);
@@ -190,9 +200,9 @@ public sealed class CompositePrimaryKeyTests : IDisposable
         {
             db.CreateTable("People", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-            }, primaryKeyColumns: new[] { "Id" })
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+            }, primaryKey: new[] { "Id" })
             .Insert(new Row { ["Id"] = 1, ["Name"] = "Alice" });
         }
 

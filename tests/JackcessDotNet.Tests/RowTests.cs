@@ -203,11 +203,11 @@ public sealed class RowTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id",    DataType.Long).Build(),
-            new ColumnBuilder("Name",  DataType.Text).MaxLength(20).Build(),
-            new ColumnBuilder("Notes", DataType.Memo).Build(),
-            new ColumnBuilder("Flag",  DataType.Boolean).Build(),
-            new ColumnBuilder("When",  DataType.ShortDateTime).Build(),
+            new ColumnDefinition("Id",    DataType.Int32),
+            new ColumnDefinition("Name",  DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("Notes", DataType.Memo),
+            new ColumnDefinition("Flag",  DataType.Boolean),
+            new ColumnDefinition("When",  DataType.DateTime),
         }, primaryKey: "Id");
         table.Insert(new Row { ["Id"] = 1 });
         table.Insert(new Row { ["When"] = new DateTime(2024, 1, 2), ["Name"] = DBNull.Value, ["Id"] = 2, ["Notes"] = "n" });
@@ -254,9 +254,9 @@ public sealed class RowTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var columns = new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
-            new ColumnBuilder("Age",  DataType.Int).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("Age",  DataType.Int16),
         };
         var from = db.CreateTable("From", columns, primaryKey: "Id");
         var to   = db.CreateTable("To", columns, primaryKey: "Id");

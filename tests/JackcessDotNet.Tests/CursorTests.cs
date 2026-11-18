@@ -15,11 +15,11 @@ public sealed class CursorTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static IReadOnlyList<Column> PeopleColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> PeopleColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-        new ColumnBuilder("Age",  DataType.Int ).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+        new ColumnDefinition("Age",  DataType.Int16 ),
     };
 
     /// <summary>
@@ -30,7 +30,9 @@ public sealed class CursorTests : IDisposable
     private (Database db, Table table) OpenWithPeople(string? primaryKey = null)
     {
         var db = Database.Create(_path, FileFormat.Access2000);
-        var t  = db.CreateTable("People", PeopleColumns(), primaryKey: primaryKey);
+        var t  = primaryKey is null
+            ? db.CreateTable("People", PeopleColumns())
+            : db.CreateTable("People", PeopleColumns(), primaryKey);
         for (int i = 1; i <= 5; i++)
             t.Insert(new Row { ["Id"] = i, ["Name"] = $"P{i}", ["Age"] = (short)(20 + i) });
         return (db, t);

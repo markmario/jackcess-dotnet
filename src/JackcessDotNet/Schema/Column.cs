@@ -1,40 +1,73 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// Describes a column in an Access table.
+/// A column a table has: its name, its type, and what Access's field properties say of it. Read from a table
+/// (<see cref="Table.Columns"/>) and never made by a caller: a column to give a table is a
+/// <see cref="ColumnDefinition"/>.
 /// </summary>
 public sealed class Column
 {
     /// <summary>Column name (max 64 characters in Jet 4).</summary>
     public string Name { get; }
 
-    /// <summary>Jet data type.</summary>
+    /// <summary>The column's type.</summary>
     public DataType DataType { get; }
 
     /// <summary>
-    /// Storage length in bytes.
-    /// For Text: max bytes = max chars * 2 (UTF-16LE).
-    /// For Binary: max bytes directly.
-    /// For fixed-length types: matches <see cref="DataType.GetFixedSize()"/>.
+    /// The room a value has in a row, in bytes: twice <see cref="MaxLength"/> for a Text column, whose
+    /// characters are two bytes each; the most bytes for a Binary column; the size of the type for a column of
+    /// fixed length; 0 for a Memo or OLE Object column, whose values are kept on pages of their own. Jackcess's
+    /// <c>getLength</c>.
     /// </summary>
-    public int Length { get; }
+    public int LengthInBytes { get; }
 
-    /// <summary>Column ordinal position (0-based).</summary>
-    public int ColumnNumber { get; internal set; }
+    /// <summary>
+    /// The most a value of the column holds, in the type's own units: characters for a Text column, bytes for
+    /// any other (<see cref="LengthInBytes"/>). It is the number <see cref="ColumnDefinition.MaxLength"/> sets
+    /// and <see cref="ColumnValueTooLongException.MaxLength"/> reports. Jackcess's <c>getLengthInUnits</c>.
+    /// </summary>
+    public int MaxLength => DataType == DataType.Text ? LengthInBytes / 2 : LengthInBytes;
 
-    /// <summary>Whether the column is required (NOT NULL).</summary>
+    /// <summary>
+    /// The column's number in its table's definition, counted from 0: its position among the table's columns,
+    /// except that Access does not renumber the columns left when one is deleted, so the numbers of a table that
+    /// has had a column deleted have gaps.
+    /// </summary>
+    public int Ordinal { get; internal set; }
+
+    /// <summary>
+    /// The properties Access keeps for the column - its Description, Caption, Format and the like - read from
+    /// the table's properties the first time they are asked for. Empty for a column Access keeps none for.
+    /// </summary>
+    public PropertyMap Properties => Owner?.PropertiesOf(this) ?? (_noProperties ??= new PropertyMap(Name, 0x01));
+
+    private PropertyMap? _noProperties;
+
+    /// <summary>The table the column is a column of, which reads its properties; null for one not yet in a table.</summary>
+    internal Table? Owner { get; set; }
+
+    /// <summary>
+    /// Whether the column was asked to be required when its table was made in this session
+    /// (<see cref="ColumnDefinition.IsRequired"/>). It is not read from a file: a table that is opened says
+    /// <c>false</c>, whatever Access's Required property of the column is (<see cref="Properties"/> has that).
+    /// </summary>
     public bool IsRequired { get; }
 
     /// <summary>Whether this is an AutoNumber (identity) column.</summary>
     public bool IsAutoNumber { get; }
 
-    /// <summary>Whether this column allows zero-length strings (Text/Memo only).</summary>
+    /// <summary>
+    /// Whether the column was asked to allow zero-length strings when its table was made in this session
+    /// (<see cref="ColumnDefinition.AllowZeroLength"/>; Text and Memo only). It is not read from a file: a table
+    /// that is opened says <c>false</c>, whatever Access's Allow Zero Length property of the column is
+    /// (<see cref="Properties"/> has that).
+    /// </summary>
     public bool AllowZeroLength { get; }
 
-    /// <summary>Precision for Numeric type (1-28).</summary>
+    /// <summary>For a Decimal column, the most digits a value has (1-28).</summary>
     public byte Precision { get; }
 
-    /// <summary>Scale for Numeric type (0-28).</summary>
+    /// <summary>For a Decimal column, how many of its digits follow the decimal point (0-28).</summary>
     public byte Scale { get; }
 
     /// <summary>
@@ -117,7 +150,7 @@ public sealed class Column
     {
         Name = name;
         DataType = dataType;
-        Length = length;
+        LengthInBytes = length;
         IsRequired = isRequired;
         IsAutoNumber = isAutoNumber;
         AllowZeroLength = allowZeroLength;
@@ -126,5 +159,6 @@ public sealed class Column
         IsVariableLength = dataType.IsVariableLength();
     }
 
-    public override string ToString() => $"{Name} ({DataType}, {Length})";
+    /// <summary>The column as "name (type, length in bytes)".</summary>
+    public override string ToString() => $"{Name} ({DataType}, {LengthInBytes})";
 }

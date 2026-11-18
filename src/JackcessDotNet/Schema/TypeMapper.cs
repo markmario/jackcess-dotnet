@@ -38,17 +38,17 @@ internal static class TypeMapper
         if (t == typeof(bool))     return DataType.Boolean;
         if (t == typeof(byte))     return DataType.Byte;
         if (t == typeof(sbyte))    return DataType.Byte;       // signed 8-bit → unsigned Byte
-        if (t == typeof(short))    return DataType.Int;
-        if (t == typeof(ushort))   return DataType.Int;
-        if (t == typeof(int))      return DataType.Long;
-        if (t == typeof(uint))     return DataType.Long;
-        if (t == typeof(long))     return DataType.Long;       // truncated to 32-bit Long
-        if (t == typeof(ulong))    return DataType.Long;
-        if (t == typeof(float))    return DataType.Float;
+        if (t == typeof(short))    return DataType.Int16;
+        if (t == typeof(ushort))   return DataType.Int16;
+        if (t == typeof(int))      return DataType.Int32;
+        if (t == typeof(uint))     return DataType.Int32;
+        if (t == typeof(long))     return DataType.Int32;       // truncated to 32-bit Long
+        if (t == typeof(ulong))    return DataType.Int32;
+        if (t == typeof(float))    return DataType.Single;
         if (t == typeof(double))   return DataType.Double;
-        if (t == typeof(decimal))  return DataType.Money;      // 4-decimal precision is usually enough
-        if (t == typeof(DateTime)) return DataType.ShortDateTime;
-        if (t == typeof(DateTimeOffset)) return DataType.ShortDateTime;
+        if (t == typeof(decimal))  return DataType.Currency;      // 4-decimal precision is usually enough
+        if (t == typeof(DateTime)) return DataType.DateTime;
+        if (t == typeof(DateTimeOffset)) return DataType.DateTime;
         if (t == typeof(Guid))     return DataType.Guid;
         if (t == typeof(string))   return DataType.Text;       // caller may promote to Memo on length
         if (t == typeof(char))     return DataType.Text;
@@ -61,7 +61,7 @@ internal static class TypeMapper
     /// Builds a <see cref="Column"/> from a property/column name + CLR type, with
     /// optional max-length hint and autonumber flag. String fields longer than
     /// <see cref="MemoLengthThreshold"/> chars are promoted to <see cref="DataType.Memo"/>;
-    /// byte arrays longer than 255 bytes are promoted to <see cref="DataType.Ole"/>.
+    /// byte arrays longer than 255 bytes are promoted to <see cref="DataType.OleObject"/>.
     /// Returns null if the type isn't mappable.
     /// </summary>
     public static Column? ColumnFromClrType(
@@ -70,30 +70,30 @@ internal static class TypeMapper
         var dt = MapClrType(clrType);
         if (dt is null) return null;
 
-        var cb = new ColumnBuilder(name, dt.Value);
+        var definition = new ColumnDefinition(name, dt.Value);
 
         // String/byte-array promotion based on max length.
         if (dt == DataType.Text && maxLength is int charCap && charCap > MemoLengthThreshold)
         {
-            cb = new ColumnBuilder(name, DataType.Memo);
+            definition = new ColumnDefinition(name, DataType.Memo);
         }
         else if (dt == DataType.Text)
         {
-            cb.MaxLength(maxLength ?? DefaultTextCharLength);
+            definition.MaxLength = maxLength ?? DefaultTextCharLength;
         }
         else if (dt == DataType.Binary && maxLength is int byteCap && byteCap > 255)
         {
-            cb = new ColumnBuilder(name, DataType.Ole);
+            definition = new ColumnDefinition(name, DataType.OleObject);
         }
         else if (dt == DataType.Binary)
         {
-            cb.WithLength(maxLength ?? 50);
+            definition.MaxLength = maxLength ?? 50;
         }
 
-        if (autoNumber && cb.Build().DataType == DataType.Long)
-            cb.WithAutoNumber();
+        if (autoNumber && definition.DataType == DataType.Int32)
+            definition.IsAutoNumber = true;
 
-        return cb.Build();
+        return definition.ToColumn(nameof(name));
     }
 
     /// <summary>
@@ -120,17 +120,17 @@ internal static class TypeMapper
         {
             DataType.Boolean       => Convert.ToBoolean(value),
             DataType.Byte          => Convert.ToByte(value),
-            DataType.Int           => Convert.ToInt16(value),
-            DataType.Long          => Convert.ToInt32(value),
-            DataType.Float         => Convert.ToSingle(value),
+            DataType.Int16           => Convert.ToInt16(value),
+            DataType.Int32          => Convert.ToInt32(value),
+            DataType.Single         => Convert.ToSingle(value),
             DataType.Double        => Convert.ToDouble(value),
-            DataType.Money         => Convert.ToDecimal(value),
-            DataType.Numeric       => Convert.ToDecimal(value),
-            DataType.ShortDateTime => value is DateTimeOffset dto
+            DataType.Currency         => Convert.ToDecimal(value),
+            DataType.Decimal       => Convert.ToDecimal(value),
+            DataType.DateTime => value is DateTimeOffset dto
                                         ? dto.UtcDateTime
                                         : Convert.ToDateTime(value),
-            DataType.BigInt        => Convert.ToInt64(value),
-            DataType.ExtendedDateTime => value is DateTimeOffset extended
+            DataType.Int64        => Convert.ToInt64(value),
+            DataType.DateTimeExtended => value is DateTimeOffset extended
                                         ? extended.UtcDateTime
                                         : Convert.ToDateTime(value),
             DataType.Guid          => value is Guid g ? g : new Guid(value.ToString()!),
@@ -138,7 +138,7 @@ internal static class TypeMapper
             DataType.Memo          => Convert.ToString(value),
             DataType.Binary        => value is byte[] b ? b : throw new ArgumentException(
                                         $"Cannot coerce {value.GetType()} into Binary column"),
-            DataType.Ole           => value is byte[] o ? o : throw new ArgumentException(
+            DataType.OleObject           => value is byte[] o ? o : throw new ArgumentException(
                                         $"Cannot coerce {value.GetType()} into OLE column"),
             _                      => value,
         };

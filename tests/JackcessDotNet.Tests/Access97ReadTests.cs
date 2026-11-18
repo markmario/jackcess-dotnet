@@ -354,7 +354,7 @@ public sealed class Access97ReadTests
 
                 Assert.True(entries.Select(e => e.RowPointer).Distinct().Count() == entries.Count, $"{where}: a row has two entries.");
                 Assert.True(entries.All(e => rows.Contains(e.RowPointer)), $"{where}: an entry is for a row the table does not have.");
-                if (!index.IgnoresNulls)
+                if (!index.IgnoreNulls)
                     Assert.True(entries.Count == rows.Count, $"{where}: {entries.Count} entries for {rows.Count} rows.");
 
                 var reader = new IndexReader(db.File, index);
@@ -392,7 +392,7 @@ public sealed class Access97ReadTests
             var rows  = table.Rows.ToList();
             foreach (var index in table.Indexes)
             {
-                if (index.RootPageNumber <= 0 || !index.Columns.All(c => c.Column.DataType is DataType.Byte or DataType.Int or DataType.Long)) continue;
+                if (index.RootPageNumber <= 0 || !index.Columns.All(c => c.Column.DataType is DataType.Byte or DataType.Int16 or DataType.Int32)) continue;
                 var reader = new IndexReader(db.File, index);
                 Assert.True(reader.CanResolveKey);
 

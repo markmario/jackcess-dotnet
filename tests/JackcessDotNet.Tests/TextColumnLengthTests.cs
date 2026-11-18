@@ -23,8 +23,8 @@ public sealed class TextColumnLengthTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Dates", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Date", DataType.Text).MaxLength(11).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Date", DataType.Text) { MaxLength = 11 },
         });
         table.Insert(new Row { ["Id"] = 1, ["Date"] = "14-Sep-2026" });
 
@@ -45,7 +45,7 @@ public sealed class TextColumnLengthTests : IDisposable
         // What a caller checks a whole batch of rows with before it writes any, so that a refused value stops the
         // batch before the file holds half of it.
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = db.CreateTable("Dates", new[] { new ColumnBuilder("Date", DataType.Text).MaxLength(11).Build() });
+        var table = db.CreateTable("Dates", new[] { new ColumnDefinition("Date", DataType.Text) { MaxLength = 11 } });
 
         table.Validate(new Row { ["Date"] = "14-Sep-2026" });
         var ex = Assert.Throws<ColumnValueTooLongException>(() => table.Validate(new Row { ["Date"] = "14-Sept-2026" }));
@@ -58,7 +58,7 @@ public sealed class TextColumnLengthTests : IDisposable
     public void Text_as_long_as_its_column_is_written_whole()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = db.CreateTable("Names", new[] { new ColumnBuilder("Name", DataType.Text).MaxLength(255).Build() });
+        var table = db.CreateTable("Names", new[] { new ColumnDefinition("Name", DataType.Text) { MaxLength = 255 } });
         var longest = new string('n', 255);
 
         table.Insert(new Row { ["Name"] = longest });

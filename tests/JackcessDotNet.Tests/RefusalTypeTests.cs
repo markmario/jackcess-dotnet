@@ -22,8 +22,8 @@ public sealed class RefusalTypeTests : IDisposable
     private Table People(Database db)
         => db.CreateTable("People", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
         }, primaryKey: "Id");
 
     [Fact]
@@ -59,7 +59,7 @@ public sealed class RefusalTypeTests : IDisposable
         Assert.False(db.TryGetTable("Nobody", out _));
 
         // Assert.Throws takes the exact type: none of these is the derived one.
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("PEOPLE", new[] { new ColumnBuilder("Id", DataType.Long).Build() }));
+        Assert.Throws<InvalidOperationException>(() => db.CreateTable("PEOPLE", new[] { new ColumnDefinition("Id", DataType.Int32) }));
         Assert.Throws<InvalidOperationException>(() => people.UpdateByPrimaryKey(2, new Row { ["Name"] = "Bea" }));
         Assert.Throws<InvalidOperationException>(() => people.DeleteRow("Id", 2));
     }
@@ -71,8 +71,8 @@ public sealed class RefusalTypeTests : IDisposable
         var people = People(db);
         var pets = db.CreateTable("Pets", new[]
         {
-            new ColumnBuilder("Id",    DataType.Long).Build(),
-            new ColumnBuilder("Owner", DataType.Long).Build(),
+            new ColumnDefinition("Id",    DataType.Int32),
+            new ColumnDefinition("Owner", DataType.Int32),
         }, primaryKey: "Id");
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "Ada" });
         pets.Insert(new Row { ["Id"] = 10, ["Owner"] = 7 });

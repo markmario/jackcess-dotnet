@@ -19,8 +19,8 @@ public sealed class SchemaChangeUndoTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(20).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 20 };
 
     private void Create()
     {
@@ -76,7 +76,7 @@ public sealed class SchemaChangeUndoTests : IDisposable
     [Fact]
     public void A_long_value_column_whose_writing_fails_at_any_page_leaves_the_file_as_it_was()
     {
-        int failures = FailAtEveryWrite(db => db.GetTable("Child").AddColumn(new ColumnBuilder("Notes", DataType.Memo).Build()));
+        int failures = FailAtEveryWrite(db => db.GetTable("Child").AddColumn(new ColumnDefinition("Notes", DataType.Memo)));
 
         Assert.True(failures >= 2, $"only {failures} writes failed: the column's usage maps and the definition are at least two");
         using var after = Database.Open(_path);

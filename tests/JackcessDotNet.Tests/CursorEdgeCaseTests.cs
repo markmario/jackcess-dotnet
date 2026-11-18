@@ -20,8 +20,8 @@ public sealed class CursorEdgeCaseTests : IDisposable
         var db = Database.Create(_path, FileFormat.Access2000);
         var t = db.CreateTable("People", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
         });
         return (db, t);
     }

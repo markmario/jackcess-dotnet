@@ -53,7 +53,7 @@ public sealed class CodecTests
         try
         {
             using (var db = Database.Create(path, FileFormat.Access2000))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             // No exception, no codec injected — the freshly-created file is unencrypted.
             using var reopen = Database.Open(path);
@@ -75,7 +75,7 @@ public sealed class CodecTests
         try
         {
             using (var db = Database.Create(path, FileFormat.Access2000))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             // Corrupt page 2's first two bytes (would be 0x02 0x01 in an unencrypted file).
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
@@ -104,7 +104,7 @@ public sealed class CodecTests
         try
         {
             using (var db = Database.Create(path, FileFormat.Access2000))
-                db.CreateTable("X", new[] { new ColumnBuilder("A", DataType.Long).Build() });
+                db.CreateTable("X", new[] { new ColumnDefinition("A", DataType.Int32) });
 
             using var reopen = Database.Open(path, new DatabaseOpenOptions { Password = "any-password" });
             Assert.Contains("X", reopen.GetTableNames());

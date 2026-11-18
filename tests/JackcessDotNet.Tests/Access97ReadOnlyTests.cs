@@ -54,8 +54,9 @@ public sealed class Access97ReadOnlyTests : IDisposable
         Assert.Contains("Jackcess", refused.Message);
     }
 
-    private static Column Long(string name) => new ColumnBuilder(name, DataType.Long).Build();
-    private static Column Text(string name) => new ColumnBuilder(name, DataType.Text).MaxLength(50).Build();
+    private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
+    private static ColumnDefinition Text(string name) => new ColumnDefinition(name, DataType.Text) { MaxLength = 50 };
+    private static Column[] ColumnsOf(params ColumnDefinition[] definitions) => definitions.Select(d => d.ToColumn("columns")).ToArray();
 
     private static DataTable Things(string name)
     {
@@ -152,7 +153,6 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["create table with a primary key of two columns"] = db => db.CreateTable("New", new[] { Long("Id"), Long("N") }, new[] { "Id", "N" }),
         ["create table with indexes"] = db => db.CreateTable("New", new[] { Long("Id"), Long("N") }, new[] { "Id" }, new[] { new IndexDefinition("ByN", "N") }),
         ["create table with text"]  = db => db.CreateTable("New", new[] { Long("Id"), Text("Name") }),
-        ["table builder"]           = db => new TableBuilder("New").AddColumn(Long("Id")).WithPrimaryKey("Id").ToTable(db),
         ["import a DataTable"]      = db => db.ImportTable(Things("Things")),
         ["import a DataTable into a table"] = db => db.ImportTable(KeysAsDataTable(), options: new ImportOptions { AppendIfExists = true }),
         ["import a DataSet"]        = db => db.ImportTables(new DataSet { Tables = { Things("Things"), Things("More") } }),
@@ -442,8 +442,8 @@ public sealed class Access97ReadOnlyTests : IDisposable
     public void No_row_is_encoded_for_Access_97()
     {
         // RowEncoder is a public class. It made a Jet3 row with two bytes where the format has one.
-        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new[] { Long("Id"), Text("Name") }));
-        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new TableDefinition("T", new[] { Long("Id"), Text("Name") })));
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, ColumnsOf(Long("Id"), Text("Name"))));
+        AssertRefused(() => new RowEncoder(JetFormat.Jet3, new TableDefinition("T", ColumnsOf(Long("Id"), Text("Name")))));
 
         using var db = Database.Open(CopyOfFixture());
         AssertRefused(() => new RowEncoder(db.File.Format, db.GetTable("LongRows").Definition));
@@ -452,7 +452,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
     [Fact]
     public void No_table_definition_is_made_for_Access_97()
     {
-        AssertRefused(() => new TableDefinition("T", new[] { Long("Id"), Text("Name") }).Serialize(JetFormat.Jet3));
+        AssertRefused(() => new TableDefinition("T", ColumnsOf(Long("Id"), Text("Name"))).Serialize(JetFormat.Jet3));
     }
 
     [Fact]

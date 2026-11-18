@@ -58,7 +58,7 @@ public sealed class RowLayoutTests : IDisposable
             foreach (var column in table.Columns)
                 added[column.Name] = column.DataType switch
                 {
-                    DataType.Long => 1000,
+                    DataType.Int32 => 1000,
                     DataType.Text => "added",
                     DataType.Memo => "added memo",
                     _             => template.TryGetValue(column.Name, out var value) ? value : null,
@@ -103,9 +103,9 @@ public sealed class RowLayoutTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Flag", DataType.Boolean).Build(), new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(10).Build(), new ColumnBuilder("Other", DataType.Boolean).Build(),
-            new ColumnBuilder("When", DataType.ShortDateTime).Build(), new ColumnBuilder("Notes", DataType.Memo).Build(),
+            new ColumnDefinition("Flag", DataType.Boolean), new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 10 }, new ColumnDefinition("Other", DataType.Boolean),
+            new ColumnDefinition("When", DataType.DateTime), new ColumnDefinition("Notes", DataType.Memo),
         });
 
         Assert.Equal(new[] { "Flag fixed 0", "Id fixed 1", "Name variable 0", "Other fixed 5", "When fixed 6", "Notes variable 1" },
@@ -131,8 +131,8 @@ public sealed class RowLayoutTests : IDisposable
         // As Access writes a table of one Yes/No or one Byte column: the row is long enough to hold, in its place,
         // where it went if it ever has to move.
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var flags = db.CreateTable("Flags", new[] { new ColumnBuilder("A", DataType.Boolean).Build() });
-        var bytes = db.CreateTable("Bytes", new[] { new ColumnBuilder("B", DataType.Byte).Build() });
+        var flags = db.CreateTable("Flags", new[] { new ColumnDefinition("A", DataType.Boolean) });
+        var bytes = db.CreateTable("Bytes", new[] { new ColumnDefinition("B", DataType.Byte) });
 
         Assert.Equal("01-00-00-00-01", BitConverter.ToString(new RowEncoder(db.File.Format, flags.Definition).Encode(new Row { ["A"] = true })));
         Assert.Equal("01-00-07-00-01", BitConverter.ToString(new RowEncoder(db.File.Format, bytes.Definition).Encode(new Row { ["B"] = (byte)7 })));
@@ -142,7 +142,7 @@ public sealed class RowLayoutTests : IDisposable
     public void A_definition_that_puts_two_columns_in_one_place_is_not_written_by()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("T", new[] { new ColumnBuilder("A", DataType.Long).Build(), new ColumnBuilder("B", DataType.Long).Build() }, primaryKey: "A")
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32), new ColumnDefinition("B", DataType.Int32) }, primaryKey: "A")
               .Insert(new Row { ["A"] = 1, ["B"] = 2 });
         byte[] before = File.ReadAllBytes(_path);
 
@@ -199,8 +199,8 @@ public sealed class RowLayoutTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build(),
-            new ColumnBuilder("N", DataType.Numeric).WithNumericScale(5, 2).Build(),
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo),
+            new ColumnDefinition("N", DataType.Decimal) { Precision = 5, Scale = 2 },
         });
         table.Insert(new Row { ["Id"] = 1, ["N"] = 999.99m });
         long written = db.File.WriteCount;
@@ -297,7 +297,7 @@ public sealed class RowLayoutTests : IDisposable
     public void A_scan_of_a_table_with_no_overflow_row_reads_each_of_its_pages_once()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build() });
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 } });
         for (int i = 0; i < 5_000; i++)
             table.Insert(new Row { ["Id"] = i, ["Name"] = "row " + i });
         int pages = UsageMap.GetOwnedPages(db.File.ReadPage(table.Definition.UmapPageNumber), table.Definition.OwnedPagesRow, db.File.Format, db.File).Count;
@@ -313,7 +313,7 @@ public sealed class RowLayoutTests : IDisposable
     public void A_deleted_row_is_marked_as_Access_marks_one()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build() }, primaryKey: "Id");
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
         table.Insert(new Row { ["Id"] = 1 });
         table.Insert(new Row { ["Id"] = 2 });
         table.DeleteRow("Id", 1);
@@ -334,8 +334,8 @@ public sealed class RowLayoutTests : IDisposable
     {
         var table = db.CreateTable("T", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
-            new ColumnBuilder("Blob", DataType.Ole).Build(),
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("Blob", DataType.OleObject),
         }, primaryKey: "Id");
         return (table, table.Columns[2]);
     }
@@ -474,9 +474,9 @@ public sealed class RowLayoutTests : IDisposable
         // values freed: the update threw and the row was gone (qcatco/exportmdb.interop#56).
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var columns = new List<Column> { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build() };
+            var columns = new List<ColumnDefinition> { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo) };
             for (int i = 0; i < 20; i++)
-                columns.Add(new ColumnBuilder("T" + i, DataType.Text).MaxLength(255).Build());
+                columns.Add(new ColumnDefinition("T" + i, DataType.Text) { MaxLength = 255 });
             var table = db.CreateTable("T", columns, primaryKey: "Id");
             var row = new Row { ["Id"] = 1, ["Notes"] = new string('n', 9_000) };
             for (int i = 0; i < 7; i++) row["T" + i] = new string((char)(0x3A9 + i), 255);   // 510 bytes each: 3,570
@@ -562,7 +562,7 @@ public sealed class RowLayoutTests : IDisposable
             {
                 using var db = Database.Create(path, FileFormat.Access2000);
                 db.ShareLongValuePages = share;
-                var table = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build() });
+                var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo) });
                 long early = 0, late = 0;
                 for (int i = 1; i <= 400; i++)
                 {

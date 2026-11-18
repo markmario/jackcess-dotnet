@@ -23,7 +23,7 @@ public sealed class LongValueRoomTests : IDisposable
     }
 
     private static Table Notes(Database db)
-        => db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Notes", DataType.Memo).Build() });
+        => db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo) });
 
     // Lengths in characters, the same every run. A note of 33 to 2,038 characters is one chunk; a longer one a chain.
     private static int Length(string workload, int i)
@@ -208,7 +208,7 @@ public sealed class LongValueRoomTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             db.ShareLongValuePages = true;
-            var made = db.CreateTable("T", new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Blob", DataType.Ole).Build() }, primaryKey: "Id");
+            var made = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Blob", DataType.OleObject) }, primaryKey: "Id");
             made.Insert(new Row { ["Id"] = 1, ["Blob"] = Bytes(5_000, 1) });
             made.Insert(new Row { ["Id"] = 2, ["Blob"] = Bytes(5_000, 2) });
         }

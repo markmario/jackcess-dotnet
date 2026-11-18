@@ -18,20 +18,20 @@ public sealed class SecondaryIndexTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Code", DataType.Text).MaxLength(40).Build(),
-        new ColumnBuilder("Grp", DataType.Long).Build(),
-        new ColumnBuilder("Seq", DataType.Int).Build(),
-        new ColumnBuilder("Note", DataType.Memo).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Code", DataType.Text) { MaxLength = 40 },
+        new ColumnDefinition("Grp", DataType.Int32),
+        new ColumnDefinition("Seq", DataType.Int16),
+        new ColumnDefinition("Note", DataType.Memo),
     };
 
     private static IndexDefinition[] Indexes() => new[]
     {
         new IndexDefinition("ByCode", "Code") { IsUnique = true },
         new IndexDefinition("ByGroup", "Grp"),
-        new IndexDefinition("ByGroupAndSeq", "Grp", "Seq") { DescendingColumns = new[] { "Seq" } },
+        new IndexDefinition("ByGroupAndSeq", "Grp", "Seq") { DescendingColumns = { "Seq" } },
     };
 
     private static Table Indexed(Database db) => db.CreateTable("Indexed", Columns(), new[] { "Id" }, Indexes());
@@ -58,24 +58,6 @@ public sealed class SecondaryIndexTests : IDisposable
         Assert.Equal(new[] { "Id ASC", "Code ASC", "Grp ASC", "Grp ASC, Seq DESC" }, indexes.Select(ix => string.Join(", ", ix.Columns)));
         Assert.Equal(4, indexes.Select(ix => ix.RootPageNumber).Distinct().Count());
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "Indexed", expectedRows: 0));
-    }
-
-    [Fact]
-    public void The_table_builder_gives_a_table_its_indexes()
-    {
-        using var db = Database.Create(_path, FileFormat.Access2000);
-        var table = new TableBuilder("Built")
-            .AddColumn("Id", DataType.Long)
-            .AddColumn("Name", DataType.Text, c => c.MaxLength(20))
-            .WithPrimaryKey("Id")
-            .WithIndex(new IndexDefinition("ByName", "Name") { IsUnique = true })
-            .ToTable(db);
-
-        table.Insert(new Row { ["Id"] = 1, ["Name"] = "one" });
-
-        Assert.Equal(new[] { "PrimaryKey", "ByName" }, table.Indexes.Select(ix => ix.Name));
-        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Name"] = "ONE" }));
-        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Built", expectedRows: 1));
     }
 
     [Fact]
@@ -227,8 +209,8 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Numbered", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).AutoNumber().Build(),
-            new ColumnBuilder("Code", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
         }, new[] { "Id" }, new[] { new IndexDefinition("ByCode", "Code") { IsUnique = true } });
         var first = new Row { ["Code"] = "a" };
         table.Insert(first);          // no Id given: the primary key is the number the table gives
@@ -264,9 +246,9 @@ public sealed class SecondaryIndexTests : IDisposable
     public void A_unique_index_costs_an_insert_no_more_page_reads_than_one_that_is_not()
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
-        Column[] Two() => new[] { new ColumnBuilder("Id", DataType.Long).Build(), new ColumnBuilder("Txt", DataType.Text).MaxLength(30).Build() };
-        var unique = db.CreateTable("Unique", Two(), primaryKeyColumns: null, new[] { new IndexDefinition("ById", "Id") { IsUnique = true } });
-        var plain  = db.CreateTable("Plain", Two(), primaryKeyColumns: null, new[] { new IndexDefinition("ById", "Id") });
+        ColumnDefinition[] Two() => new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Txt", DataType.Text) { MaxLength = 30 } };
+        var unique = db.CreateTable("Unique", Two(), primaryKey: null, new[] { new IndexDefinition("ById", "Id") { IsUnique = true } });
+        var plain  = db.CreateTable("Plain", Two(), primaryKey: null, new[] { new IndexDefinition("ById", "Id") });
         var keyed  = db.CreateTable("Keyed", Two(), primaryKey: "Id");
         foreach (int i in Shuffled(5_000))
             foreach (var table in new[] { unique, plain, keyed })
@@ -294,7 +276,7 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Indexed(db);
         table.Insert(RowOf(1));
-        var other = db.CreateTable("Other", new[] { new ColumnBuilder("N", DataType.Long).Build() });
+        var other = db.CreateTable("Other", new[] { new ColumnDefinition("N", DataType.Int32) });
         other.Insert(new Row { ["N"] = 1 });
         var (otherPage, otherRow, _) = JetPages.Rows(db.File, IndexChecks.TdefOf(db, "Other")).Single();
 
@@ -320,12 +302,12 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Wide", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("A", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("B", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("C", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("D", DataType.Text).MaxLength(255).Build(),
-            new ColumnBuilder("E", DataType.Text).MaxLength(255).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("C", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("D", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("E", DataType.Text) { MaxLength = 255 },
         }, new[] { "Id" }, new[] { new IndexDefinition("ById", "Id"), new IndexDefinition("ByAll", "A", "B", "C", "D", "E") });
         string Text(int seed, int length) => new string(Enumerable.Range(0, length).Select(i => (char)('a' + (i * 7 + seed) % 26)).ToArray());
         for (int i = 1; i <= 40; i++)
@@ -349,8 +331,8 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Flags", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Flag", DataType.Boolean).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Flag", DataType.Boolean),
         }, new[] { "Id" }, new[] { new IndexDefinition("ByFlag", "Flag") { IsUnique = true } });
         bool Stored(int id) => (bool)table.Rows.Single(r => (int)r["Id"]! == id)["Flag"]!;
 
@@ -387,11 +369,11 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Values", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Code", DataType.Text).MaxLength(20).Build(),
-            new ColumnBuilder("N", DataType.Long).Build(),
-            new ColumnBuilder("D", DataType.ShortDateTime).Build(),
-            new ColumnBuilder("M", DataType.Memo).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("N", DataType.Int32),
+            new ColumnDefinition("D", DataType.DateTime),
+            new ColumnDefinition("M", DataType.Memo),
         }, new[] { "Id" }, new[]
         {
             new IndexDefinition("ByCode", "Code") { IsUnique = true },
@@ -450,10 +432,10 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Pairs", new[]
         {
-            new ColumnBuilder("A", DataType.Long).Build(),
-            new ColumnBuilder("B", DataType.Long).Build(),
-            new ColumnBuilder("T", DataType.Text).MaxLength(20).Build(),
-        }, primaryKeyColumns: null, new[]
+            new ColumnDefinition("A", DataType.Int32),
+            new ColumnDefinition("B", DataType.Int32),
+            new ColumnDefinition("T", DataType.Text) { MaxLength = 20 },
+        }, primaryKey: null, new[]
         {
             new IndexDefinition("AB", "A", "B") { IsUnique = true },
             new IndexDefinition("T", "T") { IsUnique = true },
@@ -476,10 +458,10 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Nulls", new[]
         {
-            new ColumnBuilder("A", DataType.Long).Build(),
-            new ColumnBuilder("B", DataType.Long).Build(),
-            new ColumnBuilder("C", DataType.Long).Build(),
-        }, primaryKeyColumns: null, new[]
+            new ColumnDefinition("A", DataType.Int32),
+            new ColumnDefinition("B", DataType.Int32),
+            new ColumnDefinition("C", DataType.Int32),
+        }, primaryKey: null, new[]
         {
             new IndexDefinition("Required", "A") { IsRequired = true },
             new IndexDefinition("Sparse", "B", "C") { IgnoreNulls = true },
@@ -508,14 +490,14 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.CreateTable("Large", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(120).Build(),
-            new ColumnBuilder("Grp", DataType.Long).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 120 },
+            new ColumnDefinition("Grp", DataType.Int32),
         }, new[] { "Id" }, new[]
         {
             // Long keys that share little: few to a page, so the tree is deep with few rows.
             new IndexDefinition("ByName", "Name") { IsUnique = true },
-            new IndexDefinition("ByGroupAndName", "Grp", "Name") { DescendingColumns = new[] { "Name" } },
+            new IndexDefinition("ByGroupAndName", "Grp", "Name") { DescendingColumns = { "Name" } },
         });
         const int Count = 12_000;
         string NameOf(int i) => $"{(i * 7919L) % 100_003:D6} {new string((char)('a' + i % 26), 90)} {i}";
@@ -541,9 +523,9 @@ public sealed class SecondaryIndexTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var columns = new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Amount", DataType.Numeric).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(20).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Amount", DataType.Decimal),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
         };
         var before = IndexChecks.AllPages(db);
 
@@ -555,7 +537,7 @@ public sealed class SecondaryIndexTests : IDisposable
             new[] { new IndexDefinition("ByName", "Name"), new IndexDefinition("byname", "Id") }));
         Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, new[] { "Id" }, new[] { new IndexDefinition("PrimaryKey", "Name") }));
         Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, null,
-            new[] { new IndexDefinition("ByName", "Name") { DescendingColumns = new[] { "Id" } } }));
+            new[] { new IndexDefinition("ByName", "Name") { DescendingColumns = { "Id" } } }));
         Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, null,
             Enumerable.Range(0, 33).Select(i => new IndexDefinition($"Ix{i}", "Name")).ToArray()));
         Assert.Throws<ArgumentException>(() => new IndexDefinition("Twice", "Name", "name"));

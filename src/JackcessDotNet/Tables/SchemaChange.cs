@@ -70,7 +70,7 @@ internal static class SchemaChange
         var column = given.CopyFor(db.Catalog.TextSortOrder);
         bool isVariable = column.DataType.IsVariableLength();
         int  maxVar     = editor.MaxVarColumnCount;
-        column.ColumnNumber     = editor.MaxColumnCount;
+        column.Ordinal     = editor.MaxColumnCount;
         column.IsVariableLength = isVariable;
         column.HasStoredPlace   = true;
         if (isVariable)
@@ -86,7 +86,7 @@ internal static class SchemaChange
         }
 
         // Rows must still be writable by the table's columns with this one among them.
-        var layout = new RowLayout(format, table.Columns.Append(column).ToList(), column.ColumnNumber + 1, maxVar + (isVariable ? 1 : 0));
+        var layout = new RowLayout(format, table.Columns.Append(column).ToList(), column.Ordinal + 1, maxVar + (isVariable ? 1 : 0));
         if (layout.WhyNotWritable is { } why)
             throw new NotSupportedException($"A column is not added to '{table.Name}': {why}. Nothing was changed.");
 
@@ -199,7 +199,7 @@ internal static class SchemaChange
         var shared = table.Indexes.FirstOrDefault(existing =>
             existing.RootPageNumber > 0
             && existing.Columns.Count == columns.Count
-            && existing.Columns.Zip(columns, (a, b) => a.Column.ColumnNumber == b.Column.ColumnNumber && a.Flags == b.Flags).All(same => same)
+            && existing.Columns.Zip(columns, (a, b) => a.Column.Ordinal == b.Column.Ordinal && a.Flags == b.Flags).All(same => same)
             && shares(existing));
         planned.SharedData = shared?.IndexDataNumber;
 
@@ -369,10 +369,10 @@ internal static class SchemaChange
         file.EnsureWritable();
 
         // The tables, by the names the catalog has for them: MSysRelationships holds those.
-        string fromName = db.Catalog.TableNameAsListed(definition.FromTable)
-            ?? throw new InvalidOperationException($"Table '{definition.FromTable}' was not found in this database. Nothing was changed.");
-        string toName = db.Catalog.TableNameAsListed(definition.ToTable)
-            ?? throw new InvalidOperationException($"Table '{definition.ToTable}' was not found in this database. Nothing was changed.");
+        string fromName = db.Catalog.TableNameAsListed(definition.FromTableName)
+            ?? throw new InvalidOperationException($"Table '{definition.FromTableName}' was not found in this database. Nothing was changed.");
+        string toName = db.Catalog.TableNameAsListed(definition.ToTableName)
+            ?? throw new InvalidOperationException($"Table '{definition.ToTableName}' was not found in this database. Nothing was changed.");
         var parent = db.GetTable(fromName);
         var child  = db.GetTable(toName);
         bool sameTable = string.Equals(fromName, toName, StringComparison.OrdinalIgnoreCase);
@@ -386,15 +386,15 @@ internal static class SchemaChange
                     $"{fromColumns[i].DataType} and '{toName}.{toColumns[i].Name}' is {toColumns[i].DataType}. Nothing was changed.");
 
         bool enforced = definition.HasReferentialIntegrity;
-        if (!enforced && (definition.CascadeUpdates || definition.CascadeDeletes || definition.CascadeNull))
+        if (!enforced && (definition.CascadeUpdates || definition.CascadeDeletes || definition.CascadeNullOnDelete))
             throw new ArgumentException("A relationship cascades only when it has referential integrity.", nameof(definition));
 
         int flags = enforced ? 0 : NoReferentialIntegrityFlag;
         if (definition.CascadeUpdates) flags |= CascadeUpdatesFlag;
         if (definition.CascadeDeletes) flags |= CascadeDeletesFlag;
-        if (definition.CascadeNull)    flags |= CascadeNullFlag;
-        if (definition.JoinType == RelationshipJoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
-        if (definition.JoinType == RelationshipJoinType.RightOuter) flags |= RightOuterJoinFlag;
+        if (definition.CascadeNullOnDelete)    flags |= CascadeNullFlag;
+        if (definition.JoinType == JoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
+        if (definition.JoinType == JoinType.RightOuter) flags |= RightOuterJoinFlag;
         // One to one when each side's columns have a unique index of their own, as Access's Relationships window
         // and Jackcess mark it. To Access the mark is more than a description: the foreign key's index is then a
         // unique one (below).
@@ -500,10 +500,10 @@ internal static class SchemaChange
                     : NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
                 var fromPrimary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
-                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull);
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNullOnDelete);
                 var fromSecondary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeySecondaryTable, primaryNumber, parent.Definition.TdefPageNumber,
-                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNull);
+                    definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNullOnDelete);
 
                 int writtenSecondary = Write(db, file, secondary, fromSecondary);
                 int writtenPrimary   = Write(db, file, primary, fromPrimary);
@@ -524,7 +524,7 @@ internal static class SchemaChange
         => table.Indexes.FirstOrDefault(index =>
             index.IsUnique
             && index.Columns.Count == columns.Count
-            && index.Columns.Zip(columns, (a, b) => a.Column.ColumnNumber == b.ColumnNumber).All(same => same));
+            && index.Columns.Zip(columns, (a, b) => a.Column.Ordinal == b.Ordinal).All(same => same));
 
     /// <summary>
     /// The name Access gives the index a relationship has on its referenced table: ".r" and a letter, B for the

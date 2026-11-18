@@ -19,11 +19,11 @@ public sealed class SmokeTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static IReadOnlyList<Column> PeopleColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> PeopleColumns() => new[]
     {
-        new ColumnBuilder("Id",   DataType.Long).Build(),
-        new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-        new ColumnBuilder("Age",  DataType.Int ).Build(),
+        new ColumnDefinition("Id",   DataType.Int32),
+        new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+        new ColumnDefinition("Age",  DataType.Int16 ),
     };
 
     // ── Tests ─────────────────────────────────────────────────────────────────
@@ -84,9 +84,9 @@ public sealed class SmokeTests : IDisposable
 
         Assert.Equal("People", table.Name);
         Assert.Equal(3, table.Columns.Count);
-        Assert.Contains(table.Columns, c => c.Name == "Id"   && c.DataType == DataType.Long);
+        Assert.Contains(table.Columns, c => c.Name == "Id"   && c.DataType == DataType.Int32);
         Assert.Contains(table.Columns, c => c.Name == "Name" && c.DataType == DataType.Text);
-        Assert.Contains(table.Columns, c => c.Name == "Age"  && c.DataType == DataType.Int);
+        Assert.Contains(table.Columns, c => c.Name == "Age"  && c.DataType == DataType.Int16);
     }
 
     [Fact]
@@ -104,8 +104,8 @@ public sealed class SmokeTests : IDisposable
         {
             var t = db.CreateTable("Items", new[]
             {
-                new ColumnBuilder("Id",    DataType.Long).Build(),
-                new ColumnBuilder("Label", DataType.Text).MaxLength(80).Build(),
+                new ColumnDefinition("Id",    DataType.Int32),
+                new ColumnDefinition("Label", DataType.Text) { MaxLength = 80 },
             });
             for (int i = 1; i <= 5; i++)
                 t.Insert(new Row { ["Id"] = i, ["Label"] = $"Item {i}" });
@@ -123,8 +123,8 @@ public sealed class SmokeTests : IDisposable
     {
         using var db = Database.Create(_path, FileFormat.Access2000);
 
-        db.CreateTable("Alpha", new[] { new ColumnBuilder("X", DataType.Long).Build() });
-        db.CreateTable("Beta",  new[] { new ColumnBuilder("Y", DataType.Text).MaxLength(20).Build() });
+        db.CreateTable("Alpha", new[] { new ColumnDefinition("X", DataType.Int32) });
+        db.CreateTable("Beta",  new[] { new ColumnDefinition("Y", DataType.Text) { MaxLength = 20 } });
 
         var alpha = db.GetTable("Alpha");
         var beta  = db.GetTable("Beta");
@@ -135,11 +135,11 @@ public sealed class SmokeTests : IDisposable
 
     // ── Memo tests ────────────────────────────────────────────────────────────
 
-    private static IReadOnlyList<Column> ArticleColumns() => new[]
+    private static IReadOnlyList<ColumnDefinition> ArticleColumns() => new[]
     {
-        new ColumnBuilder("Id",    DataType.Long).Build(),
-        new ColumnBuilder("Title", DataType.Text).MaxLength(100).Build(),
-        new ColumnBuilder("Body",  DataType.Memo).Build(),
+        new ColumnDefinition("Id",    DataType.Int32),
+        new ColumnDefinition("Title", DataType.Text) { MaxLength = 100 },
+        new ColumnDefinition("Body",  DataType.Memo),
     };
 
     [Fact]

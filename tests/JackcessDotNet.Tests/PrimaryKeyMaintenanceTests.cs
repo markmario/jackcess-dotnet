@@ -17,10 +17,10 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    private static Column[] Columns() => new[]
+    private static ColumnDefinition[] Columns() => new[]
     {
-        new ColumnBuilder("Id", DataType.Long).Build(),
-        new ColumnBuilder("Txt", DataType.Text).MaxLength(30).Build(),
+        new ColumnDefinition("Id", DataType.Int32),
+        new ColumnDefinition("Txt", DataType.Text) { MaxLength = 30 },
     };
 
     // Keys 1..count, inserted out of order.
@@ -48,7 +48,7 @@ public sealed class PrimaryKeyMaintenanceTests : IDisposable
         Assert.Equal(rows.Select(r => (r.Page, r.Row)).OrderBy(p => p), entries.Select(e => (e.RowPage, e.Row)).OrderBy(p => p));
         var byPointer = rows.ToDictionary(r => (r.Page, r.Row), r => (int)r.Values["Id"]!);
         foreach (var e in entries)
-            Assert.Equal(Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Long, true, byPointer[(e.RowPage, e.Row)])), e.Hex);
+            Assert.Equal(Convert.ToHexString(IndexKeys.EncodeColumn(DataType.Int32, true, byPointer[(e.RowPage, e.Row)])), e.Hex);
 
         Assert.Empty(JetPages.RuleBreaks(file, block.Root, tdef));
         // The index's usage map lists exactly its tree's pages: those a split added, less those that emptied.

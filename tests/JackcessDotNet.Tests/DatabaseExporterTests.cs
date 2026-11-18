@@ -26,11 +26,11 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("Customers", new[]
             {
-                new ColumnBuilder("Id",      DataType.Long ).Build(),
-                new ColumnBuilder("Name",    DataType.Text ).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",  DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance", DataType.Money).Build(),
-                new ColumnBuilder("Active",  DataType.Boolean).Build(),
+                new ColumnDefinition("Id",      DataType.Int32 ),
+                new ColumnDefinition("Name",    DataType.Text ) { MaxLength = 50 },
+                new ColumnDefinition("Joined",  DataType.DateTime),
+                new ColumnDefinition("Balance", DataType.Currency),
+                new ColumnDefinition("Active",  DataType.Boolean),
             }, primaryKey: "Id");
             t.Insert(new Row { ["Id"] = 1, ["Name"] = "Alice", ["Joined"] = new DateTime(2024, 1, 1), ["Balance"] = 100.50m, ["Active"] = true  });
             t.Insert(new Row { ["Id"] = 2, ["Name"] = "Bob",   ["Joined"] = new DateTime(2024, 2, 1), ["Balance"] =  -5.00m, ["Active"] = false });
@@ -71,8 +71,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("Things", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Note", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Note", DataType.Text) { MaxLength = 50 },
             });
             t.Insert(new Row { ["Id"] = 1, ["Note"] = null  });
             t.Insert(new Row { ["Id"] = 2, ["Note"] = "Hi"  });
@@ -92,9 +92,9 @@ public sealed class DatabaseExporterTests : IDisposable
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            db.CreateTable("A", new[] { new ColumnBuilder("X", DataType.Long).Build() })
+            db.CreateTable("A", new[] { new ColumnDefinition("X", DataType.Int32) })
               .Insert(new Row { ["X"] = 1 });
-            db.CreateTable("B", new[] { new ColumnBuilder("Y", DataType.Text).MaxLength(20).Build() })
+            db.CreateTable("B", new[] { new ColumnDefinition("Y", DataType.Text) { MaxLength = 20 } })
               .Insert(new Row { ["Y"] = "hi" });
         }
 
@@ -112,7 +112,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToDataSet_SystemTablesExcludedByDefault()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("UserT", new[] { new ColumnBuilder("X", DataType.Long).Build() });
+            db.CreateTable("UserT", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
         var ds = reopen.ExportToDataSet();
@@ -138,11 +138,11 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance",  DataType.Money).Build(),
-                new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Joined",   DataType.DateTime),
+                new ColumnDefinition("Balance",  DataType.Currency),
+                new ColumnDefinition("IsActive", DataType.Boolean),
             });
             t.Insert(new Row { ["Id"] = 1, ["Name"] = "Ann", ["Joined"] = new DateTime(2024,1,1), ["Balance"] = 10m,  ["IsActive"] = true  });
             t.Insert(new Row { ["Id"] = 2, ["Name"] = "Bo",  ["Joined"] = new DateTime(2024,2,1), ["Balance"] = -5m,  ["IsActive"] = false });
@@ -164,7 +164,7 @@ public sealed class DatabaseExporterTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build()
+                new ColumnDefinition("Id", DataType.Int32)
             }).Insert(new Row { ["Id"] = 42 });
 
         using var reopen = Database.Open(_path);
@@ -179,7 +179,7 @@ public sealed class DatabaseExporterTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("OtherName", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build()
+                new ColumnDefinition("Id", DataType.Int32)
             }).Insert(new Row { ["Id"] = 7 });
 
         using var reopen = Database.Open(_path);
@@ -206,9 +206,9 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("Renamed", new[]
             {
-                new ColumnBuilder("CustomerKey", DataType.Long).Build(),
-                new ColumnBuilder("Name",        DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("ExtraIgnored",DataType.Text).MaxLength(50).Build(), // column not on POCO
+                new ColumnDefinition("CustomerKey", DataType.Int32),
+                new ColumnDefinition("Name",        DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("ExtraIgnored",DataType.Text) { MaxLength = 50 }, // column not on POCO
             });
             t.Insert(new Row { ["CustomerKey"] = 5, ["Name"] = "X", ["ExtraIgnored"] = "noise" });
         }
@@ -238,10 +238,10 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("NullableValuesPoco", new[]
             {
-                new ColumnBuilder("Id",      DataType.Long).Build(),
-                new ColumnBuilder("OptInt",  DataType.Long).Build(),
-                new ColumnBuilder("OptDate", DataType.ShortDateTime).Build(),
-                new ColumnBuilder("OptText", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",      DataType.Int32),
+                new ColumnDefinition("OptInt",  DataType.Int32),
+                new ColumnDefinition("OptDate", DataType.DateTime),
+                new ColumnDefinition("OptText", DataType.Text) { MaxLength = 50 },
             });
             t.Insert(new Row { ["Id"] = 1, ["OptInt"] = 42, ["OptDate"] = new DateTime(2024,1,1), ["OptText"] = "hi"  });
             t.Insert(new Row { ["Id"] = 2, ["OptInt"] = null, ["OptDate"] = null, ["OptText"] = null });
@@ -270,8 +270,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("EnumPoco", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Kind", DataType.Long).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Kind", DataType.Int32),
             });
             t.Insert(new Row { ["Id"] = 1, ["Kind"] = (int)Kind.Beta  });
             t.Insert(new Row { ["Id"] = 2, ["Kind"] = (int)Kind.Gamma });
@@ -297,8 +297,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("DateTimeOffsetPoco", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("When", DataType.ShortDateTime).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("When", DataType.DateTime),
             });
             t.Insert(new Row { ["Id"] = 1, ["When"] = stored });
         }
@@ -316,7 +316,7 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build()
+                new ColumnDefinition("Id", DataType.Int32)
             });
             for (int i = 1; i <= 100; i++)
                 t.Insert(new Row { ["Id"] = i });
@@ -360,11 +360,11 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("StringEverywherePoco", new[]
             {
-                new ColumnBuilder("Id",     DataType.Long).Build(),
-                new ColumnBuilder("Score",  DataType.Double).Build(),
-                new ColumnBuilder("When",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Flag",   DataType.Boolean).Build(),
-                new ColumnBuilder("Marker", DataType.Guid).Build(),
+                new ColumnDefinition("Id",     DataType.Int32),
+                new ColumnDefinition("Score",  DataType.Double),
+                new ColumnDefinition("When",   DataType.DateTime),
+                new ColumnDefinition("Flag",   DataType.Boolean),
+                new ColumnDefinition("Marker", DataType.Guid),
             });
             t.Insert(new Row
             {
@@ -421,7 +421,7 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             db.CreateTable("NoPK", new[]
             {
-                new ColumnBuilder("X", DataType.Long).Build(),
+                new ColumnDefinition("X", DataType.Int32),
             }).Insert(new Row { ["X"] = 1 });
         }
 
@@ -437,9 +437,9 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             db.CreateTable("Ordered", new[]
             {
-                new ColumnBuilder("Charlie", DataType.Text).MaxLength(10).Build(),
-                new ColumnBuilder("Alpha",   DataType.Long).Build(),
-                new ColumnBuilder("Bravo",   DataType.Boolean).Build(),
+                new ColumnDefinition("Charlie", DataType.Text) { MaxLength = 10 },
+                new ColumnDefinition("Alpha",   DataType.Int32),
+                new ColumnDefinition("Bravo",   DataType.Boolean),
             });
         }
 
@@ -453,7 +453,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToDataSet_IncludeSystem_BringsBackMSysTables()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("U", new[] { new ColumnBuilder("X", DataType.Long).Build() });
+            db.CreateTable("U", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
         var ds = reopen.ExportToDataSet(includeSystem: true);
@@ -471,8 +471,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("Memos", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Body", DataType.Memo).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Body", DataType.Memo),
             });
             t.Insert(new Row { ["Id"] = 1, ["Body"] = big });
         }
@@ -491,8 +491,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("Blobs", new[]
             {
-                new ColumnBuilder("Id",  DataType.Long).Build(),
-                new ColumnBuilder("Raw", DataType.Binary).WithLength(50).Build(),
+                new ColumnDefinition("Id",  DataType.Int32),
+                new ColumnDefinition("Raw", DataType.Binary) { MaxLength = 50 },
             });
             t.Insert(new Row { ["Id"] = 1, ["Raw"] = blob });
         }
@@ -520,8 +520,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("WidenedPoco", new[]
             {
-                new ColumnBuilder("BigId",  DataType.Long).Build(),
-                new ColumnBuilder("Amount", DataType.Money).Build(),
+                new ColumnDefinition("BigId",  DataType.Int32),
+                new ColumnDefinition("Amount", DataType.Currency),
             });
             t.Insert(new Row { ["BigId"] = 42, ["Amount"] = 1234.56m });
         }
@@ -545,8 +545,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("ReadOnlyPropertyPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Greeting", DataType.Text).MaxLength(20).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Greeting", DataType.Text) { MaxLength = 20 },
             });
             t.Insert(new Row { ["Id"] = 1, ["Greeting"] = "ignored" });
         }
@@ -572,8 +572,8 @@ public sealed class DatabaseExporterTests : IDisposable
         {
             var t = db.CreateTable("GuidFromStringPoco", new[]
             {
-                new ColumnBuilder("Id",     DataType.Long).Build(),
-                new ColumnBuilder("Marker", DataType.Text).MaxLength(40).Build(),
+                new ColumnDefinition("Id",     DataType.Int32),
+                new ColumnDefinition("Marker", DataType.Text) { MaxLength = 40 },
             });
             t.Insert(new Row { ["Id"] = 1, ["Marker"] = g.ToString() });
         }
@@ -587,7 +587,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToCollection_TableNotFound_Throws()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("Real", new[] { new ColumnBuilder("X", DataType.Long).Build() });
+            db.CreateTable("Real", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
         Assert.Throws<ArgumentException>(
@@ -598,7 +598,7 @@ public sealed class DatabaseExporterTests : IDisposable
     public void ExportToDataTable_TableNotFound_Throws()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("Real", new[] { new ColumnBuilder("X", DataType.Long).Build() });
+            db.CreateTable("Real", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
         Assert.Throws<ArgumentException>(

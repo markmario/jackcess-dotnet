@@ -149,10 +149,17 @@ using var fresh = Database.Create("MyData.mdb");
 using var accdb = Database.Create("MyData.accdb", FileFormat.Access2010);
 var people = fresh.CreateTable("People", new[]
 {
-    new ColumnBuilder("Id",   DataType.Long).Build(),
-    new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-}, primaryKey: "Id");
-people.Insert(new Row { ["Id"] = 1, ["Name"] = "Alice" });
+    new ColumnDefinition("Id",   DataType.Int32) { IsAutoNumber = true },
+    new ColumnDefinition("Name", DataType.Text)  { MaxLength = 50 },
+    new ColumnDefinition("Born", DataType.DateTime),
+}, "Id");
+var alice = new Row { ["Name"] = "Alice" };
+people.Insert(alice);                           // alice["Id"] is now 1
+
+// A row that is read has every column, null for one with no value.
+Row read = people.FindRowByPrimaryKey(1)!;
+string? name   = read.GetValue<string>("Name");
+DateTime? born = read.GetValue<DateTime?>("Born");   // null
 ```
 
 ## Opening password-protected files
@@ -173,16 +180,23 @@ parsed — no cryptic "page X corrupt" errors.
 ## Composite (multi-column) primary keys
 
 ```csharp
-db.CreateTable("Orders", new[]
+var orders = db.CreateTable("Orders", new[]
 {
-    new ColumnBuilder("CustomerId", DataType.Long).Build(),
-    new ColumnBuilder("OrderId",    DataType.Long).Build(),
-    new ColumnBuilder("Total",      DataType.Money).Build(),
-}, primaryKeyColumns: new[] { "CustomerId", "OrderId" });
+    new ColumnDefinition("CustomerId", DataType.Int32),
+    new ColumnDefinition("OrderId",    DataType.Int32),
+    new ColumnDefinition("Total",      DataType.Currency),
+}, "CustomerId", "OrderId");
+
+Row? order = orders.FindRowByPrimaryKey(42, 7);
 ```
 
-Up to 10 columns per composite key (Jet's hard limit). The single-column
-`primaryKey:` overload still works for the common case.
+Up to 10 columns per composite key (Jet's hard limit), named in key order after the columns; none for a
+table without a primary key.
+
+`DataType` members are named for the CLR type of that meaning where there is one - `Int16` (Access's
+Integer), `Int32` (Long Integer), `Int64` (Large Number), `Single`, `Double`, `Decimal`, `DateTime`, `Guid`
+(Replication ID) - and otherwise by Access's word: `Currency`, `Text`, `Memo`, `OleObject`, `Binary`,
+`DateTimeExtended`.
 
 ## Foreign-key enforcement
 
@@ -310,7 +324,7 @@ and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBui
 using var db = Database.Open("Shop.mdb");
 var orders = db.GetTable("Orders");
 
-orders.AddColumn(new ColumnBuilder("Shipped", DataType.ShortDateTime).Build());
+orders.AddColumn(new ColumnDefinition("Shipped", DataType.DateTime));
 orders.AddIndex(new IndexDefinition("ByCustomerAndDate", "CustomerId", "Placed") { IsUnique = true });
 
 db.CreateRelationship(new RelationshipDefinition("Customers", "Id", "Orders", "CustomerId")
@@ -402,7 +416,7 @@ materialising the whole table.
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4)                   | ✅      |
 | Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `FileFormat.Access2007`, `Access2010`, `Access2016`, `Access2019` |
-| Large Number (`BigInt`) and Date/Time Extended (`ExtendedDateTime`) columns | ✅ Read, written, created and indexed; `.accdb` only |
+| Large Number (`DataType.Int64`) and Date/Time Extended (`DataType.DateTimeExtended`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |

@@ -24,14 +24,14 @@ public sealed class DatabaseImporterTests : IDisposable
     [Theory]
     [InlineData(typeof(bool),           DataType.Boolean)]
     [InlineData(typeof(byte),           DataType.Byte)]
-    [InlineData(typeof(short),          DataType.Int)]
-    [InlineData(typeof(int),            DataType.Long)]
-    [InlineData(typeof(long),           DataType.Long)]
-    [InlineData(typeof(float),          DataType.Float)]
+    [InlineData(typeof(short),          DataType.Int16)]
+    [InlineData(typeof(int),            DataType.Int32)]
+    [InlineData(typeof(long),           DataType.Int32)]
+    [InlineData(typeof(float),          DataType.Single)]
     [InlineData(typeof(double),         DataType.Double)]
-    [InlineData(typeof(decimal),        DataType.Money)]
-    [InlineData(typeof(DateTime),       DataType.ShortDateTime)]
-    [InlineData(typeof(DateTimeOffset), DataType.ShortDateTime)]
+    [InlineData(typeof(decimal),        DataType.Currency)]
+    [InlineData(typeof(DateTime),       DataType.DateTime)]
+    [InlineData(typeof(DateTimeOffset), DataType.DateTime)]
     [InlineData(typeof(Guid),           DataType.Guid)]
     [InlineData(typeof(string),         DataType.Text)]
     [InlineData(typeof(byte[]),         DataType.Binary)]
@@ -49,7 +49,7 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void TypeMapper_Enum_UnwrapsToUnderlyingType()
     {
-        Assert.Equal(DataType.Long,  TypeMapper.MapClrType(typeof(IntBackedEnum)));
+        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum)));
         Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum)));
     }
 
@@ -72,7 +72,7 @@ public sealed class DatabaseImporterTests : IDisposable
     {
         var col = TypeMapper.ColumnFromClrType("Blob", typeof(byte[]), maxLength: 4096);
         Assert.NotNull(col);
-        Assert.Equal(DataType.Ole, col!.DataType);
+        Assert.Equal(DataType.OleObject, col!.DataType);
     }
 
     [Fact]
@@ -81,7 +81,8 @@ public sealed class DatabaseImporterTests : IDisposable
         var col = TypeMapper.ColumnFromClrType("Name", typeof(string), maxLength: 30);
         Assert.NotNull(col);
         Assert.Equal(DataType.Text, col!.DataType);
-        Assert.Equal(60, col.Length);   // 30 chars × 2 bytes UTF-16
+        Assert.Equal(60, col.LengthInBytes);   // 30 chars × 2 bytes UTF-16
+        Assert.Equal(30, col.MaxLength);
     }
 
     // ── DataTable import ─────────────────────────────────────────────────────
@@ -315,7 +316,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         var codeCol = t.Columns.Single(c => c.Name == "Code");
         Assert.Equal(DataType.Text, codeCol.DataType);
-        Assert.Equal(40, codeCol.Length);   // MaxLength=20 → 40 bytes UTF-16
+        Assert.Equal(40, codeCol.LengthInBytes);   // MaxLength=20 → 40 bytes UTF-16
     }
 
     private sealed class NullableValuesPoco
@@ -366,7 +367,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("EnumPoco");
-        Assert.Equal(DataType.Long, t.Columns.Single(c => c.Name == "Kind").DataType);
+        Assert.Equal(DataType.Int32, t.Columns.Single(c => c.Name == "Kind").DataType);
         var saved = t.Rows.OrderBy(r => Convert.ToInt32(r["Id"])).ToList();
         Assert.Equal((int)IntBackedEnum.Beta,  saved[0]["Kind"]);
         Assert.Equal((int)IntBackedEnum.Alpha, saved[1]["Kind"]);
@@ -565,7 +566,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Mixed");
-        Assert.Equal(DataType.Long, t.Columns.Single(c => c.Name == "Id").DataType);
+        Assert.Equal(DataType.Int32, t.Columns.Single(c => c.Name == "Id").DataType);
         Assert.Equal(DataType.Text, t.Columns.Single(c => c.Name == "Name").DataType);
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Url").DataType);
     }
@@ -575,23 +576,23 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void Coerce_NullAndDBNull_BecomeNull()
     {
-        Assert.Null(TypeMapper.CoerceForJet(null,         DataType.Long));
+        Assert.Null(TypeMapper.CoerceForJet(null,         DataType.Int32));
         Assert.Null(TypeMapper.CoerceForJet(DBNull.Value, DataType.Text));
     }
 
     [Fact]
     public void Coerce_Widens_IntToLong_AndNarrows_LongToInt()
     {
-        Assert.Equal((short)42, TypeMapper.CoerceForJet(42,       DataType.Int));
-        Assert.Equal(42,        TypeMapper.CoerceForJet(42L,      DataType.Long));
-        Assert.Equal(42m,       TypeMapper.CoerceForJet(42,       DataType.Money));
+        Assert.Equal((short)42, TypeMapper.CoerceForJet(42,       DataType.Int16));
+        Assert.Equal(42,        TypeMapper.CoerceForJet(42L,      DataType.Int32));
+        Assert.Equal(42m,       TypeMapper.CoerceForJet(42,       DataType.Currency));
     }
 
     [Fact]
     public void Coerce_DateTimeOffset_BecomesUtcDateTime()
     {
         var dto = new DateTimeOffset(2024, 7, 4, 12, 0, 0, TimeSpan.FromHours(5));
-        var asDt = (DateTime)TypeMapper.CoerceForJet(dto, DataType.ShortDateTime)!;
+        var asDt = (DateTime)TypeMapper.CoerceForJet(dto, DataType.DateTime)!;
         Assert.Equal(dto.UtcDateTime, asDt);
     }
 
@@ -606,9 +607,9 @@ public sealed class DatabaseImporterTests : IDisposable
 
     [Theory]
     [InlineData(typeof(sbyte),    DataType.Byte)]   // signed 8-bit folded into unsigned Byte
-    [InlineData(typeof(ushort),   DataType.Int)]
-    [InlineData(typeof(uint),     DataType.Long)]
-    [InlineData(typeof(ulong),    DataType.Long)]
+    [InlineData(typeof(ushort),   DataType.Int16)]
+    [InlineData(typeof(uint),     DataType.Int32)]
+    [InlineData(typeof(ulong),    DataType.Int32)]
     [InlineData(typeof(char),     DataType.Text)]
     public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType expected)
     {
@@ -761,8 +762,8 @@ public sealed class DatabaseImporterTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         db.CreateTable("Customers", new[]
         {
-            new ColumnBuilder("Id",   DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Id",   DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
         });
 
         var dt = new DataTable("Customers");
@@ -781,8 +782,8 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             var existing = db.CreateTable("Customers", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             }, primaryKey: "Id");
             existing.Insert(new Row { ["Id"] = 1, ["Name"] = "Seed" });
         }
@@ -811,8 +812,8 @@ public sealed class DatabaseImporterTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             });
 
         var dt = new DataTable("T");
@@ -837,9 +838,9 @@ public sealed class DatabaseImporterTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Note", DataType.Memo).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Note", DataType.Memo),
             });
 
         // Source only supplies Id + Name — Note should land as null in the new row.
@@ -881,11 +882,11 @@ public sealed class DatabaseImporterTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         db.CreateTable("CustomerPoco", new[]
         {
-            new ColumnBuilder("Id",       DataType.Long).Build(),
-            new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-            new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-            new ColumnBuilder("Balance",  DataType.Money).Build(),
-            new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+            new ColumnDefinition("Id",       DataType.Int32),
+            new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("Joined",   DataType.DateTime),
+            new ColumnDefinition("Balance",  DataType.Currency),
+            new ColumnDefinition("IsActive", DataType.Boolean),
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
@@ -900,11 +901,11 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance",  DataType.Money).Build(),
-                new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Joined",   DataType.DateTime),
+                new ColumnDefinition("Balance",  DataType.Currency),
+                new ColumnDefinition("IsActive", DataType.Boolean),
             }, primaryKey: "Id");
         }
 
@@ -934,8 +935,8 @@ public sealed class DatabaseImporterTests : IDisposable
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[]
             {
-                new ColumnBuilder("Id",    DataType.Long).Build(),
-                new ColumnBuilder("Label", DataType.Text).MaxLength(20).Build(),
+                new ColumnDefinition("Id",    DataType.Int32),
+                new ColumnDefinition("Label", DataType.Text) { MaxLength = 20 },
             });
 
         var dt = new DataTable("T");
@@ -961,11 +962,11 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             db.CreateTable("CustomerPoco", new[]
             {
-                new ColumnBuilder("Id",       DataType.Long).Build(),
-                new ColumnBuilder("Name",     DataType.Text).MaxLength(50).Build(),
-                new ColumnBuilder("Joined",   DataType.ShortDateTime).Build(),
-                new ColumnBuilder("Balance",  DataType.Money).Build(),
-                new ColumnBuilder("IsActive", DataType.Boolean).Build(),
+                new ColumnDefinition("Id",       DataType.Int32),
+                new ColumnDefinition("Name",     DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Joined",   DataType.DateTime),
+                new ColumnDefinition("Balance",  DataType.Currency),
+                new ColumnDefinition("IsActive", DataType.Boolean),
             }, primaryKey: "Id");
         }
 
@@ -980,7 +981,7 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Contains(t.Indexes, ix => ix.IsPrimaryKey);
         // Schema intact (still 5 columns, Text length still 50).
         Assert.Equal(5,   t.Columns.Count);
-        Assert.Equal(100, t.Columns.Single(c => c.Name == "Name").Length);   // 50 chars × 2 bytes
+        Assert.Equal(100, t.Columns.Single(c => c.Name == "Name").LengthInBytes);   // 50 chars × 2 bytes
     }
 
     [Fact]
@@ -993,7 +994,7 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             db.CreateTable("Existing", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build()
+                new ColumnDefinition("Id", DataType.Int32)
             }).Insert(new Row { ["Id"] = 999 });
         }
 
@@ -1063,8 +1064,8 @@ public sealed class DatabaseImporterTests : IDisposable
         {
             seed.CreateTable("Customers", new[]
             {
-                new ColumnBuilder("Id",   DataType.Long).Build(),
-                new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
             }, primaryKey: "Id");
         }
 

@@ -19,8 +19,8 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
     private static Table People(Database db)
         => db.CreateTable("People", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
         }, primaryKey: "Id");
 
     [Fact]
@@ -149,9 +149,9 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         using var db = Database.Create(_path);
         var table = db.CreateTable("Lines", new[]
         {
-            new ColumnBuilder("Order", DataType.Long).Build(),
-            new ColumnBuilder("Line", DataType.Long).Build(),
-            new ColumnBuilder("What", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Order", DataType.Int32),
+            new ColumnDefinition("Line", DataType.Int32),
+            new ColumnDefinition("What", DataType.Text) { MaxLength = 50 },
         }, new[] { "Order", "Line" });
         for (int order = 1; order <= 3; order++)
             for (int line = 1; line <= 3; line++)
@@ -170,7 +170,7 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
     public void A_table_with_no_primary_key_has_no_row_to_find_by_it()
     {
         using var db = Database.Create(_path);
-        var table = db.CreateTable("Loose", new[] { new ColumnBuilder("Id", DataType.Long).Build() });
+        var table = db.CreateTable("Loose", new[] { new ColumnDefinition("Id", DataType.Int32) });
         table.Insert(new Row { ["Id"] = 1 });
 
         Assert.Throws<InvalidOperationException>(() => table.FindRowByPrimaryKey(1));
@@ -182,8 +182,8 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         using var db = Database.Create(_path);
         var table = db.CreateTable("People", new[]
         {
-            new ColumnBuilder("Id", DataType.Long).Build(),
-            new ColumnBuilder("Name", DataType.Text).MaxLength(50).Build(),
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
         }, new[] { "Id" }, new[] { new IndexDefinition("ByName", "Name") });
 
         Assert.True(table.CreateIndexCursor().Index!.IsPrimaryKey);
@@ -191,7 +191,7 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         Assert.Null(table.CreateIndexCursor("NoSuchIndex").Index);
         Assert.Throws<ArgumentNullException>(() => table.CreateIndexCursor(null!));
 
-        var loose = db.CreateTable("Loose", new[] { new ColumnBuilder("Id", DataType.Long).Build() });
+        var loose = db.CreateTable("Loose", new[] { new ColumnDefinition("Id", DataType.Int32) });
         Assert.Null(loose.CreateIndexCursor().Index);
     }
 
@@ -219,7 +219,7 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
             () => db.GetTableNames(),
             () => db.GetSystemTableNames(),
             () => db.GetRelationships(),
-            () => db.CreateTable("More", new[] { new ColumnBuilder("Id", DataType.Long).Build() }),
+            () => db.CreateTable("More", new[] { new ColumnDefinition("Id", DataType.Int32) }),
             () => db.CreateRelationship(new RelationshipDefinition("People", "Id", "People", "Id")),
             () => db.FindDecimalsBeyondPrecision(),
             () => _ = db.EnforceForeignKeys,

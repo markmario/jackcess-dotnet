@@ -49,9 +49,9 @@ public sealed class WideDecimalTests : IDisposable
         {
             var table = db.CreateTable("D", new[]
             {
-                new ColumnBuilder("Id", DataType.Long).Build(),
-                ColumnBuilder.Numeric("Small", 5, 2).Build(),
-                ColumnBuilder.Numeric("Big", 28, 0).Build(),
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("Small", DataType.Decimal) { Precision = 5, Scale = 2 },
+                new ColumnDefinition("Big", DataType.Decimal) { Precision = 28, Scale = 0 },
             }, "Id");
             for (int id = 1; id <= 4; id++)
                 table.Insert(new Row { ["Id"] = id, ["Small"] = id * 111.11m, ["Big"] = id * 11_111m + 1 });
@@ -95,7 +95,7 @@ public sealed class WideDecimalTests : IDisposable
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
-            var table = db.CreateTable("D", new[] { new ColumnBuilder("Id", DataType.Long).Build(), ColumnBuilder.Numeric("Big", 28, 0).Build() }, "Id");
+            var table = db.CreateTable("D", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Big", DataType.Decimal) { Precision = 28, Scale = 0 } }, "Id");
             table.Insert(new Row { ["Id"] = 1, ["Big"] = 11_112m });
             table.Insert(new Row { ["Id"] = 2, ["Big"] = 9_999_999_999_999_999_999_999_999_999m });
         }
