@@ -90,6 +90,17 @@ public sealed class JetFormat
     public const int OffsetDataTdefPage  = 4;
     /// <summary>Bytes per row-slot entry in the row-slot table (same in all versions).</summary>
     public const int SizeRowEntry        = 2;
+    /// <summary>
+    /// A row's slot marks it deleted with both of its flag bits, as Access and Java Jackcess mark one. The first
+    /// alone (0x8000) is what the row an overflow pointer leads to carries: a row that is there, kept out of a
+    /// scan. A deleted row left with that mark alone would be a row's values no slot points at, still holding
+    /// its references to long values; what Access makes of one has not been seen, and none is left to find out.
+    /// </summary>
+    public const ushort DeletedRowFlags  = 0xC000;
+    /// <summary>The flag of a deleted row, and of the row an overflow pointer leads to.</summary>
+    public const ushort DeletedRowFlag   = 0x8000;
+    /// <summary>The flag of a row that holds, in place of its values, where they went: a row number and a page.</summary>
+    public const ushort OverflowRowFlag  = 0x4000;
     /// <summary>Bitmask applied to a slot value to strip the DELETED / OVERFLOW flag bits.</summary>
     public const int RowOffsetMask       = 0x1FFF;
 

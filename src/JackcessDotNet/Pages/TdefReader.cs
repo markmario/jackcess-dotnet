@@ -28,7 +28,14 @@ internal static class TdefReader
         int FreeSpaceUmapRow,
         IReadOnlyDictionary<string, LvalUmapRef> LvalColumnUmapPages,
         IReadOnlyList<Index> Indexes,
-        bool HasUnreadIndexes = false);
+        bool HasUnreadIndexes = false,
+        // One more than the highest column number the table has had, and the number of variable-length offsets
+        // its rows carry: both count the columns Access has deleted, which keep their numbers and places.
+        int MaxColumnCount = 0,
+        int MaxVarColumnCount = 0,
+        // The columns' names ran past the definition's first page, which is all that is read: the columns are
+        // not all known as Access has them. Reading goes on with what there is; a row is not written by them.
+        bool HasUnreadColumns = false);
 
     /// <summary>Number of slots in an index column block's column array (always 10 in real Access).</summary>
     private const int MaxIndexColumns = 10;
@@ -89,12 +96,16 @@ internal static class TdefReader
                 scale:          page[p + format.OffsetColumnScale]);
 
             col.ColumnNumber = colNum;
-            // The flag says where the row keeps the value; this library goes by the type. Where they differ
-            // (Yes/No apart: its value is its null bit) the value is not where it is looked for.
-            col.IsStoredOtherwise = dataType != DataType.Boolean && ((flags & 0x01) != 0) == dataType.IsVariableLength();
-            // Honour the on-disk offsets so post-deletion tables decode correctly.
-            col.FixedDataOffset  = dataType.IsVariableLength() ? (short)-1 : fixedOffset;
-            col.VarLenTableIndex = dataType.IsVariableLength() ? varIndex     : (short)-1;
+            // The column's flag says where a row keeps the value, not its type: Access keeps a Long, a Date/Time,
+            // a Replication ID or a Decimal among the variable-length values when the flag says so, and Text or
+            // Binary among the fixed-length ones. Its place there is the definition's too (RowLayout).
+            bool isVariable = (flags & 0x01) == 0;
+            col.IsVariableLength = isVariable;
+            col.FixedDataOffset  = isVariable ? (short)-1 : fixedOffset;
+            col.VarLenTableIndex = isVariable ? varIndex : (short)-1;
+            col.HasStoredPlace   = true;
+            // Jet4's extended flags follow the flags byte: bits 6 and 7 mark a calculated column.
+            col.IsCalculated     = format.Version != JetVersion.Jet3 && (page[p + format.OffsetColumnFlags + 1] & 0xC0) != 0;
             // Jet4's extended flags follow the flags byte; bit 0 is "Unicode Compression".
             col.IsCompressedUnicode = format.Version != JetVersion.Jet3
                 && (page[p + format.OffsetColumnFlags + 1] & 0x01) != 0;
@@ -116,12 +127,17 @@ internal static class TdefReader
         int pos = colDefStart + numCols * colHdrSize;
 
         // Read column names and patch them in
+        // A definition too long for one page goes on to another (the page's bytes 4-7 name it), which is not
+        // read: a column whose name does not end on this page has no name, and the columns after it none either.
+        int namesRead = 0;
         for (int i = 0; i < numCols && pos + format.SizeNameLength <= page.Length; i++)
         {
             (string name, int consumed) = ReadName(page, pos, format);
             pos += consumed;
             columns[i] = RenameColumn(columns[i], name);
+            if (consumed > format.SizeNameLength) namesRead++;
         }
+        bool columnsIncomplete = namesRead < numCols;
 
         // ── Index column blocks + slots + names ──────────────────────────────
         // Wrapped in try/fallback: a TDEF whose index sections spill past the
@@ -186,7 +202,11 @@ internal static class TdefReader
             // Index blocks past the first page are not parsed, and a block or slot that names a column or a
             // block the definition has not is left out or cut short: the table has indexes that are not in
             // Indexes as Access has them. Reading tolerates that; a write must not trust them.
-            HasUnreadIndexes:     indexesIncomplete || numIndexes > 0 && indexBlocksEnd > page.Length);
+            HasUnreadIndexes:     indexesIncomplete || numIndexes > 0 && indexBlocksEnd > page.Length,
+            // The count of columns ever made is kept just before the count of variable-length ones.
+            MaxColumnCount:       ByteUtil.GetShort(page, format.TdefOffsetNumVarCols - 2),
+            MaxVarColumnCount:    numVarCols,
+            HasUnreadColumns:     columnsIncomplete);
     }
 
     /// <summary>Intermediate record: one decoded index column block.</summary>
@@ -333,7 +353,9 @@ internal static class TdefReader
             ColumnNumber     = src.ColumnNumber,
             FixedDataOffset  = src.FixedDataOffset,
             VarLenTableIndex = src.VarLenTableIndex,
-            IsStoredOtherwise = src.IsStoredOtherwise,
+            IsVariableLength = src.IsVariableLength,
+            HasStoredPlace   = src.HasStoredPlace,
+            IsCalculated     = src.IsCalculated,
             IsCompressedUnicode = src.IsCompressedUnicode,
             SortOrder        = src.SortOrder,
         };

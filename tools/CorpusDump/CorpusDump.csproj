@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A tool, not a product: reads every table of every corpus file with the engine and writes what it read as
+       text, so that two versions of the engine can be compared reading the same files (tools/Compare-CorpusReads.ps1). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\JackcessDotNet\JackcessDotNet.csproj" />
+  </ItemGroup>
+
+</Project>

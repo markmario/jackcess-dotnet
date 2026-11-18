@@ -94,6 +94,26 @@ public sealed class Database : IDisposable
     public bool EnforceForeignKeys { get; set; }
 
     /// <summary>
+    /// How a long value (Memo or OLE) too long for one page is put on its pages. <c>false</c>, the default, is
+    /// Access's way: every chunk of such a value has a page to itself, the last chunk too, and only values that
+    /// fit in one chunk share pages - those the column's free-space map lists. <c>true</c> is how this library
+    /// placed them before: the last chunk of a value goes on a page with other values' chunks, which makes a
+    /// smaller file and one Access reads the same.
+    /// <para>
+    /// The difference shows when Access itself later deletes or replaces such a value. It takes every page of the
+    /// value to be the value's alone and gives them all back to the file, whatever else is on them; the next thing
+    /// Access adds is written over the other values there, and they, or the whole file, can no longer be read. A
+    /// file written with <c>true</c> is therefore one to be read, or added to by this library, but not one for
+    /// Access to change long values in. It is kept for a caller whose files must stay byte for byte as they were.
+    /// </para>
+    /// </summary>
+    public bool ShareLongValuePages
+    {
+        get => _file.ShareLongValuePages;
+        set => _file.ShareLongValuePages = value;
+    }
+
+    /// <summary>
     /// Whether a row may bring its own value for an AutoNumber column. Default <c>false</c>: an insert numbers
     /// the row itself and ignores any value the row holds for such a column, and an update leaves the column as
     /// it was. When <c>true</c>, a value the row holds is written as given - and a Long one past the table's
@@ -709,6 +729,9 @@ public sealed class Database : IDisposable
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
             HasUnreadIndexes = info.HasUnreadIndexes,
+            MaxColumnCount    = info.MaxColumnCount,
+            MaxVarColumnCount = info.MaxVarColumnCount,
+            HasUnreadColumns  = info.HasUnreadColumns,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)

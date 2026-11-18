@@ -211,11 +211,23 @@ internal static class JetPages
             int count = ByteUtil.GetShort(page, file.Format.OffsetDataNumRows);
             for (int r = 0; r < count; r++)
             {
+                // Read here on its own, not through the library's reader of slots. A row Access moved to another
+                // page (0x4000) is still the row at this slot, which its index entries name: its values are where
+                // the four bytes at the slot say - a row number, then a page.
                 int slot = ByteUtil.GetUShort(page, file.Format.OffsetDataRowTable + r * 2);
-                if ((slot & 0xC000) != 0) continue;
+                if ((slot & 0x8000) != 0) continue;
+                byte[] from = page;
+                int at = r;
+                while ((slot & 0x4000) != 0)
+                {
+                    int pointer = slot & 0x1FFF;
+                    at = from[pointer];
+                    from = file.ReadPage(from[pointer + 1] | from[pointer + 2] << 8 | from[pointer + 3] << 16);
+                    slot = ByteUtil.GetUShort(from, file.Format.OffsetDataRowTable + at * 2) & 0x7FFF;
+                }
                 int start = slot & 0x1FFF;
-                int end = r == 0 ? page.Length : ByteUtil.GetUShort(page, file.Format.OffsetDataRowTable + (r - 1) * 2) & 0x1FFF;
-                byte[] bytes = page.Skip(start).Take(end - start).ToArray();
+                int end = at == 0 ? from.Length : ByteUtil.GetUShort(from, file.Format.OffsetDataRowTable + (at - 1) * 2) & 0x1FFF;
+                byte[] bytes = from.Skip(start).Take(end - start).ToArray();
                 var row = new Row();
                 foreach (var column in info.Columns)
                     if ((forKeys ? decoder.DecodeForKey(bytes, column) : decoder.Decode(bytes, column)) is { } value) row[column.Name] = value;

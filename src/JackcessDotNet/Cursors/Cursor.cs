@@ -86,7 +86,7 @@ public class Cursor : IEnumerable<Row>
     public Row? GetCurrentRow() => _currentRow;
 
     /// <summary>
-    /// Advances to the next live (non-deleted, non-overflow) row and returns it.
+    /// Advances to the next live (non-deleted) row and returns it.
     /// Returns null when there are no more rows.
     /// </summary>
     public Row? GetNextRow()
@@ -172,7 +172,7 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// Reads the live row at <paramref name="pageNumber"/>/<paramref name="rowIndex"/>.
-    /// Returns null if that slot is deleted, an overflow pointer, or malformed.
+    /// Returns null if that slot is deleted or malformed; an overflow row is read where its pointer leads.
     /// Used by <see cref="IndexCursor"/> for index-driven random access.
     /// </summary>
     internal Row? ReadRowAt(int pageNumber, int rowIndex)
@@ -183,27 +183,11 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// Decodes the row at <paramref name="rowIndex"/> on <paramref name="page"/>.
-    /// Returns null if the slot is deleted, an overflow pointer, or malformed.
+    /// Returns null if the slot is deleted or malformed; an overflow row is read where its pointer leads.
     /// </summary>
     private Row? TryReadRow(byte[] page, int rowIndex)
     {
-        var    format  = _file.Format;
-        int    slotOff = format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
-        ushort slotVal = ByteUtil.GetUShort(page, slotOff);
-        if ((slotVal & 0x8000) != 0) return null;   // deleted
-        if ((slotVal & 0x4000) != 0) return null;   // overflow pointer
-
-        int rowStart = slotVal & JetFormat.RowOffsetMask;
-        int rowEnd   = (rowIndex == 0)
-            ? format.PageSize
-            : (ByteUtil.GetUShort(page,
-                   format.OffsetDataRowTable + (rowIndex - 1) * JetFormat.SizeRowEntry)
-               & JetFormat.RowOffsetMask);
-        int rowLen = rowEnd - rowStart;
-        if (rowLen <= 0) return null;
-
-        var rowBytes = new byte[rowLen];
-        Array.Copy(page, rowStart, rowBytes, 0, rowLen);
+        if (DataRows.Read(_file, page, rowIndex) is not { } rowBytes) return null;
 
         var row = new Row();
         foreach (var col in ColumnsToRead ?? _definition.Columns)

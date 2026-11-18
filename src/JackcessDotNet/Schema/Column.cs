@@ -39,8 +39,8 @@ public sealed class Column
 
     /// <summary>
     /// Byte offset of this fixed-length column inside the row's fixed-data area,
-    /// as stored in the TDEF. -1 for variable-length columns or when the value
-    /// hasn't been populated by the reader.
+    /// as stored in the TDEF. -1 for a column kept among the variable-length values, or one
+    /// that has not been through a table definition yet.
     ///
     /// This matters for tables that have had columns deleted: Access leaves the
     /// deleted column's slot in row bytes, so subsequent columns' actual offsets
@@ -48,16 +48,35 @@ public sealed class Column
     /// </summary>
     public short FixedDataOffset { get; internal set; } = -1;
 
-    /// <summary>0-based index into the variable-length offset table; -1 for fixed columns.</summary>
+    /// <summary>
+    /// 0-based index into the row's table of variable-length offsets; -1 for a column kept among the fixed-length
+    /// values, or one that has not been through a table definition yet.
+    /// </summary>
     public short VarLenTableIndex { get; internal set; } = -1;
 
     /// <summary>
-    /// True when the table's definition keeps this column where this library does not look for its type: among
-    /// the row's variable-length values, for a type it reads from the fixed-length ones (or the other way round).
-    /// Access keeps a Decimal column that way, and a Replication ID column made by SQL. Such a column's values
-    /// are not read as they are, so no index key is made of them.
+    /// Whether a row keeps this column among its variable-length values. It is a flag of the column in the table's
+    /// definition, not a property of its type: Access keeps a Long, a Date/Time, a Replication ID or a Decimal
+    /// there when the flag says so (its own system tables do, and so does a Replication ID column made by SQL), and
+    /// Text or Binary among the fixed-length values (SQL's CHAR and BINARY). A column this library creates is kept
+    /// where its type usually is.
     /// </summary>
-    internal bool IsStoredOtherwise { get; set; }
+    public bool IsVariableLength { get; internal set; }
+
+    /// <summary>
+    /// True once a table definition has given the column its place in a row - read from one, or written to one:
+    /// <see cref="IsVariableLength"/>, <see cref="FixedDataOffset"/> and <see cref="VarLenTableIndex"/> are then
+    /// the definition's, and rows are read and written by them.
+    /// </summary>
+    internal bool HasStoredPlace { get; set; }
+
+    /// <summary>
+    /// Whether the column is a calculated one (Access 2010 and later): its value is the result of an expression,
+    /// which Access works out and keeps in the row inside a wrapper of its own, as a type the column's properties
+    /// name. This library neither works the expression out nor reads the result: the column reads as null, and a
+    /// table with a calculated column is not written to.
+    /// </summary>
+    public bool IsCalculated { get; internal set; }
 
     /// <summary>
     /// Whether a Text or Memo value may be written in Jet's compressed form (0xFF 0xFE,
@@ -104,6 +123,7 @@ public sealed class Column
         AllowZeroLength = allowZeroLength;
         Precision = precision;
         Scale = scale;
+        IsVariableLength = dataType.IsVariableLength();
     }
 
     public override string ToString() => $"{Name} ({DataType}, {Length})";

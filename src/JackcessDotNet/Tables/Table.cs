@@ -245,7 +245,9 @@ public sealed class Table
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         _indexes.EnsureCanBeKept();
-        new RowEncoder(_file.Format, _definition.Columns).Validate(row);
+        var encoder = new RowEncoder(_file.Format, _definition);
+        encoder.EnsureWritable();
+        encoder.Validate(row);
 
         var asWritten = row;
         if (_autoNumberColumns.Count > 0)
@@ -425,22 +427,8 @@ public sealed class Table
 
             for (int r = 0; r < rowCount; r++)
             {
-                int    slotOff = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
-                ushort slotVal = ByteUtil.GetUShort(dp, slotOff);
-                if ((slotVal & 0x8000) != 0) continue;   // deleted
-                if ((slotVal & 0x4000) != 0) continue;   // overflow pointer
-
-                int rowStart = slotVal & JetFormat.RowOffsetMask;
-                int rowEnd   = (r == 0)
-                    ? format.PageSize
-                    : (ByteUtil.GetUShort(dp,
-                           format.OffsetDataRowTable + (r - 1) * JetFormat.SizeRowEntry)
-                       & JetFormat.RowOffsetMask);
-                int rowLen = rowEnd - rowStart;
-                if (rowLen <= 0) continue;
-
-                var rowBytes = new byte[rowLen];
-                Array.Copy(dp, rowStart, rowBytes, 0, rowLen);
+                // Deleted rows are passed; an overflow row is read where its pointer leads.
+                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
 
                 var row = new Row();
                 foreach (var col in _definition.Columns)

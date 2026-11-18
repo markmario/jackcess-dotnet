@@ -28,7 +28,6 @@ internal static class IndexKeys
     /// </summary>
     public static bool CanEncode(Column column)
         => CanEncode(column.DataType)
-        && !column.IsStoredOtherwise
         && (column.DataType is not (DataType.Text or DataType.Memo) || TextIndexCodes.For(column.SortOrder) is not null);
 
     /// <summary>
@@ -45,9 +44,7 @@ internal static class IndexKeys
     public static string WhyNot(Column column)
         => !CanEncode(column.DataType)
             ? $"{column.Name} is a {column.DataType} column, whose keys this library does not write"
-            : column.IsStoredOtherwise
-                ? $"{column.Name} is a {column.DataType} column kept {(column.DataType.IsVariableLength() ? "among the row's fixed-length values" : "among the row's variable-length values")}, where this library does not read it"
-                : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy} and {SortOrder.General}";
+            : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy} and {SortOrder.General}";
 
     /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are written.</summary>
     public static string WhyNot(Column column, object? value)
