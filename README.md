@@ -6,22 +6,24 @@
 
 # JackcessDotNet
 
-[![Upstream](https://img.shields.io/badge/upstream-mehran--ghanizadeh%2Fjackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
+[![NuGet](https://img.shields.io/nuget/v/Jackcess.Net?logo=nuget)](https://www.nuget.org/packages/Jackcess.Net)
+[![Ported from](https://img.shields.io/badge/ported%20from-mehran--ghanizadeh%2Fjackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Pure managed library for reading and writing Microsoft Access (`.mdb` / `.accdb`) files.
 No ODBC, no ACE drivers, no native dependencies. It builds for .NET 8, .NET Framework 4.7.2
 and .NET Standard 2.0.
 
-**This is QCAT's fork of [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet).**
-It exists for two reasons:
+This project started from release 1.2.2 of
+[`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet) and is now
+maintained on its own, with its own package, `Jackcess.Net`. It is not a release of the Jackcess project, and
+neither the Jackcess authors nor Mehran Ghanizadeh maintain or endorse it. It differs from that port in two ways:
 
 - **.NET Framework.** The `JackcessDotNet` package on nuget.org ships a `net10.0` assembly and nothing
-  else (checked for 2.0.0 and 3.1.0). QCAT's consumers run on .NET Framework 4.8.1, so they cannot use it.
-- **Files Microsoft Access accepts.** The files this fork writes are checked against Access's own engine
+  else (checked for 2.0.0 and 3.1.0), so nothing on .NET Framework can use it. This one ships `net8.0`,
+  `net472` and `netstandard2.0`.
+- **Files Microsoft Access accepts.** The files this library writes are checked against Access's own engine
   (ACE), not only read back by the library that wrote them. See [What this fork changes](#what-this-fork-changes).
-
-The fork publishes no package. See [Using this fork](#using-this-fork).
 
 The library is a C# port of the [`spannm/jackcess`](https://github.com/spannm/jackcess) Java
 project (a maintained fork of the original [Jackcess](https://jackcess.sourceforge.io/)
@@ -29,10 +31,20 @@ by James Ahlborn). The Java project remains the source of truth for the Jet
 file format; this port tracks its behaviour and reuses its test corpus for
 verification.
 
-## Using this fork
+## Installing
 
-Reference the project from source. QCAT's ExportMdb.Interop takes this repository as a git submodule,
-references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own.
+```
+dotnet add package Jackcess.Net
+```
+
+The package ID is not the assembly name. The assembly and the namespace are `JackcessDotNet`, as in the
+port this started from, so `using JackcessDotNet;` is unchanged; `dotnet add package JackcessDotNet` installs
+that other port's package, not this one. Versions start at 2.0.0, because the public API changed after the
+1.2.2 this started from. If you distribute a build, the [Apache License 2.0](LICENSE) and [NOTICE](NOTICE)
+have to travel with it; the package carries both.
+
+It can also be referenced from source. QCAT's ExportMdb.Interop takes this repository as a git submodule,
+references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own:
 
 ```
 git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-dotnet
@@ -42,11 +54,8 @@ git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-
 <ProjectReference Include="..\..\ext\jackcess-dotnet\src\JackcessDotNet\JackcessDotNet.csproj" />
 ```
 
-`dotnet add package JackcessDotNet` installs the upstream package, not this fork. The version in the
-project file (1.2.2) and [CHANGELOG.md](CHANGELOG.md) are upstream's, from the release the fork started
-at; a build here also writes a `JackcessDotNet.1.2.2.nupkg` to `artifacts/`, which is not the nuget.org
-package of that version and is not published anywhere. If you distribute a build of this fork, the
-[Apache License 2.0](LICENSE) has to travel with it.
+A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a release build has a
+real version (see [Releasing](#releasing)).
 
 ## What this fork changes
 
@@ -119,7 +128,37 @@ dotnet test JackcessDotNet.slnx --configuration Release
 - The engine's tests read back what the engine wrote. Whether Access accepts a file is tested where ACE
   is installed, in ExportMdb.Interop's suite.
 
-Issues are disabled on this repository. QCAT tracks work on the fork with ExportMdb.Interop's.
+Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
+Older issue numbers in comments and in this README, such as `qcatco/exportmdb.interop#64`, are in
+ExportMdb.Interop's tracker, where the work was tracked until this repository had its own.
+
+## Releasing
+
+A release is a `vX.Y.Z` tag on `main`, and the tag is the version: there is no version to edit and no bump
+commit. Merge, then tag the merge commit and push the tag. `.github/workflows/publish.yml` then:
+
+1. **Checks the tag** (`scripts/Assert-ReleaseTag.ps1`) before building anything: a plain `vX.Y.Z`, on `main`'s
+   own line (the merge commit, not a commit inside a pull request), above every release so far, at or above
+   `MinimumReleaseVersion` in the project file, and not already released. A refused tag publishes nothing;
+   delete it, fix what it tripped over, and tag again.
+2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the three
+   frameworks, `LICENSE` and `NOTICE`, and the assembly, file and product versions of each DLL.
+3. **Waits for approval** of the `nuget` environment, then pushes the package and its symbols to nuget.org
+   through [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) - there is no
+   API key in the repository - and makes a GitHub Release.
+
+Every other run of that workflow - a pull request, a push to `main`, a run by hand - rehearses the same steps at
+`<next version>-ci.<run>` and publishes nothing.
+
+Before tagging, move what `src/JackcessDotNet/PublicAPI.Unshipped.txt` lists into `PublicAPI.Shipped.txt`, and give
+`CHANGELOG.md`'s Unreleased section the version. A change that removes or changes public API raises
+`MinimumReleaseVersion` to the next major in the same pull request.
+
+**`.github/workflows/nuget-publish.yml` stays disabled** in the repository's Actions settings: never enable it,
+never delete it, and never put a workflow back at that path. A tag runs the workflow of the commit it points at,
+and every commit before publish.yml carries upstream's release job there, which published any `v*` tag with no
+check. Disabling the workflow at that path stops it on every commit, old ones included. publish.yml's
+`retired-workflow` job fails while it is enabled, and the publish job waits on it.
 
 ## Quick start
 
@@ -640,16 +679,19 @@ neither makes nor opens an Access 97 file.
 
 ## Version history
 
-[CHANGELOG.md](CHANGELOG.md) is upstream's, up to 1.2.2, where this fork started. What the fork has
-changed since is in [What this fork changes](#what-this-fork-changes) and in this repository's pull requests.
+[CHANGELOG.md](CHANGELOG.md). Up to 1.2.2 it is the history of the port this started from; what has changed
+since is in [What this fork changes](#what-this-fork-changes) and in this repository's pull requests.
 
 ## Credits
 
 This project would not exist without the years of reverse-engineering work
 done by James Ahlborn (original Jackcess) and Markus Spann (maintained fork
 at [`spannm/jackcess`](https://github.com/spannm/jackcess)). The Jet binary
-format is documented effectively only through their Java source.
+format is documented effectively only through their Java source. The C# port
+this repository started from is Mehran Ghanizadeh's
+[`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet).
 
 ## License
 
-[Apache License 2.0](LICENSE) — same as the upstream Jackcess project.
+[Apache License 2.0](LICENSE) — same as the upstream Jackcess project. [NOTICE](NOTICE) records the
+works this is derived from.
