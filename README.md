@@ -6,27 +6,98 @@
 
 # JackcessDotNet
 
-[![NuGet](https://img.shields.io/nuget/v/JackcessDotNet?logo=nuget&label=NuGet)](https://www.nuget.org/packages/JackcessDotNet)
-[![Downloads](https://img.shields.io/nuget/dt/JackcessDotNet?logo=nuget&label=Downloads)](https://www.nuget.org/packages/JackcessDotNet)
-[![GitHub](https://img.shields.io/badge/GitHub-mehran--ghanizadeh-181717?logo=github)](https://github.com/mehran-ghanizadeh)
-[![Repo](https://img.shields.io/badge/repo-jackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
+[![Upstream](https://img.shields.io/badge/upstream-mehran--ghanizadeh%2Fjackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Pure .NET 8 library for reading and writing Microsoft Access (`.mdb` / `.accdb`) files.
-No ODBC, no ACE drivers, no native dependencies — runs anywhere .NET 8 runs
-(Windows, Linux, macOS, containers).
+Pure managed library for reading and writing Microsoft Access (`.mdb` / `.accdb`) files.
+No ODBC, no ACE drivers, no native dependencies. It builds for .NET 8, .NET Framework 4.7.2
+and .NET Standard 2.0.
 
-This is a C# port of the [`spannm/jackcess`](https://github.com/spannm/jackcess) Java
+**This is QCAT's fork of [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet).**
+It exists for two reasons:
+
+- **.NET Framework.** The `JackcessDotNet` package on nuget.org ships a `net10.0` assembly and nothing
+  else (checked for 2.0.0 and 3.1.0). QCAT's consumers run on .NET Framework 4.8.1, so they cannot use it.
+- **Files Microsoft Access accepts.** The files this fork writes are checked against Access's own engine
+  (ACE), not only read back by the library that wrote them. See [What this fork changes](#what-this-fork-changes).
+
+The fork publishes no package. See [Using this fork](#using-this-fork).
+
+The library is a C# port of the [`spannm/jackcess`](https://github.com/spannm/jackcess) Java
 project (a maintained fork of the original [Jackcess](https://jackcess.sourceforge.io/)
-by James Ahlborn). The upstream Java project remains the source of truth for the Jet
+by James Ahlborn). The Java project remains the source of truth for the Jet
 file format; this port tracks its behaviour and reuses its test corpus for
 verification.
 
-## Install
+## Using this fork
+
+Reference the project from source. QCAT's ExportMdb.Interop takes this repository as a git submodule,
+references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own.
 
 ```
-dotnet add package JackcessDotNet
+git submodule add https://github.com/qcatco/jackcess-dotnet.git ext/jackcess-dotnet
 ```
+
+```xml
+<ProjectReference Include="..\..\ext\jackcess-dotnet\src\JackcessDotNet\JackcessDotNet.csproj" />
+```
+
+`dotnet add package JackcessDotNet` installs the upstream package, not this fork. The version in the
+project file (1.2.2) and [CHANGELOG.md](CHANGELOG.md) are upstream's, from the release the fork started
+at; a build here also writes a `JackcessDotNet.1.2.2.nupkg` to `artifacts/`, which is not the nuget.org
+package of that version and is not published anywhere. If you distribute a build of this fork, the
+[Apache License 2.0](LICENSE) has to travel with it.
+
+## What this fork changes
+
+Each of these was found by having Access or ACE open a file the engine wrote.
+
+- **Three target frameworks:** `net8.0`, `net472` and `netstandard2.0`.
+- **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
+  Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
+- **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
+  also stay in insertion order. A page holds at most 255 rows.
+- **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
+  to 1,024 bytes there, and Access showed `#Error` for those values.
+- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
+  and for General (Access 2010 and later).
+- **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
+  enforced. Access answers through them after the engine adds, changes or deletes rows.
+- **An insert fills AutoNumber columns from the table's own counter**, as Access does.
+- **Foreign keys can be enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
+  off by default).
+- **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
+  engine writes, a long memo in several pieces included.
+- **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
+  out again and write over them.
+- **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
+
+Limits to know about:
+
+- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
+  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
+  order or any other sort order, or a column type it makes no key for. It still reads such a table.
+  See [Text index keys](#text-index-keys-sort-orders-and-limits).
+
+## Building and testing
+
+You need the **.NET 10 SDK**. The tests run on Microsoft Testing Platform (`global.json` selects it), and
+only the 10 SDK's `dotnet test` runs that.
+
+```
+dotnet build JackcessDotNet.slnx --configuration Release
+dotnet test JackcessDotNet.slnx --configuration Release
+```
+
+- The tests are xUnit.net v3 and run on .NET 8 only; the library's other two targets are built, not tested here.
+- Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
+  A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
+- `./tools/corpus.ps1` checks every corpus file against `tests/corpus/MANIFEST.sha256`. CI runs it before building.
+- The engine's tests read back what the engine wrote. Whether Access accepts a file is tested where ACE
+  is installed, in ExportMdb.Interop's suite.
+
+Issues are disabled on this repository. QCAT tracks work on the fork with ExportMdb.Interop's.
 
 ## Quick start
 
@@ -191,7 +262,7 @@ materialising the whole table.
 | Read Jet 3 (Access 97) / Jet 4 (Access 2000–2003) | ✅      |
 | Read ACE 12 / 14 / 16 / 17 (`.accdb`)             | ✅      |
 | Create new `.mdb` files (Jet 4 / Jet 3)           | ✅      |
-| Row CRUD + B-tree indexes (single-column PK)      | ✅      |
+| Row CRUD + primary-key B-tree index               | ✅      |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Currency, Single, Double, Date/Time, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
@@ -339,7 +410,8 @@ versions of the engine.
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md) — also shipped inside the `.nupkg`.
+[CHANGELOG.md](CHANGELOG.md) is upstream's, up to 1.2.2, where this fork started. What the fork has
+changed since is in [What this fork changes](#what-this-fork-changes) and in this repository's pull requests.
 
 ## Credits
 
