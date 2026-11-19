@@ -357,23 +357,28 @@ public sealed class RoomReuseTests : IDisposable
     public void A_row_whose_values_move_on_from_a_page_they_leave_empty_does_not_go_back_to_it()
     {
         // As Access moves values on: the new place is found before the old one is left, so it is a new page, and the
-        // one left - 250 deleted slots and nothing else, too little room for the row - is begun again.
-        using var db = Database.Create(_path);
-        var table = db.CreateTable("W", new[] { "Id", "A", "B", "C", "D", "E", "F", "G" }
-            .Select(name => name == "Id" ? new ColumnDefinition(name, DataType.Int32) : new ColumnDefinition(name, DataType.Text) { MaxLength = 255 })
-            .ToList(), "Id");
+        // one left - 250 deleted slots and nothing else, too little room for the row - is begun again. Its rows were
+        // deleted in an earlier session: a page begun again keeps the slots of rows deleted in the session.
         Row Of(int id, int a, int other = 0) => new Row
         {
             ["Id"] = id, ["A"] = Greek(a), ["B"] = Greek(other), ["C"] = Greek(other), ["D"] = Greek(other),
             ["E"] = Greek(other), ["F"] = Greek(other), ["G"] = Greek(other),
         };
-        for (int id = 1; id <= 10; id++) table.Insert(Of(id, 200));
-        for (int i = 0; i < 249; i++)
+        using (var earlier = Database.Create(_path))
         {
-            table.Insert(Of(100 + i, 1));
-            table.Delete(table.FindRowByPrimaryKey(100 + i)!);
+            var created = earlier.CreateTable("W", new[] { "Id", "A", "B", "C", "D", "E", "F", "G" }
+                .Select(name => name == "Id" ? new ColumnDefinition(name, DataType.Int32) : new ColumnDefinition(name, DataType.Text) { MaxLength = 255 })
+                .ToList(), "Id");
+            for (int id = 1; id <= 10; id++) created.Insert(Of(id, 200));
+            for (int i = 0; i < 249; i++)
+            {
+                created.Insert(Of(100 + i, 1));
+                created.Delete(created.FindRowByPrimaryKey(100 + i)!);
+            }
+            created.Delete(created.FindRowByPrimaryKey(10)!);
         }
-        table.Delete(table.FindRowByPrimaryKey(10)!);
+        using var db = Database.Open(_path);
+        var table = db.GetTable("W");
         int second = Owned(db, table)[1];
         Assert.Equal(250, Slots(db, second));
 
@@ -391,6 +396,208 @@ public sealed class RoomReuseTests : IDisposable
         Assert.Contains(second, Listed(db, table));
         Assert.DoesNotContain(third, Listed(db, table));   // 485 bytes left: no room for another row of 3,595
         Assert.Equal(Greek(255), table.FindRowByPrimaryKey(3)!["G"]);
+    }
+
+    // ── What was read of a row deleted since ─────────────────────────────────
+
+    /// <summary>
+    /// Rows 1 to 18 on two pages; rows 3 and 4 grown past their page, their values on a third; row 19 inserted after
+    /// them there, in its slot 2. Returns that page.
+    /// </summary>
+    private static int ValuesAndARowOnAPageOfTheirOwn(Database db, Table table)
+    {
+        for (int id = 1; id <= 18; id++) Put(table, id, 200);
+        Set(table, 3, ("B", 255), ("C", 255));
+        Set(table, 4, ("B", 255), ("C", 255));
+        Put(table, 19, 200);
+        int away = RowsMovedTo(db, table, 3);
+        Assert.Equal(away, RowsMovedTo(db, table, 4));
+        Assert.Equal(new RowId(away, 2), Where(table, 19));
+        return away;
+    }
+
+    /// <summary>
+    /// Row 19 deleted, rows 3 and 4 home again - the page their values leave has no row on it - and rows 20 to 22
+    /// inserted, which that page takes.
+    /// </summary>
+    private static void DeleteRow19AndUseItsPageAgain(Table table, int away)
+    {
+        Delete(table, 19);
+        Set(table, 3, ("B", 0), ("C", 0));
+        Set(table, 4, ("B", 0), ("C", 0));
+        for (int id = 20; id <= 22; id++) Put(table, id, 10);
+        Assert.All(new[] { 20, 21, 22 }, id => Assert.Equal(away, Where(table, id).PageNumber));
+    }
+
+    /// <summary>Every row but 19, as it was: none was changed or deleted through what was read of row 19.</summary>
+    private static void AssertRow19WasTheOnlyRowDeleted(Database db, Table table)
+    {
+        var ids = table.Rows.Select(row => (int)row["Id"]!).OrderBy(id => id).ToList();
+        Assert.Equal(Enumerable.Range(1, 18).Concat(new[] { 20, 21, 22 }), ids);
+        Assert.All(new[] { 20, 21, 22 }, id => Assert.Equal(Greek(10), table.FindRowByPrimaryKey(id)!["A"]));
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 21);
+    }
+
+    /// <summary>
+    /// A <see cref="Row"/>, a cursor and an index cursor that read row 19 before it was deleted name its slot, which
+    /// holds no row: each use of them is refused, as the documentation says, though the page has since been left with
+    /// no row and taken rows again. Its slots begin again after that one.
+    /// </summary>
+    [Theory]
+    [InlineData("Table.Update")]
+    [InlineData("Table.Delete")]
+    [InlineData("Cursor.GetCurrentRowValue")]
+    [InlineData("Cursor.UpdateCurrentRow")]
+    [InlineData("Cursor.DeleteCurrentRow")]
+    [InlineData("IndexCursor.UpdateCurrentRow")]
+    [InlineData("IndexCursor.DeleteCurrentRow")]
+    public void What_was_read_of_a_row_deleted_since_is_refused_when_its_page_has_taken_rows_again(string through)
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        int away = ValuesAndARowOnAPageOfTheirOwn(db, table);
+        var held = table.FindRowByPrimaryKey(19)!;
+        var cursor = table.CreateCursor();
+        Assert.NotNull(cursor.FindRow("Id", 19));
+        var byKey = table.CreateIndexCursor();
+        Assert.NotNull(byKey.FindRowByEntry(19));
+
+        DeleteRow19AndUseItsPageAgain(table, away);
+
+        Action use = through switch
+        {
+            "Table.Update"                 => () => { held["A"] = "through a Row read before the delete"; table.Update(held); },
+            "Table.Delete"                 => () => table.Delete(held),
+            "Cursor.GetCurrentRowValue"    => () => cursor.GetCurrentRowValue("A"),
+            "Cursor.UpdateCurrentRow"      => () => cursor.UpdateCurrentRow(new Row { ["A"] = "through a cursor" }),
+            "Cursor.DeleteCurrentRow"      => () => cursor.DeleteCurrentRow(),
+            "IndexCursor.UpdateCurrentRow" => () => byKey.UpdateCurrentRow(new Row { ["A"] = "through an index cursor" }),
+            "IndexCursor.DeleteCurrentRow" => () => byKey.DeleteCurrentRow(),
+            _ => throw new ArgumentOutOfRangeException(nameof(through)),
+        };
+        Assert.Throws<InvalidOperationException>(use);
+        AssertRow19WasTheOnlyRowDeleted(db, table);
+    }
+
+    [Fact]
+    public void A_savepoint_on_a_row_deleted_since_is_restored_to_no_row_when_its_page_has_taken_rows_again()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        int away = ValuesAndARowOnAPageOfTheirOwn(db, table);
+        var cursor = table.CreateCursor();
+        Assert.NotNull(cursor.FindRow("Id", 19));
+        var saved = cursor.GetSavepoint();
+        cursor.MoveBeforeFirst();
+
+        DeleteRow19AndUseItsPageAgain(table, away);
+
+        cursor.RestoreSavepoint(saved);
+        Assert.Null(cursor.Current);
+        Assert.True(cursor.MoveNext());              // and the next move goes on from that place
+        Assert.Equal(20, cursor.Current!["Id"]);
+        AssertRow19WasTheOnlyRowDeleted(db, table);
+    }
+
+    [Fact]
+    public void A_child_row_a_cascade_deleted_is_not_updated_through_what_was_read_of_it()
+    {
+        using var db = Database.Create(_path);
+        db.EnforceForeignKeys = true;
+        var parent = db.CreateTable("Parent", new[] { new ColumnDefinition("K", DataType.Int32) }, new[] { "K" });
+        var child = db.CreateTable("Child", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("K", DataType.Int32),
+            new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("C", DataType.Text) { MaxLength = 255 },
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+        db.CreateRelationship(new RelationshipDefinition("Parent", "K", "Child", "K")
+        {
+            Name = "ParentChild", HasReferentialIntegrity = true, CascadeDeletes = true,
+        });
+        parent.Insert(new Row { ["K"] = 1 });
+        parent.Insert(new Row { ["K"] = 2 });
+        void Grow(int id, int chars)
+        {
+            var row = child.FindRowByPrimaryKey(id)!;
+            row["B"] = Greek(chars);
+            row["C"] = Greek(chars);
+            child.Update(row);
+        }
+        for (int id = 1; id <= 18; id++) child.Insert(new Row { ["Id"] = id, ["K"] = 1, ["A"] = Greek(200) });
+        Grow(3, 255);
+        Grow(4, 255);
+        child.Insert(new Row { ["Id"] = 19, ["K"] = 2, ["A"] = Greek(200) });
+        int away = child.FindRowByPrimaryKey(19)!.Id!.Value.PageNumber;
+        var held = child.FindRowByPrimaryKey(19)!;
+
+        parent.Delete(parent.FindRowByPrimaryKey(2)!);   // and child 19 with it
+        Assert.Null(child.FindRowByPrimaryKey(19));
+        Grow(3, 0);
+        Grow(4, 0);
+        for (int id = 20; id <= 22; id++) child.Insert(new Row { ["Id"] = id, ["K"] = 1, ["A"] = Greek(10) });
+        Assert.Equal(away, child.FindRowByPrimaryKey(22)!.Id!.Value.PageNumber);
+
+        held["A"] = "through a Row read before the cascade";
+        Assert.Throws<InvalidOperationException>(() => child.Update(held));
+        Assert.All(new[] { 20, 21, 22 }, id => Assert.Equal(Greek(10), child.FindRowByPrimaryKey(id)!["A"]));
+        Assert.Equal(21, child.Rows.Count());
+    }
+
+    [Fact]
+    public void A_page_left_with_no_row_keeps_the_slots_of_rows_deleted_in_the_session_and_begins_again_after_them()
+    {
+        int away;
+        int pages;
+        using (var db = Database.Create(_path))
+        {
+            var table = Wide(db);
+            away = ValuesAndARowOnAPageOfTheirOwn(db, table);
+            pages = db.File.PageCount;
+            Delete(table, 19);
+            Set(table, 3, ("B", 0), ("C", 0));
+            Set(table, 4, ("B", 0), ("C", 0));
+
+            // Slots 0 and 1 held values, slot 2 row 19: kept, deleted and empty, and the page listed.
+            Assert.Equal(3, Slots(db, away));
+            Assert.All(Enumerable.Range(0, 3), row => Assert.Equal((JetFormat.DeletedRowFlags, 0), Slot(db, away, row)));
+            Assert.Equal(4082 - 3 * JetFormat.SizeRowEntry, Free(db, away));
+            Assert.Contains(away, Listed(db, table));
+
+            // A row grown past its page and home again, over and over: its values go to that page and leave it, which
+            // is begun again after slot 2 each time, so the file does not grow.
+            for (int i = 0; i < 1000; i++)
+            {
+                Set(table, 5, ("B", 255), ("C", 255));
+                Assert.Equal(new RowId(away, 3), new RowId(RowsMovedTo(db, table, 5), MovedToRow(db, table, 5)));
+                Set(table, 5, ("B", 0), ("C", 0));
+            }
+            Assert.Equal(3, Slots(db, away));
+            Assert.Equal(pages, db.File.PageCount);
+        }
+
+        // A later session read no row of the page: it is begun again from its first slot.
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            Set(table, 5, ("B", 255), ("C", 255));
+            Assert.Equal(new RowId(away, 3), new RowId(RowsMovedTo(db, table, 5), MovedToRow(db, table, 5)));
+            Set(table, 5, ("B", 0), ("C", 0));
+            Assert.Equal(0, Slots(db, away));
+            Assert.Equal(pages, db.File.PageCount);
+            IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 18);
+        }
+    }
+
+    /// <summary>The row on its page that the values of row <paramref name="id"/> were moved to.</summary>
+    private static int MovedToRow(Database db, Table table, int id)
+    {
+        var at = Where(table, id);
+        byte[] page = db.File.ReadPage(at.PageNumber);
+        int start = ByteUtil.GetUShort(page, db.File.Format.OffsetDataRowTable + at.RowNumber * JetFormat.SizeRowEntry) & JetFormat.RowOffsetMask;
+        return page[start];
     }
 
     // ── A row updated back and forth ─────────────────────────────────────────

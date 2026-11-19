@@ -279,12 +279,13 @@ changed since 1.2.2.
   free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
   another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
   for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
-  Access gives back to the file and takes again, is kept for the table, begun again, and listed. The free-space map
-  was left empty, so Access added a page for the first row it wrote to a table this library had filled. A table
-  nothing is deleted from still takes its rows on its last page, in insertion order; after deletes, a row goes to an
-  earlier page, as in Access, and is read there in the table's order. A `Row` read before its row was deleted can
-  come to name another row: read rows again after deleting. An insert reads no more pages for it, however large the
-  table: the map is read once a session.
+  Access gives back to the file and takes again, is kept for the table, begun again, and listed. It keeps the slots
+  of the rows deleted from it in the session, so that a `Row`, a cursor or a savepoint that read one of them finds no
+  row there and an update or a delete through it is still refused. The free-space map was left empty, so Access added
+  a page for the first row it wrote to a table this library had filled. A table nothing is deleted from still takes
+  its rows on its last page, in insertion order; after deletes, a row goes to an earlier page, as in Access, and is
+  read there in the table's order. An insert reads no more pages for it, however large the table: the map is read
+  once a session.
 - **A long value's chain goes to pages an earlier session emptied** (#58). Only a value of one chunk looked at the
   column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
   change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's

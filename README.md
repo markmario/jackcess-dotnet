@@ -226,7 +226,9 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   holds (below). `FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
 - **Room a delete or an update leaves is used again where Access uses it** (#58; see
   [Rows and long values](#rows-and-long-values-what-to-know)). A deleted row's bytes leave its page and the rows
-  after them close up; its slot stays, marked deleted, and no row takes it again.
+  after them close up; its slot stays, marked deleted: a `Row`, a cursor or a savepoint that read the row finds no
+  row there, and an update or a delete through it is refused with `InvalidOperationException`, however the page is
+  used again.
 - **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); a null is not found by
   looking for null, where Jackcess finds one.
 
@@ -1059,19 +1061,20 @@ have been deleted - and a row Access moved to another page is read where its poi
     for another row of the same size: a page a row of more than half a page began is not listed, so the next row,
     however small, goes to another page - a new one when no other is listed - in Access as here.
   - A delete takes the row's bytes off its page - the rows after them close up - and leaves its slot, marked
-    deleted and empty; no row takes a deleted row's slot again. The page is listed when, before the delete, it had
-    no room for the row it lost and a slot, whatever room the delete leaves it (to the byte, for rows of 101 to 401
-    bytes). A page a delete leaves with no row stays the table's.
+    deleted and empty; a new row takes a slot of its own, not a deleted row's. The page is listed when, before the
+    delete, it had no room for the row it lost and a slot, whatever room the delete leaves it (to the byte, for rows
+    of 101 to 401 bytes). A page a delete leaves with no row stays the table's.
   - An update that fits where the row is lists nothing. A row that comes home lists the page its values leave by the
     same rule as a delete; values that move on to another page do not list the page they leave.
   - Access gives back to the file a page an update leaves with no row - out of the table's maps - and takes it again
     for the next page it needs, its slots begun again from the first, so a row updated back and forth past its
     page's room adds a page to Access's file at most (one in 3,000 such cycles, measured). This library adds every
-    page at the end of the file and takes none back from it, so it keeps such a page for the table, begun again with
-    no slots and listed: the next row, or values moved, go to it, and its file grows by a page at most too. Every
-    slot on such a page was a deleted one - values moved there and gone again, or a row deleted with its index
-    entries - so a slot number is used again only where nothing in the file names it; but a `Row` read before its
-    row was deleted names its slot, which can then hold another row. Read rows again after deleting.
+    page at the end of the file and takes none back from it, so it keeps such a page for the table, begun again and
+    listed: the next row, or values moved, go to it, and its file grows by a page at most too. Every slot on such a
+    page was a deleted one - values moved there and gone again, or a row deleted with its index entries. A row
+    deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint, so the page keeps that
+    row's slot, deleted, with the slots before it, and is begun again after them: a slot number is used again only
+    where nothing names it, and what read a deleted row finds no row in its slot.
   - Finding a page reads the pages tried and no other: the map is read once a session, and kept.
   - Where Access does not use room, this library does not either: a page with 255 slots takes no more rows, however
     many of them are deleted ones; a row that shrinks where it is, or whose values move to another page, lists no

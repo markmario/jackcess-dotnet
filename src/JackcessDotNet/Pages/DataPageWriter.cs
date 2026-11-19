@@ -395,10 +395,12 @@ internal sealed class DataPageWriter
     /// A page left with no row on it Access gives back to the file, out of the table's maps, and takes again for the
     /// next page it needs, its slots begun again from the first: that is what keeps a row updated back and forth from
     /// growing Access's file. This library adds every page at the end of the file and takes none back from it, so it
-    /// keeps such a page for the table, begun again with no slots, and lists it: the next row, or values moved, go to
-    /// it as they would to the page Access takes back. Every slot on it is a deleted one - values moved there and gone
-    /// again, which only their row's pointer named, or a row deleted with its index entries - so, as in the page Access
-    /// begins again, a slot number is used again only where nothing in the file names it.
+    /// keeps such a page for the table, begun again, and lists it: the next row, or values moved, go to it as they
+    /// would to the page Access takes back. Every slot on it is a deleted one: values moved there and gone again, which
+    /// only their row's pointer named, or a row deleted with its index entries. A row deleted in this session is still
+    /// named by what read it - a <see cref="Row"/>, a cursor, a savepoint - which is to find no row in its slot, so the
+    /// page keeps that slot, deleted, with the slots before it (<see cref="DeletedRowSlots"/>), and its slots begin
+    /// again after them: a slot number is used again only where nothing names it.
     /// </para>
     /// </summary>
     private void Leave(TableDefinition table, List<(int Page, int Row)> moved, bool cameHome)
@@ -412,7 +414,7 @@ internal sealed class DataPageWriter
             TryReplace(page, row, Array.Empty<byte>(), JetFormat.DeletedRowFlags);
             if (!HoldsARow(page))
             {
-                _file.WritePage(pageNumber, PageAllocator.NewDataPage(_file.Format, table.TdefPageNumber));
+                _file.WritePage(pageNumber, BegunAgain(table, _file.DeletedRowSlots.Kept(pageNumber)));
                 room.List(table, pageNumber, _allocator);
                 continue;
             }
@@ -420,6 +422,21 @@ internal sealed class DataPageWriter
             if (cameHome && roomBefore < lost + JetFormat.SizeRowEntry)
                 room.List(table, pageNumber, _allocator);
         }
+    }
+
+    /// <summary>
+    /// A page of <paramref name="table"/> begun again: no row on it, and its first <paramref name="kept"/> slots kept,
+    /// deleted and empty, so that the next row goes to the slot after them.
+    /// </summary>
+    private byte[] BegunAgain(TableDefinition table, int kept)
+    {
+        var format  = _file.Format;
+        byte[] page = PageAllocator.NewDataPage(format, table.TdefPageNumber);
+        for (int r = 0; r < kept; r++)
+            ByteUtil.PutUShort(page, format.OffsetDataRowTable + r * JetFormat.SizeRowEntry, (ushort)(format.PageSize | JetFormat.DeletedRowFlags));
+        ByteUtil.PutShort(page, format.OffsetDataNumRows, (short)kept);
+        ByteUtil.PutShort(page, JetFormat.OffsetDataFreeSpace, (short)(format.DataPageInitialFreeSpace - kept * JetFormat.SizeRowEntry));
+        return page;
     }
 
     /// <summary>Whether a slot of <paramref name="page"/> is not a deleted one: a row, a row's pointer, or values moved there.</summary>
@@ -518,10 +535,12 @@ internal sealed class DataPageWriter
         // Free any LVAL chains referenced by this row.
         FreeRowLvalChains(table, rowBytes, decoder);
 
-        // The row leaves its page, and its values the page they had been moved to.
+        // The row leaves its page, and its values the page they had been moved to. Its slot is kept from rows to come,
+        // in this session, wherever its page is begun again: what read the row names it.
         var moved = new List<(int Page, int Row)>();
         DataRows.Read(_file, page, rowIndex, moved);
         Remove(table, pageNumber, page, rowIndex);
+        _file.DeletedRowSlots.Deleted(pageNumber, rowIndex);
         foreach (var (movedPage, movedRow) in moved)
             Remove(table, movedPage, _file.ReadPage(movedPage), movedRow);
         return values;
@@ -530,10 +549,11 @@ internal sealed class DataPageWriter
     /// <summary>
     /// Takes the bytes of a deleted row, or of the values it had moved to another page, off <paramref name="page"/>,
     /// as Access deletes a row (measured, DAO 16, #58): the page's other rows close up over them, and the slot stays -
-    /// marked deleted, with both flag bits, and no bytes - and is never used again. The page is listed in the table's
-    /// free-space map when it had no room, before, for what it lost and a slot: Access lists a page so, and only so, for
-    /// a delete, whatever room the delete leaves it (at a byte either side, for rows of 101 to 401 bytes). A delete
-    /// gives no page back to the file, even one it leaves with no row: Access keeps such a page for the table.
+    /// marked deleted, with both flag bits, and no bytes - and no row is put in it: a new row takes a slot of its own,
+    /// and a page begun again keeps the slot of a row deleted in the session (<see cref="Leave"/>). The page is listed in
+    /// the table's free-space map when it had no room, before, for what it lost and a slot: Access lists a page so, and
+    /// only so, for a delete, whatever room the delete leaves it (at a byte either side, for rows of 101 to 401 bytes). A
+    /// delete gives no page back to the file, even one it leaves with no row: Access keeps such a page for the table.
     /// </summary>
     private void Remove(TableDefinition table, int pageNumber, byte[] page, int rowIndex)
     {
