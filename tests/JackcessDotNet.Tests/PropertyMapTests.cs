@@ -78,7 +78,7 @@ public sealed class PropertyMapTests
     }
 
     [Fact]
-    public void Properties_FreshTable_AreEmpty()
+    public void Properties_FreshTable_AreItsColumnsOwn()
     {
         string path = Path.Combine(Path.GetTempPath(), $"prop_{Guid.NewGuid():N}.mdb");
         try
@@ -86,8 +86,10 @@ public sealed class PropertyMapTests
             using var db = Database.Create(path, FileFormat.Access2000);
             var t = db.CreateTable("Foo", new[] { new ColumnDefinition("X", DataType.Int32) });
             Assert.Empty(t.Properties);
+            // A column is made with the Required property Access keeps for a field (#41), and nothing else.
             var column = t.Columns.Single().Properties;
-            Assert.Empty(column);
+            var required = Assert.Single(column);
+            Assert.Equal(("Required", (object)false), (required.Name, required.Value));
             Assert.Equal("X", column.Name);
             Assert.Same(column, t.Columns.Single().Properties);
         }

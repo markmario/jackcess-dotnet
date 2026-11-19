@@ -727,6 +727,11 @@ public sealed class Database : IDisposable
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
+        // What the definitions ask of the columns beyond their types - Required, Allow Zero Length, a Replication
+        // ID AutoNumber's GenGUID() - which Access keeps as properties, in the table's row of the catalog.
+        var propertyMaps   = ColumnProperties.For(columns);
+        byte[]? properties = PropertyMapWriter.Write(propertyMaps, out var propertyNames);
+
         // A table with a Large Number or a Date/Time Extended column makes the file one of Access 2016's format
         // or Access 2019's, as it does when Access adds the table: older versions of Access then refuse the file
         // rather than misread it. An .mdb has no such column, and the table is refused here, with no page added.
@@ -801,12 +806,13 @@ public sealed class Database : IDisposable
         _file.WritePage(tdefPage, tdefBytes);
 
         // 7. Register the table in MSysObjects.
-        _catalog.InsertTableEntry(name, tdefPage);
+        _catalog.InsertTableEntry(name, tdefPage, properties);
 
         // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
         if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
 
-        var table = new Table(_file, _allocator, tableDef, owningDb: this);
+        propertyMaps.Written(propertyNames);
+        var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
         _tables[tdefPage] = table;
         return table;
     }
@@ -958,7 +964,7 @@ public sealed class Database : IDisposable
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
 
-        int tdefPageNum = _catalog.FindTable(name, out string? listedName);
+        int tdefPageNum = _catalog.FindTable(name, out string? listedName, out var readProperties);
         if (tdefPageNum < 0)
         {
             table = null;
@@ -967,7 +973,15 @@ public sealed class Database : IDisposable
 
         if (!_tables.TryGetValue(tdefPageNum, out table))
         {
-            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum), owningDb: this);
+            // The table's properties are read with it, from its row of the catalog as that was just read: what
+            // they say of a column (Column.IsRequired, Column.AllowZeroLength) is then known for as long as the
+            // column is held, and no insert reads the catalog for them. A value that cannot be read does not keep
+            // the table from being opened: it is read again, and the failure reported, when it is asked for.
+            PropertyMaps? properties = null;
+            try { properties = PropertyMapReader.Read(readProperties!(), _file.Format); }
+            catch (Exception e) when (e is IOException or ArgumentException or IndexOutOfRangeException) { }
+
+            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum), owningDb: this, properties);
             _tables[tdefPageNum] = table;
         }
         return true;
@@ -1016,6 +1030,136 @@ public sealed class Database : IDisposable
         }
 
         return tableDef;
+    }
+
+    // ── Properties ───────────────────────────────────────────────────────────
+
+    private PropertyMaps? _databaseProperties;
+    private PropertyMaps? _summaryProperties;
+    private PropertyMaps? _userDefinedProperties;
+
+    /// <summary>
+    /// The database's own properties, as Access keeps them: <c>AccessVersion</c>, <c>Build</c> and the like,
+    /// and those a caller adds - what DAO's <c>Database.Properties</c> lists beyond its built-in ones. Jackcess's
+    /// <c>getDatabaseProperties</c>. Read from the catalog the first time they are asked for; empty for a
+    /// database that has none. <see cref="PropertyMap.Set(string, object)"/> and <see cref="PropertyMap.Save"/>
+    /// change them.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The database is closed.</exception>
+    public PropertyMap DatabaseProperties => DatabaseMaps(ref _databaseProperties, "MSysDb").Default;
+
+    /// <summary>
+    /// The properties of the database's Summary sheet - <c>Title</c>, <c>Author</c>, <c>Company</c> and the
+    /// rest - which Access keeps with its <c>SummaryInfo</c> document. Jackcess's <c>getSummaryProperties</c>.
+    /// Empty for a database that has none. A database made by Access has the document; one made by DAO alone
+    /// has not, and this library does not add it: <see cref="PropertyMap.Save"/> then throws
+    /// <see cref="NotSupportedException"/>.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The database is closed.</exception>
+    public PropertyMap SummaryProperties => DatabaseMaps(ref _summaryProperties, "SummaryInfo").Default;
+
+    /// <summary>
+    /// The properties of the database's Custom sheet, which Access keeps with its <c>UserDefined</c> document.
+    /// Jackcess's <c>getUserDefinedProperties</c>. Empty for a database that has none; saved as
+    /// <see cref="SummaryProperties"/> are, and refused the same way in a database without the document.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The database is closed.</exception>
+    public PropertyMap UserDefinedProperties => DatabaseMaps(ref _userDefinedProperties, "UserDefined").Default;
+
+    // The maps of one document of the Databases container, read once and kept.
+    private PropertyMaps DatabaseMaps(ref PropertyMaps? kept, string document)
+    {
+        ThrowIfDisposed();
+        if (kept is not null) return kept;
+
+        var maps = PropertyMapReader.Read(_catalog.FindDatabaseObject(document)?.Properties, _file.Format);
+        maps.Saver = saved => SaveProperties(saved, () => _catalog.FindDatabaseObject(document), $"the database's '{document}' document");
+        return kept = maps;
+    }
+
+    /// <summary>
+    /// Writes <paramref name="maps"/> as the LvProp of the catalog's row for the object they belong to, which
+    /// <paramref name="find"/> finds: the row is rewritten, its other values as they were and its entries in the
+    /// catalog's indexes following it. Everything that refuses the change does so before a byte is written, and
+    /// what is written is taken back if writing it fails.
+    /// </summary>
+    /// <param name="maps">The properties to write.</param>
+    /// <param name="find">Finds the object's row in the catalog as it now is; null when it has none.</param>
+    /// <param name="owner">What the properties belong to, for a refusal's message.</param>
+    /// <param name="withinUndo">Whether the caller has an undo scope open, which takes this change back with its own.</param>
+    internal void SaveProperties(PropertyMaps maps, Func<SystemCatalog.ObjectRow?> find, string owner, bool withinUndo = false)
+    {
+        ThrowIfDisposed();
+        _file.EnsureWritable();
+
+        byte[]? value = PropertyMapWriter.Write(maps, out var names);
+        var row = find() ?? throw new NotSupportedException(
+            $"The properties of {owner} are not written: the database's catalog has no such object to keep them with, " +
+            "and this library does not add one. Nothing was changed.");
+        var catalog = GetTable("MSysObjects");
+        if (catalog.InsertRefusal is { } why)
+            throw new NotSupportedException($"The properties of {owner} are not written: {why}");
+
+        var change = new Row { ["LvProp"] = value };
+        if (withinUndo)
+            catalog.RewriteRowAt(row.RowPointer, change);
+        else
+        {
+            using var undo = _file.BeginUndo();
+            catalog.RewriteRowAt(row.RowPointer, change);
+            undo.Commit();
+        }
+        maps.Written(names);
+    }
+
+    /// <summary>
+    /// Whether the properties of <paramref name="column"/>, a column about to be added to
+    /// <paramref name="table"/>, can be written: asked before anything is. Where they cannot - the catalog has an
+    /// index whose keys this library does not write (a database that sorts in an order other than General and
+    /// General - Legacy), or the table's properties were not read whole - a column that is what was asked for with
+    /// no property at all is still added, without them: false is returned. One whose definition only a property
+    /// can say is refused.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The column needs a property and the table's cannot be written.</exception>
+    internal bool ColumnPropertiesCanBeWritten(TableDefinition table, Column column)
+    {
+        string? why = null;
+        if (_catalog.FindObject(table.TdefPageNumber) is not { } row)
+            why = "the catalog has no row for the table";
+        else if (PropertyMapReader.Read(row.Properties, _file.Format).UnreadReason is { } unread)
+            why = $"the ones in the file were not all read ({unread}), and writing those that were would lose the rest";
+        else if (GetTable("MSysObjects").InsertRefusal is { } refusal)
+            why = refusal.TrimEnd('.');
+        if (why is null) return true;
+
+        if (ColumnProperties.Needs(column) is not { } needs) return false;
+        throw new NotSupportedException(
+            $"Column '{column.Name}' is not added to '{table.Name}': {needs} is kept as a property of the column, and the table's " +
+            $"properties cannot be written: {why}. Nothing was changed.");
+    }
+
+    /// <summary>
+    /// Writes the properties a column this library adds is given (<see cref="ColumnProperties"/>): the column's
+    /// block, added to the table's properties as the file holds them. What a caller has changed in the table's
+    /// maps and not saved is not written with it. Called inside the undo scope of the change that adds the
+    /// column, which takes it back with the column if it fails; the table's open maps take the column's
+    /// properties in once they are written.
+    /// </summary>
+    internal void AddColumnProperties(TableDefinition table, Column column)
+    {
+        int id = table.TdefPageNumber;
+        var inFile = PropertyMapReader.Read(_catalog.FindObject(id)?.Properties, _file.Format);
+
+        // A block Access left for a column of this name that is gone is not this column's.
+        if (inFile.Get(column.Name) is { } leftover)
+            foreach (var property in leftover.ToList())
+                leftover.Remove(property.Name);
+        ColumnProperties.Add(inFile, column);
+        if (inFile.Get(column.Name) is not { Count: > 0 } written) return;   // a Long AutoNumber has none
+
+        SaveProperties(inFile, () => _catalog.FindObject(id), $"table '{table.Name}'", withinUndo: true);
+        if (_tables.TryGetValue(id, out var open))
+            open.PropertyMaps.Adopt(written, inFile.Names);
     }
 
     // ── Changing the schema ──────────────────────────────────────────────────
