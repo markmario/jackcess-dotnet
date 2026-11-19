@@ -325,8 +325,8 @@ public sealed class RowLayoutTests : IDisposable
         byte[] bytes = db.File.ReadPage(page);
         ushort Slot(int row) => ByteUtil.GetUShort(bytes, db.File.Format.OffsetDataRowTable + row * JetFormat.SizeRowEntry);
         Assert.Equal(JetFormat.DeletedRowFlags, Slot(0) & JetFormat.DeletedRowFlags);   // deleted
-        Assert.Equal(JetFormat.DeletedRowFlags, Slot(1) & JetFormat.DeletedRowFlags);   // rewritten elsewhere
-        Assert.Equal(0, Slot(2) & JetFormat.DeletedRowFlags);
+        Assert.Equal(0, Slot(1) & JetFormat.DeletedRowFlags);                           // updated where it is
+        Assert.Equal(2, ByteUtil.GetShort(bytes, db.File.Format.OffsetDataNumRows));    // and no slot more for it
         Assert.Equal(3, table.Rows.Single()["Id"]);
     }
 

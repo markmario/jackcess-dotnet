@@ -201,7 +201,8 @@ public sealed class SecondReviewTests : IDisposable
         {
             var hit = table.CreateIndexCursor("DataIndex").FindRowByEntry(row[column]!);
             Assert.NotNull(hit);
-            Assert.Equal(row[column], hit![column]);
+            // The first row whose text is equal as the index's sort order has it, which Access's = is.
+            Assert.True(ValueMatch.Matches(table.Columns.First(c => c.Name == column), hit![column], row[column]), $"'{hit[column]}' for '{row[column]}'");
             found++;
         }
         Assert.True(found >= 20, $"{found} rows looked up");
@@ -363,7 +364,7 @@ public sealed class SecondReviewTests : IDisposable
         int pages = db.File.PageCount;
 
         var eleven = Enumerable.Range(0, 11).Select(i => Long($"K{i}")).ToArray();
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
         Assert.Equal(pages, db.File.PageCount);
 
         var many = Enumerable.Range(0, 256).Select(i => Long($"C{i:D3}")).ToArray();

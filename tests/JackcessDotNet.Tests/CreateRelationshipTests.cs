@@ -507,8 +507,8 @@ public sealed class CreateRelationshipTests : IDisposable
     public void A_relationship_that_names_what_is_not_there_or_asks_what_cannot_be_is_refused_and_nothing_changes()
     {
         ParentAndChild().Dispose();
-        AssertRefusedAndUnchanged<InvalidOperationException>(new RelationshipDefinition("Nowhere", "K", "Child", "K"));
-        AssertRefusedAndUnchanged<InvalidOperationException>(new RelationshipDefinition("Parent", "K", "Child", "Nothing"));
+        AssertRefusedAndUnchanged<ArgumentException>(new RelationshipDefinition("Nowhere", "K", "Child", "K"));
+        AssertRefusedAndUnchanged<ArgumentException>(new RelationshipDefinition("Parent", "K", "Child", "Nothing"));
         AssertRefusedAndUnchanged<ArgumentException>(new RelationshipDefinition("Parent", "K", "Child", "K") { CascadeDeletes = true });
         AssertRefusedAndUnchanged<ArgumentException>(
             new RelationshipDefinition("Parent", new[] { "K", "K" }, "Child", new[] { "K", "Id" }) { HasReferentialIntegrity = true });

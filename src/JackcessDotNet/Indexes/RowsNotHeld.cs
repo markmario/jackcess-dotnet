@@ -46,6 +46,13 @@ internal sealed class RowsNotHeld
         return entries;
     }
 
+    /// <summary>The entries <see cref="TakeEntriesOfNoRow"/> handed over to a change that was taken back: the index holds them again.</summary>
+    internal void PutBackEntriesOfNoRow(List<(byte[] Key, int RowPointer)> entries)
+    {
+        if (_entriesOfNoRow.Count == 0) _entriesOfNoRow = entries;
+        else _entriesOfNoRow.AddRange(entries);
+    }
+
     /// <summary>Whether one of the rows, other than the one at <paramref name="rowPointer"/>, has <paramref name="key"/>.</summary>
     internal bool AnotherHas(byte[] key, int? rowPointer)
     {
@@ -54,11 +61,23 @@ internal sealed class RowsNotHeld
         return rows > 0;
     }
 
-    /// <summary>The row at <paramref name="rowPointer"/> has been deleted or rewritten: it is no longer a row the index lacks.</summary>
-    internal void Forget(int rowPointer)
+    /// <summary>
+    /// The row at <paramref name="rowPointer"/> has been deleted or rewritten: it is no longer a row the index lacks.
+    /// Returns the key it had, to be put back if the change is taken back (<see cref="PutBack"/>); null when the
+    /// row was not one of them.
+    /// </summary>
+    internal byte[]? Forget(int rowPointer)
     {
-        if (!_keys.TryGetValue(rowPointer, out byte[]? key)) return;
+        if (!_keys.TryGetValue(rowPointer, out byte[]? key)) return null;
         _keys.Remove(rowPointer);
         if (--_rowsWith[key] == 0) _rowsWith.Remove(key);
+        return key;
+    }
+
+    /// <summary>The row at <paramref name="rowPointer"/>, forgotten by a change that was taken back, is one the index lacks again.</summary>
+    internal void PutBack(int rowPointer, byte[] key)
+    {
+        _keys[rowPointer] = key;
+        _rowsWith[key] = _rowsWith.TryGetValue(key, out int rows) ? rows + 1 : 1;
     }
 }

@@ -484,6 +484,71 @@ internal sealed class IndexWriter
         }
     }
 
+    // ── Leaves, for a cursor ─────────────────────────────────────────────────
+
+    /// <summary>A leaf of a tree as a cursor walks it: its entries in order, and the leaves either side of it (0 for none).</summary>
+    internal sealed class Leaf
+    {
+        internal Leaf(List<(byte[] Key, int RowPointer)> entries, int prev, int next)
+        {
+            Entries = entries;
+            Prev    = prev;
+            Next    = next;
+        }
+
+        internal List<(byte[] Key, int RowPointer)> Entries { get; }
+        internal int Prev { get; }
+        internal int Next { get; }
+    }
+
+    /// <summary>The leaf on page <paramref name="pageNumber"/>.</summary>
+    internal Leaf ReadLeaf(int pageNumber)
+    {
+        var page = Read(pageNumber);
+        if (!page.IsLeaf) throw new InvalidDataException($"Index page {pageNumber} is not a leaf.");
+        return AsLeaf(page);
+    }
+
+    private static Leaf AsLeaf(IndexPage page)
+        => new(page.Entries.Select(e => (e.Key, e.RowPtr)).ToList(), page.Prev, page.Next);
+
+    /// <summary>
+    /// The leaf, in the tree rooted at <paramref name="rootPage"/>, where the first entry at or after
+    /// (<paramref name="key"/>, <paramref name="rowPointer"/>) is - or, in a tree whose nodes an earlier version
+    /// of this library wrote without row pointers, a leaf at or before it: the caller reads on from it.
+    /// </summary>
+    internal Leaf LeafFor(int rootPage, byte[] key, int rowPointer)
+    {
+        var page = Read(rootPage);
+        while (!page.IsLeaf)
+        {
+            // A node with no tail holds no row pointers (UseTail): the key's first entry is looked for.
+            var sought = new Entry(key, page.Tail > 0 ? rowPointer : 0, 0);
+            UseTail(page, target: null);
+            int slot  = FirstAtLeast(page.Entries, sought);
+            int child = slot >= 0 ? page.Entries[slot].SubPage : page.Tail;
+            if (child <= 0) throw new InvalidDataException($"Index page {page.Number} names no page beneath it.");
+            page = Read(child);
+        }
+        return AsLeaf(page);
+    }
+
+    /// <summary>The first leaf (<paramref name="last"/> false) or the last of the tree rooted at <paramref name="rootPage"/>.</summary>
+    internal Leaf EndLeaf(int rootPage, bool last)
+    {
+        var page = Read(rootPage);
+        while (!page.IsLeaf)
+        {
+            UseTail(page, target: null);
+            int child = last
+                ? (page.Tail > 0 ? page.Tail : page.Entries.Count > 0 ? page.Entries[^1].SubPage : 0)
+                : (page.Entries.Count > 0 ? page.Entries[0].SubPage : page.Tail);
+            if (child <= 0) throw new InvalidDataException($"Index page {page.Number} names no page beneath it.");
+            page = Read(child);
+        }
+        return AsLeaf(page);
+    }
+
     // ── Splitting ────────────────────────────────────────────────────────────
 
     /// <summary>

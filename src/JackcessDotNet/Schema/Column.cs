@@ -51,7 +51,7 @@ public sealed class Column
     /// Whether every row must have a value in the column: Access's Required property of the field, which is
     /// where Access keeps it (<see cref="Properties"/>, "Required"). <c>false</c> for a column that has no such
     /// property, as Access takes it. A row with no value in a required column is refused
-    /// (<see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/>). A Yes/No column always has a value,
+    /// (<see cref="Table.Insert"/>, <see cref="Table.Update"/>). A Yes/No column always has a value,
     /// so nothing is refused for it. It is the property as the file has it: one changed with
     /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
@@ -71,7 +71,7 @@ public sealed class Column
     /// Text or Memo column that has no such property: Access takes a zero-length string in one, though DAO then
     /// reports the property as <c>false</c>. Always <c>false</c> for a column of another type, which holds no
     /// string. A zero-length string in a column that does not allow one is refused (<see cref="Table.Insert"/>,
-    /// <see cref="Table.UpdateByPrimaryKey"/>). It is the property as the file has it: one changed with
+    /// <see cref="Table.Update"/>). It is the property as the file has it: one changed with
     /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
     public bool AllowZeroLength

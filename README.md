@@ -107,7 +107,106 @@ people.Insert(alice);                           // alice["Id"] is now 1
 Row read = people.FindRowByPrimaryKey(1)!;
 string? name   = read.GetValue<string>("Name");
 DateTime? born = read.GetValue<DateTime?>("Born");   // null
+
+// A row that is read is updated or deleted by where it was read, whatever key its table has.
+read["Born"] = new DateTime(1990, 4, 1);
+people.Update(read);
 ```
+
+## Cursors and rows
+
+```csharp
+// Every row that is read knows where it is (Row.Id: its page and its row on the page). Update and Delete find
+// the row by it, so a table with a key of several columns, or with none, is changed like any other.
+Row order = orders.FindRowByPrimaryKey(42, 7)!;
+order["Total"] = 99.5m;
+orders.Update(order);                           // only what changed is written
+orders.Delete(order);
+
+// A batch goes in whole or not at all.
+try { people.InsertRange(rows); }
+catch (BatchInsertException e) { Console.WriteLine($"row {e.RowIndex}: {e.InnerException!.Message}"); }
+
+// A cursor finds rows by their values, and updates or deletes the row it is on.
+var cursor = people.CreateCursor();
+for (var row = cursor.FindRow("Name", "Alice"); row is not null; row = cursor.FindNextRow("Name", "Alice"))
+    cursor.UpdateCurrentRow(new Row { ["Name"] = "Alicia" });
+cursor.ColumnNames = new[] { "Id", "Name" };    // read these columns only
+foreach (Row row in cursor.EnumerateBackward()) { }
+object? born = cursor.FindRow("Id", 1) is null ? null : cursor.GetCurrentRowValue("Born");
+var here = cursor.GetSavepoint();               // ... and later: cursor.RestoreSavepoint(here);
+
+// An index cursor goes through its index's rows in the index's order: all of them, or those between two entries.
+var byDate = orders.CreateIndexCursor("ByCustomerAndDate", new IndexRange
+{
+    StartEntry = new object?[] { 42, new DateTime(2024, 1, 1) },
+    EndEntry   = new object?[] { 42, new DateTime(2025, 1, 1) },
+    IsEndInclusive = false,
+});
+foreach (Row row in byDate) { }
+Row? first   = byDate.FindRowByEntry(42, new DateTime(2024, 3, 1));          // that entry, or null
+Row? closest = byDate.FindClosestRowByEntry(42, new DateTime(2024, 3, 1));   // that entry, or the next after it
+foreach (Row row in orders.CreateIndexCursor("ByCustomerAndDate").FindRowsByEntry(42)) { }   // every order of customer 42
+
+// A joiner finds the rows of one table that go with a row of another, through an index.
+var ordersOf = new Joiner(customers, new[] { "CustomerID" }, orders, new[] { "CustomerID" });
+foreach (Row row in ordersOf.FindRows(alfki!)) { }
+```
+
+- **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
+  index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
+  other rows moved up or down around it; one that no longer fits goes to another page, and its slot is left
+  four bytes that say where (Access's overflow row); it comes home when it fits again. Measured from Access
+  (DAO, ACE 16) and written the same.
+- **Rows can be updated while they are gone through** - with `Table.Rows`, a cursor, an index cursor's rows of
+  an entry, or a `Joiner` - and each is come to once. In a table's own order no row moves. In an index's order
+  a row moves when an update changes its key in that index, and a cursor over the index is told, by whoever made
+  the update (an insert, and an entry an index that ignores nulls gains or loses, too). Going one way the
+  cursor gives each row once: a row it has given is passed if its entry has moved ahead of the cursor, and a
+  row it has not given is given when the cursor comes to its entry, wherever it has been meanwhile - a row
+  outside its range, or one it looked past, among them. A cursor that turns back begins again from where it is,
+  giving again the rows it passed but not the row it is on; a savepoint keeps what the cursor had given, kept up
+  as rows move. A cursor is told of a change once it is in the file for good, and holds a few stretches of its
+  index however many rows it moves.
+- **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
+  was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
+  column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes
+  none; so does this), and written when it is not what the file holds now. Every other column is left as the
+  file has it, unread: a long value is neither read nor written again, and a Date/Time keeps every digit Access
+  stored. (A byte array changed in place and not given to the row again is not assigned.) An insert, an update
+  and a delete each change the row, its long values and its index entries together or not at all.
+- **An index cursor keeps to its index.** Its rows are the index's entries, in their order, and every lookup
+  goes through that index or refuses the values: an entry has at most as many values as the index has columns.
+  With fewer it stands for every row with those values in its leading columns.
+- **A cursor over a table and a cursor over an index find the same rows**, by one rule:
+  - *Text* is equal as its column's sort order has it, which is what Access's `=` and a unique index go by
+    (measured in General - Legacy and General): `'abc'` is `'ABC'`, `'a'` is `'a '`, `'ss'` is `'ß'`; `'e'` is
+    not `'é'`, and `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a
+    character keyed by its neighbours) it is equal when it is the same text. Text is never read as a number.
+  - *Numbers* are equal across number types; a Double or Single by its bits.
+  - *A Date/Time* is the number the row stores. A `DateTime` - taken first to what it reads as once stored, to
+    the millisecond, so `DateTime.Now` finds the row written with it - finds every row whose number **reads
+    as** that `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not
+    for about a third of the dates Access computes (`DateAdd`, a date plus fractions of a day). Through an index
+    that is the small range of numbers that read as it (two, for a time of 30 December 1899, which -0.25 and
+    0.25 both read as). In a range's entry, in any place, and given to `FindClosestRowByEntry`, a `DateTime` is
+    put against a row by the date its number reads as: a range of dates has the rows whose dates are in it.
+    A `double` is the number itself: it finds the row that stores exactly that number, and
+    `cursor.GetCurrentRowDateNumber(column)` gives it, so two dates within a millisecond are told apart; in a
+    range it is put against the numbers, as Access's `BETWEEN` and an index's `Seek` put a date literal
+    (measured: `BETWEEN #12/30/1899 05:00# AND #12/30/1899 07:00#` leaves out a 06:00 stored as -0.25). The rows
+    come in the index's order, which is the numbers', as Access's `ORDER BY` has them: before 31 December 1899 a
+    day's times run back from its midnight. A `Joiner` joins a row that was read on its stored number, as
+    Access's join does, unless the row has been given a date in that column since.
+  - A null is never a match.
+- **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
+  `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
+  whose keys it does not make (below), a character Access keys by its neighbours, or a key longer than an entry
+  holds (below). `FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
+- **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); a null is not found by
+  looking for null, where Jackcess finds one; and the room an emptied overflow slot or a deleted row leaves on a
+  page is not used again, so a row updated back and forth past its page's room makes the file grow until Access
+  compacts it (#58).
 
 ## Opening password-protected files
 
@@ -173,15 +272,17 @@ using var db = Database.Open("Northwind.mdb");
 orders.Insert(new Row { ["CustomerID"] = "INVALID", ... });
 //   throws ConstraintViolationException: "Foreign-key violation in relationship 'CustomersOrders'..."
 
-customers.UpdateByPrimaryKey("ALFKI", new Row { ["CustomerID"] = "ALFKA" });
+Row customer = customers.FindRowByPrimaryKey("ALFKI")!;
+customer["CustomerID"] = "ALFKA";
+customers.Update(customer);
 //   cascade update: the customer's orders take the new key - or, without it, refused while it has orders
 
-customers.DeleteRow("CustomerID", "ALFKA");
+customers.Delete(customer);
 //   cascade delete: its orders go too, and their order lines; cascade-to-null: their CustomerID becomes null;
 //   neither: refused while it has orders
 ```
 
-`Insert`, `UpdateByPrimaryKey` and `DeleteRow` refuse what would leave a row referring to no parent, and carry out
+`Insert`, `Update` and `Delete` - and a cursor's `UpdateCurrentRow` and `DeleteCurrentRow` - refuse what would leave a row referring to no parent, and carry out
 the cascades a relationship asks for, as Access does. A foreign key whose columns are all null refers to nothing.
 A refused change leaves the file untouched: everything is checked, cascades included, before anything is written,
 and a change that fails while being written is taken back. With the property off, nothing is checked and nothing
@@ -224,7 +325,7 @@ in Access since.** Compacting rebuilds the indexes, and the option is then needl
 
 - **The first change that looks for rows through an index reads its table once**, while the database is open, and
   compares the two row by row: every row's key must be in the index, pointing at that row. For a unique index
-  that is the first `Insert`, `UpdateByPrimaryKey` or `Validate` of a session, which reads the table once for all
+  that is the first `Insert`, `Update` or `Validate` of a session, which reads the table once for all
   the table's unique indexes together; for a relationship, the first change that keeps it.
 - **The rows an index does not hold are kept beside it** while the database is open. A row is compared with them
   as well as with the unique index, so the duplicate is refused - as Access refuses it once the file is
@@ -444,9 +545,9 @@ string? title = (string?)db.SummaryProperties["Title"];
   value in the file, so saving any of those maps saves them all. A save is written whole or not at all, and a
   save with nothing changed writes nothing. Until a change is saved it is the map's alone: `Column.IsRequired`,
   `Column.AllowZeroLength` and what rows are refused for follow the file, as Access would see it.
-- **A save rewrites the object's row in the catalog**, which moves it and leaves the place it had unused, as
-  any row this library updates does: a file whose properties are saved many times grows by that much each
-  time, until Access compacts it.
+- **A save rewrites the object's row in the catalog** where the row is, as any row this library updates: the
+  properties themselves, a long value, are written to pages of their own again, and the room the old ones had
+  is noted for later long values to use.
 - **Names and values are Access's.** A property's name is 1 to 64 characters, with no period, exclamation
   mark, grave accent, square bracket or control character and no space at its start; a value is not text or
   bytes of no length, which Access takes for no value. `Set` refuses the others, as DAO refuses them.
@@ -593,6 +694,10 @@ A `decimal` key, a `uint` key in an `.mdb` and a `ulong` key are refused before 
 | Large Number (`DataType.Int64`) and Date/Time Extended (`DataType.DateTimeExtended`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
+| Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change |
+| Batch insert, all rows or none (`Table.InsertRange`) | ✅ |
+| Cursors: both ways, find first and next, update or delete the current row, one column, some columns, savepoints | ✅ No column matchers |
+| Index cursors: the index's order, ranges between two entries, closest row, rows of an entry; `Joiner` | ✅ For every type an index is kept for |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
@@ -741,11 +846,11 @@ Refused, rather than write a key Access cannot find:
   ｰ U+FF70; in General also U+3033-3035, 〻 U+303B, ゠ U+30A0 and ꀕ U+A015) and,
   in General - Legacy, the Arabic shadda (U+0651, U+FE7C, U+FE7D). So a Japanese
   name with ー (データ, コンピューター) or an Arabic word with a shadda cannot be a
-  value of an indexed column (the primary key or any other index) or a table name: `Insert`, `UpdateByPrimaryKey`,
-  `DeleteRow` and `CreateTable` throw `NotSupportedException` before anything
+  value of an indexed column (the primary key or any other index) or a table name: `Insert`, `Update`,
+  `Delete` and `CreateTable` throw `NotSupportedException` before anything
   is written. In General the same goes for four Arabic ligatures (U+06D6,
   U+06D7, U+FD24, U+FD6F). Any text is fine in a column that is no key, and a
-  row Access wrote with such a key is still found: the table is scanned for it.
+  row Access wrote with such a key is still found: the index's rows are gone through for it.
 
 ### Keys longer than 510 bytes
 
@@ -762,8 +867,10 @@ entry for such a key:
 | This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry - Access's key of the same values with the last byte 0 | found | seen by a unique index when the row it points at has the value; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
 | This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
 
-- **Lookups** of a value whose key is cut read the table instead of searching
-  the index, so a row is found whichever way its entry is stored.
+- **Lookups** of a value whose key is cut do not search the index: an index
+  cursor goes through the index's rows, comparing each, and any other lookup
+  reads the table, so a row is found whichever way its entry is stored. A
+  range, or the closest row to such a value, is refused.
 - **Writes** always store Access's cut key. Updating a row whose entry was
   whole, or cut with the earlier digest, replaces it with Access's; nothing
   converts rows that are not written, except that with

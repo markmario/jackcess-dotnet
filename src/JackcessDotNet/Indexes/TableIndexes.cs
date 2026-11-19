@@ -437,7 +437,7 @@ internal sealed class TableIndexes
                     noRow.Add((key, pointer));
             }
             foreach (int pointer in held) unfound[t].Remove(pointer);
-            _file.IndexesChecked[Which(trees[t])] = new RowsNotHeld(unfound[t], noRow);
+            _file.NoteIndexChecked(Which(trees[t]), new RowsNotHeld(unfound[t], noRow));
         }
     }
 
@@ -500,7 +500,8 @@ internal sealed class TableIndexes
         foreach (var entry in entries)
         {
             // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
-            if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld)) notHeld.Forget(rowPointer);
+            if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld) && notHeld.Forget(rowPointer) is { } key)
+                _file.Journal(() => notHeld.PutBack(rowPointer, key));
 
             // The entry goes under the key it is stored under: for a key that was cut, the cut key, the whole one or
             // the one cut the earlier way (StoredUnder), whichever holds this row - the one that points at it, whose
@@ -571,7 +572,10 @@ internal sealed class TableIndexes
         foreach (var tree in Trees)
         {
             if (!_file.IndexesChecked.TryGetValue(Which(tree), out var seen)) continue;
-            foreach (var (key, pointer) in seen.TakeEntriesOfNoRow())
+            var taken = seen.TakeEntriesOfNoRow();
+            // Taken out by a change that is taken back, they are in the index again (PageFile.Journal).
+            if (taken.Count > 0) _file.Journal(() => seen.PutBackEntriesOfNoRow(taken));
+            foreach (var (key, pointer) in taken)
                 TakeOutIfNoRows(writer, tree, key, pointer);
         }
     }
@@ -615,7 +619,9 @@ internal sealed class TableIndexes
             }
         }
         if (_file.IndexesChecked.TryGetValue(Which(tree), out var notHeld))
-            foreach (int held in entered) notHeld.Forget(held);
+            foreach (int held in entered)
+                if (notHeld.Forget(held) is { } had)
+                    _file.Journal(() => notHeld.PutBack(held, had));
     }
 
     // The entries a row's own key can be chained through before the rest are left as they are: a file an earlier
