@@ -319,10 +319,15 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal void Journal(Action undo) => _undo?.Remember(undo);
 
-    /// <summary>Notes, in <see cref="IndexesChecked"/>, the rows an index that was looked at does not hold.</summary>
+    /// <summary>
+    /// Notes, in <see cref="IndexesChecked"/>, the rows an index that was looked at does not hold. A look taken
+    /// before the change being kept for undoing has written a page is of the file as it was when the change began,
+    /// which is what the file is again if the change is taken back: it is kept then, so that a change refused
+    /// before it writes - a duplicate - does not cost the next change a reading of the whole table.
+    /// </summary>
     internal void NoteIndexChecked((int TdefPage, int Index) index, RowsNotHeld rows)
     {
-        if (_undo is not null)
+        if (_undo is { HasWritten: true })
         {
             bool had = IndexesChecked.TryGetValue(index, out var was);
             Journal(() =>
@@ -388,6 +393,9 @@ internal sealed class PageFile : IDisposable
             _file   = file;
             _length = file._stream.Length;
         }
+
+        /// <summary>Whether the change has written a page yet.</summary>
+        internal bool HasWritten => _wrote;
 
         /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
         internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);
@@ -477,8 +485,10 @@ internal sealed class PageFile : IDisposable
 
         /// <summary>
         /// Takes back everything written since the scope began, unless it was committed: the pages, and what the
-        /// file keeps in memory of them, which is then what it was when the scope began. A scope that wrote nothing
-        /// changes nothing: what was learnt of the file while it was open is still true.
+        /// file keeps in memory of them, which is then what it was when the scope began. What was noted is taken
+        /// back whether or not a page was written: a change notes some things before its first write - a page it is
+        /// about to put a long value on is no longer one with room (#61) - and when that write fails they are not
+        /// true of the file. A scope that wrote nothing and noted nothing changes nothing.
         /// </summary>
         public void Dispose()
         {
@@ -486,23 +496,26 @@ internal sealed class PageFile : IDisposable
             {
                 End();
                 _afterCommit = null;
-                if (_wrote) TakeBack();
+                TakeBack();
             }
             Release(_before);
         }
 
         private void TakeBack()
         {
-            foreach (var (pageNumber, raw) in _before)
+            if (_wrote)
             {
-                _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
-                _file._stream.Write(raw, 0, raw.Length);
+                foreach (var (pageNumber, raw) in _before)
+                {
+                    _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
+                    _file._stream.Write(raw, 0, raw.Length);
+                }
+                _file._stream.SetLength(_length);
+                _file._stream.Flush();
+                // What was read of the pages since is no longer what the file holds.
+                _file.ChangeStamp++;
             }
-            _file._stream.SetLength(_length);
-            _file._stream.Flush();
-            // What was read of the pages since is no longer what the file holds; what was noted of them is taken
-            // back, the last first.
-            _file.ChangeStamp++;
+            // What was noted of them is taken back, the last first.
             if (_journal is { } journal)
                 for (int i = journal.Count - 1; i >= 0; i--) journal[i]();
         }

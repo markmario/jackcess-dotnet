@@ -49,6 +49,12 @@ changed since 1.2.2.
   written takes back what it wrote, and an insert gives the row back with the AutoNumber values it came with. A
   delete of a row whose values are on another page left one page changed, and an insert could leave a page added
   or a row without its index entries.
+- **A change that fails at its first write takes back what it noted** (#61), as one that fails later does: an
+  insert that took a page a delete had emptied for its long value, and then could not write - a full disk - left
+  the session without that page, so later values went to new pages until the database was opened again. What a
+  change learnt of the file before it wrote anything is kept, as it is still true: a change refused before it
+  writes, a duplicate among them, does not have the next read the table again for `Database.VerifyIndexes`. This
+  fixes a defect on `main`.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
