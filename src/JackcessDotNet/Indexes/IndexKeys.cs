@@ -254,8 +254,9 @@ internal static class IndexKeys
                 bytes = SignFlipped(BigEndian(Convert.ToInt32(value)));
                 break;
             case DataType.Currency:
-                // The number the row stores: ten-thousandths, in eight bytes.
-                bytes = SignFlipped(BigEndian(MoneyUnits(Convert.ToDecimal(value))));
+                // The number the row stores: ten-thousandths, in eight bytes, a caller's number taken to them as
+                // Access takes it, for a row and for a value looked for alike (Util.CurrencyRounding, #65).
+                bytes = SignFlipped(BigEndian(CurrencyRounding.Units(value!)));
                 break;
             case DataType.Int64:
                 bytes = SignFlipped(BigEndian(Convert.ToInt64(value)));
@@ -322,9 +323,6 @@ internal static class IndexKeys
             for (int i = 0; i < bytes.Length; i++) bytes[i] = (byte)~bytes[i];
         return Prepend(ascending ? AscStartFlag : DescStartFlag, bytes);
     }
-
-    /// <summary>A Currency value as its row stores it: ten-thousandths, rounded as the row encoder rounds.</summary>
-    internal static long MoneyUnits(decimal value) => (long)Math.Round(value * 10000m, 0, MidpointRounding.AwayFromZero);
 
     // IEEE bytes, big-endian, made to sort as the numbers do: a positive number's sign bit is set, a negative
     // number's bytes are all inverted - and the other way round descending.

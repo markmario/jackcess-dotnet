@@ -483,8 +483,9 @@ internal sealed class ForeignKeyEnforcer
     /// <summary>
     /// <paramref name="value"/> as a row of <paramref name="column"/> stores it: the one form values are compared
     /// and keyed in. It is what <see cref="RowEncoder"/> writes for the value and what
-    /// <see cref="RowDecoder.DecodeForKey"/> reads back - a number in the column's own type, a Currency rounded to
-    /// its four places, a Date/Time as its double, a Date/Time Extended as its 42 bytes (a caller's
+    /// <see cref="RowDecoder.DecodeForKey"/> reads back - a number in the column's own type, a Currency taken to its
+    /// four places as Access takes it (<see cref="Util.CurrencyRounding"/>), a Date/Time as its double, a Date/Time
+    /// Extended as its 42 bytes (a caller's
     /// <see cref="DateTime"/> in the form Access's <c>INSERT</c> writes, which a parent keyed in Access's other form
     /// is not: Access refuses such a child), and a Yes/No as the true or false it stands for, by the one reading of a
     /// caller's value that rows and keys are made from (<see cref="RowValues"/>): the column holds no null, and no
@@ -504,7 +505,7 @@ internal sealed class ForeignKeyEnforcer
                 DataType.Int64        => Convert.ToInt64(value),
                 DataType.Single        => Convert.ToSingle(value),
                 DataType.Double        => Convert.ToDouble(value),
-                DataType.Currency         => IndexKeys.MoneyUnits(Convert.ToDecimal(value)) / 10000m,
+                DataType.Currency         => Util.CurrencyRounding.ToDecimal(Util.CurrencyRounding.Units(value!)),
                 DataType.DateTime => value is DateTime date ? date.ToOADate() : value,
                 DataType.DateTimeExtended => value is DateTime extended ? StoredExtendedDate.Of(extended) : value,
                 DataType.Guid          => value is Guid ? value : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!),
