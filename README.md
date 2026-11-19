@@ -250,6 +250,67 @@ compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
 - The descriptor Access writes for an Agile-encrypted database has no data-integrity element, so there is no hash
   for a write to leave stale: Access reads what this library wrote as it reads its own.
 
+## Sharing a file with Access
+
+```csharp
+// Opened to be written (the default): no other program or Database writes to the file while it is open.
+using var db = Database.Open("Orders.accdb");
+
+// Opened only to be read: nothing is written to the file, and it opens while Access has the database open.
+using var reader = Database.Open("Orders.accdb", new DatabaseOpenOptions { ReadOnly = true });
+```
+
+This library takes none of the locks Access takes on a database it shares with other users, so it cannot write to a
+file another program is writing to: each would write over pages the other keeps track of. Two writers did (#62): with
+ACE holding a connection while the library inserted, `COUNT(*)` gave 800 rows where 708 were there and primary-key
+seeks returned other rows; two `Database`s inserting at once failed on a page ("Data page 47 has only 23 free bytes")
+and left 116 rows out of a primary key. So a file is shared as Access shares a database it has open exclusively -
+except with readers, as Access's own read-only open shares one:
+
+| The file is opened | Shared with | While it is open |
+| --- | --- | --- |
+| to be written: `Database.Open`, `Database.Create` | readers only | Access cannot open it to write, shared or exclusively: "Could not use '...'; file already in use" (error 3045). Access read-only - ACE's `Mode=Read`, DAO's read-only `OpenDatabase` - and a `Database` opened `ReadOnly` open it and read it. A second `Database` opened to be written is refused. |
+| only to be read: `DatabaseOpenOptions.ReadOnly` | readers and writers | Access opens it in any mode but exclusively, and writes to it; so does a `Database`. |
+
+And the other way about, with Access - or another `Database` - there first:
+
+| Access has the database open | `Database.Open` | `Database.Open`, `ReadOnly` | `Database.Create` over it |
+| --- | --- | --- | --- |
+| shared (ACE's default mode, DAO's `OpenDatabase`) | `DatabaseInUseException` | opens | `DatabaseInUseException` |
+| read-only (ACE's `Mode=Read`, DAO's read-only) | opens | opens | `DatabaseInUseException` |
+| exclusively | `DatabaseInUseException` | `DatabaseInUseException` | `DatabaseInUseException` |
+
+- `DatabaseInUseException` is an `IOException`, with the HResult of a sharing violation (0x80070020) - what Windows
+  gives for a file in use - so code that waits for a file someone holds for a moment goes on waiting. Nothing of the
+  file is changed.
+- A database opened `ReadOnly` is held by a handle that cannot write, and every change - a row inserted, updated or
+  deleted, a table or column made, dropped or renamed, a property saved, an import - is refused with
+  `NotSupportedException` before anything happens (`Database.IsReadOnly`). A file marked read-only opens this way.
+- `Database.Create` replaces a file only when no one has it open, readers included. It emptied a file Access had
+  open, under Access.
+- An Access 97 file, which is only ever read, is opened as one opened `ReadOnly` is: beside Access.
+- Access's lock file (`.ldb`, `.laccdb`) is neither made nor read. Measured with ACE 16 and DAO 16, and DAO 3.6 for an
+  Access 97 file: Access makes one when it opens a database shared or read-only - 64 bytes a user, the machine's name
+  and the user's - and deletes it when the last user closes; opening a database exclusively it makes none, and leaves
+  one that no one holds as it is; one left by a process that was killed is taken over by the next user. Access with a
+  database open shared holds the file open for writing, so the file's own sharing tells a writer Access is there.
+
+**What a `ReadOnly` database reads while another program writes** is the file as it is when each page is read: rows
+Access has committed by then - Access writes a change when it commits it - by the columns and indexes a table had when
+it was first got. Measured: while ACE inserted 272,000 rows, updating and deleting some as it went (each statement its
+own transaction, and in transactions of 200), a `ReadOnly` database read the table 3,921 times, in an .mdb and an
+.accdb. No reading failed or had a row twice or a value of another row's; four of 2.2 million lookups through the
+primary key missed a row the reading had found a moment before, which ACE may have deleted between the two; the
+readings kept up with ACE's commits, a whole transaction at a time when ACE committed 200 statements at a time; and
+once ACE had closed, the same open database read every row. That is what was seen, not a promise: nothing keeps a
+reading from meeting another program's change part-way, and such a reading can miss rows, find one that has gone, or
+fail. For a reading that agrees with itself, open the file when no other program has it open for writing. (Access
+reading with `Mode=Read` while this library wrote 1.4 million rows found nothing amiss either, in 282 readings.)
+
+Java Jackcess takes no lock, says that a file must not be written by two programs at once, and opens one read-only when
+asked (`DatabaseBuilder.withReadOnly`); it also opens a file it cannot write to read-only without being asked, which
+this library leaves to the caller.
+
 ## Composite (multi-column) primary keys
 
 ```csharp
@@ -737,6 +798,8 @@ Integer otherwise, which does not hold every value).
 | Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `FileFormat.Access2007`, `Access2010`, `Access2016`, `Access2019` |
 | Large Number (`DataType.Int64`) and Date/Time Extended (`DataType.DateTimeExtended`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
+| Open a file only to read it (`DatabaseOpenOptions.ReadOnly`), while Access has it open | ✅ Nothing written; every change refused |
+| Keep Access and other writers out while a file is open to be written | ✅ By the file's sharing; Access's lock file is neither made nor read |
 | Row CRUD + primary-key B-tree index               | ✅      |
 | Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change |
 | Batch insert, all rows or none (`Table.InsertRange`) | ✅ |
@@ -801,6 +864,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Protected files open as Access opens them**: an .mdb's database password is checked, an encoded .mdb is
   read and written with the key its header holds, and every kind of protection Access makes is tested against a
   file it made. See [Opening password-protected files](#opening-password-protected-files).
+- **A file open to be written is kept from Access**, which opened it beside the library and wrote over it; a file
+  opened only to be read opens beside Access. See [Sharing a file with Access](#sharing-a-file-with-access).
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
 
 Limits to know about:
@@ -814,10 +879,10 @@ Limits to know about:
   asks each before it writes to any.
 - Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`.
-- One writer at a time. This library takes no lock on a file, as Access does with its lock file: `Database.Open`
-  refuses, with `IOException`, a file another process - Access holding it - or another `Database` has open for
-  writing, and leaves it as it was. A file this library has open is not kept from Access, which should not be
-  given it until the `Database` is disposed.
+- One writer at a time. This library takes none of Access's locks, so a file it has open to be written is kept from
+  every other writer - Access says it is "already in use" - and it does not open a file another program or `Database`
+  has open for writing (`DatabaseInUseException`). Readers - Access read-only, a `Database` opened `ReadOnly` - share
+  it with a writer. See [Sharing a file with Access](#sharing-a-file-with-access).
 - A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
   before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
   the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
