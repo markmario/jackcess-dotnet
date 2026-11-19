@@ -21,6 +21,9 @@
           moved, and was entered under the key of the date read, in each index on K; at c89bfe4, with
           VerifyIndexes - without it the entries of a key that did not change were left as they were - its entries
           were found by the row they point at, taken out, and the row entered under the key of the date read.
+      U   row 2 (the second form) given a new UForm: at 913240c the row moved, and was entered in the unique KU under
+          the key of no value; c89bfe4 refuses it, KU holding row 1 under the key it makes of row 2's date. Then
+          given the unique index KForm (K descending, UForm), each row entered under the key of its date as read.
 
     -Commit 913240c is from the first span (the second form read as no value), c89bfe4 from the second. The file is
     not the same bytes on every run (it holds the time it was made), so the fixtures are committed, and this script
@@ -65,6 +68,10 @@ public sealed class MakeEarlierExtendedDateKeys
         var t = db.GetTable("T");
         foreach (int id in new[] { 2, 3 })
             t.UpdateByPrimaryKey(id, new Row { ["TForm"] = "earlier " + id });
+        var u = db.GetTable("U");
+        try { u.UpdateByPrimaryKey(2, new Row { ["UForm"] = "earlier 2" }); }
+        catch (ConstraintViolationException) { }
+        u.AddIndex(new IndexDefinition("KForm", "K", "UForm") { IsUnique = true, DescendingColumns = { "K" } });
     }
 }
 '@

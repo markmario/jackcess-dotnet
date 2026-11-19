@@ -64,7 +64,11 @@ changed since 1.2.2.
   cut at 510 bytes in an index of several columns other than Text and Long), is such an entry the row's wrong one:
   a row with its key is taken, the entry goes, and the row is entered under its own key. A removal that takes out
   a leaf's last entry reads the next leaf's first, one page more, for another entry under the key. An index with
-  no such entry costs nothing more to write to.
+  no such entry costs nothing more to write to. An update of a row whose wrong entry is moved enters the row under
+  its new key once, and an entry an index holds already is never added again; this fixes a defect on `main`, where
+  such a row was entered twice - by the move, which read the row as it was being written, and by the update - and
+  Access walked it twice, refused to delete a parent of it once it had deleted the row, and DAO compacted a file
+  whose primary key held such an entry without the key.
 - **A Date/Time Extended value is keyed by the 42 bytes its row stores, as Access keys it** (#51); this fixes a
   defect on `main`. Access writes a date in more than one form - its `INSERT` the time of day in 100-nanosecond
   units and a count of 7, its SQL `UPDATE` and DAO's `Edit` the time in whole seconds and a count of 0 - and keys

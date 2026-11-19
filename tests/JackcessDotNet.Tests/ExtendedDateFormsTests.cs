@@ -480,15 +480,42 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Subset(ofNoRowBefore.ToHashSet(), ofNoRow.ToHashSet());
     }
 
+    /// <summary>
+    /// The rows of <paramref name="table"/> that one of its indexes does not hold exactly once, each as "index row
+    /// page/row: n entries": an entry under any key counts, and a row whose columns are all null in an index that
+    /// ignores nulls is to have none.
+    /// </summary>
+    private static List<string> NotEnteredOnce(Database db, string table)
+    {
+        var rows = JetPages.Rows(db.File, IndexChecks.TdefOf(db, table), forKeys: true);
+        var found = new List<string>();
+        foreach (var index in db.GetTable(table).Indexes.GroupBy(ix => ix.IndexDataNumber).Select(g => g.First()))
+        {
+            var entries = JetPages.LeafEntries(db.File, index.RootPageNumber).GroupBy(e => (e.RowPage, e.Row)).ToDictionary(g => g.Key, g => g.Count());
+            foreach (var (page, row, values) in rows)
+            {
+                bool none = index.IgnoreNulls && index.Columns.All(c => !values.TryGetValue(c.Column.Name, out var v) || v is null);
+                int has = entries.TryGetValue((page, row), out int n) ? n : 0;
+                if (has != (none ? 0 : 1)) found.Add($"{index.Name} row {page}/{row}: {has} entries");
+            }
+        }
+        return found;
+    }
+
     // An entry an earlier version put under another key - U's row 2, its date in the second form, under the key of
     // no value, as 913240c entered such a row - is the row's wrong one with VerifyIndexes: when the table next
     // changes it is moved to the key of the row's bytes, as an entry of any other type is (#36). Trusting the index,
-    // it stays where it is, believed, as Access believes it. Before #51 such a row's key was not one this library made
-    // as Access does, and its entry was believed either way.
+    // it stays where it is, believed, as Access believes it, until the row changes: the update finds it under that key
+    // and moves it. Before #51 such a row's key was not one this library made as Access does, and its entry was
+    // believed either way. Given a new date, the row is in KU once, verified or not: verified, the update took its
+    // wrong entry out, reading the row as it was being written, and entered it under its new date, and the update's
+    // own entry is that one - entered by both, the row was in KU twice.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void An_entry_under_a_key_an_earlier_version_made_is_moved_to_the_key_of_the_row_s_bytes_with_VerifyIndexes(bool verify)
+    [InlineData("insert", false)]
+    [InlineData("insert", true)]
+    [InlineData("its date", false)]
+    [InlineData("its date", true)]
+    public void An_entry_under_a_key_an_earlier_version_made_is_moved_to_the_key_of_the_row_s_bytes_with_VerifyIndexes(string change, bool verify)
     {
         using var db = Database.Open(Copy(Forms));
         var u = db.GetTable("U");
@@ -502,9 +529,75 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Single(Audit(db, "U").Wrong);
 
         db.VerifyIndexes = verify;
-        u.Insert(new Row { ["Id"] = 7, ["UForm"] = "a day on", ["K"] = D0.AddDays(1) });
-        if (verify) Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 5));
-        else Assert.Single(Audit(db, "U").Wrong);
+        if (change == "insert")
+        {
+            u.Insert(new Row { ["Id"] = 7, ["UForm"] = "a day on", ["K"] = D0.AddDays(1) });
+            if (verify) Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 5));
+            else Assert.Single(Audit(db, "U").Wrong);
+            return;
+        }
+        var cursor = u.CreateCursor();
+        Assert.NotNull(cursor.FindRow("Id", 2));
+        cursor.UpdateCurrentRow(new Row { ["K"] = D0.AddDays(1) });
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 4));
+    }
+
+    // U in the files earlier versions changed (tools/earlier-extended-date-keys.ps1): at 913240c its row 2, in the second
+    // form, moved and was entered in the unique KU under the key of no value, and at either commit every row was entered
+    // in the unique KForm (K descending, UForm) under the key of its date as that version read it. With VerifyIndexes,
+    // row 2 given a new date (913240c's file) or a new UForm (c89bfe4's) leaves every index of U holding each row once,
+    // under its own key: the update took the row's wrong entries out, reading the row as it was being written, and
+    // entered it under its new key - the update's own entry is that one - and every other entry the check saw to be no
+    // row's, or another row's wrong one, went or moved with them. Entered twice, the row was in KU and KForm twice in
+    // 913240c's file and in KForm twice in c89bfe4's (the review of #66).
+    [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb", "K")]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", "UForm")]
+    public void With_VerifyIndexes_a_row_an_earlier_version_entered_in_a_unique_index_by_its_date_is_entered_once_when_it_changes(string asset, string column)
+    {
+        using var db = Database.Open(Copy(asset));
+        var u = db.GetTable("U");
+        Assert.NotEmpty(Audit(db, "U").Wrong);
+
+        db.VerifyIndexes = true;
+        var cursor = u.CreateCursor();
+        Assert.NotNull(cursor.FindRow("Id", 2));
+        cursor.UpdateCurrentRow(column == "K" ? new Row { ["K"] = D0.AddDays(1) } : new Row { ["UForm"] = "changed" });
+        Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 4));
+    }
+
+    // T in the files earlier versions changed: its row 2, its date in the second form, is under the key of the date as
+    // that version read it in each of T's four indexes on K - at 913240c, which moved the row, under the key of no value,
+    // the entries ACE made left pointing where it was. With T's rows other than 1 and 2 deleted, T is made V's child on
+    // K - V holds the date in both forms, each row a parent with its child's bytes - its updates cascading. V's row 2
+    // given another date takes T's row 2 with it, and each of T's indexes holds each row once, under its own key, and no
+    // entry pointing at no row but those 913240c left. Verified, the relationship's search of T read the table - T's
+    // index on K does not hold row 2 under its key - and the update took the row's wrong entry out and entered it under
+    // its new date: the update's own entry is that one, where the review of #66 found the row twice.
+    [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb", true)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", true)]
+    public void A_new_date_cascades_to_a_child_an_earlier_version_keyed_by_its_date_and_leaves_it_entered_once(string asset, bool verify)
+    {
+        using var db = Database.Open(Copy(asset));
+        var (v, t) = (db.GetTable("V"), db.GetTable("T"));
+        var rows = Pointers(t);
+        foreach (int id in rows.Keys.Where(id => id > 2)) t.DeleteRowAt(rows[id]);
+        db.CreateRelationship(new RelationshipDefinition("V", "K", "T", "K") { Name = "VT", HasReferentialIntegrity = true, CascadeUpdates = true });
+        Assert.Equal(4, Audit(db, "T").Wrong.Count);   // row 2, in each index on K
+        var ofNoRowBefore = Audit(db, "T").OfNoRow;
+
+        db.EnforceForeignKeys = true;
+        db.VerifyIndexes = verify;
+        var parent = v.CreateCursor();
+        Assert.NotNull(parent.FindRow("Id", 2));
+        parent.UpdateCurrentRow(new Row { ["K"] = D0.AddDays(1) });
+
+        Assert.Equal(new[] { (1, D0), (2, D0.AddDays(1)) }, t.Rows.Select(r => ((int)r["Id"]!, (DateTime)r["K"]!)).OrderBy(r => r.Item1));
+        Assert.Empty(NotEnteredOnce(db, "T"));
+        var (wrong, ofNoRow) = Audit(db, "T");
+        Assert.Empty(wrong);
+        Assert.Subset(ofNoRowBefore.ToHashSet(), ofNoRow.ToHashSet());
     }
 
     // ── What it costs ───────────────────────────────────────────────────────

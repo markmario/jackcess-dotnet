@@ -363,9 +363,10 @@ answered with the row that no longer has it, and that row is not found under the
   had a wrong one. What is under that key already is looked at the same way, an entry that is itself a wrong one
   being moved in its turn; beside a row that does have the key the row is entered all the same - the two are
   duplicates whatever the index says. An entry goes and its row's own comes, or neither: a failure part-way is
-  undone. A key is one this library makes as Access does for every type it writes - a Date/Time Extended value's
-  made of the bytes its row stores, as Access makes it (below) - and, cut at 510 bytes in an index of several
-  columns, only where those columns are Text and Long, the shapes that were measured.
+  undone. An update of the row itself enters it under its new key once: an entry an index holds already is never
+  added again. A key is one this library makes as Access does for every type it writes - a Date/Time Extended
+  value's made of the bytes its row stores, as Access makes it (below) - and, cut at 510 bytes in an index of
+  several columns, only where those columns are Text and Long, the shapes that were measured.
 - **A key this library may not make as Access does** - one cut at 510 bytes in an index of several columns other
   than Text and Long - is never looked for through an index, with or without `VerifyIndexes`: the table is read
   for it, so a relationship's child or parent is found however Access keyed it. When a row with such a key is
