@@ -198,6 +198,17 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     come in the index's order, which is the numbers', as Access's `ORDER BY` has them: before 31 December 1899 a
     day's times run back from its midnight. A `Joiner` joins a row that was read on its stored number, as
     Access's join does, unless the row has been given a date in that column since.
+  - *A Date/Time Extended* is the 42 bytes the row stores, which Access keys and orders a value by
+    ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)): its `INSERT` writes a date in one form, and its
+    SQL `UPDATE` and DAO's `Edit` in another, the time of day in whole seconds. A `DateTime` finds every row whose
+    bytes say that date: through an index under the key of each form, where Access's own `=` through an index
+    finds the first form alone (measured; without an index it finds both). A value in a form that reads as its
+    date and that Access was not seen to write - a space or a plus sign among its digits - is found by a cursor over
+    the table, and not through an index, which holds it under a key of its own. In a range's entry and given to
+    `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
+    Access's `BETWEEN` through an index puts it (measured): a row in the second form is where its bytes are. A
+    `Joiner` joins a row that was read on its stored bytes, as a relationship does, unless the row has been given a
+    date in that column since.
   - A null is never a match.
 - **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order

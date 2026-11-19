@@ -269,6 +269,95 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "C", expectedRows: 2));
     }
 
+    // ── Lookups ─────────────────────────────────────────────────────────────
+
+    private static int[] IdsOf(IEnumerable<Row> rows) => rows.Select(r => (int)r["Id"]!).ToArray();
+
+    // A date through ACE's indexes is found in both forms ACE writes, each under its own key, in the index's order:
+    // the second form's key comes first ascending and last descending. A cursor over the table finds those and the
+    // forms patched in, which the index holds under keys of their own. Through the index the first form alone was
+    // found.
+    [Fact]
+    public void A_date_is_found_through_an_index_in_both_forms_ACE_writes()
+    {
+        using var db = Database.Open(Copy(Forms));
+        var t = db.GetTable("T");
+        Assert.Equal(new[] { 2, 1 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0)));
+        Assert.Equal(new[] { 1, 2 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByEntry(D0)));
+        Assert.Equal(2, t.CreateIndexCursor("KAsc").FindRowByEntry(D0)!["Id"]);
+        Assert.Equal(1, t.CreateIndexCursor("KDesc").FindRow("K", D0)!["Id"]);
+
+        // Midnight and a second after it in both forms; a tick after midnight, a second form alone, a fraction.
+        var midnight = new DateTime(2020, 1, 2);
+        Assert.Equal(new[] { 11, 12 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight)));
+        Assert.Equal(new[] { 14, 15 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight.AddSeconds(1))));
+        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight.AddTicks(1))));
+        Assert.Equal(new[] { 9 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddSeconds(1))));
+        Assert.Equal(new[] { 8 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddTicks(1234567))));
+        Assert.Empty(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddTicks(1)));
+
+        // With a Text column before the date and after it.
+        Assert.Equal(2, t.CreateIndexCursor("FormK").FindRowByEntry("second", D0)!["Id"]);
+        Assert.Equal(2, t.CreateIndexCursor("KForm").FindRowByEntry(D0, "second")!["Id"]);
+        Assert.Null(t.CreateIndexCursor("FormK").FindRowByEntry("space-day", D0));
+
+        var cursor = t.CreateCursor();
+        var found = new List<int>();
+        for (var row = cursor.FindRow("K", D0); row is not null; row = cursor.FindNextRow("K", D0)) found.Add((int)row["Id"]!);
+        Assert.Equal(new[] { 1, 2, 3, 4, 5, 6, 7 }, found);
+    }
+
+    // The review of #52's first finding: p2, keyed by its date in the second form, and child 2, whose foreign key is
+    // that date in the second form, are found by FindRowByPrimaryKey and through the primary key and the
+    // relationship's index, the indexes trusted or verified; and V's row of the date in the second form, whose key
+    // is before the first form's. Each was "not found".
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_row_ACE_keyed_in_the_second_form_is_found_by_its_primary_key_and_through_an_index(bool verify)
+    {
+        using (var db = Database.Open(Copy(SecondFormForeignKey)))
+        {
+            db.VerifyIndexes = verify;
+            var (p, c) = (db.GetTable("P"), db.GetTable("C"));
+            Assert.Equal("p2", p.FindRowByPrimaryKey(D0)!["Nm"]);
+            Assert.Equal("p2", p.CreateIndexCursor("PK").FindRow("D", D0)!["Nm"]);
+            Assert.Equal("p2", p.CreateIndexCursor("PK").FindRowByEntry(D0)!["Nm"]);
+            Assert.Equal(2, c.CreateIndexCursor("FKPD").FindRow("PD", D0)!["Id"]);
+        }
+        using (var db = Database.Open(Copy(Forms)))
+        {
+            db.VerifyIndexes = verify;
+            Assert.Equal(2, db.GetTable("V").FindRowByPrimaryKey(D0)!["Id"]);
+        }
+    }
+
+    // A Joiner from P to C joins a parent read from the table to the children with its very bytes, as Access's
+    // relationship joins them: p2 to child 2, and p3 - the date in the first form, added beside it - to child 5. A
+    // DateTime given joins both forms; and each child joins back to its own parent. A parent read was joined on its
+    // date in the first form: p2 to child 5.
+    [Fact]
+    public void A_joiner_joins_a_row_that_was_read_on_its_bytes()
+    {
+        using var db = Database.Open(Copy(SecondFormForeignKey));
+        db.EnforceForeignKeys = true;
+        var (p, c) = (db.GetTable("P"), db.GetTable("C"));
+        p.Insert(new Row { ["Nm"] = "p3", ["D"] = D0 });
+        c.Insert(new Row { ["Id"] = 5, ["PD"] = D0 });
+
+        var childrenOf = new Joiner(p, new[] { "D" }, c, new[] { "PD" });
+        var parents = p.Rows.ToDictionary(r => (string)r["Nm"]!);
+        Assert.Equal(new[] { 1 }, IdsOf(childrenOf.FindRows(parents["p1"])));
+        Assert.Equal(new[] { 2 }, IdsOf(childrenOf.FindRows(parents["p2"])));
+        Assert.Equal(new[] { 5 }, IdsOf(childrenOf.FindRows(parents["p3"])));
+        Assert.Equal(new[] { 2, 5 }, IdsOf(childrenOf.FindRows(new Dictionary<string, object?> { ["D"] = D0 })));
+
+        var parentOf = childrenOf.CreateReverse();
+        var children = c.Rows.ToDictionary(r => (int)r["Id"]!);
+        Assert.Equal("p2", parentOf.FindFirstRow(children[2])!["Nm"]);
+        Assert.Equal("p3", parentOf.FindFirstRow(children[5])!["Nm"]);
+    }
+
     // ── Rows changed and deleted ────────────────────────────────────────────
 
     // A row in any form rewritten in another column keeps the entries ACE made of its date, its indexes trusted or

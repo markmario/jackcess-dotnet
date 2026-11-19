@@ -77,7 +77,12 @@ changed since 1.2.2.
   row's key is made of its bytes, in whichever form they are, and a caller's `DateTime` is keyed in the first form,
   which is what Access's `INSERT` writes and this library writes: every entry ACE made over rows in its two forms,
   and in three more it reads a date from but does not write, is the key this library makes. Such an index is
-  searched for a relationship's rows and a unique index's duplicates as an index of any other type is.
+  searched for a relationship's rows and a unique index's duplicates as an index of any other type is. A
+  `DateTime` looked for through one - `Table.FindRowByPrimaryKey`, an index cursor's `FindRow`, `FindRowByEntry`
+  and `FindRowsByEntry` - is looked for under the key of each form, so a row ACE stored in its second form is
+  found, as a cursor over the table finds it (it was not); in a range's entry and given to
+  `FindClosestRowByEntry` it is the first form's key, as Access's `BETWEEN` through an index has it. A `Joiner`
+  joins a row read from a table on the bytes it stores.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
