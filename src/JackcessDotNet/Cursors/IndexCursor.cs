@@ -23,7 +23,21 @@ namespace JackcessDotNet;
 /// <see cref="Cursor.FindRow(string, object?)"/>, which then go through the index's rows comparing each; a range
 /// and <see cref="FindClosestRowByEntry"/> need the key, and refuse such a value. Whichever way a row is found,
 /// it is compared with the values asked for before it is returned (<see cref="Cursor.FindRow(string, object?)"/>
-/// says how), and a null is never a match.
+/// says how), and a null is never a match. A <see cref="DateTime"/> in a range's entry or given to
+/// <see cref="FindClosestRowByEntry"/> is put against a row by the date the row's number reads as, in whichever
+/// column of the index it is; a <see cref="double"/> by the number itself, as Access's <c>BETWEEN</c> and an
+/// index's <c>Seek</c> put a date literal against a row.
+/// </para>
+/// <para>
+/// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
+/// anything else: another cursor, <see cref="Table.Update"/>. A row whose key in the index changes moves in the
+/// cursor's order, and the cursor is told. Going one way, the cursor gives each row once: a row it has come to
+/// is passed if an update has moved its entry ahead of the cursor, and a row it has not come to yet is given when
+/// the cursor comes to its entry, wherever updates have moved that entry in the meantime. A search comes to the
+/// rows it looks at, as a move comes to the row it gives. A cursor that turns back begins again from where it is:
+/// going the other way it gives again the rows it has passed, as any cursor does, but not the row it is on.
+/// Put before the first row or after the last, or on the row a lookup finds, it begins again from there. A
+/// savepoint keeps what the cursor had come to, and is told of rows that move as the cursor is.
 /// </para>
 /// </summary>
 public sealed class IndexCursor : Cursor
@@ -33,18 +47,31 @@ public sealed class IndexCursor : Cursor
     private readonly Index            _index;
     private readonly IndexEntryWalker _entries;
 
-    // The range: keys from _low on, and before _high; null for no bound. _none: a range no key can be in.
-    private readonly byte[]? _low;
-    private readonly byte[]? _high;
-    private readonly bool    _none;
+    // The range: its start and end, the keys its entries are from (_low) and before (_high) - null for no bound -
+    // and whether an entry that is one the start or the end stands for is in it. _none: a range no key can be in.
+    private readonly EntryBound? _start;
+    private readonly EntryBound? _end;
+    private readonly bool        _startInclusive;
+    private readonly bool        _endInclusive;
+    private readonly byte[]?     _low;
+    private readonly byte[]?     _high;
+    private readonly bool        _none;
 
     // Where the cursor is: an entry's key and row pointer, which stay a place in the index's order whatever
-    // becomes of the entry.
+    // becomes of the entry; and what it has come to in its pass.
     private Where  _where = Where.BeforeFirst;
     private byte[] _key   = Array.Empty<byte>();
     private int    _pointer;
+    private Pass   _pass  = new();
 
-    internal IndexCursor(Table table, PageFile file, TableDefinition definition, Index index, IndexRange? range)
+    // The positions savepoints were taken at, each for as long as its savepoint is held: told of entries that move.
+    private List<WeakReference<Saved>>? _saved;
+
+    // While FindClosestRowByEntry looks: the values it was given, and whether it looks for an entry that is one of
+    // them (passing the others, and stopping where none can be) or for one at or after them.
+    private (EntryBound Values, bool Equal)? _seeking;
+
+    internal IndexCursor(Table table, PageFile file, TableDefinition definition, Index index, IndexRange? range, bool watched = true)
         : base(table, file, definition)
     {
         _index = index;
@@ -55,16 +82,20 @@ public sealed class IndexCursor : Cursor
 
         if (range?.StartEntry is { } start)
         {
-            var (first, last) = BoundKeys(start, nameof(range), "start");
-            _low  = range.IsStartInclusive ? first : IndexEntryWalker.AfterAllBeginningWith(last);
+            _start          = BoundFor(start, nameof(range), "start");
+            _startInclusive = range.IsStartInclusive;
+            // An exclusive start whose keys decide begins after every entry it stands for.
+            _low  = _startInclusive || _start.HasDates ? _start.StartFence : _start.EndFence;
             _none = _low is null;
         }
         if (range?.EndEntry is { } end)
         {
-            var (first, last) = BoundKeys(end, nameof(range), "end");
-            _high = range.IsEndInclusive ? IndexEntryWalker.AfterAllBeginningWith(last) : first;
+            _end          = BoundFor(end, nameof(range), "end");
+            _endInclusive = range.IsEndInclusive;
+            // An exclusive end whose keys decide ends before every entry it stands for.
+            _high = _endInclusive || _end.HasDates ? _end.EndFence : _end.StartFence;
         }
-        table.Watch(this);
+        if (watched) table.Watch(this);
     }
 
     /// <summary>
@@ -78,13 +109,13 @@ public sealed class IndexCursor : Cursor
     private protected override void ToStart()
     {
         _where = Where.BeforeFirst;
-        Jumped();
+        _pass  = new Pass();
     }
 
     private protected override void ToEnd()
     {
         _where = Where.AfterLast;
-        Jumped();
+        _pass  = new Pass { StartWhere = Where.AfterLast };
     }
 
     private protected override bool AtStart => _where == Where.BeforeFirst;
@@ -93,96 +124,277 @@ public sealed class IndexCursor : Cursor
 
     private protected override int? Step(bool forward)
     {
-        (byte[] Key, int RowPointer)? entry = null;
-        if (!_none)
-        {
-            if (forward)
-            {
-                entry = _where switch
-                {
-                    Where.BeforeFirst => _low is null ? _entries.First() : _entries.After(_low, 0),
-                    Where.AtEntry     => _entries.After(_key, _pointer),
-                    _                 => null,
-                };
-                if (entry is { } found && _high is not null && IndexEntryWalker.CompareKeys(found.Key, _high) >= 0) entry = null;
-            }
-            else
-            {
-                entry = _where switch
-                {
-                    Where.AfterLast => _high is null ? _entries.Last() : _entries.Before(_high, 0),
-                    Where.AtEntry   => _entries.Before(_key, _pointer),
-                    _               => null,
-                };
-                if (entry is { } found && _low is not null && IndexEntryWalker.CompareKeys(found.Key, _low) < 0) entry = null;
-            }
-        }
+        if (_pass.Forward is { } going && going != forward) Turn(forward);
+        else _pass.Forward = forward;
 
-        if (entry is not { } next)
+        while (!_none)
         {
-            _where = forward ? Where.AfterLast : Where.BeforeFirst;
-            return null;
+            var entry = forward ? EntryAfterPlace() : EntryBeforePlace();
+            if (entry is not { } next) break;
+            _where   = Where.AtEntry;
+            _key     = next.Key;
+            _pointer = next.RowPointer;
+
+            // An entry between the range's keys that its start or end leaves out - one of a date's group with
+            // other values after it - is passed; so is one a closest row's lookup is not looking for.
+            if (!InRange(next.Key)) continue;
+            if (forward && _seeking is { } seeking)
+            {
+                if (seeking.Equal && seeking.Values.EndFence is { } end && IndexEntryWalker.CompareKeys(next.Key, end) >= 0) break;
+                int against = seeking.Values.Compare(next.Key);
+                if (seeking.Equal ? against != 0 : against < 0) continue;
+            }
+            return _pointer;
         }
-        _where   = Where.AtEntry;
-        _key     = next.Key;
-        _pointer = next.RowPointer;
-        return _pointer;
+        _where = forward ? Where.AfterLast : Where.BeforeFirst;
+        return null;
+    }
+
+    // The entry after the cursor's place, within the range's keys; null at their end.
+    private (byte[] Key, int RowPointer)? EntryAfterPlace()
+    {
+        var entry = _where switch
+        {
+            Where.AtEntry when _low is null || IndexEntryWalker.CompareKeys(_key, _low) >= 0 => _entries.After(_key, _pointer),
+            Where.AfterLast => null,
+            _ => _low is null ? _entries.First() : _entries.After(_low, 0),
+        };
+        return entry is { } found && _high is not null && IndexEntryWalker.CompareKeys(found.Key, _high) >= 0 ? null : entry;
+    }
+
+    // The entry before the cursor's place, within the range's keys; null at their beginning.
+    private (byte[] Key, int RowPointer)? EntryBeforePlace()
+    {
+        var entry = _where switch
+        {
+            Where.AtEntry when _high is null || IndexEntryWalker.CompareKeys(_key, _high) < 0 => _entries.Before(_key, _pointer),
+            Where.BeforeFirst => null,
+            _ => _high is null ? _entries.Last() : _entries.Before(_high, 0),
+        };
+        return entry is { } found && _low is not null && IndexEntryWalker.CompareKeys(found.Key, _low) < 0 ? null : entry;
+    }
+
+    // Whether an entry is one of the range's: within its keys, and not left out by a start or an end with a date.
+    private bool InRange(byte[] key)
+    {
+        if (_start is { HasDates: true } && _start.Compare(key) is var fromStart && (_startInclusive ? fromStart < 0 : fromStart <= 0))
+            return false;
+        if (_end is { HasDates: true } && _end.Compare(key) is var toEnd && (_endInclusive ? toEnd > 0 : toEnd >= 0))
+            return false;
+        return true;
     }
 
     private protected override object Place()
-        => (_where, _key, _pointer,
-            _movedAhead is { Count: > 0 } ? new HashSet<int>(_movedAhead) : null,
-            _movedBehind is { Count: > 0 } ? new HashSet<int>(_movedBehind) : null);
+        => new Snapshot(_where, _key, _pointer, _pass);
 
     private protected override void Restore(object place)
-        => (_where, _key, _pointer, _movedAhead, _movedBehind) = ((Where, byte[], int, HashSet<int>?, HashSet<int>?))place;
+    {
+        var snapshot = (Snapshot)place;
+        (_where, _key, _pointer, _pass) = (snapshot.Where, snapshot.Key, snapshot.Pointer, snapshot.Pass);
+        snapshot.PutBack();
+    }
+
+    private protected override object SavePosition()
+    {
+        var saved = new Saved(_where, _key, _pointer, _pass.Copy());
+        _saved ??= new List<WeakReference<Saved>>();
+        if (_saved.Count >= 32 && _saved.Count % 32 == 0) _saved.RemoveAll(held => !held.TryGetTarget(out _));
+        _saved.Add(new WeakReference<Saved>(saved));
+        return saved;
+    }
+
+    private protected override void RestorePosition(object position)
+    {
+        // The savepoint's own position stays as it was, and is still told of rows that move: it can be restored again.
+        var saved = (Saved)position;
+        (_where, _key, _pointer, _pass) = (saved.Where, saved.Key, saved.Pointer, saved.Pass.Copy());
+    }
 
     private protected override int? PointerAt() => _where == Where.AtEntry && _pointer != 0 ? _pointer : null;
 
-    // ── Rows that move in the index while the cursor is in it ────────────────
-
-    // The rows the cursor has been at or past whose entries an update has since moved to the other side of it:
-    // ahead of it (met again going forwards) and behind it (met again going backwards). Each is passed once, and
-    // is then where the cursor has been.
-    private HashSet<int>? _movedAhead;
-    private HashSet<int>? _movedBehind;
+    // ── What the cursor has come to ───────────────────────────────────────────
 
     /// <summary>
-    /// Told by the table that an update has changed the key of the row at <paramref name="rowPointer"/> in the
-    /// index tree numbered <paramref name="tree"/>, by this cursor or by anything else. A row the cursor has
-    /// given already, now on the other side of its place, is not given a second time when the cursor comes to
-    /// its new entry.
+    /// The moves a cursor makes one way from where it began them - put before the first row or after the last,
+    /// turned, or put on the row a lookup found - and the rows it has come to on its way. Those are the rows whose
+    /// entries are between where the pass began and where the cursor is, but for the parts of the index a lookup
+    /// went over (<see cref="Skipped"/>), as long as no update moves an entry: what updates have moved across that
+    /// span is kept apart (<see cref="CameAway"/>, <see cref="MissedInside"/>).
     /// </summary>
-    internal void EntryMoved(int tree, int rowPointer, byte[] oldKey, byte[] newKey)
+    private sealed class Pass
     {
-        if (tree != _index.IndexDataNumber || _where != Where.AtEntry) return;
-        int was = Against(oldKey, rowPointer), now = Against(newKey, rowPointer);
-        if (was <= 0 && now > 0)
+        /// <summary>Which way the pass goes: null before its first move, when it has come to nothing.</summary>
+        internal bool? Forward;
+
+        internal Where  StartWhere = Where.BeforeFirst;
+        internal byte[] StartKey   = Array.Empty<byte>();
+        internal int    StartPointer;
+
+        /// <summary>The parts of the index a lookup went over without coming to them, each between two places (null: the index's beginning).</summary>
+        internal List<(byte[]? FromKey, int FromPointer, byte[] ToKey)>? Skipped;
+
+        /// <summary>Rows come to whose entries an update has moved out of the span the pass has gone over.</summary>
+        internal HashSet<int>? CameAway;
+
+        /// <summary>Rows not come to whose entries an update has moved into the span the pass has gone over.</summary>
+        internal HashSet<int>? MissedInside;
+
+        internal Pass Copy() => new()
         {
-            (_movedAhead ??= new HashSet<int>()).Add(rowPointer);
-            _movedBehind?.Remove(rowPointer);
+            Forward      = Forward,
+            StartWhere   = StartWhere,
+            StartKey     = StartKey,
+            StartPointer = StartPointer,
+            Skipped      = Skipped is null ? null : new List<(byte[]?, int, byte[])>(Skipped),
+            CameAway     = CameAway is null ? null : new HashSet<int>(CameAway),
+            MissedInside = MissedInside is null ? null : new HashSet<int>(MissedInside),
+        };
+    }
+
+    /// <summary>
+    /// Where the cursor was before a move or a lookup, to put it back when one fails or finds nothing. A move or a
+    /// lookup begins a new pass, or changes where one began and what it went over; it changes nothing the pass
+    /// knows of rows that moved, which only an update does, and no update is made while one runs.
+    /// </summary>
+    private sealed class Snapshot
+    {
+        private readonly bool?  _forward;
+        private readonly Where  _startWhere;
+        private readonly byte[] _startKey;
+        private readonly int    _startPointer;
+        private readonly int    _skipped;
+
+        internal Snapshot(Where where, byte[] key, int pointer, Pass pass)
+        {
+            (Where, Key, Pointer, Pass) = (where, key, pointer, pass);
+            (_forward, _startWhere, _startKey, _startPointer) = (pass.Forward, pass.StartWhere, pass.StartKey, pass.StartPointer);
+            _skipped = pass.Skipped?.Count ?? 0;
         }
-        else if (was >= 0 && now < 0)
+
+        internal Where  Where   { get; }
+        internal byte[] Key     { get; }
+        internal int    Pointer { get; }
+        internal Pass   Pass    { get; }
+
+        internal void PutBack()
         {
-            (_movedBehind ??= new HashSet<int>()).Add(rowPointer);
-            _movedAhead?.Remove(rowPointer);
+            (Pass.Forward, Pass.StartWhere, Pass.StartKey, Pass.StartPointer) = (_forward, _startWhere, _startKey, _startPointer);
+            if (Pass.Skipped is { } skipped && skipped.Count > _skipped) skipped.RemoveRange(_skipped, skipped.Count - _skipped);
         }
     }
 
-    // Where an entry is against the cursor's place: before it (less than 0), at it, or after it.
-    private int Against(byte[] key, int rowPointer)
+    /// <summary>A savepoint's position: the cursor's place and its pass, kept up as rows move.</summary>
+    private sealed class Saved
     {
-        int byKey = IndexEntryWalker.CompareKeys(key, _key);
-        return byKey != 0 ? byKey : ((uint)rowPointer).CompareTo((uint)_pointer);
+        internal Saved(Where where, byte[] key, int pointer, Pass pass) => (Where, Key, Pointer, Pass) = (where, key, pointer, pass);
+
+        internal Where  Where   { get; }
+        internal byte[] Key     { get; }
+        internal int    Pointer { get; }
+        internal Pass   Pass    { get; }
     }
 
-    private protected override bool Passes(int pointer, bool forward)
-        => (forward ? _movedAhead : _movedBehind)?.Remove(pointer) == true;
+    // A turn begins a new pass where the cursor is: going the other way, the rows it has passed are given again,
+    // but for the row it is on, which it has just given wherever its entry now is.
+    private void Turn(bool forward)
+        => _pass = new Pass
+        {
+            Forward      = forward,
+            StartWhere   = _where,
+            StartKey     = _key,
+            StartPointer = _pointer,
+            CameAway     = _where == Where.AtEntry && _pointer != 0 ? new HashSet<int> { _pointer } : null,
+        };
 
-    private protected override void Jumped()
+    // Puts the cursor before every entry of the key and after, going forwards: where a lookup begins. The entries
+    // between where the cursor was and there are not come to.
+    private void JumpTo(byte[] key)
     {
-        _movedAhead  = null;
-        _movedBehind = null;
+        if (_pass.Forward is null)
+        {
+            // The pass has come to nothing yet: it begins there.
+            (_pass.StartWhere, _pass.StartKey, _pass.StartPointer) = (Where.AtEntry, key, 0);
+        }
+        else
+        {
+            if (_pass.Forward == false) Turn(forward: true);
+            (_pass.Skipped ??= new List<(byte[]?, int, byte[])>()).Add((_where == Where.AtEntry ? _key : null, _pointer, key));
+        }
+        (_where, _key, _pointer) = (Where.AtEntry, key, 0);
+    }
+
+    private protected override bool Passes(int pointer, bool forward) => _pass.CameAway?.Contains(pointer) == true;
+
+    /// <summary>
+    /// Told by the table that the entry of the row at <paramref name="rowPointer"/> in the index tree numbered
+    /// <paramref name="tree"/> was at <paramref name="oldKey"/> and is at <paramref name="newKey"/> - null for no
+    /// entry: one an insert added, or an update added or took out of an index that ignores nulls - by this cursor
+    /// or by anything else. What the cursor, and each of its savepoints, has come to follows the row.
+    /// </summary>
+    internal void EntryMoved(int tree, int rowPointer, byte[]? oldKey, byte[]? newKey)
+    {
+        if (tree != _index.IndexDataNumber) return;
+        Follow(_where, _key, _pointer, _pass, rowPointer, oldKey, newKey);
+        if (_saved is null) return;
+        foreach (var held in _saved)
+            if (held.TryGetTarget(out var saved))
+                Follow(saved.Where, saved.Key, saved.Pointer, saved.Pass, rowPointer, oldKey, newKey);
+    }
+
+    // Whether the row had been come to, worked out from where its entry was, is kept as its entry moves: a row
+    // come to whose entry leaves the span gone over is remembered, as is one not come to whose entry enters it.
+    private static void Follow(Where where, byte[] key, int pointer, Pass pass, int row, byte[]? oldKey, byte[]? newKey)
+    {
+        bool wasIn = oldKey is not null && IsGoneOver(where, key, pointer, pass, oldKey, row);
+        bool isIn  = newKey is not null && IsGoneOver(where, key, pointer, pass, newKey, row);
+        bool cameTo = wasIn ? pass.MissedInside?.Contains(row) != true : pass.CameAway?.Contains(row) == true;
+        pass.CameAway?.Remove(row);
+        pass.MissedInside?.Remove(row);
+        if (cameTo && !isIn) (pass.CameAway ??= new HashSet<int>()).Add(row);
+        else if (!cameTo && isIn) (pass.MissedInside ??= new HashSet<int>()).Add(row);
+    }
+
+    // Whether an entry is in the span the pass has gone over: from where it began to where the cursor is, in its
+    // direction, both ends in, but for what a lookup went over.
+    private static bool IsGoneOver(Where where, byte[] key, int pointer, Pass pass, byte[] entryKey, int entryPointer)
+    {
+        if (pass.Forward is not { } forward) return false;
+        bool fromStart = forward
+            ? AtOrAfter(entryKey, entryPointer, pass.StartWhere, pass.StartKey, pass.StartPointer)
+            : AtOrBefore(entryKey, entryPointer, pass.StartWhere, pass.StartKey, pass.StartPointer);
+        bool toPlace = forward
+            ? AtOrBefore(entryKey, entryPointer, where, key, pointer)
+            : AtOrAfter(entryKey, entryPointer, where, key, pointer);
+        if (!fromStart || !toPlace) return false;
+        if (pass.Skipped is { } skipped)
+            foreach (var (fromKey, fromPointer, toKey) in skipped)
+                if ((fromKey is null || CompareEntries(entryKey, entryPointer, fromKey, fromPointer) > 0)
+                    && CompareEntries(entryKey, entryPointer, toKey, 0) < 0)
+                    return false;
+        return true;
+    }
+
+    private static bool AtOrAfter(byte[] key, int pointer, Where where, byte[] placeKey, int placePointer)
+        => where switch
+        {
+            Where.BeforeFirst => true,
+            Where.AfterLast   => false,
+            _                 => CompareEntries(key, pointer, placeKey, placePointer) >= 0,
+        };
+
+    private static bool AtOrBefore(byte[] key, int pointer, Where where, byte[] placeKey, int placePointer)
+        => where switch
+        {
+            Where.BeforeFirst => false,
+            Where.AfterLast   => true,
+            _                 => CompareEntries(key, pointer, placeKey, placePointer) <= 0,
+        };
+
+    // Two places in the index's order: by key, then by row pointer.
+    private static int CompareEntries(byte[] a, int aPointer, byte[] b, int bPointer)
+    {
+        int byKey = IndexEntryWalker.CompareKeys(a, b);
+        return byKey != 0 ? byKey : ((uint)aPointer).CompareTo((uint)bPointer);
     }
 
     // ── Lookups ───────────────────────────────────────────────────────────────
@@ -225,11 +437,20 @@ public sealed class IndexCursor : Cursor
     }
 
     /// <summary>
-    /// Moves to the first row, in the index's order, whose entry is at or after <paramref name="entryValues"/>,
-    /// and returns it: the row with those values when there is one, and otherwise the row that comes next.
-    /// Jackcess's <c>findClosestRowByEntry</c>. When no row of the cursor is at or after the values, the cursor
-    /// is left after its last row and null is returned. A value is given for each of the index's columns, in the
-    /// index's order, or for the first of them only; a null is the value an index holds for a column with none.
+    /// Moves to the row with <paramref name="entryValues"/> in the index's first columns - the first of them in the
+    /// index's order when there are several - or, when there is none, to the first row in the index's order whose
+    /// entry is after the values, and returns it. Jackcess's <c>findClosestRowByEntry</c>. When no row of the
+    /// cursor is at or after the values, the cursor is left after its last row and null is returned. A value is
+    /// given for each of the index's columns, in the index's order, or for the first of them only; a null is the
+    /// value an index holds for a column with none.
+    /// <para>
+    /// A <see cref="DateTime"/> is put against a row's Date/Time by the date the row's number reads as, to the
+    /// millisecond, wherever the column is in the index, and a <see cref="double"/> by the number itself. From 31
+    /// December 1899 on the index orders the numbers as their dates. Before it, as in Access's index and its
+    /// <c>ORDER BY</c>, a day's times run back from its midnight, and 30 December 1899's times are kept as negative
+    /// numbers as well as positive ones (-0.25 reads as six in the morning); so there, when no row has the date,
+    /// the first row after it in the index's order need not be the one with the nearest date.
+    /// </para>
     /// </summary>
     /// <param name="entryValues">The values to look for, in the order of the index's columns.</param>
     /// <returns>The row, which is then <see cref="Cursor.Current"/>, or null when there is none at or after the values.</returns>
@@ -246,20 +467,34 @@ public sealed class IndexCursor : Cursor
     public Row? FindClosestRowByEntry(params object?[] entryValues)
     {
         if (entryValues is null) throw new ArgumentException("Entry values are required.", nameof(entryValues));
-        var (first, _) = BoundKeys(entryValues, nameof(entryValues), "sought");
+        var sought = BoundFor(entryValues, nameof(entryValues), "sought");
         if (_none) { MoveAfterLast(); return null; }
 
-        // No row is at pointer 0: the next entry is the first at or after the key, and within the range. A row
-        // that cannot be read leaves the cursor as it was.
+        // From the first key an entry with the values can have, within the range: first a row that has them, as
+        // far as one can be; then the first row after them. Each lookup begins a pass where it begins. A row that
+        // cannot be read leaves the cursor as it was.
         object place = Place();
         var current  = CurrentRow;
         try
         {
-            Jumped();
-            _where   = Where.AtEntry;
-            _key     = _low is not null && IndexEntryWalker.CompareKeys(first, _low) < 0 ? _low : first;
-            _pointer = 0;
-            return MoveToRow(forward: true);
+            byte[] from = _low is not null && IndexEntryWalker.CompareKeys(sought.StartFence, _low) < 0 ? _low : sought.StartFence;
+            Row? row = null;
+            foreach (bool equal in new[] { true, false })
+            {
+                ToStart();
+                JumpTo(from);
+                _seeking = (sought, equal);
+                try
+                {
+                    row = MoveToRow(forward: true);
+                }
+                finally
+                {
+                    _seeking = null;
+                }
+                if (row is not null) break;
+            }
+            return row;
         }
         catch
         {
@@ -286,13 +521,10 @@ public sealed class IndexCursor : Cursor
     private static string ColumnNamesOf(Index index) => string.Join(", ", index.Columns.Select(c => c.Column.Name));
 
     /// <summary>
-    /// The first and the last key of the entries that have <paramref name="values"/> in the index's first
-    /// columns: where a range begins or ends, or a closest row is looked for. They are one key, unless the last
-    /// of the values is a <see cref="DateTime"/> for a Date/Time column: then they are the keys of the least and
-    /// the greatest number that read as it (<see cref="ValueMatch.StoredRange"/>), so that a bound given as a
-    /// date takes in, or leaves out, every row that reads as that date.
+    /// The entries that have <paramref name="values"/> in the index's first columns, as a range's start or end or
+    /// the entry a closest row is looked for at (<see cref="EntryBound"/>).
     /// </summary>
-    private (byte[] First, byte[] Last) BoundKeys(IReadOnlyList<object?> values, string parameterName, string what)
+    private EntryBound BoundFor(IReadOnlyList<object?> values, string parameterName, string what)
     {
         if (values.Count == 0 || values.Count > _index.Columns.Count)
             throw new ArgumentException(
@@ -311,31 +543,157 @@ public sealed class IndexCursor : Cursor
                     throw new NotSupportedException(
                         $"No key is made for index '{_index.Name}': {IndexKeys.WhyNot(columns[i].Column, values[i])}.");
 
-            byte[] Key(object? last)
-            {
-                var given = values.ToArray();
-                given[given.Length - 1] = last;
-                byte[] key = IndexKeys.EncodeWhole(columns, given);
-                if (key.Length > LongestKeyOf(columns.Count))
-                    throw new NotSupportedException(
-                        $"No key is made for index '{_index.Name}': the {what} values' key is longer than an index entry holds.");
-                return key;
-            }
-
-            int end = values.Count - 1;
-            if (values[end] is DateTime date && columns[end].Column.DataType == DataType.DateTime)
-            {
-                var (least, greatest) = ValueMatch.StoredRange(date);
-                byte[] a = Key(least), b = Key(greatest);
-                return IndexEntryWalker.CompareKeys(a, b) <= 0 ? (a, b) : (b, a);
-            }
-            byte[] one = Key(values[end]);
-            return (one, one);
+            var bound = new EntryBound(columns, values);
+            if (bound.Length > LongestKeyOf(columns.Count))
+                throw new NotSupportedException(
+                    $"No key is made for index '{_index.Name}': the {what} values' key is longer than an index entry holds.");
+            return bound;
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
         {
             throw new ArgumentException(
                 $"A {what} value is not one its column of index '{_index.Name}' holds: {e.Message}", parameterName, e);
+        }
+    }
+
+    /// <summary>
+    /// Values of an index's first columns - a range's start or end, or the entry a closest row is looked for at -
+    /// and the entries they stand for: those with the values in those columns. A <see cref="DateTime"/> for a
+    /// Date/Time column stands for every number that reads as it, wherever the column is in the index, and is put
+    /// against an entry by the date the entry's number reads as (<see cref="ValueMatch.ReadsAs"/>); any other
+    /// value by the bytes of its key, as the index orders it. The keys decide alone when no value is such a date.
+    /// </summary>
+    private sealed class EntryBound
+    {
+        private static readonly DateTime FirstDay = new(1899, 12, 30);
+        private const double OneSecond = 1.0 / 86_400;
+
+        // Each value's part of a key, or null for a date put against an entry by what the entry reads as; the
+        // date, and the column's direction.
+        private readonly byte[]?[]  _parts;
+        private readonly DateTime[] _dates;
+        private readonly bool[]     _ascending;
+
+        internal EntryBound(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+        {
+            _parts     = new byte[]?[columns.Count];
+            _dates     = new DateTime[columns.Count];
+            _ascending = columns.Select(c => c.IsAscending).ToArray();
+            int firstDate = -1;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                var column = columns[i].Column;
+                if (values[i] is DateTime date && column.DataType == DataType.DateTime)
+                {
+                    // The date as a row stores it, to the millisecond (ValueMatch.AsStored).
+                    _dates[i] = ValueMatch.AsStored(date);
+                    if (firstDate < 0) firstDate = i;
+                }
+                else _parts[i] = IndexKeys.EncodeColumn(column, columns[i].IsAscending, values[i]);
+            }
+
+            // How long the key of the values is, a date as the number it is written as: what an entry holds.
+            Length = Enumerable.Range(0, columns.Count).Sum(i => _parts[i]?.Length
+                ?? IndexKeys.EncodeColumn(DataType.DateTime, _ascending[i], _dates[i].ToOADate()).Length);
+
+            if (firstDate < 0)
+            {
+                byte[] key = Concat(_parts);
+                StartFence = key;
+                EndFence   = IndexEntryWalker.AfterAllBeginningWith(key);
+                return;
+            }
+
+            // Every entry the values stand for, or that is after (or before) them all, has a number in the first
+            // date's column from the least that can read as that date or later on (or the greatest that can read
+            // as it or earlier), under the key of the columns before it.
+            HasDates = true;
+            byte[] prefix = Concat(_parts.Take(firstDate));
+            byte[] least    = Concat(new[] { prefix, IndexKeys.EncodeColumn(DataType.DateTime, _ascending[firstDate], LeastReadingAtOrAfter(_dates[firstDate])) });
+            byte[] greatest = Concat(new[] { prefix, IndexKeys.EncodeColumn(DataType.DateTime, _ascending[firstDate], GreatestReadingAtOrBefore(_dates[firstDate])) });
+            if (!_ascending[firstDate]) (least, greatest) = (greatest, least);
+            StartFence = least;
+            EndFence   = IndexEntryWalker.AfterAllBeginningWith(greatest);
+        }
+
+        /// <summary>Whether a value is a date put against entries by what they read as, so that the keys do not decide alone.</summary>
+        internal bool HasDates { get; }
+
+        /// <summary>The first key an entry the values stand for, or one after them, can have.</summary>
+        internal byte[] StartFence { get; }
+
+        /// <summary>The first key after every entry the values stand for or that is before them; null when no key is.</summary>
+        internal byte[]? EndFence { get; }
+
+        /// <summary>The length of the values' key, a date written as its own number.</summary>
+        internal int Length { get; }
+
+        /// <summary>
+        /// Where an entry is against the values, in the index's order: below 0 before every entry they stand for,
+        /// 0 for one of them, above 0 after them all.
+        /// </summary>
+        internal int Compare(byte[] key)
+        {
+            int at = 0;
+            for (int i = 0; i < _parts.Length; i++)
+            {
+                if (_parts[i] is { } part)
+                {
+                    for (int j = 0; j < part.Length; j++)
+                    {
+                        if (at + j >= key.Length) return -1;
+                        if (key[at + j] != part[j]) return key[at + j] < part[j] ? -1 : 1;
+                    }
+                    at += part.Length;
+                    continue;
+                }
+
+                // A date's part: its flag, then the number's eight bytes - or the flag alone for no value, which
+                // comes first in an ascending column and last in a descending one.
+                bool ascending = _ascending[i];
+                if (at >= key.Length) return -1;
+                if (key[at] == (ascending ? 0x00 : 0xFF)) return ascending ? -1 : 1;
+                if (at + 9 > key.Length) return -1;
+                double stored = StoredNumber(key, at + 1, ascending);
+                int order = ValueMatch.ReadsAs(stored) is { } read
+                    ? read.CompareTo(_dates[i])
+                    : stored.CompareTo(_dates[i].ToOADate());
+                if (order != 0) return (order < 0) == ascending ? -1 : 1;
+                at += 9;
+            }
+            return 0;
+        }
+
+        // The number a date's part of a key holds: IndexKeys.EncodeColumn undone. Its bytes were inverted when
+        // the number was negative (ascending) or positive (descending), which leaves the top bit clear either way;
+        // and a positive number's sign bit was set before that.
+        private static double StoredNumber(byte[] key, int at, bool ascending)
+        {
+            bool topSet = (key[at] & 0x80) != 0;
+            long bits = 0;
+            for (int i = 0; i < 8; i++)
+                bits = bits << 8 | (byte)(topSet ? key[at + i] : ~key[at + i]);
+            if (topSet == ascending) bits ^= long.MinValue;
+            return BitConverter.Int64BitsToDouble(bits);
+        }
+
+        // The least number that can read as the date or as a later one. From 31 December 1899 on the numbers read
+        // as the dates do, in order. Before it a day's times run back from its midnight, and 30 December 1899's are
+        // read from negative numbers as well as positive ones, so for an earlier date the numbers from the day
+        // before on are taken in.
+        private static double LeastReadingAtOrAfter(DateTime date)
+            => date.ToOADate() >= 1.0 ? ValueMatch.StoredRange(date).Least : (date.Date - FirstDay).Days - 1 - OneSecond;
+
+        // The greatest number that can read as the date or as an earlier one: for a date before 30 December 1899,
+        // the number of its midnight, which is its day's greatest.
+        private static double GreatestReadingAtOrBefore(DateTime date)
+            => date.ToOADate() >= 0.0 ? ValueMatch.StoredRange(date).Greatest : (date.Date - FirstDay).Days + OneSecond;
+
+        private static byte[] Concat(IEnumerable<byte[]?> parts)
+        {
+            var key = new List<byte>();
+            foreach (var part in parts) key.AddRange(part!);
+            return key.ToArray();
         }
     }
 
@@ -432,11 +790,7 @@ public sealed class IndexCursor : Cursor
             if (_where == Where.AfterLast) break;
             if (_where == Where.AtEntry && before is not null && IndexEntryWalker.CompareKeys(_key, before) >= 0) continue;
             if (_where == Where.BeforeFirst || IndexEntryWalker.CompareKeys(_key, from) < 0)
-            {
-                _where   = Where.AtEntry;
-                _key     = _low is not null && IndexEntryWalker.CompareKeys(from, _low) < 0 ? _low : from;
-                _pointer = 0;
-            }
+                JumpTo(_low is not null && IndexEntryWalker.CompareKeys(from, _low) < 0 ? _low : from);
             while (MoveToRow(forward: true) is { } row)
             {
                 if (before is not null && IndexEntryWalker.CompareKeys(_key, before) >= 0)
@@ -471,6 +825,17 @@ public sealed class IndexCursor : Cursor
 /// columns - an inclusive start begins at the first such row and an inclusive end stops after the last. A null
 /// is the value an index holds for a column with none. The order is the index's own, so in a descending column
 /// the start is the greater value.
+/// <para>
+/// A <see cref="DateTime"/> for a Date/Time column, in whichever place of the entry, stands for every row whose
+/// number reads as that date, to the millisecond (a date finer than that is taken to what it reads as once
+/// stored), and is put against a row by the date its number reads as: a range from one date to another has the
+/// rows whose dates are between them. A <see cref="double"/> is the number a row stores, put against a row's
+/// number as Access's <c>BETWEEN</c> puts a date against one. (Access measured: <c>BETWEEN</c> and an index's
+/// <c>Seek</c> go by the numbers, so a time of 30 December 1899 stored as a negative number - -0.25 reads as six
+/// in the morning - is not between five and seven in the morning to Access; to a range of
+/// <see cref="DateTime"/> values it is.) The rows come in the index's order, which before 31 December 1899 is not
+/// the dates' order: there a day's times run back from its midnight, as in Access's <c>ORDER BY</c>.
+/// </para>
 /// </summary>
 public sealed class IndexRange
 {

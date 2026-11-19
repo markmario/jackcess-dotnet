@@ -140,13 +140,11 @@ public class Cursor : IEnumerable<Row>
     }
 
     /// <summary>
-    /// Whether the cursor goes past the row at <paramref name="pointer"/> without giving it: a row it has given
-    /// already, which an update has since moved ahead of it in its order. No row moves in a table's own order.
+    /// Whether the cursor goes past the row at <paramref name="pointer"/> without giving it: a row it has come to
+    /// already going this way, which an update has since moved ahead of it in its order. No row moves in a table's
+    /// own order.
     /// </summary>
     private protected virtual bool Passes(int pointer, bool forward) => false;
-
-    /// <summary>Has the cursor forget what it knew of rows moved around its place: it is being put somewhere else.</summary>
-    private protected virtual void Jumped() { }
 
     // ── What a kind of cursor says of its order ──────────────────────────────
 
@@ -252,6 +250,15 @@ public class Cursor : IEnumerable<Row>
 
     private protected static readonly object PlaceBeforeFirst = new();
     private protected static readonly object PlaceAfterLast   = new();
+
+    /// <summary>
+    /// Where the cursor is, for a savepoint to keep (<see cref="RestorePosition"/>): more than <see cref="Place"/>
+    /// where the cursor also knows what it has come to, which the savepoint keeps up to date as rows move.
+    /// </summary>
+    private protected virtual object SavePosition() => Place();
+
+    /// <summary>Puts the cursor back where <see cref="SavePosition"/> said it was; the position can be restored again.</summary>
+    private protected virtual void RestorePosition(object position) => Restore(position);
 
     // ── Reading ───────────────────────────────────────────────────────────────
 
@@ -390,8 +397,9 @@ public class Cursor : IEnumerable<Row>
     /// <para>
     /// The cursor stays where it is: the next move goes on to the row after the one updated. A row keeps its
     /// place in the table when it is updated. In an index's order it moves when the update changes its key in
-    /// that index, and a cursor over the index does not come a second time to a row it has given already,
-    /// whichever way it is going and whoever updated the row.
+    /// that index, and a cursor over the index going one way does not come a second time to a row it has given,
+    /// whoever updated the row; it comes to every row it has not (<see cref="IndexCursor"/> says what turning
+    /// back does).
     /// </para>
     /// </summary>
     /// <param name="values">The values to give the row, by column name.</param>
@@ -596,15 +604,19 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// Notes where the cursor is, to come back to with <see cref="RestoreSavepoint"/>: Jackcess's
-    /// <c>getSavepoint</c>. A savepoint is a place in the cursor's order, not a copy of a row.
+    /// <c>getSavepoint</c>. A savepoint is a place in the cursor's order, not a copy of a row. A cursor over an
+    /// index notes with it which rows it has come to going the way it is going, and keeps that up to date as
+    /// updates move rows in its index, so that restored it does not give a row a second time
+    /// (<see cref="IndexCursor"/>).
     /// </summary>
-    public CursorSavepoint GetSavepoint() => new(this, Place());
+    public CursorSavepoint GetSavepoint() => new(this, SavePosition());
 
     /// <summary>
     /// Puts the cursor back where it was when <paramref name="savepoint"/> was taken: Jackcess's
     /// <c>restoreSavepoint</c>. <see cref="Current"/> is the row at that place as the file has it now - null when
     /// the cursor was on no row, or when the row has since been deleted;
-    /// the next move goes on from that place either way.
+    /// the next move goes on from that place either way, passing the rows it had come to when the savepoint was
+    /// taken wherever updates have moved them since. A savepoint can be restored any number of times.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="savepoint"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="savepoint"/> was taken from another cursor.</exception>
@@ -613,8 +625,7 @@ public class Cursor : IEnumerable<Row>
         if (savepoint is null) throw new ArgumentNullException(nameof(savepoint));
         if (!ReferenceEquals(savepoint.Cursor, this))
             throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
-        Restore(savepoint.Place);
-        Jumped();
+        RestorePosition(savepoint.Place);
         _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
     }
 

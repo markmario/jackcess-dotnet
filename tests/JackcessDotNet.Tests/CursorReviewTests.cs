@@ -276,4 +276,287 @@ public sealed class CursorReviewTests : IDisposable
         Assert.Equal(9000, ((string)table.FindRowByPrimaryKey(last + 1)!["Notes"]!).Length);
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 15);
     }
+
+    // ── Keys that change around a cursor ─────────────────────────────────────
+
+    /// <summary>Ten rows, Id 1 to 10, K ten times Id, with an index on K.</summary>
+    private static Table Ten(Database db, bool ignoreNulls = false)
+    {
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") { IgnoreNulls = ignoreNulls } });
+        for (int i = 1; i <= 10; i++) table.Insert(new Row { ["Id"] = i, ["K"] = i * 10 });
+        return table;
+    }
+
+    private static void SetK(Table table, int id, int? k)
+    {
+        var row = table.FindRowByPrimaryKey(id)!;
+        row["K"] = k;
+        table.Update(row);
+    }
+
+    private static List<int> Rest(IndexCursor cursor, bool forward)
+    {
+        var ids = new List<int>();
+        while (forward ? cursor.MoveNext() : cursor.MovePrevious())
+        {
+            ids.Add((int)cursor.Current!["Id"]!);
+            Assert.True(ids.Count <= 30, "the cursor does not come to an end");
+        }
+        return ids;
+    }
+
+    private static IndexCursor At(Table table, int rows, bool forward)
+    {
+        var cursor = table.CreateIndexCursor("ByK");
+        if (!forward) cursor.MoveAfterLast();
+        for (int i = 0; i < rows; i++) Assert.True(forward ? cursor.MoveNext() : cursor.MovePrevious());
+        return cursor;
+    }
+
+    [Fact]
+    public void A_row_not_yet_given_is_given_wherever_its_key_has_been_meanwhile()
+    {
+        using var db = Database.Create(_path);
+        var table = Ten(db);
+
+        // Behind the cursor and back ahead of it, to the key it had.
+        var cursor = At(table, 3, forward: true);
+        SetK(table, 7, 5);
+        SetK(table, 7, 70);
+        Assert.Equal(new[] { 4, 5, 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+
+        // The same going backwards: rows 10, 9, 8 given; row 4 past the cursor and back.
+        cursor = At(table, 3, forward: false);
+        SetK(table, 4, 95);
+        SetK(table, 4, 40);
+        Assert.Equal(new[] { 7, 6, 5, 4, 3, 2, 1 }, Rest(cursor, forward: false));
+
+        // Behind the cursor, then ahead of it to another key.
+        cursor = At(table, 5, forward: true);
+        SetK(table, 8, 15);
+        SetK(table, 8, 85);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 8, 80);
+
+        // Brought behind the cursor, and the cursor then turned back: it comes to the row, which it never gave.
+        cursor = At(table, 5, forward: true);
+        SetK(table, 9, 25);
+        Assert.Equal(new[] { 4, 3, 9, 2, 1 }, Rest(cursor, forward: false));
+        SetK(table, 9, 90);
+
+        // Inserted behind the cursor, and moved ahead of it.
+        cursor = At(table, 5, forward: true);
+        table.Insert(new Row { ["Id"] = 11, ["K"] = 15 });
+        SetK(table, 11, 65);
+        Assert.Equal(new[] { 6, 11, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+    }
+
+    [Fact]
+    public void A_row_already_given_is_not_given_again_when_its_key_takes_it_ahead_of_the_cursor()
+    {
+        using var db = Database.Create(_path);
+        var table = Ten(db);
+
+        // By Table.Update of a row that is not the cursor's current one.
+        var cursor = At(table, 5, forward: true);
+        SetK(table, 2, 75);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 2, 20);
+
+        // Twice over, the second time while already ahead.
+        cursor = At(table, 5, forward: true);
+        SetK(table, 2, 75);
+        SetK(table, 2, 95);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 2, 20);
+
+        // Going backwards, a given row lowered past the cursor.
+        cursor = At(table, 4, forward: false);
+        SetK(table, 9, 15);
+        Assert.Equal(new[] { 6, 5, 4, 3, 2, 1 }, Rest(cursor, forward: false));
+        SetK(table, 9, 90);
+
+        // Two cursors on the one index: each row's key raised through one, as the other goes through them all.
+        var reader = At(table, 0, forward: true);
+        var writer = table.CreateIndexCursor("ByK");
+        var given = new List<int>();
+        while (reader.MoveNext())
+        {
+            int id = (int)reader.Current!["Id"]!;
+            given.Add(id);
+            Assert.True(given.Count <= 30);
+            Assert.NotNull(writer.FindRowByEntry(reader.Current["K"]));
+            writer.UpdateCurrentRow(new Row { ["K"] = (int)reader.Current["K"]! + 1000 });
+        }
+        Assert.Equal(Enumerable.Range(1, 10), given);
+    }
+
+    [Fact]
+    public void A_row_whose_entry_leaves_an_index_that_ignores_nulls_and_comes_back_is_given_once()
+    {
+        using var db = Database.Create(_path);
+        var table = Ten(db, ignoreNulls: true);
+
+        var cursor = At(table, 5, forward: true);
+        SetK(table, 2, null);      // a row given: its entry leaves the index...
+        SetK(table, 2, 75);        // ...and comes back ahead of the cursor
+        SetK(table, 8, null);      // a row not given leaves and comes back
+        SetK(table, 8, 85);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+    }
+
+    [Fact]
+    public void A_cursor_that_turns_back_gives_again_the_rows_it_passed_but_not_the_row_it_is_on()
+    {
+        using var db = Database.Create(_path);
+        var table = Ten(db);
+
+        // The row the cursor is on, moved behind it, is not given going back; turned again at the beginning, the
+        // cursor gives every row.
+        var cursor = At(table, 5, forward: true);
+        cursor.UpdateCurrentRow(new Row { ["K"] = 15 });
+        Assert.Equal(new[] { 4, 3, 2, 1 }, Rest(cursor, forward: false));
+        Assert.Equal(new[] { 1, 5, 2, 3, 4, 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 5, 50);
+
+        // A row given and moved ahead of the cursor, which then turns back and forward again: going forward
+        // again, the cursor gives the rows ahead of it, that one among them.
+        cursor = At(table, 5, forward: true);
+        SetK(table, 2, 75);
+        Assert.Equal(new[] { 4, 3, 1 }, Rest(cursor, forward: false));
+        Assert.Equal(new[] { 1, 3, 4, 5, 6, 7, 2, 8, 9, 10 }, Rest(cursor, forward: true));
+    }
+
+    [Fact]
+    public void A_savepoint_keeps_what_the_cursor_had_given_whatever_keys_change_before_it_is_restored()
+    {
+        using var db = Database.Create(_path);
+        var table = Ten(db);
+
+        // A given row's key is raised after the savepoint was taken: restored, the cursor does not give it again.
+        var cursor = At(table, 5, forward: true);
+        var saved = cursor.GetSavepoint();
+        Assert.True(cursor.MoveNext());
+        SetK(table, 2, 75);
+        Assert.True(cursor.MoveNext());
+        cursor.RestoreSavepoint(saved);
+        Assert.Equal(5, cursor.Current!["Id"]);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        cursor.RestoreSavepoint(saved);                                     // and a second time the same
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 2, 20);
+
+        // Raised before the savepoint was taken.
+        cursor = At(table, 5, forward: true);
+        SetK(table, 2, 75);
+        saved = cursor.GetSavepoint();
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        cursor.RestoreSavepoint(saved);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, Rest(cursor, forward: true));
+        SetK(table, 2, 20);
+
+        // A row not given when the savepoint was taken, moved behind where the cursor then was: given once the
+        // savepoint is restored.
+        cursor = At(table, 3, forward: true);
+        saved = cursor.GetSavepoint();
+        cursor.MoveNext();
+        cursor.MoveNext();
+        SetK(table, 7, 45);
+        cursor.RestoreSavepoint(saved);
+        Assert.Equal(new[] { 4, 7, 5, 6, 8, 9, 10 }, Rest(cursor, forward: true));
+    }
+
+    // ── Dates in a range's entries ───────────────────────────────────────────
+
+    private static double Next(double number, int steps = 1)
+        => BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(number) + steps);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_date_anywhere_in_a_range_s_entry_takes_in_every_number_that_reads_as_it(bool descending)
+    {
+        using var db = Database.Create(_path);
+        var date = new DateTime(2024, 5, 6, 7, 8, 9);
+        double d1 = date.ToOADate(), d2 = Next(d1, 3);
+        Assert.Equal(date, ValueMatch.ReadsAs(d2));
+        var table = Dated(db, descending,
+            (1, d1, 3), (1, d1, 7), (1, d2, 4), (1, d2, 8), (1, d1 - 1, 6), (1, d1 + 1, 6), (2, d2, 6), (2, d1, 11));
+
+        int[] Ls(IndexCursor cursor) => cursor.Select(r => (int)r["L"]!).OrderBy(l => l).ToArray();
+
+        // (Date, Long): the rows whose date reads as it and whose Long is between.
+        Assert.Equal(new[] { 6, 7, 8 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 5), EndEntry = E(date, 9) })));
+        Assert.Equal(new[] { 6, 7 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 5), EndEntry = E(date, 8), IsEndInclusive = false })));
+        Assert.Equal(new[] { 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 6), IsStartInclusive = false, EndEntry = E(date) })));
+        Assert.Equal(new[] { 3, 4, 6, 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date), EndEntry = E(date) })));
+        // (Long, Date, Long).
+        Assert.Equal(new[] { 4, 7, 8 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartEntry = E(1, date, 4), EndEntry = E(1, date, 8) })));
+        Assert.Equal(new[] { 6, 11 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartEntry = E(2, date), EndEntry = E(2, date, 50) })));
+
+        // The closest row to an entry with the date in it: the row with those values when there is one.
+        Assert.Equal(7, table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 7)!["L"]);
+        Assert.Equal(8, table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 8)!["L"]);
+        Assert.Equal(11, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(2, date, 11)!["L"]);
+        Assert.Equal(4, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(1, date, 4)!["L"]);
+        var closest = table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 5)!;       // none: one after it
+        Assert.Equal(date, closest["D"]);
+        Assert.True((int)closest["L"]! >= 5);
+    }
+
+    [Fact]
+    public void A_time_stored_as_a_negative_number_is_in_the_ranges_and_the_closest_row_its_time_is_in()
+    {
+        using var db = Database.Create(_path);
+        var day = new DateTime(1899, 12, 30);
+        var table = Dated(db, false, (1, -0.25, 1), (1, 0.25, 2), (1, 0.5, 3), (1, -0.75, 4), (1, 2.25, 5), (1, -2.25, 6));
+        Assert.Equal(day.AddHours(6), table.FindRowByPrimaryKey(0)!["D"]);
+        Assert.Equal(day.AddHours(18), table.FindRowByPrimaryKey(3)!["D"]);
+
+        int[] Ls(IndexRange range) => table.CreateIndexCursor("ByD", range).Select(r => (int)r["L"]!).OrderBy(l => l).ToArray();
+
+        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartEntry = E(day.AddHours(6)), EndEntry = E(day.AddHours(6)) }));
+        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartEntry = E(day.AddHours(5)), EndEntry = E(day.AddHours(7)) }));
+        Assert.Equal(new[] { 1, 2, 3, 4 }, Ls(new IndexRange { StartEntry = E(day.AddHours(5)), EndEntry = E(day.AddHours(19)) }));
+        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartEntry = E(day.AddHours(12)), EndEntry = E(day.AddDays(3)) }));
+        Assert.Equal(new[] { 1, 2, 3, 4, 6 }, Ls(new IndexRange { StartEntry = E(day.AddDays(-3)), EndEntry = E(day.AddDays(1)) }));
+        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartEntry = E(day.AddHours(6)), IsStartInclusive = false, EndEntry = E(day.AddDays(2).AddHours(6)) }));
+
+        // A number is put against the numbers, as Access's BETWEEN puts a literal against them.
+        Assert.Equal(new[] { 2 }, Ls(new IndexRange { StartEntry = E(5 / 24.0), EndEntry = E(7 / 24.0) }));
+
+        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(18))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(6))?["L"]);
+        table.Delete(table.FindRowByPrimaryKey(1)!);
+        table.Delete(table.FindRowByPrimaryKey(3)!);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(6))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(5))?["L"]);
+    }
+
+    [Fact]
+    public void A_range_of_dates_before_1900_has_the_rows_whose_dates_are_in_it_in_the_index_s_order()
+    {
+        using var db = Database.Create(_path);
+        // 28 December 1899 at 18:00 and 06:00; 29 December at 18:00, 06:00 and midnight: before 30 December 1899 a
+        // day's times run back from its midnight.
+        var table = Dated(db, false, (1, -2.75, 1), (1, -2.25, 2), (1, -1.75, 3), (1, -1.25, 4), (1, -1.0, 5));
+        var dec28 = new DateTime(1899, 12, 28);
+        var dec29 = dec28.AddDays(1);
+        Assert.Equal(dec28.AddHours(18), table.FindRowByPrimaryKey(0)!["D"]);
+
+        int[] Ls(IndexRange range) => table.CreateIndexCursor("ByD", range).Select(r => (int)r["L"]!).ToArray();
+
+        Assert.Equal(new[] { 1, 5 }, Ls(new IndexRange { StartEntry = E(dec28.AddHours(12)), EndEntry = E(dec29.AddHours(3)) }));
+        Assert.Equal(new[] { 4, 5 }, Ls(new IndexRange { StartEntry = E(dec29), EndEntry = E(dec29.AddHours(12)) }));
+        Assert.Equal(new[] { 3, 4 }, Ls(new IndexRange { StartEntry = E(dec29.AddHours(6)), EndEntry = E(dec29.AddHours(18)) }));
+        // Numbers, as Access's BETWEEN #12/28/1899 12:00# AND #12/29/1899 03:00# takes them.
+        Assert.Equal(new[] { 2, 3, 4 }, Ls(new IndexRange { StartEntry = E(-2.5), EndEntry = E(-1.125) }));
+
+        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByEntry(dec29.AddHours(6))!["L"]);
+        // None at five: the first after it in the index's order, which is six in the evening.
+        Assert.Equal(3, table.CreateIndexCursor("ByD").FindClosestRowByEntry(dec29.AddHours(5))!["L"]);
+    }
 }

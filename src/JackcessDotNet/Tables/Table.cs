@@ -405,7 +405,7 @@ public sealed class Table
         // Through the key's index; a key whose index was not read is looked for among the rows as they are stored.
         if (definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey) is { RootPageNumber: > 0 } keyIndex
             && keyIndex.Columns.Count == keyColumns.Count)
-            return new IndexCursor(this, _file, definition, keyIndex, range: null).FindRowByEntry(primaryKey);
+            return new IndexCursor(this, _file, definition, keyIndex, range: null, watched: false).FindRowByEntry(primaryKey);
 
         var pattern = new Row();
         for (int i = 0; i < keyColumns.Count; i++)
@@ -452,43 +452,51 @@ public sealed class Table
         EnsureTakesRows();
 
         var given = AutoNumberValuesIn(row);
+        int rowPtr;
+        IReadOnlyList<TableIndexes.Entry> entries;
 
         // What is written is taken back if writing fails - with the rest of a larger change when the insert is
         // part of one (InsertRange, a relationship's catalog rows).
-        using var undo = _file.BeginUndoUnlessOpen();
-        try
+        using (var undo = _file.BeginUndoUnlessOpen())
         {
-            int? lastAutoNumber = FillAutoNumbers(row);
-
-            // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
-            // bool it stands for - read once, for the row's bytes and its index entries alike.
-            var written = RowValues.AsWritten(row, _definition.Columns);
-            EnsureColumnRules(written, assignedOnly: false);
-            _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
-
-            // Everything an index can refuse the row for, before any of it is written.
-            var entries = _indexes.EntriesFor(written, enforce: true);
-            var looked  = _indexes.EnsureNoDuplicates(entries, forEntry: true);
-
-            int rowPtr = _dataWriter.InsertRow(_definition, written);
-
-            // The counter and the row count go to the definition together, once the row is on its page and before
-            // its index entries: a row in the file is always one the counter has passed.
-            _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
-            _indexes.Add(entries, rowPtr, looked);
-            undo?.Commit();
-        }
-        catch when (given is not null)
-        {
-            // Nothing of the row stays in the file: it goes back to the caller as it came. The counter is written
-            // with the row count, so it has not moved, and the next insert is given this row's number.
-            foreach (var (name, had, value) in given)
+            try
             {
-                if (had) row[name] = value;
-                else     row.Remove(name);
+                int? lastAutoNumber = FillAutoNumbers(row);
+
+                // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
+                // bool it stands for - read once, for the row's bytes and its index entries alike.
+                var written = RowValues.AsWritten(row, _definition.Columns);
+                EnsureColumnRules(written, assignedOnly: false);
+                _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
+
+                // Everything an index can refuse the row for, before any of it is written.
+                entries = _indexes.EntriesFor(written, enforce: true);
+                var looked = _indexes.EnsureNoDuplicates(entries, forEntry: true);
+
+                rowPtr = _dataWriter.InsertRow(_definition, written);
+
+                // The counter and the row count go to the definition together, once the row is on its page and
+                // before its index entries: a row in the file is always one the counter has passed.
+                _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
+                _indexes.Add(entries, rowPtr, looked);
+                undo?.Commit();
             }
-            throw;
+            catch when (given is not null)
+            {
+                // Nothing of the row stays in the file: it goes back to the caller as it came. The counter is
+                // written with the row count, so it has not moved, and the next insert is given this row's number.
+                foreach (var (name, had, value) in given)
+                {
+                    if (had) row[name] = value;
+                    else     row.Remove(name);
+                }
+                throw;
+            }
         }
+
+        // A cursor over an index is told of the row's entry in it.
+        foreach (var entry in entries)
+            TellCursors(entry.Tree.Number, rowPtr, null, entry.Key);
     }
 
     /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
@@ -742,8 +750,8 @@ public sealed class Table
         return row.Pointer;
     }
 
-    // The cursors over this table's indexes, each for as long as something holds it: one is told when an update
-    // moves a row's entry in its index (IndexCursor.EntryMoved), so that it does not come to the row twice.
+    // The cursors over this table's indexes, each for as long as something holds it: one is told when a row's
+    // entry in its index is added, moves or goes (IndexCursor.EntryMoved), so that it gives each row once.
     private readonly List<WeakReference<IndexCursor>> _indexCursors = new();
     private int _lookAgainAt = 32;
 
@@ -757,7 +765,12 @@ public sealed class Table
         _indexCursors.Add(new WeakReference<IndexCursor>(cursor));
     }
 
-    private void TellCursors(int tree, int rowPointer, byte[] oldKey, byte[] newKey)
+    /// <summary>
+    /// Tells every cursor over the index tree numbered <paramref name="tree"/> that the entry of the row at
+    /// <paramref name="rowPointer"/> was at <paramref name="oldKey"/> and is at <paramref name="newKey"/>, either
+    /// null for no entry. Told once the change is in the file for good.
+    /// </summary>
+    private void TellCursors(int tree, int rowPointer, byte[]? oldKey, byte[]? newKey)
     {
         foreach (var held in _indexCursors)
             if (held.TryGetTarget(out var cursor))
@@ -826,13 +839,16 @@ public sealed class Table
         // The row, the pages its long values go to and its index entries change together or not at all: what
         // is written is taken back if writing fails. The counter is raised once the row is on its page and
         // before its index entries, as an insert's is.
-        using var undo = _file.BeginUndoUnlessOpen();
         var entries = new EntryMove(this, refuseDuplicates: true);
-        newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
-        if (highestGiven is { } given)
-            _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
-        entries.Follow(rowPtr, newRowPtr);
-        undo?.Commit();
+        using (var undo = _file.BeginUndoUnlessOpen())
+        {
+            newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
+            if (highestGiven is { } given)
+                _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
+            entries.Follow(rowPtr, newRowPtr);
+            undo?.Commit();
+        }
+        entries.TellCursors(newRowPtr);
         return newRowPtr;
     }
 
@@ -916,13 +932,27 @@ public sealed class Table
             }
             _indexes.Remove(old, oldPointer);
             _indexes.Add(now, newPointer);
+        }
 
-            // A cursor over an index is told of an entry that has moved in it.
-            if (oldPointer == newPointer)
-                foreach (var was in _old)
-                    foreach (var entry in _new)
-                        if (ReferenceEquals(was.Tree, entry.Tree) && !was.Key.AsSpan().SequenceEqual(entry.Key))
-                            _table.TellCursors(entry.Tree.Number, newPointer, was.Key, entry.Key);
+        /// <summary>
+        /// Tells each cursor over an index of the row's entry in it that the update moved, added - a value an
+        /// index that ignores nulls had none for - or took out: once the change is in the file for good, so that a
+        /// change taken back is told to no cursor.
+        /// </summary>
+        internal void TellCursors(int pointer)
+        {
+            if (_table._indexCursors.Count == 0) return;
+            foreach (var was in _old)
+            {
+                byte[]? key = null;
+                foreach (var entry in _new)
+                    if (ReferenceEquals(entry.Tree, was.Tree)) key = entry.Key;
+                if (key is null || !was.Key.AsSpan().SequenceEqual(key))
+                    _table.TellCursors(was.Tree.Number, pointer, was.Key, key);
+            }
+            foreach (var entry in _new)
+                if (!_old.Any(was => ReferenceEquals(was.Tree, entry.Tree)))
+                    _table.TellCursors(entry.Tree.Number, pointer, null, entry.Key);
         }
     }
 
@@ -933,12 +963,20 @@ public sealed class Table
     /// every index following it, as <see cref="Update"/> does, and returns where the row is afterwards.
     /// Duplicates are the enforcer's to have refused, and no relationship is looked at.
     /// </summary>
-    internal int RewriteRowAt(int rowPtr, Row changes)
+    /// <param name="rowPtr">Where the row is.</param>
+    /// <param name="changes">The values to give it, by column name.</param>
+    /// <param name="tellCursors">
+    /// Where to put what tells the cursors over the table's indexes of the row's entries, for a caller that
+    /// commits a larger change to run once it has; null to tell them now.
+    /// </param>
+    internal int RewriteRowAt(int rowPtr, Row changes, List<Action>? tellCursors = null)
     {
         _file.EnsureWritable();
         var entries = new EntryMove(this, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
+        if (tellCursors is null) entries.TellCursors(newRowPtr);
+        else tellCursors.Add(() => entries.TellCursors(newRowPtr));
         return newRowPtr;
     }
 
