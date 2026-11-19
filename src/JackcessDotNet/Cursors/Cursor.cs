@@ -443,7 +443,12 @@ public class Cursor : IEnumerable<Row>
     /// <param name="values">The values to give the row, by column name.</param>
     /// <exception cref="ArgumentNullException"><paramref name="values"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// A value given to a Currency column is not a number (<see cref="Table.Insert"/>). Nothing is written.
+    /// A value given to a Currency column is of a kind no number is made of (<see cref="Table.Insert"/>). Nothing is
+    /// written.
+    /// </exception>
+    /// <exception cref="FormatException">
+    /// A value given to a Currency column is text that does not read as a number (<see cref="Table.Insert"/>).
+    /// Nothing is written.
     /// </exception>
     /// <exception cref="OverflowException">
     /// A value given to a Currency column is a number no Currency holds (<see cref="Table.Insert"/>). Nothing is

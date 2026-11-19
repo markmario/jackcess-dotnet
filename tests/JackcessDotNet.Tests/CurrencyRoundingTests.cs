@@ -157,16 +157,48 @@ public sealed class CurrencyRoundingTests
     }
 
     [Fact]
-    public void A_value_that_is_not_a_number_is_not_taken_for_one()
+    public void An_equality_takes_no_value_for_a_number_that_is_not_one_of_NET_s_numbers()
     {
-        // Access reads text by the machine's locale ('1,5' is 15 where a comma groups digits), and writes True as -1.
+        // As ValueMatch has it for every number column: text, a bool and the rest are no number to an equality.
         foreach (object value in new object[] { "1.5", "0", "1,5", "", true, false, 'x', DateTime.Now, Guid.Empty, new byte[] { 1 }, DayOfWeek.Monday })
         {
             Assert.False(CurrencyRounding.IsNumber(value), $"{value} ({value.GetType().Name})");
             Assert.False(CurrencyRounding.TryUnits(value, out _), $"{value} ({value.GetType().Name})");
-            Assert.Throws<InvalidCastException>(() => CurrencyRounding.Units(value));
         }
         Assert.False(CurrencyRounding.TryUnits(null, out _));
+    }
+
+    // What f gives with the current culture the one named.
+    private static T InCulture<T>(string name, Func<T> f)
+    {
+        var was = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo(name);
+        try { return f(); }
+        finally { CultureInfo.CurrentCulture = was; }
+    }
+
+    [Fact]
+    public void Text_and_a_bool_are_taken_for_the_number_every_number_column_takes_them_for()
+    {
+        // Convert's reading, in the current culture, as a Double column takes text (Convert.ToDouble); only the
+        // rounding of the number it makes is the Currency's own. Access reads text by the machine's locale and writes
+        // True as -1, a question for every number type alike.
+        Assert.Equal(312, InCulture("en-US", () => CurrencyRounding.Units("0.03125")));
+        Assert.Equal(-12346, InCulture("en-US", () => CurrencyRounding.Units(" -1.23465 ")));
+        Assert.Equal(150_000, InCulture("en-US", () => CurrencyRounding.Units("1,5")));
+        Assert.Equal(15.0, InCulture("en-US", () => Convert.ToDouble("1,5")));
+        Assert.Equal(15_000, InCulture("de-DE", () => CurrencyRounding.Units("1,5")));
+        Assert.Equal(312, InCulture("de-DE", () => CurrencyRounding.Units("0,03125")));
+        Assert.Equal(10_000, CurrencyRounding.Units(true));
+        Assert.Equal(0, CurrencyRounding.Units(false));
+        Assert.Equal(10_000, CurrencyRounding.Units(DayOfWeek.Monday));
+
+        Assert.Throws<FormatException>(() => InCulture("en-US", () => CurrencyRounding.Units("abc")));
+        Assert.Throws<FormatException>(() => CurrencyRounding.Units(""));
+        foreach (object value in new object[] { 'x', DateTime.Now, Guid.Empty, new byte[] { 1 } })
+            Assert.Throws<InvalidCastException>(() => CurrencyRounding.Units(value));
+        Assert.Throws<OverflowException>(() => InCulture("en-US", () => CurrencyRounding.Units("79228162514264337593543950336")));
+        Assert.Throws<OverflowException>(() => InCulture("en-US", () => CurrencyRounding.Units("922337203685477.5808")));
         Assert.Throws<OverflowException>(() => CurrencyRounding.Units(double.NaN));
         Assert.Throws<OverflowException>(() => CurrencyRounding.Units(922337203685477.5808m));
         Assert.Equal(312, CurrencyRounding.Units(0.03125));

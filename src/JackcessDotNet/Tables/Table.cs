@@ -453,12 +453,18 @@ public sealed class Table
     /// <para>
     /// A Currency column's number is taken to its four places as Access takes one: its exact value, half to even.
     /// The double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written as - 0.0001, and the
-    /// decimal 1.23465 1.2346. A lookup by the same number finds the row.
+    /// decimal 1.23465 1.2346. A lookup by the same number finds the row. Text and a <see cref="bool"/> are taken
+    /// as every number column takes them - text read in the current culture, a <see cref="bool"/> as 1 or 0 - and
+    /// the number they make is taken to four places so.
     /// </para>
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// A Currency column's value is not a number: text, which is not read as one, or a value of another kind.
-    /// Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// A Currency column's value is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a
+    /// <see cref="char"/>. Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
+    /// <exception cref="FormatException">
+    /// A Currency column's value is text that does not read as a number in the current culture. Nothing of the row
+    /// is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="OverflowException">
     /// A Currency column's value is a number no Currency holds: NaN, an infinity, or one past
@@ -604,8 +610,8 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="ArgumentException"/> for a Currency column's value that is not a number and
-    /// <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
+    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a Currency column's value that
+    /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
     /// takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
     /// does not take, a zero-length string in a column that does not allow one, or a
@@ -728,8 +734,12 @@ public sealed class Table
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
-    /// table's. Or a value it assigns to a Currency column is not a number (<see cref="Insert"/>). Nothing is
-    /// written.
+    /// table's. Or a value it assigns to a Currency column is of a kind no number is made of (<see cref="Insert"/>).
+    /// Nothing is written.
+    /// </exception>
+    /// <exception cref="FormatException">
+    /// A value <paramref name="row"/> assigns to a Currency column is text that does not read as a number
+    /// (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="OverflowException">
     /// A value <paramref name="row"/> assigns to a Currency column is a number no Currency holds

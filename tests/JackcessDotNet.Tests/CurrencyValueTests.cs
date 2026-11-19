@@ -126,10 +126,25 @@ public sealed class CurrencyValueTests : IDisposable
                  })
             Assert.True(closest == (decimal)table.CreateIndexCursor("ByC").FindClosestRowByEntry(asked)!["C"]!, $"the closest row to {Shown(asked)}");
 
-        // A value no Currency holds, or one that is not a number, is not one the column holds.
+        // Text and a bool are taken as a write takes them, for the number every number column takes them for; an
+        // equality takes neither for a number, as in every number column.
+        var was = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo("en-US");
+        try
+        {
+            Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartEntry = new object[] { "0.03125" }, EndEntry = new object[] { "0.03125" } }));
+            Assert.Equal(1.2346m, table.CreateIndexCursor("ByC").FindClosestRowByEntry("1.23465")!["C"]);
+            Assert.Equal(1.2345m, table.CreateIndexCursor("ByC").FindClosestRowByEntry(true)!["C"]);
+            Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByEntry("0.0312"));
+            Assert.Null(table.CreateCursor().FindRow("C", "0.0312"));
+            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new object[] { "abc" } }));
+        }
+        finally { CultureInfo.CurrentCulture = was; }
+
+        // A value no Currency holds, or one of a kind no number is made of, is not one the column holds.
         var cursor = table.CreateIndexCursor("ByC");
         Assert.NotNull(cursor.FindRowByEntry(0.0312m));
-        foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 922337203685477.625, 1e20, 922337203685477.5808m, "0.0312", true })
+        foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 922337203685477.625, 1e20, 922337203685477.5808m, 'x', new DateTime(2026, 1, 1) })
         {
             Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new[] { bad } }));
             Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { EndEntry = new[] { bad } }));
@@ -138,6 +153,42 @@ public sealed class CurrencyValueTests : IDisposable
             Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByEntry(bad));
             Assert.Null(table.CreateCursor().FindRow("C", bad));
         }
+    }
+
+    [Fact]
+    public void Text_and_a_bool_are_written_as_every_number_column_takes_them_and_the_number_rounded_as_a_Currency_is()
+    {
+        using var db = Create(FileFormat.Access2010);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("C", DataType.Currency), new ColumnDefinition("D", DataType.Double),
+        }, "Id");
+
+        var was = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("en-US");
+            table.Insert(new Row { ["Id"] = 1, ["C"] = "0.03125", ["D"] = "0.03125" });
+            table.Insert(new Row { ["Id"] = 2, ["C"] = "1,5", ["D"] = "1,5" });
+            table.Insert(new Row { ["Id"] = 3, ["C"] = true, ["D"] = true });
+            table.Insert(new Row { ["Id"] = 4, ["C"] = DayOfWeek.Monday, ["D"] = DayOfWeek.Monday });
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            table.Insert(new Row { ["Id"] = 5, ["C"] = "1,5", ["D"] = "1,5" });
+            var row = table.FindRowByPrimaryKey(1)!;
+            row["C"] = "0,09375";
+            table.Update(row);
+
+            // A Double keeps the number Convert makes of the value; a Currency takes it to four places, half to even.
+            Assert.Equal(new[] { "1: 0.0938 0.03125", "2: 15 15", "3: 1 1", "4: 1 1", "5: 1.5 1.5" },
+                table.Rows.OrderBy(r => (int)r["Id"]!).Select(r =>
+                    $"{r["Id"]}: {((decimal)r["C"]!).ToString(CultureInfo.InvariantCulture)} {((double)r["D"]!).ToString("R", CultureInfo.InvariantCulture)}"));
+
+            // An equality takes neither text nor a bool for a number, in a Currency column as in a Double one.
+            Assert.Null(table.CreateCursor().FindRow("C", "1,5"));
+            Assert.Null(table.CreateCursor().FindRow("D", "1,5"));
+            Assert.Null(table.CreateCursor().FindRow("C", true));
+        }
+        finally { CultureInfo.CurrentCulture = was; }
     }
 
     [Theory]
@@ -153,17 +204,19 @@ public sealed class CurrencyValueTests : IDisposable
             double.NaN, double.PositiveInfinity, double.NegativeInfinity, float.NaN, 922337203685477.625, -922337203685477.625,
             1e20, 922337203685477.5808m, -922337203685477.58095m, 922337203685478L, ulong.MaxValue,
         };
-        object[] notNumbers = { "1.5", "1,5", "", true, 'x', new DateTime(2026, 11, 20), Guid.NewGuid(), new byte[] { 1 }, DayOfWeek.Monday };
+        object[] noKindOfNumber = { 'x', new DateTime(2026, 11, 20), Guid.NewGuid(), new byte[] { 1 } };
+        object[] noNumberText = { "", "abc", "-" };
         using (var db = Database.Open(_file!))
         {
             var table = db.GetTable("K");
-            foreach (object bad in notHeld.Concat(notNumbers))
+            foreach (object bad in notHeld.Concat(noKindOfNumber).Concat(noNumberText))
             {
-                bool number = notHeld.Contains(bad);
+                Type expected = notHeld.Contains(bad) ? typeof(OverflowException)
+                    : noKindOfNumber.Contains(bad) ? typeof(ArgumentException) : typeof(FormatException);
                 void Refused(Action change)
                 {
                     var e = Record.Exception(change);
-                    Assert.True(number ? e is OverflowException : e is ArgumentException, $"{Shown(bad)}: {e?.GetType().Name ?? "no exception"}");
+                    Assert.True(e?.GetType() == expected, $"{Shown(bad)}: {e?.GetType().Name ?? "no exception"}, not {expected.Name}");
                     Assert.Contains("'C'", e!.Message);
                 }
                 Refused(() => table.Insert(new Row { ["Id"] = 2, ["C"] = bad }));

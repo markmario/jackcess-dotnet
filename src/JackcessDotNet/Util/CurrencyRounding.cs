@@ -19,9 +19,14 @@ namespace JackcessDotNet.Util;
 /// Where Access does otherwise this does not follow it. ACE's scan, with no index to answer, takes a decimal through
 /// a double - 1.23465 is 1.2347 there and 0.00015 is 0.0001 - and so does not find the row its own <c>INSERT</c> wrote
 /// with that decimal. ACE and DAO write NaN as the least Currency, and an <c>=</c> finds that row for NaN; here NaN is
-/// no Currency, as an infinity and a number past the range are not, which Access refuses ("Overflow"). And Access
-/// reads text as a number by the machine's locale ('1,5' is 15 where a comma groups digits): here text is not a
-/// number, nor is a Yes/No (which Access writes as -1) or any other value that is not one of .NET's numbers.
+/// no Currency, as an infinity and a number past the range are not, which Access refuses ("Overflow").
+/// </para>
+/// <para>
+/// A value that is not one of .NET's numbers is taken as every number column takes it (<see cref="NumberOf"/>): text
+/// read in the current culture, a <see cref="bool"/> as 1 or 0. Access reads text by the machine's locale and writes
+/// True as -1; how text and a Yes/No are taken is a question for every number type alike, and here only the number
+/// they make is taken to four places by this rule. A lookup for one row by its value does not take them for numbers,
+/// as it does not for any number column.
 /// </para>
 /// </summary>
 internal static class CurrencyRounding
@@ -29,6 +34,19 @@ internal static class CurrencyRounding
     /// <summary>Whether a value is a number a Currency is made of: an integer of any size, a float, a double or a decimal.</summary>
     internal static bool IsNumber(object? value)
         => value is sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal;
+
+    /// <summary>
+    /// The number a value that is not one of .NET's numbers (<see cref="IsNumber"/>) stands for when a row is written
+    /// with it, or a range or the closest row is looked for by it, as every number column takes such a value: what
+    /// <see cref="Convert.ToDecimal(object, IFormatProvider)"/> makes of it in the current culture - text read as a
+    /// number, a <see cref="bool"/> as 1 or 0, an enum as its own number.
+    /// </summary>
+    /// <exception cref="FormatException"><paramref name="value"/> is text that does not read as a number.</exception>
+    /// <exception cref="InvalidCastException">
+    /// <paramref name="value"/> is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a <see cref="char"/>.
+    /// </exception>
+    /// <exception cref="OverflowException"><paramref name="value"/> is text of a number past what a decimal holds.</exception>
+    internal static decimal NumberOf(object value) => Convert.ToDecimal(value, CultureInfo.CurrentCulture);
 
     /// <summary>
     /// The ten-thousandths <paramref name="value"/> is taken to, half to even; false for a value that is not a number
@@ -104,18 +122,19 @@ internal static class CurrencyRounding
 
     /// <summary>
     /// The ten-thousandths a row stores for <paramref name="value"/>, given for a Currency column: what
-    /// <see cref="TryUnits(object?, out long)"/> takes it to.
+    /// <see cref="TryUnits(object?, out long)"/> takes a number to, and a value that is not one of .NET's numbers
+    /// taken first for the number every number column takes it for (<see cref="NumberOf"/>).
     /// </summary>
-    /// <exception cref="InvalidCastException"><paramref name="value"/> is not a number (<see cref="IsNumber"/>).</exception>
+    /// <exception cref="FormatException"><paramref name="value"/> is text that does not read as a number.</exception>
+    /// <exception cref="InvalidCastException"><paramref name="value"/> is of a kind no number is made of.</exception>
     /// <exception cref="OverflowException">
     /// <paramref name="value"/> is a number no Currency holds: not a number, an infinity, or past the range.
     /// </exception>
     internal static long Units(object value)
     {
-        if (!IsNumber(value))
-            throw new InvalidCastException($"A Currency is made of a number, and {NotANumber(value)}.");
-        if (!TryUnits(value, out long units))
-            throw new OverflowException($"A Currency is made of a number, and {NotHeld(value)}.");
+        object number = IsNumber(value) ? value : NumberOf(value);
+        if (!TryUnits(number, out long units))
+            throw new OverflowException($"A Currency is made of a number, and {NotHeld(number)}.");
         return units;
     }
 
@@ -128,11 +147,14 @@ internal static class CurrencyRounding
     /// <summary>The greatest Currency, as a decimal.</summary>
     internal const decimal Greatest = 922_337_203_685_477.5807m;
 
-    /// <summary>Why <paramref name="value"/>, which is not a number (<see cref="IsNumber"/>), makes no Currency.</summary>
+    /// <summary>
+    /// Why <paramref name="value"/> makes no Currency when <see cref="NumberOf"/> takes it for no number: text that does
+    /// not read as one in the current culture, or a value of a kind no number is made of.
+    /// </summary>
     internal static string NotANumber(object value)
         => value is string
-            ? $"{Shown(value)} is text, which is not read as a number"
-            : $"{Shown(value)} is a {value.GetType().Name}, not a number";
+            ? $"{Shown(value)} does not read as a number in the current culture"
+            : $"{Shown(value)} is a {value.GetType().Name}, of which no number is made";
 
     /// <summary>
     /// Why no Currency holds <paramref name="value"/>, a number <see cref="TryUnits(object?, out long)"/> refuses: it

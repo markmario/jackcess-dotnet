@@ -114,25 +114,26 @@ changed since 1.2.2.
     writes. A `decimal` is taken half to even, as Access writes one: 1.23465 is 1.2346 (it was 1.2347).
   - **Ranges and `FindClosestRowByEntry`** keyed a `double` as a write did: a range of 0.03125 alone had the rows
     of 0.0313, where `=` found 0.0312's, and on .NET Framework and .NET up to 10 a bound past 15 significant digits
-    was refused with `ArgumentException` or found no row. A bound that is not a number, or one no Currency holds -
-    NaN, an infinity, a number past the range - is refused with `ArgumentException`, as Access refuses one past the
-    range ("Overflow").
+    was refused with `ArgumentException` or found no row. A bound no Currency holds - NaN, an infinity, a number past
+    the range - is refused with `ArgumentException`, as Access refuses one past the range ("Overflow").
   - **Relationships** compared a child's key with its parent's as a write rounded it, so the double 0.03125 had no
     parent 0.0312. **A property** took a `double` through a `decimal` of 15 digits. **An import** that adds a
     `double` or `float` to a Currency column (`AppendIfExists`) takes the numbers it took and refuses those it
     refused, but each as the Currency Access makes of it: past 2^38 or so it took the number the round-trip form
     says, which can be another Currency (35184372088832.0078125 was 35184372088832.01; it is 35184372088832.0078).
-  - **A write refuses, before anything is written**, a value that is not a number with `ArgumentException`: text,
-    which was read in the machine's culture (`"1,5"` was 15 in English and 1.5 in German) and which a lookup never
-    read as a number; a `bool`, which was written as 1 where Access writes -1; a date or any other type. And NaN,
-    the infinities and a number past the range once taken to four places with `OverflowException`, as a number
-    past the range was refused.
+  - **Text and a `bool` are taken as before**, as every number column takes them - text read in the current
+    culture, a `bool` as 1 or 0 - and the number they make is taken to four places by the same rule. **A write
+    refuses, before anything is written,** NaN, the infinities and a number past the range once taken to four places
+    with `OverflowException`, as a number past the range was refused; a date, a `Guid`, bytes or a `char` with
+    `ArgumentException`, where it was an `InvalidCastException`; and text that reads as no number with
+    `FormatException`, as before, now naming the column.
 
-  Three things Access does that this library does not: ACE and DAO write NaN as the least Currency
-  (-922,337,203,685,477.5808), the integer a processor makes of NaN, and their `=` finds that row for NaN; ACE reads
-  text by the machine's locale; and ACE's scan, with no index to answer, takes a `decimal` through a `double` -
-  0.00015m is 0.0001 there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's
-  index, its writes and DAO's take a decimal exactly, and so does this library, by a scan as through an index.
+  Where Access differs: ACE and DAO write NaN as the least Currency (-922,337,203,685,477.5808), the integer a
+  processor makes of NaN, and their `=` finds that row for NaN; ACE reads text by the machine's locale and writes
+  True as -1, where this library, for a Currency as for every number column, reads text in the current culture and
+  takes True as 1; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
+  there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's index, its writes and
+  DAO's take a decimal exactly, and so does this library, by a scan as through an index.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index

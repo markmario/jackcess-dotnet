@@ -197,9 +197,10 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     an equality, in a range and for `FindClosestRowByEntry` alike, as ACE's `=`, `BETWEEN`, `>=`, `>`, `<=` and
     `<` through an index and DAO's `Seek` take it: the double 0.03125 finds 0.0312, the double 0.00015, which is
     just under that half, finds 0.0001, and 1.23465m finds 1.2346. ACE's scan, with no index to answer, takes a
-    decimal through a double, and finds 1.2347 for it. Text is not a number, and NaN, an infinity or a number past
-    the range is no Currency: they find no row, and a range or `FindClosestRowByEntry` refuses them with
-    `ArgumentException`, as ACE's refuses a number past the range.
+    decimal through a double, and finds 1.2347 for it. Text is no number to an equality, as in every number
+    column, and a range takes it as a write does. NaN, an infinity or a number past the range is no Currency: it
+    finds no row, and a range or `FindClosestRowByEntry` refuses it with `ArgumentException`, as ACE's refuses a
+    number past the range.
   - *A Double or a Single* is the caller's number as the column stores it, by its bits, as ACE's index has it:
     +0.0 and -0.0 are two numbers, where ACE's scan finds both for either. *A Decimal* is the same number
     exactly, a caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7 significant
@@ -1067,10 +1068,13 @@ have been deleted - and a row Access moved to another page is read where its poi
   wherever one is made: a row, its index keys, a relationship's check, a property, an import
   ([#65](https://github.com/markmario/jackcess-dotnet/issues/65)). Measured with ACE 16 and DAO, which write alike
   through every path tried: the double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written
-  as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346. A value that is not a number is
-  refused with `ArgumentException`, text among them: Access reads text by the machine's locale. NaN, an infinity
-  and a number past -922,337,203,685,477.5808 to 922,337,203,685,477.5807 are refused with `OverflowException`;
-  Access refuses the last two ("Overflow"), and writes NaN as the least Currency, which this library does not.
+  as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346. Text and a `bool` are taken as
+  every number column takes them - text read in the current culture, a `bool` as 1 or 0 - and the number they make
+  is taken to four places so; Access reads text by the machine's locale and writes True as -1. A date, a `Guid`,
+  bytes or a `char` is refused with `ArgumentException`, and text that reads as no number with `FormatException`.
+  NaN, an infinity and a number past -922,337,203,685,477.5808 to 922,337,203,685,477.5807 are refused with
+  `OverflowException`; Access refuses the last two ("Overflow"), and writes NaN as the least Currency, which this
+  library does not.
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
 - **An empty byte array is a value of no bytes** in a Binary or OLE Object column: written as ACE's OLE DB writes
