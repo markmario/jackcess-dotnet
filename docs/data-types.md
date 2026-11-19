@@ -1,0 +1,115 @@
+# Data types
+
+The names `DataType` gives Access's column types, and what is particular to reading and writing some of them:
+Large Number and Date/Time Extended, Currency, Decimal, Date/Time, text, binary values, Yes/No and calculated
+columns. How a lookup compares a caller's value with each type is in
+[How a lookup matches values](cursors-and-rows.md#how-a-lookup-matches-values), and which column an import makes
+for each CLR type, and what comes back, in the
+[type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet).
+
+## DataType names
+
+`DataType` members are named for the CLR type of that meaning where there is one - `Int16` (Access's
+Integer), `Int32` (Long Integer), `Int64` (Large Number), `Single`, `Double`, `Decimal`, `DateTime`, `Guid`
+(Replication ID) - and otherwise by Access's word: `Currency`, `Text`, `Memo`, `OleObject`, `Binary`,
+`DateTimeExtended`.
+
+## Large Number and Date/Time Extended
+
+Large Number and Date/Time Extended columns (Access 2016 and 2019) are read, written, created and indexed. A
+Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to 9999 to 100
+nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick; it has no time
+zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row stores, in
+whichever form Access wrote them, as Access makes it. A value DAO stored through a table-type recordset
+(`dbOpenTable`), whose `AddNew` and `Edit` write a layout of their own, is read as null ([#64]).
+
+Either column is for an `.accdb`, and a table with one makes an older `.accdb` one of a later format:
+[A column that changes a file's format](file-formats.md#a-column-that-changes-a-files-format). How a Date/Time
+Extended value is found: [Date/Time Extended](cursors-and-rows.md#datetime-extended); how it is matched as a key:
+[How keys are matched](relationships.md#how-keys-are-matched).
+
+## Currency
+
+A Currency is a number to four places. How a caller's number is taken to one when it is looked for:
+[Currency](cursors-and-rows.md#currency) ([#65]).
+
+## Decimal
+
+- **Decimal values an earlier version wrote read back as different numbers.** A Decimal is stored as four
+  32-bit words; earlier versions (the `JackcessDotNet` package up to 1.2.2 among them:
+  [Which files](earlier-versions.md#which-files)) wrote and read sixteen bytes in the other order, so they and
+  Access never agreed (a 1 written by an earlier version is 16,777,216 to Access, and to this library too). Such a
+  value cannot be told from one Access wrote; one that reads with more digits than its column's precision is
+  almost certainly one. Access-written Decimals, which earlier versions misread, read correctly.
+
+  `DecimalByteOrder.Find(database)`, and the same for a `Table`, in the `JackcessDotNet.Diagnostics` namespace,
+  lists the values that read with more digits than their column holds: the table, the column, the row (its
+  primary key, and its place among the table's rows), the value as it reads and the value its bytes make in the
+  earlier order. It changes nothing - a read returns what it did - and repairs nothing:
+
+  ```csharp
+  foreach (var suspect in DecimalByteOrder.Find(db))
+      Console.WriteLine(suspect);
+  // Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order
+  ```
+
+  It finds some such values, not all: a number written in the earlier order can still read within its column's
+  precision. In a column of precision 7 or less, every number under 4,294,967,296 (before its decimal point is
+  placed) that is not a multiple of 256 is listed; of precision 8 or 9, some; of precision 10 or more - 18 is
+  the default, Access's and this library's - none, and only larger numbers can be. An empty list does not say
+  the file has no such value.
+- **A stored number that runs past 96 bits** - the first of the four words set, which Access never writes - reads
+  as the number its low 96 bits make, with its sign, as Access reads it through its OLE DB provider and through
+  DAO; earlier versions read it as null. 2^96 + 12345 in a `DECIMAL(5,2)` column is 123.45. Such a value is
+  always listed by `DecimalByteOrder.Find`, with `IsCut` set, whatever its low 96 bits make. Java Jackcess returns
+  all 128 bits as a `BigDecimal`, which a `decimal` cannot hold.
+- **Neither Access nor Java Jackcess checks a Decimal against its column's precision when it reads one.** Jackcess
+  returns the number. In Access, DAO returns it and SQL computes with it (the 1 above is found by
+  `WHERE Price = 16777216`), but the OLE DB provider cannot hand it over - reading the column fails with
+  "Conversion failed because the Decimal data value overflowed the type specified" - and a query that sorts its
+  rows, or writes the value back, is refused: "The decimal field's precision is too small to accept the numeric
+  you attempted to add."
+
+A Decimal column has no index keys this library writes: [Indexes kept on every write](indexes.md#indexes-kept-on-every-write).
+
+## Date/Time
+
+A Date/Time is read and written to the millisecond. An update of another column leaves a Date/Time Access stored
+finer than that, or outside what `DateTime` holds, as it is
+([Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows)), and a lookup
+finds every row whose number reads as the `DateTime` given ([Date/Time](cursors-and-rows.md#datetime)).
+
+## Text and Memo
+
+- **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
+  is written that way.
+- Text longer than its column is refused:
+  [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
+  column's sort order: [Text](cursors-and-rows.md#text) and
+  [Text index keys](indexes.md#text-index-keys-sort-orders-and-limits). Where a Memo's value is kept:
+  [Long values](storage.md#long-values).
+
+## Binary and OLE Object
+
+- **An empty byte array is a value of no bytes** in a Binary or OLE Object column: written as ACE's OLE DB writes
+  one, and read back as `byte[0]`, as ACE's OLE DB and SQL read it (`IS NULL` is false, `LenB` is 0). DAO - and so
+  Access's own forms - reads it as Null, and DAO writes an empty array as Null. An import writes one as an insert
+  does.
+- A `byte[]` longer than a Binary column is refused:
+  [When a change is refused](cursors-and-rows.md#when-a-change-is-refused).
+
+## Yes/No
+
+A Yes/No holds no null: what a null given one becomes, and how it is matched as a key, is in
+[How keys are matched](relationships.md#how-keys-are-matched); an import refuses a null for one
+([type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet)).
+
+## Calculated columns
+
+**A calculated column reads as null**, and a table with one is not written to: an insert, an update and a delete
+are each refused with `NotSupportedException`.
+
+[Back to contents](README.md)
+
+[#64]: https://github.com/markmario/jackcess-dotnet/issues/64
+[#65]: https://github.com/markmario/jackcess-dotnet/issues/65
