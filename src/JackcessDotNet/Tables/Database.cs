@@ -665,7 +665,7 @@ public sealed class Database : IDisposable
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
-    ///   or Complex column, or text in a sort order other than General - Legacy and General; or the database is
+    ///   or Complex column, or text in a sort order whose keys it does not make; or the database is
     ///   an Access 97 file, which is only read. Nothing is created.
     /// </exception>
     public Table CreateTable(string name, IEnumerable<ColumnDefinition> columns,

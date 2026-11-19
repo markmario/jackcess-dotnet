@@ -710,8 +710,8 @@ public sealed class Table
     /// <exception cref="InvalidOperationException">A column the index names is not in the table. Nothing is changed.</exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
-    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and
-    /// General), or a row holds a value no key is made for; or the table's definition runs, or would run, over
+    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order whose keys it does not make),
+    /// or a row holds a value no key is made for; or the table's definition runs, or would run, over
     /// more than one page. Nothing is changed.
     /// </exception>
     public Index AddIndex(IndexDefinition index)

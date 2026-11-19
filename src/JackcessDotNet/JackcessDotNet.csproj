@@ -121,6 +121,8 @@
     <EmbeddedResource Include="Resources\\index_codes_ext_genleg.txt" />
     <EmbeddedResource Include="Resources\\index_codes_gen.txt" />
     <EmbeddedResource Include="Resources\\index_codes_ext_gen.txt" />
+    <EmbeddedResource Include="Resources\\index_codes_gen_97.txt" />
+    <EmbeddedResource Include="Resources\\index_mappings_ext_gen_97.txt" />
   </ItemGroup>
 
 </Project>

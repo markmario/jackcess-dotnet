@@ -39,6 +39,15 @@ changed since 1.2.2.
   sizes between could not be made with text. A value goes onto a page Access left with 258 to 263 bytes where
   Access would put it, and such a page is no longer taken out of the map.
 
+- **Text keys in the orders of nine more locales, and Access 97's text indexes searched** (#23). A database
+  made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
+  German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
+  General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
+  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
+  General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
+  and ß among accented letters).
+
 ### Breaking changes to the public API
 
 Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds

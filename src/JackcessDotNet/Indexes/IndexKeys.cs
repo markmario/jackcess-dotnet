@@ -24,8 +24,8 @@ internal static class IndexKeys
                 or DataType.Int64 or DataType.DateTimeExtended;
 
     /// <summary>
-    /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
-    /// encodes and, for text, a column that sorts in an order whose keys it writes (<see cref="TextIndexCodes.For"/>).
+    /// True when <see cref="Encode"/> makes the keys Access writes for <paramref name="column"/>: a type it
+    /// encodes and, for text, a column that sorts in an order whose keys it makes (<see cref="TextIndexCodes.For"/>).
     /// </summary>
     public static bool CanEncode(Column column)
         => CanEncode(column.DataType)
@@ -34,7 +34,8 @@ internal static class IndexKeys
     /// <summary>
     /// True when <see cref="Encode"/> writes the key Access writes for <paramref name="value"/> in
     /// <paramref name="column"/>: a column it writes keys for and, for text, a value with no character Access keys
-    /// by the characters around it (<see cref="TextIndexCodes.CanEncode"/>).
+    /// by the characters around it and, in an Access 97 file, none its code page has not
+    /// (<see cref="TextIndexCodes.CanEncode"/>).
     /// </summary>
     public static bool CanEncode(Column column, object? value)
         => CanEncode(column)
@@ -45,11 +46,14 @@ internal static class IndexKeys
     public static string WhyNot(Column column)
         => !CanEncode(column.DataType)
             ? $"{column.Name} is a {column.DataType} column, whose keys this library does not write"
-            : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy} and {SortOrder.General}";
+            : $"{column.Name} sorts in {column.SortOrder}, and this library makes text keys only in {SortOrder.GeneralLegacy}, " +
+              $"the orders whose keys are the same, {SortOrder.General} and {SortOrder.Access97General}";
 
-    /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are written.</summary>
+    /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are made.</summary>
     public static string WhyNot(Column column, object? value)
-        => $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
+        => TextIndexCodes.For(column.SortOrder) == TextIndexCodes.Access97
+            ? $"{column.Name}'s value '{value}' has a character that Access 97's code page 1252 has not, and this library makes no key for it"
+            : $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
 
     /// <summary>
     /// The key of an entry whose columns hold <paramref name="values"/>, in the index's column order. Refuses a
@@ -100,14 +104,16 @@ internal static class IndexKeys
     /// value is one a key is made for (<see cref="CanEncode(Column, object?)"/>), and the key is no longer than an
     /// entry holds. Access cuts a longer key and ends it in a digest, and so does <see cref="Encode"/>, but
     /// Jackcess and versions of this library before the digest wrote such a key whole, where a search by the cut
-    /// key does not find it. A caller scans the table for values this is false for.
+    /// key does not find it. An Access 97 file's entry holds half as much (<see cref="Access97MaxKeyLength"/>),
+    /// and how it ends a longer key is not made here. A caller scans the table for values this is false for.
     /// </summary>
     public static bool CanSearch(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
         if (values.Count != columns.Count) return false;
         for (int i = 0; i < columns.Count; i++)
             if (!CanEncode(columns[i].Column, values[i])) return false;
-        return EncodeWhole(columns, values).Length <= MaxKeyLength;
+        bool access97 = columns.Any(c => c.Column.DataType is DataType.Text or DataType.Memo && c.Column.SortOrder.IsAccess97);
+        return EncodeWhole(columns, values).Length <= (access97 ? Access97MaxKeyLength : MaxKeyLength);
     }
 
     /// <summary>
@@ -133,6 +139,12 @@ internal static class IndexKeys
 
     /// <summary>The most bytes an index entry's key has.</summary>
     internal const int MaxKeyLength = 510;
+
+    /// <summary>
+    /// The most bytes an entry's key has in an Access 97 file: ACE 12 keys 255 of "x" there in 255 bytes, the
+    /// last two not the key's own.
+    /// </summary>
+    internal const int Access97MaxKeyLength = 255;
 
     private static readonly ushort[] DigestTable = BuildDigestTable();
 

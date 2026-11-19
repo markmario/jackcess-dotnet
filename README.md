@@ -68,8 +68,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   also stay in insertion order. A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
-- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
-  and for General (Access 2010 and later).
+- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),
+  for the orders of nine other locales that have its keys, and for General (Access 2010 and later). An
+  Access 97 file's text indexes are searched, in Access 97's General order.
 - **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
   enforced. Access answers through them after the engine adds, changes or deletes rows.
 - **An insert fills AutoNumber columns from the table's own counter**, as Access does.
@@ -92,10 +93,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 
 Limits to know about:
 
-- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
-  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
-  order or any other sort order, or a column type it makes no key for. It still reads such a table.
-  See [Text index keys](#text-index-keys-sort-orders-and-limits).
+- Text keys are written in the General - Legacy and General orders, and in the orders of the locales whose
+  keys are General - Legacy's. The engine refuses, before changing anything, to write to a table with an
+  index whose keys it cannot write: text in any other sort order, or a column type it makes no key for. It
+  still reads such a table. See [Text index keys](#text-index-keys-sort-orders-and-limits).
 - A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
   throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
   asks each before it writes to any.
@@ -497,26 +498,63 @@ but Office Access may flag a stale integrity hash. Matches the upstream
 
 ## Text index keys: sort orders and limits
 
-An index entry's key for text depends on the column's sort order. The library
-writes, and searches by, the keys of two orders, each checked byte for byte
-against the keys Microsoft's own engine (ACE 16) writes:
+An index entry's key for text depends on the column's sort order: a code, which
+is a locale's LCID, and in an Access 2000 or later file a version. The library
+makes the keys of the orders below, each checked byte for byte against the keys
+Microsoft's own engine writes.
+
+Written, and searched by:
 
 - **General - Legacy** (sort order 1033, version 0): Access 2000 to 2007, and
   what a new database gets by default in later versions.
 - **General** (1033, version 1): what Access 2010 and later can make a new
   database in. A table created in such a file sorts as the file does.
+- **The orders of nine other locales, version 0**, whose keys are those of
+  General - Legacy: Arabic (1025), German (1031), Greek (1032), Hebrew (1037),
+  Italian (1040), Dutch (1043), Russian (1049, DAO's `dbLangCyrillic`), British
+  English (2057) and Portuguese (2070). A database made in such a locale - by
+  DAO's `CreateDatabase` with that locale, or by Access with it as the "New
+  database sort order" - gives every Text and Memo column the locale's LCID in
+  place of 1033. ACE 16 was had to index 1,013,302 values in a database of each
+  (`tools/ace-text-keys.ps1 -Locale`): every character of the BMP alone and
+  between two letters, every pair of letters of Latin-1 and Latin Extended-A and
+  of characters within the Greek, Cyrillic, Hebrew, Arabic and Thai blocks,
+  letters with each combining mark, runs of ASCII, 500,000 values of two to
+  eight characters, and the values of the General - Legacy golden files. Every
+  key is the one ACE writes for the value in a database of locale 1033. A table
+  created in such a file sorts as the file does.
 
-What it does not do, and refuses rather than write a key Access cannot find:
+Searched by, in a file that is only read:
 
-- **Access 97's order, and any other sort order** (for example 1049, Russian).
-  A file whose catalog sorts in one is not given a table, and a table with an
-  index on a Text or Memo column that sorts in one is not inserted into,
-  updated or deleted from.
-  Such a file is still read; its text indexes are not searched, its tables are
-  scanned. ACE 12's keys for Access 97's order are kept in
-  `tests/JackcessDotNet.Tests/IndexKeys` for a later port
-  (qcatco/exportmdb.interop#26). An Access 97 file is not written to at all:
-  see [Access 97 files are read-only](#access-97-files-are-read-only).
+- **Access 97's General order** (1033 in an Access 97 file). An Access 97 file
+  is not written to at all (see
+  [Access 97 files are read-only](#access-97-files-are-read-only)); a row is
+  found through a text index of one instead of by reading its table. The codes
+  are Jackcess's `General97IndexCodes`, with what ACE writes otherwise: a
+  character keyed as two letters (Œ, Æ, ß) takes a place for each among the
+  accents. Access 97 keeps text in code page 1252, and a value with a character
+  that code page has not, or whose key is longer than the 255 bytes an entry
+  there holds, is looked for by reading the table. The keys are those the 32-bit
+  ACE 12.0 and Jet 4.0 write in an Access 97 file (ACE 16 opens none): every
+  character of the code page alone and in every pair, and 40,000 longer values,
+  were compared, and every text key in the nine files Access 97 itself wrote, in
+  the corpus, is the key made of its row's values.
+
+Refused, rather than write a key Access cannot find:
+
+- **Any other sort order.** ACE's keys were measured to differ from General -
+  Legacy's for Chinese (1028, 2052), Czech, Danish and Norwegian, French,
+  Hungarian, Icelandic, Japanese, Korean, Lithuanian, Polish, Romanian, Slovak,
+  Slovenian, Croatian, Spanish (1034, 3082), Swedish and Finnish, Thai, Turkish,
+  Ukrainian and Vietnamese - a few letters in most, and in Thai and Ukrainian
+  only among other characters, which is why a locale that was not measured is
+  refused too. The version 1 order of a locale other than 1033, which Access
+  2010 and later can make a database in and DAO cannot, was not measured, nor
+  were Access 97's other orders. A file whose catalog sorts in such an order is
+  not given a table, and a table with an index on a Text or Memo column that
+  sorts in one is not inserted into, updated or deleted from. Such a file is
+  still read; its text indexes are not searched, its tables are scanned. Jackcess
+  writes none of them either.
 - **A value in an indexed Text or Memo column, or a table name, with a
   character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
   々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
