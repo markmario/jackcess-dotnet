@@ -26,7 +26,8 @@ changed since 1.2.2.
   `TypeInitializationException` ("No data is available for encoding 1252") unless the application had registered
   the provider itself. It depends on `System.Text.Encoding.CodePages` and registers it.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
-  `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only.
+  `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
+  by side, and checks the packages each target of the package depends on.
 - **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
   format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time

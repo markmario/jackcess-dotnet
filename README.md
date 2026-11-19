@@ -47,12 +47,15 @@ have to travel with it; the package carries both.
 
 The package has four assemblies, and NuGet gives an application the nearest one:
 
-| The application runs on | It gets | Package dependencies |
-|---|---|---|
-| .NET 10 | `net10.0` | none |
-| .NET 11 and later | `net11.0` | none |
-| .NET Framework 4.8 and 4.8.1 | `net48` | `System.Memory`, `Microsoft.Bcl.HashCode` |
-| .NET 8 and 9, .NET Framework 4.6.2 to 4.7.2, anything else on .NET Standard 2.0 | `netstandard2.0` | those two, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` |
+| The application runs on | It gets | Package dependencies | The tests run it on |
+|---|---|---|---|
+| .NET 10 | `net10.0` | none | .NET 10 |
+| .NET 11 and later | `net11.0` | none | .NET 11 |
+| .NET Framework 4.8 and 4.8.1 | `net48` | `System.Memory`, `Microsoft.Bcl.HashCode` | .NET Framework 4.8 |
+| .NET 8 and 9, .NET Framework 4.6.2 to 4.7.2, anything else on .NET Standard 2.0 (Mono, Unity) | `netstandard2.0` | those two, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` | .NET 10 and .NET Framework 4.8 |
+
+Every row is the whole test suite, on every pull request. The `netstandard2.0` assembly is not run on .NET 8 or
+9, on .NET Framework 4.7.2, or on Mono or Unity themselves: .NET 10 and .NET Framework 4.8 stand in for them.
 
 There is no `net472` assembly: an application on .NET Framework 4.7.2 gets the `netstandard2.0` one, and
 .NET Framework 4.8 is the oldest with an assembly of its own. `net48` rather than `net481` because 4.8 runs on
@@ -141,7 +144,8 @@ dotnet test JackcessDotNet.slnx --configuration Release
   and `--framework net48` runs one.
 - The `netstandard2.0` assembly is not one a test project can target, so the same tests run against it with
   `-p:NetStandardAsset=true`, on .NET 10 (as an application on .NET 8 or 9 loads it) and on .NET Framework 4.8
-  (as one on 4.7.2 does). That build goes to `bin/Release-netstandard`, beside the ordinary one:
+  (as one on 4.7.2 does). `LibraryAssemblyTests` fails if the assembly loaded is not the one the build was for.
+  That build goes to `bin/Release-netstandard`, beside the ordinary one:
   `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true`
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.

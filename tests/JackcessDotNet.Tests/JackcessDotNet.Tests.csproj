@@ -29,6 +29,8 @@
   <PropertyGroup Condition="'$(NetStandardAsset)' == 'true'">
     <OutputPath>bin\$(Configuration)-netstandard\</OutputPath>
     <IntermediateOutputPath>obj\$(Configuration)-netstandard\</IntermediateOutputPath>
+    <!-- LibraryAssemblyTests checks that the assembly loaded is the netstandard2.0 one. -->
+    <DefineConstants>$(DefineConstants);NETSTANDARD_ASSET</DefineConstants>
   </PropertyGroup>
   <ItemGroup Condition="'$(NetStandardAsset)' == 'true'">
     <ProjectReference Include="..\..\src\JackcessDotNet\JackcessDotNet.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
