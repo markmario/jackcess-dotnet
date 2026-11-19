@@ -1001,7 +1001,7 @@ public sealed class Database : IDisposable
     internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
     {
         var format   = file.Format;
-        var tdefPage = TdefBuffer.Read(file, tdefPageNum);
+        var tdefPage = TdefBuffer.Read(file, tdefPageNum, out _, out bool isBroken);
         var info     = TdefReader.Read(tdefPage, format);
 
         var tableDef = new TableDefinition(name, info.Columns)
@@ -1011,10 +1011,10 @@ public sealed class Database : IDisposable
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
-            HasUnreadIndexes = info.HasUnreadIndexes,
+            HasUnreadIndexes = info.HasUnreadIndexes || isBroken,
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
-            HasUnreadColumns  = info.HasUnreadColumns,
+            HasUnreadColumns  = info.HasUnreadColumns || isBroken,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)

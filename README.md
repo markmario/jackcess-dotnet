@@ -448,9 +448,11 @@ index slots.
 - **Where Access and Jackcess differ, Access is followed**: a name that is taken is refused, not changed; a
   cycle of cascading relationships is allowed; a table's index slots stay in the order of their names; a new
   index's block carries the counts Access puts there.
-- **A table's definition goes on to as many pages as it takes**, as Access's does and Jackcess's: a table with
-  many columns or long names is created, read, written to and changed like any other, up to the 255 columns
-  and 32 indexes a table has.
+- **A table's definition goes on to as many pages as Access gives it**: a table with many columns or long names
+  is created, read, written to and changed like any other, up to the 255 columns and 32 indexes a table has.
+  Access puts a definition on the fewest pages that hold its length and eight bytes more, so one that ends in
+  the last eight bytes of a page has a page after it with none of it. Jackcess writes such a definition on the
+  page it fills, and Access then opens nothing of the file; here Access is followed.
 - **Usage maps.** A new index's pages, and a new Memo or OLE column's, are listed in usage maps on a page of
   their own - 4 KB each - as for a table this library creates; Access finds room on the table's usage-map page
   first.

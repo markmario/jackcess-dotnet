@@ -50,6 +50,17 @@ changed since 1.2.2.
   definition Access put on several pages has all its columns' names and takes rows; a column, an index or a
   relationship that takes a definition past its page is added, where it was refused; and a table whose
   definition is longer than a page is created.
+- **A definition that ends within eight bytes of the end of a page has the page Access gives it after that
+  one** (#37); this fixes a defect on main. Access puts a definition on the fewest pages that hold its length
+  and eight bytes more, so one of 4,089 to 4,096 bytes has a second page with none of it, one of 8,177 to 8,184
+  a third. A table created with a definition of 4,089 to 4,096 bytes, or a column added that took one there,
+  was written on its one page, as Jackcess writes it, and Access then opened nothing of the file, `.mdb` or
+  `.accdb`: "Unrecognized database format".
+  Each page's free space is Access's too: the last page's is what the pages hold less the length and eight
+  bytes, and every other page's 0.
+- **A table whose definition goes on to a page that is not its own** - one the file has not, one already read,
+  or one that is no definition page - is opened, and read by the columns its sound pages name; nothing is
+  written to it or changed in it (#37).
 - **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
   value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
   has no Large Number, the table is refused with `NotSupportedException` before it is made.

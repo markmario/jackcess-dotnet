@@ -139,8 +139,15 @@ internal sealed class TdefEditor
     }
 
     /// <summary>The definition of the table whose definition starts on <paramref name="tdefPage"/>, read whole.</summary>
+    /// <exception cref="NotSupportedException">The definition's pages stop short, or it is not laid out as its header says: it is not changed.</exception>
     internal static TdefEditor Load(PageFile file, int tdefPage, string table)
-        => new(TdefBuffer.Read(file, tdefPage), file.Format, table);
+    {
+        byte[] definition = TdefBuffer.Read(file, tdefPage, out _, out bool isBroken);
+        if (isBroken)
+            throw new NotSupportedException(
+                $"Table '{table}' is not changed: its definition goes on to a page that is not one of its own, so it was not read whole. Nothing was changed.");
+        return new TdefEditor(definition, file.Format, table);
+    }
 
     private NotSupportedException Unexpected(string what)
         => new($"Table '{_table}' is not changed: its definition is not laid out as this library expects ({what}). Nothing was changed.");

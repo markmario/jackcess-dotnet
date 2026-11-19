@@ -9,8 +9,9 @@ namespace JackcessDotNet.Tests;
 /// another, named in the first page's bytes 4-7, and so on: each later page has eight bytes of its own and then the
 /// definition where the page before left it. Such a definition is read whole - Access's own, in the corpus's
 /// <c>common2</c> files - and one that grows past its page, as a column or an index is added, or is longer than a
-/// page when its table is created, is written that way. What Access makes of the result is in ExportMdb.Interop's
-/// MultiPageDefinitionsInAccessTests.
+/// page when its table is created, is written that way, on the pages Access gives it: the fewest that hold its
+/// length and eight bytes more. What Access makes of the result is in ExportMdb.Interop's
+/// SchemaChangesInAccessTests.
 /// </summary>
 public sealed class MultiPageDefinitionTests : IDisposable
 {
@@ -36,9 +37,12 @@ public sealed class MultiPageDefinitionTests : IDisposable
     }
 
     /// <summary>
-    /// The definition's pages are laid out as Access lays them out: every page a definition page, the length the
-    /// first page counted whole and the others without their eight bytes, a full page's free space 0 and the
-    /// last page's what is left of it less eight, and 0xFFFF where the length says the definition ends.
+    /// The definition's pages are laid out as Access lays them out: every page a definition page; as many pages as
+    /// hold the definition's length and eight bytes more, the first holding a page and each one after it eight
+    /// less, so that a definition ending within eight bytes of a page's end has a page after it with none of it;
+    /// the free space of the last page what the pages hold less the length and eight, and of every other 0; and
+    /// 0xFFFF where the length says the definition ends. Access's own boundary tables are held to the same
+    /// (<see cref="Access_lays_its_own_boundary_definitions_out_this_way"/>), so this is its rule and not the engine's.
     /// </summary>
     internal static void AssertLaidOutAsAccessDoes(Database db, string table)
     {
@@ -47,25 +51,287 @@ public sealed class MultiPageDefinitionTests : IDisposable
         var pages = PagesOf(db, table);
         int length = ByteUtil.GetInt(file.ReadPage(pages[0]), 8);
 
-        int expectedPages = length <= size ? 1 : 1 + (length - size + size - 8 - 1) / (size - 8);
+        int expectedPages = length + 8 <= size ? 1 : 1 + (length + 8 - size + size - 8 - 1) / (size - 8);
         Assert.Equal(expectedPages, pages.Count);
+        int capacity = size + (pages.Count - 1) * (size - 8);
 
-        int left = length;
         for (int i = 0; i < pages.Count; i++)
         {
             byte[] page = file.ReadPage(pages[i]);
-            int room = i == 0 ? size : size - 8;
-            int held = Math.Min(room, left);
-            left -= held;
+            bool isLast = i == pages.Count - 1;
             Assert.Equal(JetFormat.PageTypeTableDef, page[0]);
             Assert.Equal(1, page[1]);
-            Assert.Equal(Math.Max(room - held - 8, 0), ByteUtil.GetShort(page, 2));
-            Assert.Equal(i + 1 < pages.Count ? pages[i + 1] : 0, ByteUtil.GetInt(page, 4));
+            Assert.Equal(isLast ? capacity - length - 8 : 0, ByteUtil.GetShort(page, 2));
+            Assert.Equal(isLast ? 0 : pages[i + 1], ByteUtil.GetInt(page, 4));
         }
-        Assert.Equal(0, left);
 
         byte[] whole = TdefBuffer.Read(file, pages[0]);
         Assert.Equal(0xFFFF, ByteUtil.GetUShort(whole, length - 2));
+    }
+
+    // ── Where a definition ends near the end of a page ───────────────────────
+
+    private static string Asset(string name) => Path.Combine(AppContext.BaseDirectory, "Assets", name);
+
+    /// <summary>The ends of a definition's first, second and third page: 4,096 bytes, and 4,088 for each page after.</summary>
+    private static readonly int[] PageEnds = { 4096, 8184, 12272 };
+
+    /// <summary>
+    /// The names of Long columns that make a definition of <paramref name="length"/> bytes in a table with no
+    /// index: 65 bytes, and for each column 27 and twice the characters of its name.
+    /// </summary>
+    internal static List<string> ColumnsMaking(int length)
+    {
+        int rest = length - 65;
+        for (int count = 1; count <= 255; count++)
+        {
+            int characters = rest - 27 * count;
+            if (characters % 2 != 0 || characters / 2 < 4 * count || characters / 2 > 64 * count) continue;
+            characters /= 2;
+            var names = new List<string>();
+            for (int i = 1; i <= count; i++)
+            {
+                int take = Math.Min(64, characters - 4 * (count - i));
+                characters -= take;
+                names.Add($"c{i:D3}" + new string('x', take - 4));
+            }
+            return names;
+        }
+        throw new InvalidOperationException($"No columns make a definition of {length} bytes.");
+    }
+
+    public static TheoryData<FileFormat, int> LengthsAcrossEachPageEnd()
+    {
+        var data = new TheoryData<FileFormat, int>();
+        foreach (var format in new[] { FileFormat.Access2000, FileFormat.Access2007 })
+            foreach (int end in PageEnds)
+                for (int length = end - 12; length <= end + 12; length++)
+                    data.Add(format, length);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(LengthsAcrossEachPageEnd))]
+    public void A_table_created_with_a_definition_ending_near_a_pages_end_is_laid_out_as_Access_lays_it_out(FileFormat format, int length)
+    {
+        var names = ColumnsMaking(length);
+        using (var db = Database.Create(_path, format))
+        {
+            var table = db.CreateTable("Edge", names.Select(Long).ToList());
+            Assert.Equal(length, ByteUtil.GetInt(db.File.ReadPage(table.Definition.TdefPageNumber), 8));
+            AssertLaidOutAsAccessDoes(db, "Edge");
+            foreach (int page in PagesOf(db, "Edge"))
+                Assert.False(JetPages.IsFree(db.File, page), $"definition page {page} is free in the global usage map");
+            table.Insert(new Row { [names[0]] = 1, [names[^1]] = 2 });
+        }
+
+        using var reopened = Database.Open(_path);
+        var read = reopened.GetTable("Edge");
+        Assert.Equal(names, read.Columns.Select(c => c.Name));
+        Assert.False(read.Definition.HasUnreadColumns);
+        Assert.Null(read.InsertRefusal);
+        var row = Assert.Single(read.Rows);
+        Assert.Equal(names.Count == 1 ? 2 : 1, row[names[0]]);
+        Assert.Equal(2, row[names[^1]]);
+    }
+
+    /// <summary>
+    /// A column added to a table with rows that takes its definition to within eight bytes of the end of a page -
+    /// or to one past it - gets the definition the pages Access gives it. A Long column named "zz" adds 31 bytes:
+    /// 27, and 2 for each character of its name.
+    /// </summary>
+    [Theory]
+    [InlineData(FileFormat.Access2000, 4088)]
+    [InlineData(FileFormat.Access2000, 4089)]
+    [InlineData(FileFormat.Access2000, 4096)]
+    [InlineData(FileFormat.Access2000, 4097)]
+    [InlineData(FileFormat.Access2000, 8177)]
+    [InlineData(FileFormat.Access2000, 8184)]
+    [InlineData(FileFormat.Access2000, 12265)]
+    [InlineData(FileFormat.Access2000, 12272)]
+    [InlineData(FileFormat.Access2007, 4089)]
+    [InlineData(FileFormat.Access2007, 4096)]
+    public void A_column_added_that_ends_a_definition_near_a_pages_end_is_laid_out_as_Access_lays_it_out(FileFormat format, int length)
+    {
+        var names = ColumnsMaking(length - 31);
+        using (var db = Database.Create(_path, format))
+        {
+            var table = db.CreateTable("Edge", names.Select(Long).ToList());
+            table.Insert(new Row { [names[0]] = 1 });
+            table.AddColumn(Long("zz"));
+            Assert.Equal(length, ByteUtil.GetInt(db.File.ReadPage(table.Definition.TdefPageNumber), 8));
+            AssertLaidOutAsAccessDoes(db, "Edge");
+            foreach (int page in PagesOf(db, "Edge"))
+                Assert.False(JetPages.IsFree(db.File, page), $"definition page {page} is free in the global usage map");
+            table.Insert(new Row { [names[0]] = 2, ["zz"] = 3 });
+        }
+
+        using var reopened = Database.Open(_path);
+        var read = reopened.GetTable("Edge");
+        Assert.Equal(names.Append("zz"), read.Columns.Select(c => c.Name));
+        Assert.Null(read.InsertRefusal);
+        Assert.Equal(new object?[] { 1, 2 }, read.Rows.Select(r => r[names[0]]));
+        Assert.Equal(new object?[] { null, 3 }, read.Rows.Select(r => r["zz"]));
+    }
+
+    public static TheoryData<string, int> AccessMadeBoundaryTables()
+    {
+        var data = new TheoryData<string, int>();
+        foreach (string file in new[] { "dao-boundary-definitions.mdb", "dao-boundary-definitions.accdb" })
+            foreach (int end in PageEnds)
+                foreach (int length in new[] { end - 8, end - 7, end - 4, end, end + 1 })
+                    data.Add(file, length);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessMadeBoundaryTables))]
+    public void Access_lays_its_own_boundary_definitions_out_this_way(string file, int length)
+    {
+        using var db = Database.Open(Asset(file));
+        var table = db.GetTable($"L{length}");
+        Assert.Equal(length, ByteUtil.GetInt(db.File.ReadPage(table.Definition.TdefPageNumber), 8));
+        AssertLaidOutAsAccessDoes(db, table.Name);
+        Assert.Equal(ColumnsMaking(length), table.Columns.Select(c => c.Name));
+        Assert.Equal(1, Assert.Single(table.Rows)[table.Columns[0].Name]);
+    }
+
+    [Theory]
+    [MemberData(nameof(AccessMadeBoundaryTables))]
+    public void A_boundary_definition_Access_made_keeps_Accesss_pages_through_a_rename_an_added_and_a_dropped_column(string file, int length)
+    {
+        string path = Path.ChangeExtension(_path, Path.GetExtension(file));
+        File.Copy(Asset(file), path, overwrite: true);
+        try
+        {
+            string name = $"L{length}";
+            string first, renamed;
+            using (var db = Database.Open(path))
+            {
+                var table = db.GetTable(name);
+                var pages = PagesOf(db, name);
+                first   = table.Columns[0].Name;
+                renamed = "r" + first.Substring(1);
+
+                // A name as long as the one it replaces: the definition is as long as it was, and on the pages it was on.
+                table.RenameColumn(first, renamed);
+                AssertLaidOutAsAccessDoes(db, name);
+                Assert.Equal(pages, PagesOf(db, name));
+                foreach (int page in pages)
+                    Assert.False(JetPages.IsFree(db.File, page), $"definition page {page} was given back to the file");
+
+                table.AddColumn(Long("Added"));
+                AssertLaidOutAsAccessDoes(db, name);
+                table.Insert(new Row { [renamed] = 2, ["Added"] = 20 });
+
+                table.DropColumn("Added");
+                AssertLaidOutAsAccessDoes(db, name);
+                var after = PagesOf(db, name);
+                Assert.Equal(pages.Count, after.Count);
+                Assert.Equal(length, ByteUtil.GetInt(db.File.ReadPage(after[0]), 8));
+            }
+
+            using var reopened = Database.Open(path);
+            var read = reopened.GetTable(name);
+            Assert.Null(read.InsertRefusal);
+            Assert.Equal(new object?[] { 1, 2 }, read.Rows.Select(r => r[renamed]));
+            // The other tables of the file are as they were.
+            foreach (int end in PageEnds)
+                foreach (int other in new[] { end - 8, end - 7, end - 4, end, end + 1 })
+                    if (other != length) AssertLaidOutAsAccessDoes(reopened, $"L{other}");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void A_definition_that_no_longer_needs_its_last_page_gives_it_back_and_one_that_needs_it_again_takes_a_page()
+    {
+        // 4,089 bytes: on two pages, the second with none of it. A column shorter, it is on one.
+        var names = ColumnsMaking(4089);
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var table = db.CreateTable("Edge", names.Select(Long).Append(Long("z")).ToList());
+        table.DropColumn("z");
+        Assert.Equal(4089, ByteUtil.GetInt(db.File.ReadPage(table.Definition.TdefPageNumber), 8));
+        var two = PagesOf(db, "Edge");
+        Assert.Equal(2, two.Count);
+
+        table.RenameColumn(names[^1], names[^1].Substring(1));     // a character shorter: 4,087 bytes
+        AssertLaidOutAsAccessDoes(db, "Edge");
+        Assert.Single(PagesOf(db, "Edge"));
+        Assert.True(JetPages.IsFree(db.File, two[1]), "the page the definition no longer needs was not given back");
+
+        table.RenameColumn(names[^1].Substring(1), names[^1]);
+        AssertLaidOutAsAccessDoes(db, "Edge");
+        Assert.Equal(2, PagesOf(db, "Edge").Count);
+        foreach (int page in PagesOf(db, "Edge"))
+            Assert.False(JetPages.IsFree(db.File, page), $"definition page {page} is free in the global usage map");
+    }
+
+    // ── A definition whose pages stop short ──────────────────────────────────
+
+    /// <summary>
+    /// A definition's first page, or its second, names as its next a page that is not one of its own. The table is
+    /// opened and its rows read by the columns the pages before name - with the first page's pointer damaged, what
+    /// a reader of the first page alone reads - and nothing is written to it.
+    /// </summary>
+    [Theory]
+    [InlineData(0, "a page the file has not")]
+    [InlineData(0, "its own first page")]
+    [InlineData(0, "a data page")]
+    [InlineData(1, "a page the file has not")]
+    [InlineData(1, "its own first page")]
+    [InlineData(1, "a data page")]
+    public void A_table_whose_definition_goes_on_to_a_page_that_is_not_its_own_is_opened_and_read_and_not_written_to(int damagedPage, string next)
+    {
+        var columns = new List<ColumnDefinition> { Long("Id") };
+        columns.AddRange(Enumerable.Range(0, 120).Select(n => Long(LongName(n))));
+        int first, damaged;
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("Long names", columns);
+            for (int i = 1; i <= 3; i++) table.Insert(new Row { ["Id"] = i, [LongName(0)] = 10 * i });
+            var other = db.CreateTable("Other", new[] { Long("Id") });
+            other.Insert(new Row { ["Id"] = 1 });
+
+            var pages = PagesOf(db, "Long names");
+            Assert.True(pages.Count > 2, $"the definition is on {pages.Count} pages");
+            first   = pages[0];
+            damaged = pages[damagedPage];
+            int target = next switch
+            {
+                "a page the file has not" => db.File.PageCount + 100,
+                "its own first page"      => first,
+                _                         => Enumerable.Range(0, db.File.PageCount).First(p => db.File.ReadPage(p)[0] == JetFormat.PageTypeData),
+            };
+            byte[] page = db.File.ReadPage(damaged);
+            ByteUtil.PutInt(page, 4, target);
+            db.File.WritePage(damaged, page);
+        }
+
+        byte[] before = File.ReadAllBytes(_path);
+        using (var refusing = Database.Open(_path))
+        {
+            Assert.Contains("Long names", refusing.GetTableNames());
+            var read = refusing.GetTable("Long names");
+            Assert.True(read.Definition.HasUnreadColumns);
+            Assert.NotNull(read.InsertRefusal);
+            Assert.Equal("Id", read.Columns[0].Name);
+            Assert.Equal(LongName(0), read.Columns[1].Name);
+            Assert.Equal(new object?[] { 1, 2, 3 }, read.Rows.Select(r => r["Id"]));
+            Assert.Equal(new object?[] { 10, 20, 30 }, read.Rows.Select(r => r[LongName(0)]));
+
+            Assert.Throws<NotSupportedException>(() => read.Insert(new Row { ["Id"] = 4 }));
+            Assert.Throws<NotSupportedException>(() => read.AddColumn(Long("More")));
+            Assert.Throws<NotSupportedException>(() => read.DropColumn(LongName(0)));
+            Assert.Throws<NotSupportedException>(() => read.RenameColumn("Id", "Key"));
+            Assert.Throws<NotSupportedException>(() => refusing.DropTable("Long names"));
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+
+        // The rest of the file is as usable as it was.
+        using var reopened = Database.Open(_path);
+        reopened.GetTable("Other").Insert(new Row { ["Id"] = 2 });
+        Assert.Equal(2, reopened.GetTable("Other").Rows.Count());
     }
 
     // ── Access's own ─────────────────────────────────────────────────────────

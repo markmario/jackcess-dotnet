@@ -10,9 +10,20 @@ namespace JackcessDotNet;
 /// A definition too long for a page goes on to another, named in bytes 4-7 of the page before it. Each page after
 /// the first has eight bytes of its own - the page type 0x02, 0x01, the page's free space and the next page - and
 /// then the definition where the last page left it. The definition's length, in its bytes 8-11, counts the first
-/// page from its start and the others without their eight bytes; a page that is full has free space 0, and the
-/// last has what is left of it less eight. So the bytes here are the first page whole, then each later page from
-/// its byte 8: an offset into them is an offset into the definition.
+/// page from its start and the others without their eight bytes. So the bytes here are the first page whole, then
+/// each later page from its byte 8: an offset into them is an offset into the definition.
+/// </para>
+/// <para>
+/// How many pages a definition is on is Access's to say, and it asks for eight bytes more than the length: a
+/// definition is on the fewest pages that hold its length and eight - the first holding a page, each one after it
+/// eight less - so one that ends within eight bytes of the end of a page has another page after it, with nothing
+/// of the definition on it. (Measured: of the 75 tables DAO made in each of an .mdb, an Access 2007 .accdb and an
+/// Access 2010 .accdb, with definitions from twelve bytes short of the first, second and third page's end to
+/// twelve past it, those of 4,089 to 4,096 bytes have a second page, of 8,177 to 8,184 a third, of 12,265 to
+/// 12,272 a fourth.) Jackcess puts such a definition on the pages it fills, one fewer, and Access opens nothing
+/// of a file with one written that way: "Unrecognized database format". The free space of the last page is what
+/// the pages hold less the length and eight - 4,087 for a definition of 4,089 bytes on two pages, 4 for one of
+/// 4,084 on one - and of every page before it 0.
 /// </para>
 /// </summary>
 internal static class TdefBuffer
@@ -29,15 +40,23 @@ internal static class TdefBuffer
     /// The definition that starts on page <paramref name="firstPage"/>: that page, and the bytes of every page
     /// it goes on to.
     /// </summary>
-    /// <exception cref="InvalidDataException">The pages lead back to one already read, or to no definition page.</exception>
-    internal static byte[] Read(PageFile file, int firstPage) => Read(file, firstPage, out _);
+    internal static byte[] Read(PageFile file, int firstPage) => Read(file, firstPage, out _, out _);
 
     /// <summary>As <see cref="Read(PageFile, int)"/>, with the pages after the first that the definition is on, in order.</summary>
-    internal static byte[] Read(PageFile file, int firstPage, out List<int> laterPages)
+    internal static byte[] Read(PageFile file, int firstPage, out List<int> laterPages) => Read(file, firstPage, out laterPages, out _);
+
+    /// <summary>
+    /// As <see cref="Read(PageFile, int)"/>, saying in <paramref name="isBroken"/> whether the pages stop short:
+    /// one names as its next a page the file has not, a page already read, or a page that is no definition page.
+    /// What was read up to there is returned, so the table can still be opened and what the first pages say of
+    /// it read; it is then a table whose definition was not read whole, which nothing is written to.
+    /// </summary>
+    internal static byte[] Read(PageFile file, int firstPage, out List<int> laterPages, out bool isBroken)
     {
         int    pageSize = file.Format.PageSize;
         byte[] first    = file.ReadPage(firstPage);
         laterPages = new List<int>();
+        isBroken   = false;
 
         int next = ByteUtil.GetInt(first, OffsetNextPage);
         if (next == 0 || first[0] != JetFormat.PageTypeTableDef) return first;
@@ -46,13 +65,12 @@ internal static class TdefBuffer
         var seen  = new HashSet<int> { firstPage };
         while (next != 0)
         {
-            if (next < 0 || next >= file.PageCount || !seen.Add(next))
-                throw new InvalidDataException(
-                    $"The table definition on page {firstPage} goes on to page {next}, which is not a page it can be on.");
-            byte[] page = file.ReadPage(next);
-            if (page[0] != JetFormat.PageTypeTableDef)
-                throw new InvalidDataException(
-                    $"The table definition on page {firstPage} goes on to page {next}, which is not a definition page.");
+            byte[]? page = next > 0 && next < file.PageCount && seen.Add(next) ? file.ReadPage(next) : null;
+            if (page is null || page[0] != JetFormat.PageTypeTableDef)
+            {
+                isBroken = true;
+                break;
+            }
             laterPages.Add(next);
             parts.Add(page);
             next = ByteUtil.GetInt(page, OffsetNextPage);
@@ -74,9 +92,10 @@ internal static class TdefBuffer
 
     /// <summary>
     /// Writes <paramref name="definition"/> - a definition whose bytes 8-11 are its length - to the table whose
-    /// definition starts on <paramref name="firstPage"/>: on that page and, when it is longer than a page, on the
-    /// pages the definition was on before, in their order, and on new ones after them. A page the definition no
-    /// longer reaches is given back to the file (<see cref="GlobalUsageMap.MarkFree"/>), as Access gives it back.
+    /// definition starts on <paramref name="firstPage"/>: on that page and, when Access would have it on more
+    /// (the class summary says when), on the pages the definition was on before, in their order, and on new ones
+    /// after them. A page the definition no longer needs is given back to the file
+    /// (<see cref="GlobalUsageMap.MarkFree"/>), as Access gives it back.
     /// The caller holds the undo scope: several pages are written.
     /// </summary>
     internal static void Write(PageFile file, PageAllocator allocator, int firstPage, byte[] definition)
@@ -99,15 +118,19 @@ internal static class TdefBuffer
             }
         }
 
+        // The fewest pages that hold the length and eight bytes more, and what they hold between them.
+        int laterRoom = pageSize - PageHeaderSize;
+        int pages     = length + PageHeaderSize <= pageSize ? 1 : 1 + (length + PageHeaderSize - pageSize + laterRoom - 1) / laterRoom;
+        int capacity  = pageSize + (pages - 1) * laterRoom;
+
         int written    = 0;
         int pageNumber = firstPage;
-        bool isFirst   = true;
-        while (true)
+        for (int i = 0; i < pages; i++)
         {
             var page = new byte[pageSize];
-            int room = isFirst ? pageSize : pageSize - PageHeaderSize;
-            int take = Math.Min(room, length - written);
-            if (isFirst)
+            int room = i == 0 ? pageSize : laterRoom;
+            int take = Math.Max(Math.Min(room, length - written), 0);   // none, on a last page Access asks for and the length does not reach
+            if (i == 0)
             {
                 Array.Copy(definition, 0, page, 0, take);
             }
@@ -119,17 +142,12 @@ internal static class TdefBuffer
             }
             written += take;
 
-            int next = 0;
-            if (written < length)
-                next = reusable.Count > 0 ? reusable.Dequeue() : allocator.AllocatePage();
+            bool isLast = i == pages - 1;
+            int next = isLast ? 0 : reusable.Count > 0 ? reusable.Dequeue() : allocator.AllocatePage();
             ByteUtil.PutInt(page, OffsetNextPage, next);
-            // What is left of the page, less eight, as Access and Jackcess count it; 0 for a page that is full.
-            ByteUtil.PutShort(page, OffsetFreeSpace, (short)Math.Max(room - take - PageHeaderSize, 0));
+            ByteUtil.PutShort(page, OffsetFreeSpace, (short)(isLast ? capacity - length - PageHeaderSize : 0));
             file.WritePage(pageNumber, page);
-
-            if (next == 0) break;
             pageNumber = next;
-            isFirst    = false;
         }
 
         while (reusable.Count > 0)
