@@ -521,6 +521,12 @@ internal sealed class PageFile : IDisposable
         }
     }
 
+    /// <summary>
+    /// Makes the file <paramref name="source"/>'s pages: what a new database is written from
+    /// (<see cref="DatabaseHeader.WriteTo"/>). Each page is written as any other is (<see cref="WritePage"/>), so a
+    /// failure part-way is one a test can ask for (<see cref="WritesBeforeFailure"/>).
+    /// </summary>
+    /// <exception cref="InvalidDataException"><paramref name="source"/> does not end at the end of a page.</exception>
     public void ReplaceWith(Stream source)
     {
         ThrowIfDisposed();
@@ -531,10 +537,19 @@ internal sealed class PageFile : IDisposable
         ChangeStamp++;
         _kept.Clear();
         IndexesChecked.Clear();
-        _stream.Seek(0, SeekOrigin.Begin);
         _stream.SetLength(0);
-        source.CopyTo(_stream);
-        _stream.Flush();
+        var page = new byte[_format.PageSize];
+        for (int pageNumber = 0; ; pageNumber++)
+        {
+            int read = 0;
+            for (int n; read < page.Length && (n = source.Read(page, read, page.Length - read)) > 0; )
+                read += n;
+            if (read == 0) return;
+            if (read < page.Length)
+                throw new InvalidDataException(
+                    $"A database is whole pages of {page.Length} bytes; what was given ends {read} bytes into page {pageNumber}.");
+            WritePage(pageNumber, page);
+        }
     }
 
     public string Path => _path;

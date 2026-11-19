@@ -427,8 +427,9 @@ db.RenameTable("Orders", "Sales");
 db.DropTable("Notes");
 ```
 
-Each change is all or nothing: what can refuse it is found before anything is written, and what is written is
-taken back if writing it fails, so a refused change leaves the file byte for byte as it was. Access is the referee
+Each change is all or nothing, and so is the creation of a table (`CreateTable`): what can refuse it is found before
+anything is written, and what is written is taken back if writing it fails, so a refused change leaves the file byte
+for byte as it was. Access is the referee
 of what is written (ExportMdb.Interop's `SchemaChangesInAccessTests`): beside the same index made by ACE, or the
 same relationship made by DAO, in a twin file, DAO lists the same thing and the two definitions hold the same
 index slots.
@@ -909,8 +910,9 @@ have been deleted - and a row Access moved to another page is read where its poi
   delete are each refused with `NotSupportedException`.
 - **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
   written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
-  not of its type, or a row too large leaves the file byte for byte as it was. Only a failure of the file itself
-  (the disk, the stream) can leave a change half made; an update outside a foreign-key cascade is not undone.
+  not of its type, or a row too large leaves the file byte for byte as it was. A failure of the file itself (the
+  disk, the stream) while a change is being written is taken back too: an insert, an update, a delete, a table
+  created, or a change to a table's definition or properties leaves the file byte for byte as it was.
 - **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
   millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
 - **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**

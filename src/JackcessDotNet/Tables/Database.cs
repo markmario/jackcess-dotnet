@@ -272,6 +272,11 @@ public sealed class Database : IDisposable
     /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
     /// there; in the later formats they sort in General.
     /// </para>
+    /// <para>
+    /// When writing the new file fails part-way - a full disk - it is closed and deleted, and the failure is thrown:
+    /// nothing that is part of a database is left at <paramref name="path"/>. A file that was there before is not
+    /// put back; it was replaced when the new one was begun.
+    /// </para>
     /// </summary>
     /// <param name="path">The path of the file to create.</param>
     /// <param name="format">The format of the file to create.</param>
@@ -285,12 +290,28 @@ public sealed class Database : IDisposable
     {
         var jetFormat = JetFormat.For(format);
         if (jetFormat.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
-        var file = new PageFile(path, jetFormat, FileMode.Create);
-        var db   = new Database(file);
+        return CreateIn(new PageFile(path, jetFormat, FileMode.Create));
+    }
 
-        DatabaseHeader.Create(jetFormat).WriteTo(file);
-
-        return db;
+    /// <summary>
+    /// Writes a new, empty database into <paramref name="file"/>, a file just made at its path, and returns it open.
+    /// When writing it fails, the file is closed and deleted - nothing that is part of a database is left at the
+    /// path, and no handle is left open on it - and the failure is thrown (#60).
+    /// </summary>
+    internal static Database CreateIn(PageFile file)
+    {
+        try
+        {
+            DatabaseHeader.Create(file.Format).WriteTo(file);
+            return new Database(file);
+        }
+        catch
+        {
+            file.Dispose();
+            try { System.IO.File.Delete(file.Path); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
     }
 
     /// <summary>
@@ -632,7 +653,9 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Creates a table: writes its definition, registers it in the catalog, and returns the <see cref="Table"/>,
-    /// ready for rows. The key's index is kept as rows are inserted, updated and deleted.
+    /// ready for rows. The key's index is kept as rows are inserted, updated and deleted. What can refuse the table
+    /// does so before anything is written, and what is written is taken back if writing it fails: a table refused,
+    /// or one the file fails to take part-way (a full disk), leaves the file byte for byte as it was, without it.
     /// <code>
     ///   db.CreateTable("Loose", columns);                       // no primary key
     ///   db.CreateTable("People", columns, "Id");                // a key of one column
@@ -660,7 +683,8 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Creates a table with indexes beside its primary key: single- or multi-column, unique or not. Every index is
     /// kept as rows are inserted, updated and deleted, and a unique index refuses a duplicate before anything of
-    /// the row is written.
+    /// the row is written. The table is written whole or not at all, as
+    /// <see cref="CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> writes one.
     /// </summary>
     /// <param name="name">The table's name, which no other table of the database has.</param>
     /// <param name="columns">The table's columns, in their order: at least one.</param>
@@ -752,6 +776,11 @@ public sealed class Database : IDisposable
         // full disk, when a page is added - must not leave a file marked for a table it does not have.
         byte? version = FormatVersionFor($"Table '{name}' was not created", columns, format);
 
+        // What follows writes, and is written whole or not at all (#60): inside an undo scope, or the caller's when
+        // the table is part of a larger change (an import), a failure part-way - a full disk - takes back every page
+        // written and appended, so that no half-made table is left in the catalog for Access to refuse to read.
+        using var undo = _file.BeginUndoUnlessOpen();
+
         // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
 
@@ -823,6 +852,7 @@ public sealed class Database : IDisposable
 
         // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
         if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
+        undo?.Commit();
 
         propertyMaps.Written(propertyNames);
         var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);

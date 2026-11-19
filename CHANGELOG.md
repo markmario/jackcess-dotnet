@@ -55,6 +55,13 @@ changed since 1.2.2.
   change learnt of the file before it wrote anything is kept, as it is still true: a change refused before it
   writes, a duplicate among them, does not have the next read the table again for `Database.VerifyIndexes`. This
   fixes a defect on `main`.
+- **A table is created whole or not at all** (#60), as every other change is written. `CreateTable` - and an
+  import into a new table, which makes its table the same way - wrote outside any undo scope: a failure part-way, a
+  full disk, left pages added to the file and, once the catalog row was written, a half-made table that
+  `GetTableNames` listed and that Access, in an `.mdb`, refused to read ("no read permission"). What it writes is
+  now taken back if writing fails: the file is byte for byte as it was, and the table is not there.
+  **`Database.Create` leaves no file when writing the new one fails**: it is closed and deleted. It was left at the
+  path, part of a database, and held open.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
