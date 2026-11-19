@@ -5,7 +5,7 @@ namespace JackcessDotNet;
 /// <summary>
 /// A database file refused because another program, or another <see cref="Database"/>, has it open in a way that
 /// does not let this one in: open for writing, when this one would write too, or open exclusively. Nothing of the
-/// file is read or changed.
+/// file is changed.
 /// <para>
 /// Its own type, so a caller can tell a file that is in use - which may be free later - from any other
 /// <see cref="IOException"/>, such as a path that does not exist. Its <see cref="Exception.HResult"/> is that of
