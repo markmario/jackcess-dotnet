@@ -216,6 +216,8 @@ JackcessDotNet.RelationshipDefinition.FromColumnNames.get -> System.Collections.
 JackcessDotNet.RelationshipDefinition.FromTableName.get -> string!
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.get -> bool
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.set -> void
+JackcessDotNet.RelationshipDefinition.IsOneToOne.get -> bool?
+JackcessDotNet.RelationshipDefinition.IsOneToOne.set -> void
 JackcessDotNet.RelationshipDefinition.JoinType.get -> JackcessDotNet.JoinType
 JackcessDotNet.RelationshipDefinition.JoinType.set -> void
 JackcessDotNet.RelationshipDefinition.Name.get -> string?

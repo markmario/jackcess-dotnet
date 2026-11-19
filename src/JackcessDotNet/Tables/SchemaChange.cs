@@ -405,9 +405,11 @@ internal static class SchemaChange
         if (definition.JoinType == JoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
         if (definition.JoinType == JoinType.RightOuter) flags |= RightOuterJoinFlag;
         // One to one when each side's columns have a unique index of their own, as Access's Relationships window
-        // and Jackcess mark it. To Access the mark is more than a description: the foreign key's index is then a
-        // unique one (below).
-        bool oneToOne = UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null;
+        // and Jackcess mark it - or as the caller says, which is DAO's way: it marks a relationship only when
+        // told to. To Access the mark is more than a description: the foreign key's index is then a unique one
+        // (below), built when the foreign key has none.
+        bool oneToOne = definition.IsOneToOne
+            ?? (UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null);
         if (oneToOne) flags |= OneToOneFlag;
 
         if (!db.TryGetTable(RelationshipsTable, out var relationships))
