@@ -18,8 +18,16 @@ public sealed class IndexDefinition
     /// <summary>The most indexes a table has (Jet's limit), its primary key among them.</summary>
     public const int MaxIndexesPerTable = 32;
 
+    /// <summary>
+    /// Describes an index of a name on one column or several: not unique, taking nulls, every column ascending,
+    /// until its properties say otherwise.
+    /// </summary>
     /// <param name="name">The index's name, unique among the table's indexes.</param>
     /// <param name="columns">The names of the columns it is on, in key order: one to <see cref="MaxColumns"/>.</param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="name"/> is null, empty or white space; or <paramref name="columns"/> is null or has no
+    /// names, more than <see cref="MaxColumns"/>, an empty name, or one name twice, whatever its case.
+    /// </exception>
     public IndexDefinition(string name, params string[] columns)
     {
         if (string.IsNullOrWhiteSpace(name))

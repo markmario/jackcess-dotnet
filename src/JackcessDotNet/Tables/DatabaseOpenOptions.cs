@@ -11,6 +11,11 @@ namespace JackcessDotNet;
 /// </summary>
 public sealed class DatabaseOpenOptions
 {
+    /// <summary>Creates options with nothing set: no password, and no format to fall back on.</summary>
+    public DatabaseOpenOptions()
+    {
+    }
+
     /// <summary>
     /// The password of an encrypted file. Null or empty (the default) for none. A file that is not encrypted is
     /// opened whatever the password, which is not looked at.

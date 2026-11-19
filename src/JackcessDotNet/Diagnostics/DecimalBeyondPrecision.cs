@@ -56,6 +56,13 @@ public sealed class DecimalBeyondPrecision
     /// </summary>
     public decimal? ValueInEarlierByteOrder { get; }
 
+    /// <summary>
+    /// The value in a line of text: its table and column, its row's place and primary key, the number it reads
+    /// as and the number its bytes make in the earlier order, those two written in the invariant culture.
+    /// </summary>
+    /// <returns>
+    /// Text such as <c>Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order</c>.
+    /// </returns>
     public override string ToString()
         => $"{Table}.{Column.Name}, row {RowIndex}" +
            (PrimaryKey.Count > 0 ? $" ({string.Join(", ", PrimaryKey.Select(k => $"{k.Key}={k.Value}"))})" : string.Empty) +

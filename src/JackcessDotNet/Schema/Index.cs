@@ -1,13 +1,12 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// Read-only metadata for a real (B-tree) index defined on a table: one Access
-/// made, or one the table was created with (<see cref="IndexDefinition"/>).
-///
-/// Each entry in <see cref="Columns"/> participates in the composite sort key,
-/// in declaration order. The tree rooted at <see cref="RootPageNumber"/> is kept
-/// as the table's rows change, and searched by <see cref="IndexCursor"/>, when
-/// its keys are ones this library writes.
+/// An index a table has: one Access made, or one the table was given (<see cref="IndexDefinition"/>). Read from
+/// a table (<see cref="Table.Indexes"/>) and never made by a caller.
+/// <para>
+/// Each of <see cref="Columns"/> is part of the index's key, in key order. The index is kept as the table's
+/// rows change, and searched by <see cref="IndexCursor"/>, when its keys are ones this library writes.
+/// </para>
 /// </summary>
 public sealed class Index
 {
@@ -86,7 +85,7 @@ public sealed class IndexColumn
     /// <summary>Raw flags byte from the index column block.</summary>
     internal byte Flags { get; }
 
-    /// <summary>True when the column is sorted ascending in this index (bit 0 of <see cref="Flags"/>).</summary>
+    /// <summary>Whether the column sorts ascending in the index; <c>false</c> when it sorts descending.</summary>
     public bool IsAscending => (Flags & 0x01) != 0;
 
     internal IndexColumn(Column column, byte flags)

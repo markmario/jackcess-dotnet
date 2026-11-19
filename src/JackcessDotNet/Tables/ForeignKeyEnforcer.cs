@@ -519,7 +519,7 @@ internal sealed class ForeignKeyEnforcer
     }
 
     /// <summary>
-    /// A stored value as a caller reads it (<see cref="RowDecoder.Decode"/>): what the value a caller names a row by
+    /// A stored value as a caller reads it (<see cref="RowDecoder.Decode(byte[], Column)"/>): what the value a caller names a row by
     /// is matched against, with enforcement on as without it.
     /// </summary>
     private static object? AsRead(Column column, object? stored)

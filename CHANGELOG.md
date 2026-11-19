@@ -88,6 +88,8 @@ changes with them.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
+- XML documentation in the package, `JackcessDotNet.xml` beside each assembly, so an editor shows it. Every
+  public type and member has it, and the build fails on one that does not (CS1591).
 
 ## [1.2.2]
 

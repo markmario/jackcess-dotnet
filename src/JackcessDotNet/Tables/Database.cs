@@ -241,8 +241,11 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Creates a new blank Access 2000-2003 database (an .mdb, <see cref="FileFormat.Access2000"/>) at
     /// <paramref name="path"/> and returns it open and ready for use. That is the format Jackcess creates when
-    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another.
+    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another. A file already at
+    /// <paramref name="path"/> is replaced.
     /// </summary>
+    /// <param name="path">The path of the file to create.</param>
+    /// <returns>The new database, open. The caller disposes it.</returns>
     public static Database Create(string path) => Create(path, FileFormat.Access2000);
 
     /// <summary>
@@ -253,11 +256,14 @@ public sealed class Database : IDisposable
     /// The file's name is the caller's: no extension is added or asked for. A file already at
     /// <paramref name="path"/> is replaced.
     /// <para>
-    /// The new file is a copy of an empty database Access's own engine made (<see cref="DatabaseHeader"/>). Tables
+    /// The new file is a copy of an empty database Access's own engine made. Tables
     /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
     /// there; in the later formats they sort in General.
     /// </para>
     /// </summary>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="format">The format of the file to create.</param>
+    /// <returns>The new database, open. The caller disposes it.</returns>
     /// <exception cref="NotSupportedException">
     /// <paramref name="format"/> is <see cref="FileFormat.Access97"/>: Access 97 files are read, and neither created
     /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
@@ -281,12 +287,11 @@ public sealed class Database : IDisposable
     /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>). With neither set this is
     /// <see cref="Open(string)"/>.
     /// <para>
-    /// With a password, an Access 97 or 2000-2003 file (.mdb) is read through the RC4-based Jet codec - see
-    /// <see cref="JetCryptCodecHandler"/> for caveats around verification - and an .accdb through the Office
-    /// Crypto codec: <b>Agile Encryption</b> (Office 2010+, MS-OFFCRYPTO §2.3.4.10–13) and <b>ECMA Standard
-    /// Encryption</b> (Office 2007, §2.3.4.5–9). RC4 CryptoAPI and extensible-provider variants still throw with
-    /// a clear error - see <see cref="OfficeCryptCodecHandler"/>. A file that is not encrypted is opened as it
-    /// is, and the password is not looked at.
+    /// With a password, an Access 97 or 2000-2003 file (.mdb) is read through Jet's RC4-based encryption, and
+    /// an .accdb through Office's: <b>Agile Encryption</b> (Office 2010+, MS-OFFCRYPTO §2.3.4.10–13) and
+    /// <b>ECMA Standard Encryption</b> (Office 2007, §2.3.4.5–9). An .accdb encrypted with RC4 CryptoAPI or an
+    /// extensible provider is refused with <see cref="NotSupportedException"/>. A file that is not encrypted is
+    /// opened as it is, and the password is not looked at.
     /// </para>
     /// <para>
     /// An Access 97 file is opened for reading only, whatever the options say (<see cref="IsReadOnly"/>).
@@ -300,6 +305,11 @@ public sealed class Database : IDisposable
     /// <see cref="DatabaseOpenOptions.FallbackFormat"/> says what to read it as.
     /// </exception>
     /// <exception cref="NotSupportedException">The file is encrypted, or damaged, and no password was given.</exception>
+    /// <param name="path">The path of the file to open.</param>
+    /// <param name="options">What is known about the file.</param>
+    /// <returns>The database, open. The caller disposes it.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
@@ -463,6 +473,9 @@ public sealed class Database : IDisposable
     /// imported - is refused with <see cref="NotSupportedException"/> before anything is written.
     /// </para>
     /// </summary>
+    /// <param name="path">The path of the file to open.</param>
+    /// <returns>The database, open. The caller disposes it.</returns>
+    /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="InvalidDataException">The file is not an Access database: it is too short, or has no signature.</exception>
     /// <exception cref="NotSupportedException">
     /// The file is encrypted, or damaged: open an encrypted one with <see cref="Open(string, DatabaseOpenOptions)"/>.
@@ -808,6 +821,8 @@ public sealed class Database : IDisposable
     /// added to it, and refuses the column in an .mdb ("Invalid argument"), as this does.
     /// </summary>
     /// <param name="whatWasNotDone">How the refusal begins: "Table 'T' was not created", or the like.</param>
+    /// <param name="columns">The table's columns.</param>
+    /// <param name="format">The format of the file the table is to be in.</param>
     /// <exception cref="NotSupportedException">The file is an .mdb, which has no such column. Nothing is changed.</exception>
     internal static byte? FormatVersionFor(string whatWasNotDone, IReadOnlyList<Column> columns, JetFormat format)
     {
@@ -917,7 +932,8 @@ public sealed class Database : IDisposable
     /// <summary>
     /// The table named <paramref name="name"/>, whatever the case of its letters: one of the database's own
     /// tables or a system table. The catalog is read to find it. A table is one <see cref="Table"/> for as long
-    /// as the database is open - asked for again, by any spelling, or returned by <see cref="CreateTable"/>, it is
+    /// as the database is open - asked for again, by any spelling, or returned by
+    /// <see cref="CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/>, it is
     /// the same object - so what is set on it (<see cref="Table.AllowAutoNumberInsert"/>) holds for every caller,
     /// and its <see cref="Table.Name"/> is the name as the catalog spells it.
     /// </summary>
@@ -1029,7 +1045,7 @@ public sealed class Database : IDisposable
     /// a refused relationship leaves the file byte for byte as it was.
     /// </para>
     /// </summary>
-    /// <returns>The relationship as <see cref="GetRelationships"/> now lists it.</returns>
+    /// <returns>The relationship, as <see cref="GetRelationships"/> lists it from then on.</returns>
     /// <exception cref="ArgumentException">
     /// The definition names no columns, or a different number on each side, or a column twice on one side of a
     /// relationship with referential integrity; or asks for a cascade without referential integrity.

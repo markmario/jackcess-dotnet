@@ -105,8 +105,10 @@ internal sealed class TextIndexCodes
     /// ligatures.
     /// </param>
     /// <param name="twoLetters">
-    /// In General - Legacy, the characters Access sorts as two letters (Æ as AE, ß as ss), and
-    /// <paramref name="threeLetters"/> as three (ﬃ as ffi).
+    /// In General - Legacy, the characters Access sorts as two letters (Æ as AE, ß as ss).
+    /// </param>
+    /// <param name="threeLetters">
+    /// In General - Legacy, the characters Access sorts as three letters (ﬃ as ffi).
     /// </param>
     private TextIndexCodes(
         string basicResource, string extResource, bool isGeneral, Dictionary<char, string> corrections,

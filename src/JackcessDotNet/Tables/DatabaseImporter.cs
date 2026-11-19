@@ -97,8 +97,8 @@ public static class DatabaseImporter
     /// no column of <paramref name="table"/> has the name of one of its columns.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
-    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, no value for a
-    /// required column, or a foreign key with no row to refer to.
+    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
+    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
     /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
@@ -319,8 +319,8 @@ public static class DatabaseImporter
     /// table, no property of <typeparamref name="T"/> has the name of one of its columns.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
-    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, no value for a
-    /// required column, or a foreign key with no row to refer to.
+    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
+    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
     /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>

@@ -5,7 +5,8 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// A table of an open database: its columns and indexes, its rows to read, and the operations that insert,
-/// update and delete them. Got from <see cref="Database.GetTable"/> or <see cref="Database.CreateTable"/>; a
+/// update and delete them. Got from <see cref="Database.GetTable"/> or
+/// <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/>; a
 /// table is one object for as long as its database is open.
 /// </summary>
 public sealed class Table
@@ -438,6 +439,15 @@ public sealed class Table
     /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
     /// moves the counter up to it.
     /// </summary>
+    /// <param name="primaryKeyValue">The value the row has in the primary key's column.</param>
+    /// <param name="newValues">
+    /// The values to give the row, by column name. A column it does not name keeps the value it has.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="newValues"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// No row has that primary key, or the table's primary key is not one column: it has none, or one of
+    /// several columns. Nothing is written.
+    /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
     /// in a column of the primary key or of an index that requires its values. The row is left as it was.
@@ -500,6 +510,7 @@ public sealed class Table
         private IReadOnlyList<TableIndexes.Entry> _old = Array.Empty<TableIndexes.Entry>();
         private IReadOnlyList<TableIndexes.Entry> _new = Array.Empty<TableIndexes.Entry>();
 
+        /// <param name="indexes">The table's indexes, whose entries move.</param>
         /// <param name="refuseDuplicates">
         /// Whether a duplicate in a unique index is looked for in the file. The foreign-key enforcer has looked
         /// already, among the rows as its whole change leaves them: the file, part-way through that change, can
@@ -561,6 +572,12 @@ public sealed class Table
     /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
     /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
     /// </summary>
+    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
+    /// <param name="value">The value the row to delete has in that column.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="columnName"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The table has no column of that name, or no row has the value in it. Nothing is deleted.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
     /// 97 file, which is only read. Nothing is deleted.
