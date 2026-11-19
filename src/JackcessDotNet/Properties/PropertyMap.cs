@@ -392,6 +392,58 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
         Version++;
     }
 
+    /// <summary>
+    /// Takes the map of column <paramref name="column"/> out - the column was dropped - and says whether there
+    /// was one. The names the file lists stay: Access leaves them when it drops a column.
+    /// </summary>
+    internal bool RemoveColumn(string column)
+    {
+        if (!_maps.TryGetValue((column, PropertyMap.ColumnType), out var map)) return false;
+        _maps.Remove((column, PropertyMap.ColumnType));
+        _inOrder.Remove(map);
+        _saved.Remove(column);
+        Changed();
+        return true;
+    }
+
+    /// <summary>
+    /// Gives the map of column <paramref name="column"/> the name <paramref name="newName"/> - the column was
+    /// renamed - where it is among the maps, every property of it as it was, and says whether there was one.
+    /// </summary>
+    internal bool RenameColumn(string column, string newName)
+    {
+        if (!_maps.TryGetValue((column, PropertyMap.ColumnType), out var map)) return false;
+        var renamed = new PropertyMap(newName, map.Type) { IsEmptyInFile = map.IsEmptyInFile };
+        foreach (var property in map) renamed.Add(property);
+        renamed.Owner = this;
+
+        _maps.Remove((column, PropertyMap.ColumnType));
+        if (_maps.TryGetValue((newName, PropertyMap.ColumnType), out var leftover)) _inOrder.Remove(leftover);
+        _inOrder[_inOrder.IndexOf(map)] = renamed;
+        _maps[(newName, PropertyMap.ColumnType)] = renamed;
+        if (_saved.TryGetValue(column, out var rules))
+        {
+            _saved.Remove(column);
+            _saved[newName] = rules;
+        }
+        Changed();
+        return true;
+    }
+
+    /// <summary>
+    /// Makes the same change to these maps - a table's open ones - as was written to the file apart from them
+    /// when a column was dropped (<paramref name="newName"/> null) or renamed. What had been changed here and
+    /// not saved stays so.
+    /// </summary>
+    internal void AdoptColumnChange(string column, string? newName)
+    {
+        bool wasDirty = IsDirty;
+        if (newName is null) RemoveColumn(column);
+        else RenameColumn(column, newName);
+        IsDirty = wasDirty;
+        Version++;
+    }
+
     /// <summary>The unnamed (table-level) property map, made when there is none.</summary>
     public PropertyMap Default => GetOrAdd(string.Empty, PropertyMap.DefaultType);
 

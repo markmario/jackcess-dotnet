@@ -65,6 +65,52 @@ internal static class GlobalUsageMap
     }
 
     /// <summary>
+    /// Gives <paramref name="pageNumber"/> back to the file: a page nothing uses any more - an index's, a column's
+    /// long values', a table's - is one Access may hand out again, and it is what Access does with such a page
+    /// when it drops what was on it (#37). The page's bytes are left as they are, as Access leaves them. A page
+    /// the map does not cover is free to it already.
+    /// </summary>
+    public static void MarkFree(PageFile file, int pageNumber)
+    {
+        var format = file.Format;
+        if (pageNumber <= MapPageNumber || file.PageCount <= MapPageNumber || !IsDatabase(file)) return;
+
+        byte[] page = file.ReadKeptPage(MapPageNumber);
+        if (page[0] != JetFormat.PageTypeData || ByteUtil.GetShort(page, format.OffsetDataNumRows) <= MapRow)
+            return;   // no global map to keep
+        int rowStart = UsageMap.GetRowStart(page, MapRow, format);
+        int rowLen   = UsageMap.GetRowLength(page, MapRow, format);
+        if (rowLen < 5) return;
+
+        switch (page[rowStart])
+        {
+            case MapTypeInline:
+            {
+                int start = ByteUtil.GetInt(page, rowStart + 1);
+                if (pageNumber < start || pageNumber - start >= (rowLen - 5) * 8) return;
+                SetBit(page, rowStart + 5, pageNumber - start);
+                file.WritePage(MapPageNumber, page);
+                return;
+            }
+            case MapTypeReference:
+            {
+                int perMapPage = PagesPerMapPage(format);
+                int index      = pageNumber / perMapPage;
+                int number     = index < (rowLen - 1) / 4 ? ByteUtil.GetInt(page, rowStart + 1 + index * 4) : 0;
+                if (number <= 0) return;
+                byte[] map = file.ReadKeptPage(number);
+                if (map[0] != JetFormat.PageTypeUsageMap)
+                    throw new InvalidDataException($"The global usage map's page {number} is not a usage-map page.");
+                SetBit(map, RefMapBitmapStart, pageNumber - index * perMapPage);
+                file.WritePage(number, map);
+                return;
+            }
+            default:
+                throw new NotSupportedException($"The global usage map has an unknown type, 0x{page[rowStart]:X2}.");
+        }
+    }
+
+    /// <summary>
     /// Rewrites the inline map at <paramref name="rowStart"/> as a reference map in which
     /// every page up to <paramref name="frontier"/>, and every map page it takes, is used.
     /// Holes the inline map held inside the file are given up, as Jackcess does.
@@ -175,4 +221,7 @@ internal static class GlobalUsageMap
 
     private static void ClearBit(byte[] page, int bitmapStart, int relativePage)
         => page[bitmapStart + relativePage / 8] &= (byte)~(1 << (relativePage % 8));
+
+    private static void SetBit(byte[] page, int bitmapStart, int relativePage)
+        => page[bitmapStart + relativePage / 8] |= (byte)(1 << (relativePage % 8));
 }
