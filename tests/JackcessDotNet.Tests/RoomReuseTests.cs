@@ -9,7 +9,8 @@ namespace JackcessDotNet.Tests;
 /// .accdb files, on tables Access made and on tables this library made: a row goes to the lowest page the table's
 /// free-space map lists, a delete takes the row's bytes off its page and lists the page when it had no room for the row,
 /// a row that comes home lists the page its values leave, and a page an update leaves with no row on it is used again.
-/// The library's suite has Access place the same rows and compare the pages byte for byte (<c>RoomReuseInAccessTests</c>).
+/// ExportMdb.Interop's suite has Access place the same rows and compares every page's room and slots, and the map
+/// (<c>RoomReuseInAccessTests</c>).
 /// Rows of 200 Greek letters are 419 bytes: nine fill a page and leave it 293 bytes.
 /// </summary>
 public sealed class RoomReuseTests : IDisposable

@@ -1018,7 +1018,7 @@ have been deleted - and a row Access moved to another page is read where its poi
   table as any other.
 - **Where a row goes, and the room a delete or an update leaves, are Access's** (#58), as measured with DAO 16 and
   ACE 16 in `.mdb` and `.accdb` files, on tables Access made and tables this library made, in one session or many.
-  ExportMdb.Interop's suite has Access place the same rows and compares the pages byte for byte:
+  ExportMdb.Interop's suite has Access place the same rows and compares every page's room and slots, and the map:
   - A new row - and the values of a row an update makes too long for its page - goes to the lowest page the
     table's free-space map lists (the second usage map of its definition). A listed page without room for the row
     and its slot, or with 255 rows, leaves the map and the next is tried: a page leaves the map so, never because a
@@ -1033,7 +1033,7 @@ have been deleted - and a row Access moved to another page is read where its poi
     same rule as a delete; values that move on to another page do not list the page they leave.
   - Access gives back to the file a page an update leaves with no row - out of the table's maps - and takes it again
     for the next page it needs, its slots begun again from the first, so a row updated back and forth past its
-    page's room adds a page to Access's file at most (one in 3,000 such updates, measured). This library adds every
+    page's room adds a page to Access's file at most (one in 3,000 such cycles, measured). This library adds every
     page at the end of the file and takes none back from it, so it keeps such a page for the table, begun again with
     no slots and listed: the next row, or values moved, go to it, and its file grows by a page at most too. Every
     slot on such a page was a deleted one - values moved there and gone again, or a row deleted with its index
