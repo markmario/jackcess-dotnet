@@ -47,6 +47,31 @@ changes with them.
 - **A cursor moves with `MoveNext()` and `MovePrevious()` and has `Current`**, in place of `GetNextRow()`,
   `GetPreviousRow()` and `GetCurrentRow()`; `BeforeFirst()` and `AfterLast()` are `MoveBeforeFirst()` and
   `MoveAfterLast()`.
+- **`Table.UpdateByPrimaryKey(key, values)` and `Table.DeleteRow(column, value)` are removed:
+  `Table.Update(row)` and `Table.Delete(row)`** take a row that was read from the table - by `Rows`, a cursor
+  or `FindRowByPrimaryKey` - and find it by where it was read (`Row.Id`), so a table with a key of several
+  columns, or with none, is updated and deleted like any other (#34). `Update` writes only the values that are
+  no longer what the row holds, and gives the `Row` its new id: the row is written again elsewhere. A row that
+  was not read from the table is refused with `ArgumentException`, and one that is no longer where it was read
+  with `InvalidOperationException`.
+- **An index cursor is a cursor over its index** (#43, #29). `CreateIndexCursor()` throws
+  `InvalidOperationException` for a table with no primary key (it made a cursor that read the table), and
+  `IndexCursor.Index` is never null. Its rows come in the index's order (they came in the table's). Every
+  lookup goes through the cursor's own index: `FindRowByEntry` with more values than the index has columns
+  throws `ArgumentException` (it looked in another index, or in the table's leading columns), and with fewer
+  finds the first row with those leading values. `FindRow(column, value)` is `Cursor`'s, finds the first row in
+  the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
+  A lookup that finds a row leaves the cursor on it, and one that finds none leaves the cursor where it was;
+  a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
+  a cast, `(string)null`, now that there is an overload taking an `IndexRange`.
+- **A Date/Time is matched by the number a row stores** (#35), as a Double is: a `DateTime` looked for finds
+  the row that stores exactly `DateTime.ToOADate()`, and a `double` the row that stores that number. A lookup
+  matched a date as it read, to the millisecond, so two dates within one could not be told apart; a date
+  Access stored finer than a millisecond is now found by its number, not by the `DateTime` it reads as.
+- **A table or column that is not there is an `ArgumentException`** in `CreateRelationship`, `AddIndex` and
+  `CreateTable` (an index's column), and so is a primary key of more than ten columns; they threw
+  `InvalidOperationException`. A name that is taken stays an `InvalidOperationException` where it was one:
+  `CreateTable`, an import under a table's name, a relationship's name.
 - **`DatabaseBuilder`, `CursorBuilder`, `TableBuilder` and `ColumnBuilder` are removed.** A column is described
   by a `ColumnDefinition` - `new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 }` - and
   `Database.CreateTable` and `Table.AddColumn` take definitions; `CreateTable`'s primary key is
@@ -85,6 +110,20 @@ changes with them.
 
 ### Added
 
+- **Row ids.** `Row.Id` is a `RowId` - the page a row is on and its number there, Jackcess's `RowId` - for a
+  row that was read, and null for one a caller made (#34).
+- **`Table.InsertRange(rows)`** inserts a batch whole or not at all: when a row is refused the rows before it
+  are taken out again and a `BatchInsertException` names the row (`RowIndex`) and carries what refused it. What
+  Jackcess does with `addRows` and `BatchUpdateException`, which leaves the rows before it in the table (#29).
+- **Cursors** (#29): `UpdateCurrentRow` and `DeleteCurrentRow`, which keep every index and enforced
+  relationship as `Table.Update` and `Table.Delete` do; `FindRow` and `FindNextRow`, by one column or by a
+  pattern of several; `GetCurrentRowValue` for one column of the current row; `ColumnNames` to read some of the
+  columns; `EnumerateBackward`; `IsBeforeFirst` and `IsAfterLast`; `GetSavepoint` and `RestoreSavepoint`.
+- **Index cursors** (#29): a cursor over the rows between two entries of an index
+  (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
+  an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
+  with `NotSupportedException` for a value no key is made for.
+- **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
