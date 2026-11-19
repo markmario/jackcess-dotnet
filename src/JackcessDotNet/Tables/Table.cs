@@ -590,7 +590,7 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column,<see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
+    /// its column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
     /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
