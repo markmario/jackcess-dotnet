@@ -15,7 +15,19 @@ changed since 1.2.2.
 
 - **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
-- **Targets `net8.0`, `net472` and `netstandard2.0`.**
+- **Targets `net10.0`, `net11.0`, `net48` and `netstandard2.0`** (it was `net8.0`, `net472` and
+  `netstandard2.0`). **Breaking for an application on .NET Framework 4.7.2:** there is no `net472` assembly, so
+  it gets the `netstandard2.0` one, with that assembly's package dependencies. What each application gets:
+  - .NET 10: `net10.0`. .NET 11 and later: `net11.0`. Neither has a package dependency.
+  - .NET Framework 4.8 and 4.8.1: `net48`.
+  - .NET 8 and 9, and .NET Framework 4.6.2 to 4.7.2: `netstandard2.0`.
+- **The `netstandard2.0` assembly opens a database on .NET.** It did not register the provider of the legacy code
+  pages, so on .NET 8 or 9 every `Database.Open` and `Database.Create` failed with a
+  `TypeInitializationException` ("No data is available for encoding 1252") unless the application had registered
+  the provider itself. It depends on `System.Text.Encoding.CodePages` and registers it.
+- **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
+  `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
+  by side, and checks the packages each target of the package depends on.
 - **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
   format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time

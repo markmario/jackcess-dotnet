@@ -1,8 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- The library's own targets that run: the tests run on each. Its fourth, netstandard2.0, is not a
+         runtime; NetStandardAsset below runs the tests on it. -->
+    <TargetFrameworks>net10.0;net11.0;net48</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- One language for every target: .NET Framework's default is C# 7.3. -->
+    <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <!-- xUnit.net v3: a test project is its own runner, so it is an executable. -->
     <OutputType>Exe</OutputType>
@@ -12,9 +16,37 @@
     <!-- xUnit.net v3 on Microsoft Testing Platform: global.json tells `dotnet test` to use it. -->
     <PackageReference Include="xunit.v3" Version="4.0.3" />
   </ItemGroup>
-  <ItemGroup>
+  <ItemGroup Condition="'$(NetStandardAsset)' != 'true'">
     <ProjectReference Include="..\..\src\JackcessDotNet\JackcessDotNet.csproj" />
   </ItemGroup>
+
+  <!--
+    -p:NetStandardAsset=true: the same tests against the library's netstandard2.0 assembly, which no test
+    project can target. On net10.0 it is loaded as an application on .NET 8 or 9 loads it; on net48, as one
+    on .NET Framework 4.7.2 does. Built to folders of its own, so it is never left where the ordinary build's
+    is expected.
+  -->
+  <PropertyGroup Condition="'$(NetStandardAsset)' == 'true'">
+    <OutputPath>bin\$(Configuration)-netstandard\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)-netstandard\</IntermediateOutputPath>
+    <!-- LibraryAssemblyTests checks that the assembly loaded is the netstandard2.0 one. -->
+    <DefineConstants>$(DefineConstants);NETSTANDARD_ASSET</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NetStandardAsset)' == 'true'">
+    <ProjectReference Include="..\..\src\JackcessDotNet\JackcessDotNet.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+  <!-- The packages that assembly needs and .NET Framework does not have. Restore gives a project the packages
+       of the assembly nearest its own framework, which here is not the one referenced. -->
+  <ItemGroup Condition="'$(NetStandardAsset)' == 'true' AND '$(TargetFramework)' == 'net48'">
+    <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- .NET Framework 4.8 has the data annotations the tests use in an assembly of its own. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.ComponentModel.DataAnnotations" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="IndexKeys\general-legacy-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\general-legacy-more-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-more-ace16.tsv" />

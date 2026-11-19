@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Pure managed library for reading and writing Microsoft Access (`.mdb` / `.accdb`) files.
-No ODBC, no ACE drivers, no native dependencies. It builds for .NET 8, .NET Framework 4.7.2
+No ODBC, no ACE drivers, no native dependencies. It builds for .NET 10, .NET 11, .NET Framework 4.8
 and .NET Standard 2.0.
 
 This project started from release 1.2.2 of
@@ -20,8 +20,8 @@ maintained on its own, with its own package, `Jackcess.Net`. It is not a release
 neither the Jackcess authors nor Mehran Ghanizadeh maintain or endorse it. It differs from that port in two ways:
 
 - **.NET Framework.** The `JackcessDotNet` package on nuget.org ships a `net10.0` assembly and nothing
-  else (checked for 2.0.0 and 3.1.0), so nothing on .NET Framework can use it. This one ships `net8.0`,
-  `net472` and `netstandard2.0`.
+  else (checked for 2.0.0 and 3.1.0), so nothing on .NET Framework can use it. This one ships `net10.0`,
+  `net11.0`, `net48` and `netstandard2.0`. See [Supported frameworks](#supported-frameworks).
 - **Files Microsoft Access accepts.** The files this library writes are checked against Access's own engine
   (ACE), not only read back by the library that wrote them. See [What this fork changes](#what-this-fork-changes).
 
@@ -43,6 +43,24 @@ that other port's package, not this one. Versions start at 2.0.0, because the pu
 1.2.2 this started from. If you distribute a build, the [Apache License 2.0](LICENSE) and [NOTICE](NOTICE)
 have to travel with it; the package carries both.
 
+### Supported frameworks
+
+The package has four assemblies, and NuGet gives an application the nearest one:
+
+| The application runs on | It gets | Package dependencies | The tests run it on |
+|---|---|---|---|
+| .NET 10 | `net10.0` | none | .NET 10 |
+| .NET 11 and later | `net11.0` | none | .NET 11 |
+| .NET Framework 4.8 and 4.8.1 | `net48` | `System.Memory`, `Microsoft.Bcl.HashCode` | .NET Framework 4.8 |
+| .NET 8 and 9, .NET Framework 4.6.2 to 4.7.2, anything else on .NET Standard 2.0 (Mono, Unity) | `netstandard2.0` | those two, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` | .NET 10 and .NET Framework 4.8 |
+
+Every row is the whole test suite, on every pull request. The `netstandard2.0` assembly is not run on .NET 8 or
+9, on .NET Framework 4.7.2, or on Mono or Unity themselves: .NET 10 and .NET Framework 4.8 stand in for them.
+
+There is no `net472` assembly: an application on .NET Framework 4.7.2 gets the `netstandard2.0` one, and
+.NET Framework 4.8 is the oldest with an assembly of its own. `net48` rather than `net481` because 4.8 runs on
+more versions of Windows and the code is the same. The public API is the same in all four.
+
 It can also be referenced from source. QCAT's ExportMdb.Interop takes this repository as a git submodule,
 references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own:
 
@@ -61,7 +79,7 @@ real version (see [Releasing](#releasing)).
 
 Each of these was found by having Access or ACE open a file the engine wrote.
 
-- **Three target frameworks:** `net8.0`, `net472` and `netstandard2.0`.
+- **Four target frameworks:** `net10.0`, `net11.0`, `net48` and `netstandard2.0`, each of them tested.
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
   Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
 - **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
@@ -114,15 +132,22 @@ Limits to know about:
 
 ## Building and testing
 
-You need the **.NET 10 SDK**. The tests run on Microsoft Testing Platform (`global.json` selects it), and
-only the 10 SDK's `dotnet test` runs that.
+You need the **.NET 11 SDK**, which builds every target, `net11.0` included; an earlier SDK cannot restore the
+project, and `global.json` asks for 11.0.100 or later. The tests run on Microsoft Testing Platform (`global.json`
+selects it), which `dotnet test` runs from the 10 SDK on. The .NET Framework 4.8 tests run on Windows only.
 
 ```
 dotnet build JackcessDotNet.slnx --configuration Release
 dotnet test JackcessDotNet.slnx --configuration Release
 ```
 
-- The tests are xUnit.net v3 and run on .NET 8 only; the library's other two targets are built, not tested here.
+- The tests are xUnit.net v3 and run on .NET 10, .NET 11 and .NET Framework 4.8: `dotnet test` runs all three,
+  and `--framework net48` runs one.
+- The `netstandard2.0` assembly is not one a test project can target, so the same tests run against it with
+  `-p:NetStandardAsset=true`, on .NET 10 (as an application on .NET 8 or 9 loads it) and on .NET Framework 4.8
+  (as one on 4.7.2 does). `LibraryAssemblyTests` fails if the assembly loaded is not the one the build was for.
+  That build goes to `bin/Release-netstandard`, beside the ordinary one:
+  `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true`
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
 - `./tools/corpus.ps1` checks every corpus file against `tests/corpus/MANIFEST.sha256`. CI runs it before building.
@@ -142,7 +167,7 @@ commit. Merge, then tag the merge commit and push the tag. `.github/workflows/pu
    own line (the merge commit, not a commit inside a pull request), above every release so far, at or above
    `MinimumReleaseVersion` in the project file, and not already released. A refused tag publishes nothing;
    delete it, fix what it tripped over, and tag again.
-2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the three
+2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the four
    frameworks, `LICENSE` and `NOTICE`, and the assembly, file and product versions of each DLL.
 3. **Waits for approval** of the `nuget` environment, then pushes the package and its symbols to nuget.org
    through [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) - there is no

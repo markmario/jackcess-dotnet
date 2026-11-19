@@ -67,13 +67,12 @@ jobs:
           # anything is built, and SourceLink needs the history too.
           fetch-depth: 0
 
-      # 8.0.x and 9.0.x as ci.yml has them; 10.0.x because the tests run on Microsoft Testing Platform.
+      # As ci.yml has them: 11.0.x builds every target, and 10.0.x is the runtime of the net10.0 tests.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
-            8.0.x
-            9.0.x
             10.0.x
+            11.0.x
 
       # A tag is checked before anything is built: a plain vX.Y.Z on main's own line (the merge commit), above every
       # release so far, at or above the csproj's MinimumReleaseVersion, and not already released.
@@ -170,7 +169,7 @@ jobs:
 
           $core = [version]($env:VERSION -replace '-.*$', '')
           $assemblyVersion = [version]"$($core.Major).$($core.Minor).$($core.Build).0"
-          foreach ($tfm in 'net8.0', 'net472', 'netstandard2.0') {
+          foreach ($tfm in 'net10.0', 'net11.0', 'net48', 'netstandard2.0') {
             $dll = Join-Path $dir "lib/$tfm/JackcessDotNet.dll"
             if (-not (Test-Path $dll)) { throw "lib/$tfm/JackcessDotNet.dll is missing from the package" }
             $name = [System.Reflection.AssemblyName]::GetAssemblyName($dll)
