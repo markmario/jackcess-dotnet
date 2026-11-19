@@ -25,8 +25,10 @@ namespace JackcessDotNet;
 /// opens exclusively: while it is open no other program or <see cref="Database"/> opens the file for writing -
 /// Access says it is "already in use" - and it is not opened while one has. Programs that only read - Access with
 /// a database open read-only, a <see cref="Database"/> opened with <see cref="DatabaseOpenOptions.ReadOnly"/> -
-/// can have the file open beside it, and read what has been written so far. Access's lock file (.ldb, .laccdb) is
-/// neither made nor read, as Access makes none for a database it opens exclusively.
+/// can have the file open beside it, and read what has been written so far. A database made by
+/// <see cref="Create(string)"/> is shared with no one, readers included, until it is disposed, as DAO holds a
+/// database it creates. Access's lock file (.ldb, .laccdb) is neither made nor read, as Access makes none for a
+/// database it opens exclusively.
 /// </para>
 /// <para>
 /// <see cref="Dispose"/> closes the file. After it, <see cref="Path"/>, <see cref="FileFormat"/> and
@@ -293,11 +295,17 @@ public sealed class Database : IDisposable
     /// the failure as its <see cref="Exception.InnerException"/>: delete it before using the path again. A file that
     /// was there before is not put back; it was replaced when the new one was begun.
     /// </para>
+    /// <para>
+    /// The new database has the file to itself until it is disposed, as DAO's <c>CreateDatabase</c> holds a database it
+    /// makes: no other program or <see cref="Database"/> opens it meanwhile, even to read. A file is replaced only when
+    /// no one has it open, and is held from the moment it is found so until the new database is closed, so that no one
+    /// comes between to read a file that has become another. Opened again with <see cref="Open(string)"/>, it is shared
+    /// with readers as any database opened to be written is.
+    /// </para>
     /// </summary>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file at <paramref name="path"/> open - Access,
-    /// while the database is open in it, read-only or not. It is not replaced, and is as it was. The new database is
-    /// kept from every other writer while it is open, as an opened one is (see <see cref="Database"/>).
+    /// while the database is open in it, read-only or not. It is not replaced, and is as it was.
     /// </exception>
     /// <param name="path">The path of the file to create.</param>
     /// <param name="format">The format of the file to create.</param>

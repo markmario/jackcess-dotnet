@@ -309,7 +309,9 @@ changed since 1.2.2.
   `.laccdb`) is neither made nor read, as Access makes none for a database it opens exclusively (measured with ACE 16,
   DAO 16 and DAO 3.6).
 - **`Database.Create` replaces a file only when no one has it open** (#62), readers included: it emptied a file
-  Access had open, under Access. `DatabaseInUseException`, the file as it was.
+  Access had open, under Access. `DatabaseInUseException`, the file as it was. The new database has the file to
+  itself until it is disposed, as DAO's `CreateDatabase` holds one: no other program or `Database` opens it
+  meanwhile, even to read. Opened again with `Database.Open`, it is shared with readers.
 - **An Access 97 file opens while Access has it open** (#62). It is only read, and is opened as one opened
   `ReadOnly` is; it was refused, as a file to be written is.
 

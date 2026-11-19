@@ -303,7 +303,8 @@ except with readers, as Access's own read-only open shares one:
 
 | The file is opened | Shared with | While it is open |
 | --- | --- | --- |
-| to be written: `Database.Open`, `Database.Create` | readers only | Access cannot open it to write, shared or exclusively: "Could not use '...'; file already in use" (error 3045). Access read-only - ACE's `Mode=Read`, DAO's read-only `OpenDatabase` - and a `Database` opened `ReadOnly` open it and read it. A second `Database` opened to be written is refused. |
+| to be written: `Database.Open` | readers only | Access cannot open it to write, shared or exclusively: "Could not use '...'; file already in use" (error 3045). Access read-only - ACE's `Mode=Read`, DAO's read-only `OpenDatabase` - and a `Database` opened `ReadOnly` open it and read it. A second `Database` opened to be written is refused. |
+| made anew: `Database.Create` | no one | Nothing opens it, Access in no mode and no `Database`, until the new database is disposed - as DAO holds a database its `CreateDatabase` made, without a lock file. Opened again with `Database.Open`, it is shared with readers. |
 | only to be read: `DatabaseOpenOptions.ReadOnly` | readers and writers | Access opens it in any mode but exclusively, and writes to it; so does a `Database`. |
 
 And the other way about, with Access - or another `Database` - there first:
@@ -324,7 +325,8 @@ And the other way about, with Access - or another `Database` - there first:
   deleted, a table or column made, dropped or renamed, a property saved, an import - is refused with
   `NotSupportedException` before anything happens (`Database.IsReadOnly`). A file marked read-only opens this way.
 - `Database.Create` replaces a file only when no one has it open, readers included. It emptied a file Access had
-  open, under Access.
+  open, under Access. The handle that finds the file free is the one that empties it, and it is kept until the new
+  database is disposed, so no one comes between to read a file that has become another.
 - An Access 97 file, which is only ever read, is opened as one opened `ReadOnly` is: beside Access.
 - Access's lock file (`.ldb`, `.laccdb`) is neither made nor read. Measured with ACE 16 and DAO 16, and DAO 3.6 for an
   Access 97 file: Access makes one when it opens a database shared or read-only - 64 bytes a user, the machine's name

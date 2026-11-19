@@ -126,7 +126,9 @@ internal sealed class PageFile : IDisposable
     /// writing already keeps it from being opened here. This library takes none of Access's locks, so a second writer
     /// would write over pages this one keeps track of, and this one over its. Opened only to be read, it is shared
     /// for reading and writing, as Access shares a database it opens read-only: a writer, Access or a
-    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out.
+    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out. Made anew
+    /// (<see cref="FileMode.Create"/>, <see cref="FileMode.Truncate"/>), it is shared with no one: it is replaced only
+    /// when no one has it open, and no one opens it until it is closed.
     /// </para>
     /// </summary>
     /// <exception cref="DatabaseInUseException">
@@ -167,19 +169,23 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// The file's handle, shared as the constructor says: for reading only by a writer, for reading and writing by a
-    /// reader. A sharing violation is the file being in use, and is thrown as <see cref="DatabaseInUseException"/>.
+    /// reader, and with no one by a file made anew. A sharing violation is the file being in use, and is thrown as
+    /// <see cref="DatabaseInUseException"/>.
     /// </summary>
     private static FileStream OpenShared(string path, FileMode mode, FileAccess access)
     {
+        // A mode that empties a file that is there replaces it whole, which a reader sharing it for writing would not
+        // keep out: such a handle shares nothing, so it is refused while anyone has the file open, and no one opens the
+        // file while it is held - the new database's whole life, as DAO holds a database it creates. Windows checks a
+        // handle's sharing before it creates or empties the file, in the one call, so a file in use is refused
+        // unchanged, and there is no moment between the check and the emptying for anyone to open the file in (a
+        // check made with a handle of its own, closed before the file was emptied, left one).
+        FileShare share = mode is FileMode.Create or FileMode.Truncate ? FileShare.None
+                        : access == FileAccess.Read ? FileShare.ReadWrite
+                        : FileShare.Read;
         try
         {
-            // A mode that empties a file that is there replaces it whole, which a reader sharing it for writing would
-            // not keep out: it is refused while anyone has the file open, as Access needs a database to itself to
-            // replace it, so that no one goes on reading a file that has become another.
-            if (mode is FileMode.Create or FileMode.Truncate && File.Exists(path))
-                using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)) { }
-            // Windows checks the sharing before it creates or empties a file, so a file in use is refused unchanged.
-            return new FileStream(path, mode, access, access == FileAccess.Read ? FileShare.ReadWrite : FileShare.Read);
+            return new FileStream(path, mode, access, share);
         }
         catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
         {

@@ -108,18 +108,29 @@ public sealed class FileSharingTests : IDisposable
             Assert.Equal(11, db.GetTable("T").RowCount);
     }
 
-    // A database just created is kept from other writers in the same way.
+    // A database just created has the file to itself until it is disposed, as DAO holds a database it creates: writers
+    // and readers are kept out, Access in every mode and every Database. Disposed, it is anyone's, and opened again it is
+    // shared with readers. It shared the file with readers, through a handle opened after another, sharing nothing, had
+    // found the file free and been closed: a reader that opened between the two had the file emptied under it (Codex's
+    // review of #73). The handle that empties the file now shares nothing, and Windows checks it before it empties the
+    // file (Create_does_not_replace_a_file_someone_has_open), so there is no between.
     [Theory]
     [MemberData(nameof(Formats))]
-    public void A_database_just_created_keeps_every_other_writer_out(FileFormat format)
+    public void A_database_just_created_has_the_file_to_itself_until_it_is_disposed(FileFormat format)
     {
         string path = NewPath(format == FileFormat.Access2000 ? ".mdb" : ".accdb");
-        using var db = Database.Create(path, format);
+        using (var db = Database.Create(path, format))
+        {
+            AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
+            AssertRefusedByWindows(() => AsAccessReads(path).Dispose());
+            AssertInUse(() => Database.Open(path).Dispose(), path);
+            AssertInUse(() => Database.Open(path, ReadOnly).Dispose(), path);
+            db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id");
+        }
 
-        AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
-        AssertInUse(() => Database.Open(path).Dispose(), path);
+        using (var db = Database.Open(path))
         using (var reader = Database.Open(path, ReadOnly))
-            Assert.Empty(reader.GetTableNames());
+            Assert.Equal(new[] { "T" }, reader.GetTableNames());
     }
 
     // A file Access has open to write - shared, or exclusively - is not opened to be written, whatever the options
