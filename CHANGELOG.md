@@ -24,6 +24,19 @@ changed since 1.2.2.
   `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` and the build checks it. A broken rule of the database
   has its own exception, and `TryGetTable` was added.
 
+- **Table definitions of more than one page** are read whole, written and changed (#37). A table whose
+  definition Access put on several pages has all its columns' names and takes rows; a column, an index or a
+  relationship that takes a definition past its page is added, where it was refused; and a table whose
+  definition is longer than a page is created.
+- **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
+  value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
+  has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **A new table or relationship has its owner's entry in `MSysACEs`**, with the others its container passes
+  on, as Access gives them (#37). Without it, Access in an `.mdb` did not read a table this library made in a
+  database DAO had created, nor drop a relationship it made.
+- **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
+  is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
+
 ### Breaking changes to the public API
 
 Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds
@@ -85,6 +98,13 @@ changes with them.
 
 ### Added
 
+- **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
+- **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;
+  `Database.DropRelationship`, `DropTable` and `RenameTable`. Jackcess has none of them: each is written as
+  Access was measured to write it, and what Access refuses is refused.
+- **`RelationshipDefinition.IsOneToOne`** (#37): a relationship is marked one to one, or left unmarked, as the
+  caller says, where it was marked only when both sides were unique. Marked, its foreign key's index is a
+  unique one, built over the rows.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
