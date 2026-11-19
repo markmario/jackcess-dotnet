@@ -76,7 +76,6 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     [Theory]
     [InlineData("0000000000003652059:0000000000000000000:7\0")]   // the day after the last
     [InlineData("0000000000000737425:0000000864000000000:7\0")]   // a time of day a day long
-    [InlineData("000000000000073742X:0000000110451234567:7\0")]   // not a digit
     [InlineData("9999999999999999999:0000000000000000000:7\0")]   // more than any number of days
     public void Bytes_that_are_no_extended_date_are_read_as_null(string stored)
         => Assert.Null(ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
@@ -91,14 +90,25 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
     [InlineData("0000000000000737425:0000000110451234567:71")]    // a count of 71: no value
     [InlineData("-000000000000000001:0000000110451234567:7\0")]   // a day before the first: no value
     [InlineData("0000000000000737425:0000000110451234567:3\0")]   // a count of 3: Access shows 30680:53:54.0000567
-    [InlineData("0000000000000737425:0000000000011045123:3\0")]   // a count of 3: Access shows 03:04:05.0000123
     [InlineData("0000000000000737425:0000000110451234567:9\0")]   // a count of 9: finer than a tick
-    [InlineData("0000000000000737425:00000001104512345X7:7\0")]   // not a digit: Access reads up to it
-    [InlineData("                   :0000000110451234567:7\0")]   // no digit: Access reads day 0
     public void Bytes_in_another_shape_than_a_date_s_are_read_as_null(string stored)
     {
         Assert.Equal(ExtendedDateTimeCodec.Size, stored.Length);
         Assert.Null(ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
+    }
+
+    // And these Access reads a date from, as it reads every value: three numbers, each read up to its first byte
+    // that is not a digit, the remainder of the time in units of 100 nanoseconds whatever the count (#64; DAO 16.0 and
+    // ACE 16's =, ExtendedDateReadingTests). They were read as null.
+    [Theory]
+    [InlineData("000000000000073742X:0000000110451234567:7\0", 202, 11, 26, 110451234567)]   // the day read up to X: 73742
+    [InlineData("0000000000000737425:00000001104512345X7:7\0", 2020, 1, 2, 1104512345)]     // the time up to X: 00:01:50.4512345
+    [InlineData("0000000000000737425:0000000000011045123:3\0", 2020, 1, 2, 110450000123)]   // a count of 3: 03:04:05.0000123
+    [InlineData("                   :0000000110451234567:7\0", 1, 1, 1, 110451234567)]      // no digit: day 0
+    public void Bytes_in_another_shape_are_read_as_Access_reads_them(string stored, int year, int month, int day, long timeOfDay)
+    {
+        Assert.Equal(ExtendedDateTimeCodec.Size, stored.Length);
+        Assert.Equal(new DateTime(year, month, day).AddTicks(timeOfDay), ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
     }
 
     // And the forms Access reads the same date from as from its own are read as that date.

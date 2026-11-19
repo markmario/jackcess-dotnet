@@ -9,6 +9,19 @@ namespace JackcessDotNet;
 /// 100 nanoseconds (twelve of seconds and seven of the fraction, as Jackcess reads them), and ":7" and a zero
 /// byte, the seven being the digits of the fraction. That one is 2 January 2020, 03:04:05.1234567.
 /// <para>
+/// Access writes a value in three layouts, and keys each by its bytes (#51):
+/// </para>
+/// <list type="bullet">
+/// <item>the one above, which its SQL <c>INSERT</c> writes, and this library;</item>
+/// <item><c>0000000000000737425:0000000000000011045:0\0</c>, the time of day in whole seconds and a count of 0, which
+/// its SQL <c>UPDATE</c> writes, and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset, and Access's own forms and
+/// datasheets: the value is taken through a Date/Time, to the whole second (#38);</item>
+/// <item><c>000000000737425:0000000110451234567:7\0</c> and four bytes more, the day in fifteen digits, which DAO's
+/// <c>AddNew</c> and <c>Edit</c> on a table-type recordset write - what DAO's <c>OpenRecordset</c> gives a table of the
+/// database when it is asked for no other kind (#64). The four bytes after the zero byte are whatever DAO's buffer
+/// held, and differ from row to row: they are no part of the value.</item>
+/// </list>
+/// <para>
 /// The value is read and written as a <see cref="DateTime"/>, because that is exactly what it is: Access takes
 /// dates from 1 January 0001 to 31 December 9999 to the 100 nanoseconds, a <see cref="DateTime"/>'s own range
 /// and its own tick, so days and time of day are its <see cref="DateTime.Ticks"/> divided by a day's and the
@@ -32,36 +45,71 @@ internal static class ExtendedDateTimeCodec
     internal const int CountAt = TrailerAt + 1;
     private const long DaysInRange  = 3652059;   // DateTime.MaxValue's day, and one more
 
+    // 10 to each count Access reads: the count of the fraction's digits is less than 10.
+    private static readonly ulong[] PowersOfTen =
+        { 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000 };
+
     /// <summary>
-    /// The value at <paramref name="offset"/>; null for 42 bytes that do not say a date: the whole shape is
-    /// looked at, not only the two numbers.
-    /// <para>
-    /// Access reads the bytes as three numbers with colons between them, loosely, and what it made of each form
-    /// here was asked of it (DAO 16.0, the bytes of a value changed in a file it had made). Where it reads the
-    /// date the bytes say, so does this: spaces before or after a number's digits, a plus sign before them, and
-    /// any byte that is not a digit in the last place, where Access writes a zero byte. Where it reads no value,
-    /// this reads null: a colon that is not a colon, a third number that is not a number or has a digit after
-    /// it, a minus sign. And these are null here although Access shows something for them, because what it
-    /// shows is not a date the bytes say:
-    /// </para>
-    /// <list type="bullet">
-    /// <item>a third number other than 7 or 0. It is the count of digits of the fraction, and Access's reading of
-    /// others is not one rule - three digits, 123, it shows as .0000123 - while eight or nine are finer than a
-    /// <see cref="DateTime"/>;</item>
-    /// <item>a number with something other than a digit in it, which Access reads up to there (a day number
-    /// 73742X is day 73742, in the year 202), and a number with no digit, which it reads as zero;</item>
-    /// <item>a day after 31 December 9999, which it shows as 30 December 1899, and a time of day of a day or
-    /// more, which it shows as 24:00:00.</item>
+    /// The value at <paramref name="offset"/>, read as Access reads it, or null where Access reads no date. Access reads
+    /// the bytes as three numbers, not as fields at fixed places (#64; DAO 16 and ACE 16, each rule asked of them with
+    /// bytes changed in a file Access made):
+    /// <list type="number">
+    /// <item>The value ends at its first zero byte; the bytes after it are not read.</item>
+    /// <item>It has two colons or more. The day is read from its start, the time of day from after the first colon,
+    /// and the count of the fraction's digits from after the last colon.</item>
+    /// <item>A number begins with a digit, a white-space byte (a space, a tab, or a line feed, vertical tab, form feed
+    /// or carriage return) or a plus sign: anything else there - any other byte, or the end of the value, as where
+    /// two colons meet - is an error. The white space is skipped, then one plus sign, and the digits are read up to
+    /// the first byte that is not a digit. No digit at all is 0, and a minus sign after the white space ends the
+    /// number as any other byte does. A number past 2^64 - 1 is an error.</item>
+    /// <item>The day and the count are taken to their low 32 bits: a day of 2^32 + 737425 is day 737425.</item>
+    /// <item>A count of 10 or more is an error.</item>
+    /// <item>The value is the day, and the time divided by 10 to the count in seconds, and the remainder in units of
+    /// 100 nanoseconds, whatever the count: 11045123 with a count of 3 is 03:04:05.0000123, and ACE's own <c>=</c>
+    /// compares it so.</item>
     /// </list>
-    /// Jackcess looks at neither colons nor trailer, and takes each byte of the numbers less '0' for a digit.
-    /// <para>
-    /// A third number of 0 is Access's own too (#38): the time of day is then in whole seconds -
-    /// <c>0000000000000737425:0000000000000011045:0</c> is 2 January 2020, 03:04:05 - and it is what Access writes
-    /// when the value comes to the column through a Date/Time, as every value its SQL <c>UPDATE</c> sets does, from
-    /// text or from another Date/Time Extended column alike. DAO reads it as that date and time, and so does this.
-    /// </para>
+    /// Where Access has an error - DAO gives Empty, and ACE's <c>=</c> fails - this reads null. So it does where
+    /// Access reads a value that is no <see cref="DateTime"/>, which Access does not show as a date of its own: a day
+    /// after 31 December 9999 (DAO shows 30 December 1899, and ACE puts it after 31 December 9999), a time of day of a
+    /// day or more (DAO shows 24:00:00 and on, and ACE puts it after the day's last tick and before the next day), and
+    /// a remainder of more than seven digits, from a count of 8 or 9 (DAO shows it as a fraction of eight or nine
+    /// places, and ACE's <c>=</c> finds it for no date). Access writes none of these, nor the counts other than 7 and
+    /// 0: they are bytes changed by hand, or by another program.
     /// </summary>
     public static DateTime? Decode(byte[] row, int offset)
+    {
+        int end = offset;
+        while (end < offset + Size && row[end] != 0) end++;
+
+        int first = -1, last = -1;
+        for (int at = offset; at < end; at++)
+        {
+            if (row[at] != ':') continue;
+            if (first < 0) first = at;
+            last = at;
+        }
+        if (first < 0 || last == first) return null;
+
+        if (ReadNumber(row, offset, end) is not { } day
+            || ReadNumber(row, first + 1, end) is not { } time
+            || ReadNumber(row, last + 1, end) is not { } count) return null;
+
+        uint days = unchecked((uint)day), digits = unchecked((uint)count);
+        if (digits >= PowersOfTen.Length || days >= DaysInRange) return null;
+        ulong seconds = time / PowersOfTen[digits], remainder = time % PowersOfTen[digits];
+        if (seconds >= TimeSpan.TicksPerDay / TimeSpan.TicksPerSecond || remainder >= TimeSpan.TicksPerSecond) return null;
+        return new DateTime(days * TimeSpan.TicksPerDay + (long)seconds * TimeSpan.TicksPerSecond + (long)remainder, DateTimeKind.Unspecified);
+    }
+
+    /// <summary>
+    /// The value at <paramref name="offset"/> as versions of this library from db6f93b until #64 read it, the
+    /// versions that keyed the date they read (#51): two colons at their places in Access's first form, after
+    /// nineteen bytes of the day and nineteen of the time, a count of 7 or 0 after the second, anything but a digit in
+    /// the last byte, and each number digits that spaces may stand before and after and a plus sign before. Null for
+    /// anything else - the layout DAO's table-type recordset writes among it, with its day of fifteen digits. Versions
+    /// from 2930d3f read a count of 7 alone.
+    /// </summary>
+    public static DateTime? DecodeAsEarlierVersions(byte[] row, int offset)
     {
         if (row[offset + Digits] != ':' || row[offset + TrailerAt] != ':') return null;
         long unit = row[offset + TrailerAt + 1] switch
@@ -72,8 +120,8 @@ internal static class ExtendedDateTimeCodec
         };
         if (unit == 0) return null;
         if (row[offset + Size - 1] is >= (byte)'0' and <= (byte)'9') return null;
-        if (ReadNumber(row, offset) is not { } days || days >= DaysInRange) return null;
-        if (ReadNumber(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay / unit) return null;
+        if (ReadNumberAsEarlierVersions(row, offset) is not { } days || days >= DaysInRange) return null;
+        if (ReadNumberAsEarlierVersions(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay / unit) return null;
         return new DateTime(days * TimeSpan.TicksPerDay + time * unit, DateTimeKind.Unspecified);
     }
 
@@ -119,9 +167,33 @@ internal static class ExtendedDateTimeCodec
         if (EncodeInSeconds(value) is { } inSeconds) yield return inSeconds;
     }
 
-    // One of the two numbers, in its nineteen bytes: digits - Access fills the field with them - which may have
-    // spaces before and after and a plus sign before. Null for anything else, and for no digit at all.
-    private static long? ReadNumber(byte[] row, int offset)
+    // One of the three numbers, read as Access reads it (Decode): from 'at' to the end of the value. Null for an error.
+    private static ulong? ReadNumber(byte[] row, int at, int end)
+    {
+        if (at >= end || !(IsDigit(row[at]) || IsWhiteSpace(row[at]) || row[at] == '+')) return null;
+        while (at < end && IsWhiteSpace(row[at])) at++;
+        if (at < end && row[at] == '+') at++;
+
+        ulong number = 0;
+        for (; at < end && IsDigit(row[at]); at++)
+        {
+            ulong digit = (ulong)(row[at] - '0');
+            if (number > (ulong.MaxValue - digit) / 10) return null;
+            number = number * 10 + digit;
+        }
+        return number;
+    }
+
+    private static bool IsDigit(byte b) => b is >= (byte)'0' and <= (byte)'9';
+
+    // White space as C's isspace has it, and Access: a space, and a tab, line feed, vertical tab, form feed or
+    // carriage return. Not a no-break space, nor the separators 0x1C to 0x1F (measured).
+    private static bool IsWhiteSpace(byte b) => b is (byte)' ' or >= 0x09 and <= 0x0D;
+
+    // One of the two numbers as DecodeAsEarlierVersions reads it, in its nineteen bytes: digits - Access fills the
+    // field with them - which may have spaces before and after and a plus sign before. Null for anything else, and
+    // for no digit at all.
+    private static long? ReadNumberAsEarlierVersions(byte[] row, int offset)
     {
         int at = offset, end = offset + Digits;
         while (at < end && row[at] == ' ') at++;

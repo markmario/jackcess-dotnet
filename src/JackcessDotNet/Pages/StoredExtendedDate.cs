@@ -6,8 +6,9 @@ namespace JackcessDotNet;
 /// <summary>
 /// A Date/Time Extended value as a row stores it: its 42 bytes (<see cref="ExtendedDateTimeCodec"/>), in whichever
 /// form they are. Access keys such a value by these bytes and not by the date they say (#51): its <c>INSERT</c>
-/// writes a date in one form and its SQL <c>UPDATE</c> in another, and it holds the two under two keys - a unique
-/// index takes a row in each, and a relationship's parent is the row with the child's very bytes. So a row's index
+/// writes a date in one form, its SQL <c>UPDATE</c> in another and DAO's table-type recordset in a third, with bytes
+/// after it that are no part of the value (#64), and it holds them under keys of their own - a unique index takes a
+/// row in each, and a relationship's parent is the row with the child's very bytes. So a row's index
 /// keys are made of these bytes (<see cref="RowDecoder.DecodeForKey"/>), keys are compared by them, and a row
 /// rewritten without a new value for the column keeps them. A caller's <see cref="DateTime"/> is the form Access's
 /// <c>INSERT</c> writes (<see cref="Of"/>), which is what this library writes too.
@@ -48,10 +49,12 @@ internal sealed class StoredExtendedDate : IEquatable<StoredExtendedDate>
     /// The date the bytes say as versions of this library that keyed the date they read read it, the key of which,
     /// in the first form, is the key such a version made for the row (#51): from 2930d3f a count of digits other
     /// than 7 - Access's second form among them - was read as no value, and from db6f93b, with
-    /// <paramref name="secondFormAsDate"/>, a count of 0 as Access's second form. Null for no value.
+    /// <paramref name="secondFormAsDate"/>, a count of 0 as Access's second form
+    /// (<see cref="ExtendedDateTimeCodec.DecodeAsEarlierVersions"/>). Null for no value: so both read the layout DAO's
+    /// table-type recordset writes (#64).
     /// </summary>
     internal DateTime? DateAsEarlierVersionsRead(bool secondFormAsDate)
-        => secondFormAsDate || _bytes[ExtendedDateTimeCodec.CountAt] == (byte)'7' ? Date : null;
+        => secondFormAsDate || _bytes[ExtendedDateTimeCodec.CountAt] == (byte)'7' ? ExtendedDateTimeCodec.DecodeAsEarlierVersions(_bytes, 0) : null;
 
     /// <summary>
     /// <paramref name="values"/> - a row's, for an index's columns - as the versions of this library that keyed the
