@@ -164,6 +164,39 @@ public sealed class ReaderBesideWriterTests : IDisposable
         Assert.Equal("changed", cursor.Current!["M"]);
     }
 
+    // ── A page read again ─────────────────────────────────────────────────────
+
+    // A page read again is read from the file, whatever its size. The file's stream kept a buffer of 4,096 bytes, so
+    // reading one of an Access 97 file's pages of 2,048 read the next with it, and that one, read again at a later
+    // move, came from the buffer as it was - on .NET, whatever another program had written to it since. A page of
+    // 4,096 was always read from the file. The writer here is a handle of its own writing a page, as DAO writes an
+    // Access 97 file this library only reads.
+    [Theory]
+    [InlineData("access97-jet40.mdb")]
+    [InlineData(null)]
+    public void A_page_read_again_beside_a_writer_is_read_from_the_file_whatever_its_size(string? asset)
+    {
+        string path = NewPath(FileFormat.Access2000);
+        if (asset is null) Database.Create(path, FileFormat.Access2000).Dispose();
+        else File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", asset), path, overwrite: true);
+
+        using var reader = Database.Open(path, ReadOnly);
+        int size = reader.File.Format.PageSize;
+        Assert.Equal(asset is null ? 4096 : 2048, size);
+        reader.File.ReadPage(2);
+        byte[] before = reader.File.ReadPage(3);
+
+        var written = new byte[size];
+        for (int i = 0; i < size; i++) written[i] = (byte)(before[i] ^ 0x5A);
+        using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+        {
+            writer.Seek(3L * size, SeekOrigin.Begin);
+            writer.Write(written, 0, size);
+        }
+
+        Assert.Equal(written, reader.File.ReadPage(3));
+    }
+
     // ── A long value through a reference its row no longer holds ─────────────
 
     /// <summary>

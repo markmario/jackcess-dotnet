@@ -185,7 +185,11 @@ internal sealed class PageFile : IDisposable
                         : FileShare.Read;
         try
         {
-            return new FileStream(path, mode, access, share);
+            // No buffer of the stream's own (a size of 1 is none): every page is read and written whole, and a page
+            // read again is read from the file. With the default buffer of 4,096 bytes, reading one of an Access 97
+            // file's pages of 2,048 read the next into it too, and on .NET that page, read again, came from there -
+            // as it was, whatever another program had written to it since (#62).
+            return new FileStream(path, mode, access, share, bufferSize: 1);
         }
         catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
         {
