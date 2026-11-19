@@ -45,8 +45,10 @@ internal sealed class IndexEntryWalker
     /// </summary>
     internal (byte[] Key, int RowPointer)? After(byte[] key, int rowPointer)
     {
-        // The kept leaf answers when it begins at or before the place: the entry is in it or in a leaf after it.
+        // The kept leaf answers when the place is within it, or after the last entry of the last leaf: the entry
+        // is in it, or is the first of the next leaf. A place further off is found from the root.
         var leaf = IsKept && _leaf!.Entries.Count > 0 && Compare(_leaf.Entries[0], key, rowPointer) <= 0
+                   && (_leaf.Next <= 0 || Compare(_leaf.Entries[_leaf.Entries.Count - 1], key, rowPointer) >= 0)
             ? _leaf
             : Keep(_tree.LeafFor(_root, key, rowPointer));
         while (true)
@@ -61,9 +63,11 @@ internal sealed class IndexEntryWalker
     /// <summary>The last entry before (<paramref name="key"/>, <paramref name="rowPointer"/>), or null when there is none.</summary>
     internal (byte[] Key, int RowPointer)? Before(byte[] key, int rowPointer)
     {
-        // The kept leaf answers when it ends at or after the place: the entry is in it or in a leaf before it.
+        // The kept leaf answers when the place is within it, or before the first entry of the first leaf: the
+        // entry is in it, or is the last of the leaf before. A place further off is found from the root.
         IndexWriter.Leaf leaf;
-        if (IsKept && _leaf!.Entries.Count > 0 && Compare(_leaf.Entries[_leaf.Entries.Count - 1], key, rowPointer) >= 0)
+        if (IsKept && _leaf!.Entries.Count > 0 && Compare(_leaf.Entries[_leaf.Entries.Count - 1], key, rowPointer) >= 0
+            && (_leaf.Prev <= 0 || Compare(_leaf.Entries[0], key, rowPointer) <= 0))
         {
             leaf = _leaf;
         }

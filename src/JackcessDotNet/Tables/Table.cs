@@ -221,7 +221,8 @@ public sealed class Table
                     var row = new Row(definition.Columns.Count);
                     foreach (var col in definition.Columns)
                         row[col.Name] = decoder.Decode(rowBytes, col);
-                    row.ReadFrom(this, RowPointer.Pack(pageNum, r));
+                    // (A row past the 256th of its page has no address: Jet names a row on its page with one byte.)
+                    if (r <= 0xFF) row.ReadFrom(this, RowPointer.Pack(pageNum, r));
                     yield return row;
                 }
             }
@@ -690,15 +691,18 @@ public sealed class Table
         if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
         {
             newRowPtr = foreignKeys.Update(this, rowPtr, newValues);
+            if (highestGiven is { } brought)
+                _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, brought);
+            return newRowPtr;
         }
-        else
-        {
-            var entries = new EntryMove(_indexes, refuseDuplicates: true);
-            newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
-            entries.Follow(rowPtr, newRowPtr);
-        }
+
+        // The counter is raised once the row is on its page and before its index entries, as an insert's is: a
+        // row in the file is always one the counter has passed, whatever becomes of the entries.
+        var entries = new EntryMove(_indexes, refuseDuplicates: true);
+        newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
+        entries.Follow(rowPtr, newRowPtr);
         return newRowPtr;
     }
 

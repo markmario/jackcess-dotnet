@@ -80,6 +80,68 @@ public sealed class CursorOperationTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Orders))]
+    public void A_row_a_cursor_updated_is_found_where_it_now_is_once_the_cursor_goes_back_or_is_restored(string order)
+    {
+        using var db = Database.Create(_path);
+        var table  = Create(db);
+        var cursor = CursorOver(table, order);
+        var ids    = CursorOver(table, order).Select(r => (int)r["Id"]!).ToList();
+
+        // The first row is updated, and the cursor goes on to the end without coming to it again...
+        Assert.True(cursor.MoveNext());
+        cursor.UpdateCurrentRow(new Row { ["N"] = 1 });
+        int forwards = 1;
+        while (cursor.MoveNext()) forwards++;
+        Assert.Equal(Rows, forwards);
+
+        // ...and back through every row, the updated one among them, where it now is.
+        var back = new List<int>();
+        while (cursor.MovePrevious()) back.Add((int)cursor.Current!["Id"]!);
+        Assert.Equal(ids.OrderBy(i => i), back.OrderBy(i => i));
+
+        // A row updated after a savepoint was taken is there when the cursor is brought back and goes on.
+        cursor.MoveBeforeFirst();
+        for (int i = 0; i < 10; i++) cursor.MoveNext();
+        var at10 = cursor.GetSavepoint();
+        for (int i = 0; i < 10; i++) cursor.MoveNext();
+        int updated = (int)cursor.Current!["Id"]!;
+        cursor.UpdateCurrentRow(new Row { ["N"] = 2 });
+        cursor.RestoreSavepoint(at10);
+        var onward = new List<int>();
+        while (cursor.MoveNext()) onward.Add((int)cursor.Current!["Id"]!);
+        Assert.Single(onward, id => id == updated);
+        Assert.Equal(onward.Count, onward.Distinct().Count());
+    }
+
+    [Fact]
+    public void A_search_that_cannot_read_a_row_leaves_the_cursor_as_it_was()
+    {
+        using var db = Database.Create(_path);
+        var table  = Create(db);
+        var cursor = table.CreateCursor();
+        for (int i = 0; i < 5; i++) cursor.MoveNext();
+        var on = cursor.Current!;
+
+        // A row further on is made unreadable: its slot says its values are on a page the file has not.
+        var damaged = table.Rows.Skip(50).First().Id!.Value;
+        byte[] page = db.File.ReadPage(damaged.PageNumber);
+        int slot  = db.File.Format.OffsetDataRowTable + damaged.RowNumber * 2;
+        int start = (page[slot] | page[slot + 1] << 8) & 0x1FFF;
+        page[slot + 1] |= 0x40;
+        page[start] = 0; page[start + 1] = 0xFF; page[start + 2] = 0xFF; page[start + 3] = 0x7F;
+        db.File.WritePage(damaged.PageNumber, page);
+
+        Assert.Throws<InvalidDataException>(() => cursor.FindRow("Name", "nobody"));
+        Assert.Same(on, cursor.Current);
+        Assert.Equal(5, on.Count);
+        Assert.Throws<InvalidDataException>(() => cursor.FindNextRow("Name", "nobody"));
+        Assert.Same(on, cursor.Current);
+        Assert.True(cursor.MoveNext());
+        Assert.NotEqual(on.Id, cursor.Current!.Id);
+    }
+
+    [Theory]
+    [MemberData(nameof(Orders))]
     public void Rows_are_deleted_through_a_cursor_going_either_way(string order)
     {
         using (var db = Database.Create(_path))

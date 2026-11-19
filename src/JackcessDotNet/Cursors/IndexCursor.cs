@@ -237,7 +237,7 @@ public sealed class IndexCursor : Cursor
                     throw new NotSupportedException(
                         $"No key is made for index '{_index.Name}': {IndexKeys.WhyNot(columns[i].Column, values[i])}.");
             byte[] key = IndexKeys.EncodeWhole(columns, values);
-            if (key.Length > IndexKeys.MaxKeyLength)
+            if (key.Length > LongestKeyOf(columns.Count))
                 throw new NotSupportedException(
                     $"No key is made for index '{_index.Name}': the {what} values' key is longer than an index entry holds.");
             return key;
@@ -273,7 +273,9 @@ public sealed class IndexCursor : Cursor
 
         try
         {
-            return IndexKeys.CanSearch(columns, values) ? IndexKeys.EncodeWhole(columns, values) : null;
+            if (!IndexKeys.CanSearch(columns, values)) return null;
+            byte[] key = IndexKeys.EncodeWhole(columns, values);
+            return key.Length <= LongestKeyOf(columns.Count) ? key : null;
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
         {
@@ -281,6 +283,15 @@ public sealed class IndexCursor : Cursor
             return null;
         }
     }
+
+    /// <summary>
+    /// The longest key of the index's first <paramref name="columns"/> columns that every entry of a row with
+    /// those values begins with. An entry longer than it holds is cut, and its last two bytes are a digest
+    /// (<see cref="IndexKeys.Truncate"/>): a key of some of the columns that reaches them is not what the cut
+    /// entry of the whole row has there.
+    /// </summary>
+    private int LongestKeyOf(int columns)
+        => columns < _index.Columns.Count ? IndexKeys.MaxKeyLength - 2 : IndexKeys.MaxKeyLength;
 
     private protected override int? Seek(IReadOnlyList<(Column Column, object? Value)> pattern, bool fromStart)
     {

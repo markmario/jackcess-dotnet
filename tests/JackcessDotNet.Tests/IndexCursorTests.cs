@@ -375,6 +375,69 @@ public sealed class IndexCursorTests : IDisposable
         Assert.Equal(2, cursor.FindClosestRowByEntry("s")!["Id"]);
     }
 
+    [Fact]
+    public void Some_of_the_columns_of_a_long_key_are_looked_for_by_what_a_cut_entry_keeps()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 },
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByAB", "A", "B") });
+        var index = table.Indexes.Single(ix => ix.Name == "ByAB");
+        var first = index.Columns.Take(1).ToList();
+
+        // A first column whose key alone is 509 or 510 bytes: within what an entry holds, and reaching the two
+        // bytes a cut entry ends in.
+        string? a = null;
+        for (int length = 200; length <= 255 && a is null; length++)
+            foreach (char letter in new[] { 'x', '\u00E9' })
+            {
+                string candidate = new string(letter, length);
+                int key = IndexKeys.EncodeWhole(first, new object?[] { candidate }).Length;
+                if (key is 509 or 510) a = candidate;
+            }
+        Assert.NotNull(a);
+        table.Insert(new Row { ["Id"] = 1, ["A"] = a, ["B"] = "a second column that makes the entry longer than it holds" });
+        table.Insert(new Row { ["Id"] = 2, ["A"] = "short", ["B"] = "b" });
+        Assert.True(IndexKeys.IsCut(index.Columns, new object?[] { a, "a second column that makes the entry longer than it holds" }));
+
+        // Found by its first column all the same: the index's rows are gone through.
+        var cursor = table.CreateIndexCursor("ByAB");
+        Assert.Equal(1, cursor.FindRowByEntry(a)!["Id"]);
+        Assert.Equal(1, cursor.FindRow("A", a)!["Id"]);
+        Assert.Equal(new[] { 1 }, cursor.FindRowsByEntry(a).Select(r => (int)r["Id"]!));
+
+        // And no place in the index's order for a range or a closest row.
+        Assert.Throws<NotSupportedException>(() => cursor.FindClosestRowByEntry(a));
+        Assert.Throws<NotSupportedException>(() => table.CreateIndexCursor("ByAB", new IndexRange { StartEntry = new object?[] { a } }));
+    }
+
+    [Fact]
+    public void A_lookup_far_from_the_last_goes_down_the_tree_and_not_along_the_leaves()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Code", DataType.Text) { MaxLength = 60 },
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByCode", "Code") });
+        table.InsertRange(Enumerable.Range(0, 20_000).Select(i => new Row { ["Id"] = i, ["Code"] = $"a code long enough that a leaf holds few of them {i:00000}" }));
+
+        var cursor = table.CreateIndexCursor("ByCode");
+        cursor.ColumnNames = new[] { "Id" };
+        Assert.Equal(3, cursor.FindRowByEntry("a code long enough that a leaf holds few of them 00003")!["Id"]);
+        long reads = db.File.ReadCount;
+        Assert.Equal(19_990, cursor.FindRowByEntry("a code long enough that a leaf holds few of them 19990")!["Id"]);
+        Assert.True(db.File.ReadCount - reads <= 8, $"{db.File.ReadCount - reads} pages read to find a row at the other end of the index");
+
+        reads = db.File.ReadCount;
+        Assert.Equal(4, cursor.FindClosestRowByEntry("a code long enough that a leaf holds few of them 00004")!["Id"]);
+        Assert.True(cursor.MovePrevious());
+        Assert.Equal(3, cursor.Current!["Id"]);
+        Assert.True(db.File.ReadCount - reads <= 10, $"{db.File.ReadCount - reads} pages read to come back to the beginning of the index");
+    }
+
     // ── Dates by the number stored (#35) ─────────────────────────────────────
 
     [Fact]

@@ -126,6 +126,9 @@ public class Cursor : IEnumerable<Row>
 
     private Row? Move(bool forward)
     {
+        // Going back, the cursor is no longer on the way it was on when it rewrote rows further on: where each
+        // now is, is the only place it is.
+        if (!forward) _rewritten = null;
         while (Step(forward) is { } pointer)
         {
             if (_rewritten is not null && _rewritten.Contains(pointer)) continue;
@@ -351,8 +354,9 @@ public class Cursor : IEnumerable<Row>
     /// <see cref="Current"/> is the row as it is afterwards.
     /// <para>
     /// The cursor stays where it is: the next move goes on to the row after the one updated. The updated row is
-    /// written again further on in the table, and this cursor does not come to it a second time on its way,
-    /// until it is put before the first row or after the last.
+    /// written again further on in the table, and this cursor does not come to it a second time while it goes
+    /// on forwards. Once it has moved back, been put before the first row or after the last, or been restored
+    /// to a savepoint, it finds the row where it now is.
     /// </para>
     /// </summary>
     /// <param name="values">The values to give the row, by column name.</param>
@@ -497,6 +501,14 @@ public class Cursor : IEnumerable<Row>
             if (fromStart) _rewritten = null;
             found = Seek(pattern, fromStart);
         }
+        catch
+        {
+            // A row that could not be read stops the search: the cursor is as it was before it.
+            Restore(place);
+            _currentRow = current;
+            _rewritten  = rewritten;
+            throw;
+        }
         finally
         {
             ColumnsToRead  = columns;
@@ -560,6 +572,7 @@ public class Cursor : IEnumerable<Row>
         if (!ReferenceEquals(savepoint.Cursor, this))
             throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
         Restore(savepoint.Place);
+        _rewritten  = null;
         _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
     }
 

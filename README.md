@@ -249,7 +249,8 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   `Row` given to `Update` is told it, and another `Row` read from the same place is no longer the row's
   (`Update` and `Delete` refuse it with `InvalidOperationException`). Access and Jackcess rewrite a row in its
   place when it fits there; this library does not yet. A cursor does not come a second time to a row it
-  updated itself, until it is put before the first row or after the last.
+  updated itself while it goes on forwards; once it has moved back, or been put somewhere else, it finds the
+  row where it now is.
 - **Only what changed is written.** A value still as the row was read with is left as the file has it: a long
   value is not written again, and a Date/Time keeps every digit Access stored.
 - **An index cursor keeps to its index.** Its rows are the index's entries, in their order, and every lookup
