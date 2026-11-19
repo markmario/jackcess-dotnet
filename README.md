@@ -183,7 +183,28 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     (measured in General - Legacy and General): `'abc'` is `'ABC'`, `'a'` is `'a '`, `'ss'` is `'ß'`; `'e'` is
     not `'é'`, and `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a
     character keyed by its neighbours) it is equal when it is the same text. Text is never read as a number.
-  - *Numbers* are equal across number types; a Double or Single by its bits.
+  - *Numbers* are equal across number types when they are exactly the same number. A Byte, Integer, Long or
+    Large Number column's 5 is a caller's 5L, 5m or 5.0, and no number that is not that whole number (5.5, 5.5m,
+    a double 5.000000000000001) is in it. ACE's `=` does not always answer so, and not alike through an index
+    and without one; where its two answers differ, this library gives the exact one, whichever that is. As
+    ACE's scan does, -0.0 finds 0, -2^63 as a double finds a Large Number's `long.MinValue`, and a decimal with
+    a fraction finds nothing (in a Large Number, ACE's scan found 0 for every decimal), where ACE's index finds
+    nothing for -0.0 and -2^63 and rounds the decimal to a whole number (5.5m finds 6, 0.1m finds 0, -1.23465m
+    finds -1). As ACE's index does, a double finds only the Large Number it is exactly - 2^53 does not find
+    2^53 + 1 - where ACE's scan compares the two as doubles.
+  - *A Currency* is the caller's number taken to its four places: a `double` or `float` by its exact value, half
+    to even, as ACE's `=` (through an index and without) and DAO's `Seek` take one - 0.03125 finds 0.0312, and
+    the double 0.00015, which is just under that half, finds 0.0001 - and a `decimal` or a whole number as this
+    library writes it, half away from zero: 1.23456 finds 1.2346, and 1.23465m finds 1.2347, where ACE's index
+    rounds a decimal half to even and its scan takes it through a double (#65). A range of an index cursor, and
+    `FindClosestRowByEntry`, still key a `double` as a row is written with it, which rounds some of these the
+    other way (#65).
+  - *A Double or a Single* is the caller's number as the column stores it, by its bits, as ACE's index has it:
+    +0.0 and -0.0 are two numbers, where ACE's scan finds both for either. *A Decimal* is the same number
+    exactly, a caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7 significant
+    digits, as OLE Automation rounds it - so the double 0.1 finds the Decimal 0.1, and is written as 0.1, on
+    every runtime (.NET 11's own conversion is exact). NaN finds nothing in a number column, where ACE's scan
+    finds every row for it, and ACE's `=` a Currency column's least value.
   - *A Date/Time* is the number the row stores. A `DateTime` - taken first to what it reads as once stored, to
     the millisecond, so `DateTime.Now` finds the row written with it - finds every row whose number **reads
     as** that `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not
@@ -454,8 +475,9 @@ db.RenameTable("Orders", "Sales");
 db.DropTable("Notes");
 ```
 
-Each change is all or nothing: what can refuse it is found before anything is written, and what is written is
-taken back if writing it fails, so a refused change leaves the file byte for byte as it was. Access is the referee
+Each change is all or nothing, and so is the creation of a table (`CreateTable`): what can refuse it is found before
+anything is written, and what is written is taken back if writing it fails, so a refused change leaves the file byte
+for byte as it was. Access is the referee
 of what is written (ExportMdb.Interop's `SchemaChangesInAccessTests`): beside the same index made by ACE, or the
 same relationship made by DAO, in a twin file, DAO lists the same thing and the two definitions hold the same
 index slots.
@@ -1004,10 +1026,21 @@ have been deleted - and a row Access moved to another page is read where its poi
   delete are each refused with `NotSupportedException`.
 - **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
   written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
-  not of its type, or a row too large leaves the file byte for byte as it was. Only a failure of the file itself
-  (the disk, the stream) can leave a change half made; an update outside a foreign-key cascade is not undone.
+  not of its type, or a row too large leaves the file byte for byte as it was. A failure of the file itself (the
+  disk, the stream) while a change is being written is taken back too: an insert, an update, a delete, a table
+  created, or a change to a table's definition or properties leaves the file byte for byte as it was.
+- **A value longer than its column is refused** before anything of its row is written, with
+  `ColumnValueTooLongException`, as Access refuses it ("The field is too small to accept the amount of data you
+  attempted to add"): text with more characters than a Text column's length, and a `byte[]` with more bytes than a
+  Binary column's, whether the definition keeps the column among the variable-length values (SQL's `VARBINARY`,
+  DAO's `dbBinary`, what this library makes) or the fixed-length ones (SQL's `BINARY`, filled with zeros to its
+  length).
 - **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
-  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
+  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column. Each of
+  those values is still held to its column's length, as the row is written whole: a Text or Binary value stored
+  longer than its column - an earlier version of this library could write one - refuses an update of the row with
+  `ColumnValueTooLongException`, naming that column and saying the value is the stored one, until the update
+  gives that column a value that fits.
 - **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**
   (`InvalidDataException` naming the page), not a missing row.
 - **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
