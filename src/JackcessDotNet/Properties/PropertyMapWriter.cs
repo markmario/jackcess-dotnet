@@ -193,10 +193,31 @@ internal static class PropertyMapWriter
                 case DataType.Byte:     return System.Convert.ToByte(value, invariant);
                 case DataType.Int16:    return System.Convert.ToInt16(value, invariant);
                 case DataType.Int32:    return System.Convert.ToInt32(value, invariant);
-                case DataType.Single:   return System.Convert.ToSingle(value, invariant);
+                case DataType.Single:
+                {
+                    // A number too large for a Single converts to infinity without a word; it is refused instead.
+                    float single = System.Convert.ToSingle(value, invariant);
+                    if (float.IsInfinity(single) && !(value is float or double && double.IsInfinity(System.Convert.ToDouble(value, invariant))))
+                        throw OutOfRange(name, value, dataType, "it is beyond what a Single holds");
+                    return single;
+                }
                 case DataType.Double:   return System.Convert.ToDouble(value, invariant);
-                case DataType.Currency: return Math.Round(System.Convert.ToDecimal(value, invariant), 4);
-                case DataType.DateTime: return System.Convert.ToDateTime(value, invariant);
+                case DataType.Currency:
+                {
+                    // A Currency is a 64-bit count of ten-thousandths.
+                    decimal currency = Math.Round(System.Convert.ToDecimal(value, invariant), 4);
+                    if (currency < MinCurrency || currency > MaxCurrency)
+                        throw OutOfRange(name, value, dataType, $"a Currency is from {MinCurrency.ToString(invariant)} to {MaxCurrency.ToString(invariant)}");
+                    return currency;
+                }
+                case DataType.DateTime:
+                {
+                    // Access's dates begin with the year 100, and so does what DateTime.ToOADate converts.
+                    DateTime date = System.Convert.ToDateTime(value, invariant);
+                    if (date < MinDate)
+                        throw OutOfRange(name, value, dataType, "a Date/Time is from 1 January 100 to 31 December 9999");
+                    return date;
+                }
                 case DataType.Guid:
                     return value switch
                     {
@@ -227,6 +248,14 @@ internal static class PropertyMapWriter
             $"The value of property '{name}' ({value.GetType().Name}) cannot be kept as {dataType}: it is not a byte array.", nameof(value));
     }
 
+    private const decimal MaxCurrency = long.MaxValue / 10000m;
+    private const decimal MinCurrency = long.MinValue / 10000m;
+    private static readonly DateTime MinDate = new DateTime(100, 1, 1);
+
+    private static ArgumentException OutOfRange(string name, object value, DataType dataType, string why)
+        => new ArgumentException(
+            $"The value of property '{name}' ({System.Convert.ToString(value, CultureInfo.InvariantCulture)}) cannot be kept as {dataType}: {why}.", nameof(value));
+
     /// <summary>The bytes of a value <see cref="Convert"/> returned, as Access stores a property of that type.</summary>
     internal static byte[] Encode(object value, DataType dataType)
     {
@@ -241,7 +270,7 @@ internal static class PropertyMapWriter
             case DataType.Single:  return BitConverter.GetBytes((float)value).LittleEndian();
             case DataType.Double:  return BitConverter.GetBytes((double)value).LittleEndian();
             case DataType.Currency:
-                return BitConverter.GetBytes(decimal.ToInt64(decimal.Round((decimal)value * 10000m))).LittleEndian();
+                return BitConverter.GetBytes(decimal.ToInt64((decimal)value * 10000m)).LittleEndian();
             case DataType.DateTime: return BitConverter.GetBytes(((DateTime)value).ToOADate()).LittleEndian();
             case DataType.Guid:    return ((Guid)value).ToByteArray();
             case DataType.Text:

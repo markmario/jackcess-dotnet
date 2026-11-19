@@ -369,6 +369,56 @@ public sealed class PropertyWriteTests : IDisposable
     }
 
     [Fact]
+    public void A_value_beyond_its_type_s_range_is_refused_when_it_is_set_and_one_at_the_edge_is_kept()
+    {
+        const decimal maxCurrency = 922_337_203_685_477.5807m, minCurrency = -922_337_203_685_477.5808m;
+        var firstDate = new DateTime(100, 1, 1);
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var map = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }).Properties;
+
+            // A Currency is a 64-bit count of ten-thousandths.
+            Assert.Throws<ArgumentException>(() => map.Set("A", maxCurrency + 0.0001m));
+            Assert.Throws<ArgumentException>(() => map.Set("A", minCurrency - 0.0001m));
+            Assert.Throws<ArgumentException>(() => map.Set("A", decimal.MaxValue));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Currency, 1e30));
+            // Access's dates begin with the year 100.
+            Assert.Throws<ArgumentException>(() => map.Set("A", firstDate.AddTicks(-1)));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DateTime.MinValue));
+            // The whole numbers, and a Single.
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Byte, 256));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Byte, -1));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Int16, 32768));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Int32, 2147483648.0));
+            Assert.Throws<ArgumentException>(() => map.Set("A", DataType.Single, 1e300));
+            Assert.Empty(map);
+
+            map.Set("MaxCurrency", maxCurrency);
+            map.Set("MinCurrency", minCurrency);
+            map.Set("FirstDate", firstDate);
+            map.Set("LastDate", DateTime.MaxValue);
+            map.Set("MaxByte", DataType.Byte, 255);
+            map.Set("MinShort", DataType.Int16, -32768);
+            map.Set("MinInt", DataType.Int32, int.MinValue);
+            map.Set("MaxSingle", float.MaxValue);
+            map.Set("Infinity", float.PositiveInfinity);
+            map.Save();
+        }
+        using var read = Database.Open(_path);
+        var kept = read.GetTable("T").Properties;
+        Assert.Equal(maxCurrency, kept["MaxCurrency"]);
+        Assert.Equal(minCurrency, kept["MinCurrency"]);
+        Assert.Equal(firstDate, kept["FirstDate"]);
+        // A date is kept as a Double of days, which holds the last day's last moment to the millisecond.
+        Assert.Equal(DateTime.MaxValue, (DateTime)kept["LastDate"]!, TimeSpan.FromMilliseconds(1));
+        Assert.Equal((byte)255, kept["MaxByte"]);
+        Assert.Equal((short)-32768, kept["MinShort"]);
+        Assert.Equal(int.MinValue, kept["MinInt"]);
+        Assert.Equal(float.MaxValue, kept["MaxSingle"]);
+        Assert.Equal(float.PositiveInfinity, kept["Infinity"]);
+    }
+
+    [Fact]
     public void The_properties_of_a_column_in_no_table_cannot_be_saved()
     {
         var column = new ColumnDefinition("Loose", DataType.Text).ToColumn("column");
