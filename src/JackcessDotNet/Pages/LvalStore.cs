@@ -554,7 +554,14 @@ internal sealed class LvalReader
     /// <paramref name="lvalRow"/>). For OTHER_PAGE (<paramref name="chained"/>
     /// false) the single chunk row IS the data; for OTHER_PAGES each chunk row
     /// is [nextRow:1][nextPage:3][payload] with nextPage == 0 ending the chain.
+    /// <para>
+    /// A value that is not where its reference says does not read: a page that is not a data page, a row the page
+    /// does not have or has deleted, one chunk shorter than the value, a chain that ends before it. Such a reference
+    /// is one a reader held while another program changed the file (#62) - the row read a moment before the change -
+    /// or a damaged file's, and was read as another value's bytes, the old bytes of one deleted, or zeros.
+    /// </para>
     /// </summary>
+    /// <exception cref="InvalidDataException">The value is not where its reference says.</exception>
     public byte[] Read(int lvalPage, int lvalRow, int totalLen, bool chained)
     {
         var result = new byte[totalLen];
@@ -566,25 +573,32 @@ internal sealed class LvalReader
 
         while (written < totalLen)
         {
-            byte[] page     = _file.ReadPage(curPage);
-            int    rowCount = ByteUtil.GetShort(page, _format.OffsetDataNumRows);
+            if (curPage <= 0 || curPage >= _file.PageCount)
+                throw NotWhereItSays(lvalPage, lvalRow, $"it goes on to page {curPage}, which the file does not have");
+            byte[] page = _file.ReadPage(curPage);
+            if (page[0] != JetFormat.PageTypeData)
+                throw NotWhereItSays(lvalPage, lvalRow, $"page {curPage} is not a page of values");
+            int rowCount = ByteUtil.GetShort(page, _format.OffsetDataNumRows);
 
             if (curRow >= rowCount)
-                throw new InvalidOperationException(
-                    $"LVAL page {curPage} has {rowCount} rows; requested row {curRow}.");
+                throw NotWhereItSays(lvalPage, lvalRow, $"page {curPage} has {rowCount} rows, and row {curRow} is asked for");
+            if ((ByteUtil.GetUShort(page, _format.OffsetDataRowTable + curRow * JetFormat.SizeRowEntry) & JetFormat.DeletedRowFlag) != 0)
+                throw NotWhereItSays(lvalPage, lvalRow, $"row {curRow} of page {curPage} has been deleted");
 
             (int rowStart, int rowEnd) = GetRowBounds(page, curRow, rowCount);
             int rowLen = rowEnd - rowStart;
 
             if (!chained)
             {
-                Array.Copy(page, rowStart, result, 0, Math.Min(rowLen, totalLen));
+                if (rowLen < totalLen)
+                    throw NotWhereItSays(lvalPage, lvalRow, $"its row holds {Math.Max(rowLen, 0)} bytes of a value of {totalLen}");
+                Array.Copy(page, rowStart, result, 0, totalLen);
                 break;
             }
 
             if (rowLen < 4)
-                throw new InvalidOperationException(
-                    $"LVAL chain row [{curPage},{curRow}] is only {rowLen} bytes (minimum 4 required).");
+                throw NotWhereItSays(lvalPage, lvalRow,
+                    $"row {curRow} of page {curPage}, a piece of its chain, is {Math.Max(rowLen, 0)} bytes, fewer than the 4 that say where the next piece is");
 
             int nextRow  = page[rowStart];
             int nextPage = page[rowStart + 1] | (page[rowStart + 2] << 8) | (page[rowStart + 3] << 16);
@@ -592,13 +606,22 @@ internal sealed class LvalReader
             Array.Copy(page, rowStart + 4, result, written, copyLen);
             written += copyLen;
 
-            if (nextPage == 0) break;
+            if (nextPage == 0)
+            {
+                if (written < totalLen)
+                    throw NotWhereItSays(lvalPage, lvalRow, $"its chain ends after {written} bytes of a value of {totalLen}");
+                break;
+            }
             curPage = nextPage;
             curRow  = nextRow;
         }
 
         return result;
     }
+
+    private static InvalidDataException NotWhereItSays(int page, int row, string why)
+        => new($"The long value at row {row} of page {page} is not where its reference says: {why}. A database opened only to be read " +
+               "reads a row as another program changes it, and can hold a reference that is no longer the row's; otherwise the file is damaged.");
 
     private (int start, int end) GetRowBounds(byte[] page, int rowIndex, int rowCount)
     {

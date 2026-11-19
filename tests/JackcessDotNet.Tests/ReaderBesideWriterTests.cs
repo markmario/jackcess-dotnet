@@ -140,6 +140,77 @@ public sealed class ReaderBesideWriterTests : IDisposable
         Assert.Equal(new[] { Memo('b'), Memo('c'), Memo('d'), "short", Memo('z') }, rows.Select(r => (string?)r["M"]));
     }
 
+    // ── A long value through a reference its row no longer holds ─────────────
+
+    /// <summary>
+    /// The bytes of the row whose Id is <paramref name="id"/>, read from its page as a reader that read the page a
+    /// moment ago holds them - long-value references and all.
+    /// </summary>
+    private static byte[] RowAsReadNow(Database db, int id)
+    {
+        var table = db.GetTable("T");
+        var rowId = table.FindRowByPrimaryKey(id)!.Id!.Value;
+        return DataRows.Read(db.File, db.File.ReadPage(rowId.PageNumber), rowId.RowNumber)!;
+    }
+
+    private static object? DecodeMemo(Database db, byte[] row)
+    {
+        var table = db.GetTable("T");
+        var decoder = new RowDecoder(db.File.Format, table.Definition.Columns, new LvalReader(db.File));
+        return decoder.Decode(row, table.Definition.Columns.First(c => c.Name == "M"));
+    }
+
+    // A reference to a long value that has been deleted - the slot it names on its page marked so, and not yet the
+    // page's last - read the value's old bytes as though they were still the row's. It is refused.
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_long_value_whose_place_has_been_deleted_is_refused(FileFormat format)
+    {
+        string path = FiveMemos(format);
+        using var writer = Database.Open(path);
+        using var reader = Database.Open(path, ReadOnly);
+        byte[] row3 = RowAsReadNow(reader, 3);
+        Assert.Equal(Memo('c'), DecodeMemo(reader, row3));
+
+        writer.GetTable("T").DeleteRow("Id", 3);
+
+        var refused = Assert.Throws<InvalidDataException>(() => DecodeMemo(reader, row3));
+        Assert.Contains("deleted", refused.Message);
+    }
+
+    // A reference to a long value whose place now holds a shorter one - another row's - read that row's bytes and
+    // made up the rest with zeros. It is refused: the value no longer fits the reference.
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_long_value_whose_place_now_holds_a_shorter_one_is_refused(FileFormat format)
+    {
+        string path = FiveMemos(format);
+        using var writer = Database.Open(path);
+        using var reader = Database.Open(path, ReadOnly);
+        byte[] row5 = RowAsReadNow(reader, 5);
+
+        writer.GetTable("T").UpdateByPrimaryKey(5, new Row { ["M"] = "short" });
+        writer.GetTable("T").Insert(new Row { ["Id"] = 6, ["M"] = new string('z', 200) });
+
+        Assert.Throws<InvalidDataException>(() => DecodeMemo(reader, row5));
+    }
+
+    // A reference to a long value whose page has dropped the row it names - deleted at the page's end - was refused
+    // as an InvalidOperationException; it is refused as data that does not read, as every other such reference is.
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_long_value_whose_page_has_dropped_its_place_is_refused(FileFormat format)
+    {
+        string path = FiveMemos(format);
+        using var writer = Database.Open(path);
+        using var reader = Database.Open(path, ReadOnly);
+        byte[] row5 = RowAsReadNow(reader, 5);
+
+        writer.GetTable("T").DeleteRow("Id", 5);
+
+        Assert.Throws<InvalidDataException>(() => DecodeMemo(reader, row5));
+    }
+
     // ── What it costs ────────────────────────────────────────────────────────
 
     // A database opened to be written is the file's one writer, and keeps the page it is on from one move to the next:
