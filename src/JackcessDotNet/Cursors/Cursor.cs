@@ -731,6 +731,8 @@ public class Cursor : IEnumerable<Row>
         if (!ReferenceEquals(savepoint.Cursor, this))
             throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
         RestorePosition(savepoint.Place);
+        // The row as the file has it now: beside a writer, not as the page kept from the last move has it (#62).
+        if (_file.SharedWithWriters) ForgetKeptPages();
         _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
     }
 

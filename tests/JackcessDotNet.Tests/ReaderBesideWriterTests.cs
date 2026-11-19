@@ -140,6 +140,30 @@ public sealed class ReaderBesideWriterTests : IDisposable
         Assert.Equal(new[] { Memo('b'), Memo('c'), Memo('d'), "short", Memo('z') }, rows.Select(r => (string?)r["M"]));
     }
 
+    // A savepoint restored gives the row at its place as the file has it now. Restoring is no move, and the cursor read
+    // the row from the page it had kept from its last move - row 1 as it was before the writer changed it, its memo
+    // through a reference the writer had since freed. Beside a writer the row is read from the file again.
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_savepoint_restored_beside_a_writer_gives_its_row_as_the_file_has_it_now(FileFormat format)
+    {
+        string path = FiveMemos(format);
+        using var writer = Database.Open(path);
+        using var reader = Database.Open(path, ReadOnly);
+
+        var cursor = reader.GetTable("T").CreateCursor();
+        Assert.True(cursor.MoveNext());
+        var onRow1 = cursor.GetSavepoint();
+        Assert.True(cursor.MoveNext());
+        Assert.Equal(2, cursor.Current!["Id"]);
+
+        writer.GetTable("T").UpdateByPrimaryKey(1, new Row { ["M"] = "changed" });
+
+        cursor.RestoreSavepoint(onRow1);
+        Assert.Equal(1, cursor.Current!["Id"]);
+        Assert.Equal("changed", cursor.Current!["M"]);
+    }
+
     // ── A long value through a reference its row no longer holds ─────────────
 
     /// <summary>
