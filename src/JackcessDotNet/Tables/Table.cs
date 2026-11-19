@@ -440,6 +440,11 @@ public sealed class Table
     /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own.
     /// </para>
     /// <para>
+    /// <paramref name="row"/> is then the row inserted: its <see cref="Row.Id"/> is the new row's, and nothing is
+    /// assigned in it, so that an <see cref="Update"/> of it changes the new row. A row read from this table or
+    /// another and given to an insert as a copy is the copy from then on, not the row it was read from.
+    /// </para>
+    /// <para>
     /// The row's bytes, its long values, the page it may add to the table, the definition's row count and counter
     /// and the row's index entries are written together or not at all: an insert that fails, even while it is
     /// being written, leaves the file, the counter and <paramref name="row"/> as they were, so the number is not
@@ -463,7 +468,8 @@ public sealed class Table
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsureTakesRows();
 
-        var given = AutoNumberValuesIn(row);
+        var given    = AutoNumberValuesIn(row);
+        var identity = row.Identity;
         int rowPtr;
         IReadOnlyList<TableIndexes.Entry> entries;
 
@@ -493,18 +499,24 @@ public sealed class Table
                 _indexes.Add(entries, rowPtr, looked);
                 undo?.Commit();
             }
-            catch when (given is not null)
+            catch
             {
-                // Nothing of the row stays in the file: it goes back to the caller as it came. The counter is
-                // written with the row count, so it has not moved, and the next insert is given this row's number.
-                foreach (var (name, had, value) in given)
-                {
-                    if (had) row[name] = value;
-                    else     row.Remove(name);
-                }
+                // Nothing of the row stays in the file: it goes back to the caller as it came - its values, which
+                // row it is and what it was given. The counter is written with the row count, so it has not moved,
+                // and the next insert is given this row's number.
+                if (given is not null)
+                    foreach (var (name, had, value) in given)
+                    {
+                        if (had) row[name] = value;
+                        else     row.Remove(name);
+                    }
+                row.Identity = identity;
                 throw;
             }
         }
+
+        // The row is the one inserted from now on.
+        row.ReadFrom(this, rowPtr);
 
         // A cursor over an index is told of the row's entry in it.
         foreach (var entry in entries)
@@ -597,10 +609,10 @@ public sealed class Table
 
     /// <summary>
     /// Inserts <paramref name="rows"/>, in their order, all of them or none: Jackcess's <c>addRows</c>. Each row
-    /// is inserted as <see cref="Insert"/> inserts one, and holds its AutoNumber values afterwards. When a row
-    /// is refused, or cannot be written, the rows inserted before it are taken out again - the file is as it
-    /// was before the call, and the rows are given back as they came - and a <see cref="BatchInsertException"/>
-    /// says which row it was and why.
+    /// is inserted as <see cref="Insert"/> inserts one, holds its AutoNumber values afterwards, and is the row
+    /// inserted (<see cref="Row.Id"/>). When a row is refused, or cannot be written, the rows inserted before it
+    /// are taken out again - the file is as it was before the call, and the rows are given back as they came,
+    /// each the row it was before - and a <see cref="BatchInsertException"/> says which row it was and why.
     /// <para>
     /// A copy of each page the batch changes is held until the batch is in, so that it can be taken back: the
     /// pages a batch adds to the file cost nothing, the index pages it changes are what is held.
@@ -628,8 +640,10 @@ public sealed class Table
             throw new ArgumentException("A row to insert is null.", nameof(rows));
         if (batch.Count == 0) return;
 
-        // What each row holds for the AutoNumber columns as it comes: a batch taken back gives its rows back so.
-        var given = batch.Select(AutoNumberValuesIn).ToList();
+        // What each row holds for the AutoNumber columns as it comes, and which row it is: a batch taken back gives
+        // its rows back so.
+        var given      = batch.Select(AutoNumberValuesIn).ToList();
+        var identities = batch.Select(row => row.Identity).ToList();
         int at = 0;
         using var undo = _file.BeginUndo();
         try
@@ -643,12 +657,13 @@ public sealed class Table
             undo.Dispose();
             for (int i = 0; i <= at && i < batch.Count; i++)
             {
-                if (given[i] is not { } values) continue;
-                foreach (var (name, had, value) in values)
-                {
-                    if (had) batch[i][name] = value;
-                    else     batch[i].Remove(name);
-                }
+                if (given[i] is { } values)
+                    foreach (var (name, had, value) in values)
+                    {
+                        if (had) batch[i][name] = value;
+                        else     batch[i].Remove(name);
+                    }
+                batch[i].Identity = identities[i];
             }
             throw new BatchInsertException(at, batch.Count, e);
         }

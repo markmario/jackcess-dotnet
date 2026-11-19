@@ -67,9 +67,20 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     internal bool WasAssigned(string columnName) => _assigned?.Contains(columnName) == true && _places.ContainsKey(columnName);
 
     /// <summary>
-    /// Where the row is in the table it was read from, or null for a row that was not read from a table: one a
-    /// caller made, a copy of another row, or a row that has been deleted. An update does not change it.
-    /// Jackcess's <c>Row.getId</c>.
+    /// Which row of which table the row is, and what it has been given since it was read: kept by an insert, which
+    /// makes the row the one it inserts, to give it back as it came when the insert is taken back.
+    /// </summary>
+    internal (Table? Source, int Pointer, HashSet<string>? Assigned) Identity
+    {
+        get => (_source, _pointer, _assigned is null ? null : new HashSet<string>(_assigned, StringComparer.OrdinalIgnoreCase));
+        set => (_source, _pointer, _assigned) = value;
+    }
+
+    /// <summary>
+    /// Where the row is in the table it was read from or inserted into, or null for a row that is in no table: one
+    /// a caller made and has not inserted, a copy of another row, or a row that has been deleted. An update does
+    /// not change it. An insert makes it the new row's: a row read from a table and given to
+    /// <see cref="Table.Insert"/> as a copy is the copy from then on. Jackcess's <c>Row.getId</c>.
     /// </summary>
     public RowId? Id => _source is null ? null : RowId.FromPointer(_pointer);
 
