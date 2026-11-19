@@ -298,71 +298,61 @@ internal static class TypeMapper
         _ => throw NotOfType(value, "a Yes/No column takes a bool, or the text True or False: of a number only 0 and 1 would read back as they were"),
     };
 
-    // A number as a decimal: exactly, for an integer or a decimal; for a floating-point value, as RoundTripDecimal
-    // gives it. Text that reads as a number in the invariant culture is that number. Null for anything else.
-    private static decimal? AsDecimal(object value) => value switch
+    // The numbers a value stands for, for a column that takes numbers, the one it is exactly first: an integer or a
+    // decimal, itself; a double or a float, the number it is and the one its round-trip form denotes (0.1 for the
+    // double 0.1); text, the number it denotes in the invariant culture. All are worked out exactly, so what a column
+    // takes is the same on every target. Refused with why for a value that is no number.
+    private static ExactNumber[] NumbersOf(object value, string what)
     {
-        sbyte v  => v, byte v => v, short v => v, ushort v => v, int v => v, uint v => v, long v => v, ulong v => v,
-        decimal v => v,
-        double v => RoundTripDecimal(v),
-        float v  => RoundTripDecimal(v),
-        string s => decimal.TryParse(s, NumberStyles.Float, Invariant, out decimal parsed) ? parsed : null,
-        _        => null,
-    };
-
-    // A double as a decimal: the number it is, when a decimal holds that exactly (the double 0.5, a whole double of
-    // up to 28 digits), and otherwise the number its round-trip form denotes (0.1 for the double 0.1). Null for NaN,
-    // the infinities and what no decimal holds (1E-30). Both are worked out exactly, the same on every target.
-    private static decimal? RoundTripDecimal(double value)
-    {
-        if (double.IsNaN(value) || double.IsInfinity(value)) return null;
-        return ExactNumber.Of(value).ToDecimal() ?? ExactNumber.Shortest(value).ToDecimal();
-    }
-
-    // A float as a decimal, as for a double.
-    private static decimal? RoundTripDecimal(float value)
-    {
-        if (float.IsNaN(value) || float.IsInfinity(value)) return null;
-        return ExactNumber.Of(value).ToDecimal() ?? ExactNumber.Shortest(value).ToDecimal();
-    }
-
-    // Whether a double, or a float, stands for number: it is the number, or its round-trip form denotes it.
-    private static bool StandsFor(double value, decimal number)
-        => !double.IsNaN(value) && !double.IsInfinity(value)
-        && (ExactNumber.Of(value) == ExactNumber.Of(number) || ExactNumber.Shortest(value) == ExactNumber.Of(number));
-
-    private static bool StandsFor(float value, decimal number)
-        => !float.IsNaN(value) && !float.IsInfinity(value)
-        && (ExactNumber.Of(value) == ExactNumber.Of(number) || ExactNumber.Shortest(value) == ExactNumber.Of(number));
-
-    // The double, and the float, nearest a decimal: read from its text, as RoundTripDecimal writes one.
-    private static double DoubleNearest(decimal value) => double.Parse(value.ToString(Invariant), NumberStyles.Float, Invariant);
-    private static float SingleNearest(decimal value) => float.Parse(value.ToString(Invariant), NumberStyles.Float, Invariant);
-
-    // The number a value is, for a column that takes numbers: refused with why when it is none.
-    private static decimal NumberOf(object value, string what)
-    {
-        if (value is bool or char or not (sbyte or byte or short or ushort or int or uint or long or ulong or decimal or double or float or string))
-            throw NotOfType(value, $"{what} takes numbers");
-        return AsDecimal(value) ?? throw value switch
+        switch (value)
         {
-            string        => NotOfType(value, $"it does not read as a number, and {what} takes numbers"),
-            double d when double.IsNaN(d) || double.IsInfinity(d) => new NotHeldException($"{Describe(value)} is not a number {what} holds"),
-            float f when float.IsNaN(f) || float.IsInfinity(f)    => new NotHeldException($"{Describe(value)} is not a number {what} holds"),
-            _             => new NotHeldException($"{Describe(value)} has more digits than {what} holds"),
-        };
+            case bool or char:
+                throw NotOfType(value, $"{what} takes numbers");
+            case sbyte v:   return new[] { ExactNumber.Of((long)v) };
+            case byte v:    return new[] { ExactNumber.Of((long)v) };
+            case short v:   return new[] { ExactNumber.Of((long)v) };
+            case ushort v:  return new[] { ExactNumber.Of((long)v) };
+            case int v:     return new[] { ExactNumber.Of((long)v) };
+            case uint v:    return new[] { ExactNumber.Of((long)v) };
+            case long v:    return new[] { ExactNumber.Of(v) };
+            case ulong v:   return new[] { ExactNumber.Of(v) };
+            case decimal v: return new[] { ExactNumber.Of(v) };
+            case double d when double.IsNaN(d) || double.IsInfinity(d):
+                throw new NotHeldException($"{Describe(value)} is not a number {what} holds");
+            case float f when float.IsNaN(f) || float.IsInfinity(f):
+                throw new NotHeldException($"{Describe(value)} is not a number {what} holds");
+            case double d:  return ExactAndShortest(ExactNumber.Of(d), ExactNumber.Shortest(d));
+            case float f:   return ExactAndShortest(ExactNumber.Of(f), ExactNumber.Shortest(f));
+            case string s when ExactNumber.TryParse(s, out ExactNumber parsed):
+                return new[] { parsed };
+            case string:
+                throw NotOfType(value, $"it does not read as a number, and {what} takes numbers");
+            default:
+                throw NotOfType(value, $"{what} takes numbers");
+        }
     }
+
+    private static ExactNumber[] ExactAndShortest(ExactNumber exact, ExactNumber shortest)
+        => exact == shortest ? new[] { exact } : new[] { exact, shortest };
 
     private static long IntegerOf(object value, long min, long max, string range)
     {
-        decimal number = NumberOf(value, "an integer column");
-        if (decimal.Truncate(number) != number)
-            throw new NotHeldException($"{Describe(value)} is not a whole number, and {range}");
-        if (number < min || number > max)
-            throw new NotHeldException($"{Describe(value)} is out of range: {range}");
-        return (long)number;
+        bool whole = false;
+        foreach (ExactNumber number in NumbersOf(value, "an integer column"))
+        {
+            if (number.Scale > 0) continue;
+            whole = true;
+            if (number.Exponent > 19) continue;   // past every 64-bit integer
+            BigInteger integer = number.Unscaled * BigInteger.Pow(10, -number.Scale);
+            if (integer >= min && integer <= max) return (long)integer;
+        }
+        throw new NotHeldException(whole
+            ? $"{Describe(value)} is out of range: {range}"
+            : $"{Describe(value)} is not a whole number, and {range}");
     }
 
+    // A number goes to a Double or a Single column when the double or float nearest it is that number, or has it as
+    // its round-trip form: text reads back as the number it denotes, and a decimal as itself.
     private static float SingleOf(object value)
     {
         switch (value)
@@ -374,14 +364,12 @@ internal static class TypeMapper
                 if ((double)single == d || double.IsNaN(d)) return single;
                 throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(single)}");
             }
-            case string s when !decimal.TryParse(s, NumberStyles.Float, Invariant, out _)
-                            && double.TryParse(s, NumberStyles.Float, Invariant, out double parsed):
-                return SingleOf(parsed);   // NaN, Infinity and what is past a decimal's range
         }
-        decimal number = NumberOf(value, "a Single column");
-        float asSingle = SingleNearest(number);
-        if (StandsFor(asSingle, number)) return asSingle;
-        throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(asSingle)}");
+        ExactNumber number = NumbersOf(value, "a Single column")[0];
+        if (number.NearestSingle() is not float nearest)
+            throw new NotHeldException($"{Describe(value)} is out of range: a Single column holds -3.4028235E+38 to 3.4028235E+38");
+        if (ExactNumber.Of(nearest) == number || ExactNumber.Shortest(nearest) == number) return nearest;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(nearest)}");
     }
 
     private static double DoubleOf(object value)
@@ -390,14 +378,12 @@ internal static class TypeMapper
         {
             case double d: return d;
             case float f: return f;
-            case string s when !decimal.TryParse(s, NumberStyles.Float, Invariant, out _)
-                            && double.TryParse(s, NumberStyles.Float, Invariant, out double parsed):
-                return parsed;   // NaN, Infinity and what is past a decimal's range
         }
-        decimal number = NumberOf(value, "a Double column");
-        double asDouble = DoubleNearest(number);
-        if (StandsFor(asDouble, number)) return asDouble;
-        throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {ExactNumber.Text(asDouble)}");
+        ExactNumber number = NumbersOf(value, "a Double column")[0];
+        if (number.NearestDouble() is not double nearest)
+            throw new NotHeldException($"{Describe(value)} is out of range: a Double column holds -1.7976931348623157E+308 to 1.7976931348623157E+308");
+        if (ExactNumber.Of(nearest) == number || ExactNumber.Shortest(nearest) == number) return nearest;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {ExactNumber.Text(nearest)}");
     }
 
     private static readonly decimal CurrencyMax = 922_337_203_685_477.5807m;
@@ -405,31 +391,31 @@ internal static class TypeMapper
 
     private static decimal CurrencyOf(object value)
     {
-        decimal number = NumberOf(value, "a Currency column");
-        if (decimal.Round(number, 4) != number)
-            throw new NotHeldException($"{Describe(value)} has more than four places after the point, and a Currency column keeps four");
-        if (number < CurrencyMin || number > CurrencyMax)
-            throw new NotHeldException($"{Describe(value)} is out of range: a Currency column holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807");
-        return number;
+        bool tooManyPlaces = true;
+        foreach (ExactNumber number in NumbersOf(value, "a Currency column"))
+        {
+            if (number.Scale > 4) continue;
+            tooManyPlaces = false;
+            if (number.ToDecimal() is decimal held && held >= CurrencyMin && held <= CurrencyMax) return held;
+        }
+        throw new NotHeldException(tooManyPlaces
+            ? $"{Describe(value)} has more than four places after the point, and a Currency column keeps four"
+            : $"{Describe(value)} is out of range: a Currency column holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807");
     }
 
     private static decimal DecimalOf(object value, int precision, int scale)
     {
-        decimal number = NumberOf(value, "a Decimal column");
-        if (scale > MaxDecimalPrecision || decimal.Round(number, scale) != number)
-            throw new NotHeldException($"{Describe(value)} has more than {scale} places after the point, and the Decimal column keeps {scale}");
-        if (precision > 0 && UnscaledAt(number, scale) >= BigInteger.Pow(10, precision))
-            throw new NotHeldException($"{Describe(value)} has more digits than the Decimal column's {precision}, {scale} of them after the point");
-        return number;
-    }
-
-    // |value| without its point, at scale places after it: value has no digit but zeros past them.
-    private static BigInteger UnscaledAt(decimal value, int scale)
-    {
-        int[] bits = decimal.GetBits(value);
-        BigInteger mantissa = new BigInteger((uint)bits[2]) << 64 | new BigInteger((uint)bits[1]) << 32 | new BigInteger((uint)bits[0]);
-        int own = (bits[3] >> 16) & 0xFF;
-        return own >= scale ? mantissa / BigInteger.Pow(10, own - scale) : mantissa * BigInteger.Pow(10, scale - own);
+        bool tooManyPlaces = true;
+        foreach (ExactNumber number in NumbersOf(value, "a Decimal column"))
+        {
+            if (number.Scale > Math.Min(scale, MaxDecimalPrecision)) continue;
+            tooManyPlaces = false;
+            if (precision > 0 && !number.IsZero && number.Exponent >= precision - scale) continue;
+            if (number.ToDecimal() is decimal held) return held;
+        }
+        throw new NotHeldException(tooManyPlaces
+            ? $"{Describe(value)} has more than {scale} places after the point, and the Decimal column keeps {scale}"
+            : $"{Describe(value)} has more digits than the Decimal column's {precision}, {scale} of them after the point");
     }
 
     // The first date a Date/Time column holds: an OLE Automation date starts at 1 January 100.

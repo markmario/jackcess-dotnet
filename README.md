@@ -635,7 +635,9 @@ An import holds every value of its source exactly, or refuses before anything is
   holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` to a Decimal
   or Currency column as the number it is when the column holds that, and otherwise as the number its round-trip
   form denotes; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
-  it as its round-trip form); text to a numeric, Yes/No,
+  it as its round-trip form); text to a numeric column as the number it denotes in the invariant culture, held as
+  a number would be - exactly: `"1e-30"` goes to a Double column and is refused by a Currency one, and NaN, the
+  infinities and a number past the column's range are refused; text to a Yes/No,
   Date/Time or GUID column when it reads as one in the invariant culture (text with an offset to a Date/Time
   column is the UTC time it denotes, and text without one the time it says, whatever the machine's time zone);
   any of these to Text or Memo as its

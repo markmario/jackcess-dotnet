@@ -126,6 +126,84 @@ public sealed class ImportConversionTests : IDisposable
         Assert.Equal(0.5m, Appended("Dec", 0.5));
     }
 
+    // ── Text as numbers ──────────────────────────────────────────────────────
+
+    // A column, text appended to it, and what the column holds of it: null where it is refused.
+    public static IEnumerable<object?[]> TextToNumbers() => new[]
+    {
+        new object?[] { "I16", "12", (short)12 },
+        new object?[] { "I16", "12.0", (short)12 },
+        new object?[] { "I16", " 12 ", (short)12 },
+        new object?[] { "I16", "1e2", (short)100 },
+        new object?[] { "I16", "-0", (short)0 },
+        new object?[] { "I16", "1.00000000000000000000000000001", null },
+        new object?[] { "I16", "40000", null },
+        new object?[] { "I16", "1e400", null },
+        new object?[] { "Cur", "0.1", 0.1m },
+        new object?[] { "Cur", "922337203685477.5807", 922337203685477.5807m },
+        new object?[] { "Cur", "922337203685477.5808", null },
+        new object?[] { "Cur", "1e-30", null },
+        new object?[] { "Cur", "0.00000000000000000000000000001", null },
+        new object?[] { "Dec", "1.10", 1.1m },
+        new object?[] { "Dec", "12345678.91", 12345678.91m },
+        new object?[] { "Dec", "123456789.1", null },
+        new object?[] { "Dec", "1.005", null },
+        new object?[] { "Dec", "1e-30", null },
+        new object?[] { "Dbl", "1e-30", 1e-30 },
+        new object?[] { "Dbl", "0.1", 0.1 },
+        new object?[] { "Dbl", "1.5", 1.5 },
+        new object?[] { "Dbl", "-0", -0.0 },
+        new object?[] { "Dbl", "5e-324", 5e-324 },
+        new object?[] { "Dbl", "1.2345678901234568E+29", 1.2345678901234568E+29 },
+        new object?[] { "Dbl", "1152921504606846976", 1152921504606846976.0 },                             // 2^60, the double exactly
+        new object?[] { "Dbl", "0.1000000000000000055511151231257827021181583404541015625", 0.1 },        // the double 0.1, exactly
+        new object?[] { "Dbl", "0.1000000000000000000000000000001", null },
+        new object?[] { "Dbl", "0.10000000000000001", null },
+        new object?[] { "Dbl", "123456789012345678901234567890", null },
+        new object?[] { "Dbl", "1e400", null },
+        new object?[] { "Dbl", "-1e400", null },
+        new object?[] { "Dbl", "1e-400", null },
+        new object?[] { "Dbl", "NaN", null },
+        new object?[] { "Dbl", "Infinity", null },
+        new object?[] { "Sng", "3.4e38", 3.4e38f },
+        new object?[] { "Sng", "1e-30", 1e-30f },
+        new object?[] { "Sng", "0.1", 0.1f },
+        new object?[] { "Sng", "16777216", 16777216f },
+        new object?[] { "Sng", "16777217", null },
+        new object?[] { "Sng", "1e39", null },
+    };
+
+    // Text goes to a number column as the number it denotes when the column holds exactly that - for a Double or Single
+    // column, when the value it becomes is that number or has it as its round-trip form - and is refused otherwise,
+    // past the column's range, NaN and the infinities included; the same on every target.
+    [Theory]
+    [MemberData(nameof(TextToNumbers), DisableDiscoveryEnumeration = true)]
+    public void Text_appended_to_a_number_column_is_the_number_it_denotes_exactly_or_is_refused(string column, string text, object? held)
+    {
+        if (held is null)
+        {
+            MakeTable();
+            byte[] before = File.ReadAllBytes(_path);
+            using (var db = Database.Open(_path))
+                Assert.ThrowsAny<ArgumentException>(() => db.ImportTable(Source(column, text), new ImportOptions { AppendIfExists = true }));
+            Assert.Equal(before, File.ReadAllBytes(_path));
+            return;
+        }
+        object? stored = Appended(column, text);
+        switch (held)
+        {
+            case double d:
+                Assert.Equal(BitConverter.DoubleToInt64Bits(d), BitConverter.DoubleToInt64Bits(Assert.IsType<double>(stored)));
+                break;
+            case float f:
+                Assert.Equal(BitConverter.GetBytes(f), BitConverter.GetBytes(Assert.IsType<float>(stored)));
+                break;
+            default:
+                Assert.Equal(held, stored);
+                break;
+        }
+    }
+
 #if NET
     // On .NET the round-trip format is the shortest text that reads back as the double, as ExactNumber's is.
     [Fact]
@@ -145,6 +223,39 @@ public sealed class ImportConversionTests : IDisposable
         }
         foreach (double d in new[] { 1.0, 10.0, 1e22, 1e23, 9007199254740993.0, 0.3, 2.0 / 3, 4.35, 1e-7, 123e-20 })
             Assert.Equal(d.ToString("R", Invariant), ExactNumber.Text(d));
+    }
+
+    // On .NET, reading text gives the double, and the float, nearest the number it denotes, as ExactNumber does.
+    [Fact]
+    public void The_nearest_double_and_float_are_dotnets_for_any_text()
+    {
+        var random = new Random(1119);
+        for (int i = 0; i < 20000; i++)
+        {
+            int digits = random.Next(1, 30);
+            var text = new System.Text.StringBuilder(random.Next(2) == 0 ? "" : "-");
+            for (int d = 0; d < digits; d++) text.Append((char)('0' + random.Next(10)));
+            // Ties: a digit string that ends in 5 at a place a double or float rounds at comes up often enough here.
+            text.Append('E').Append(random.Next(-340, 320).ToString(Invariant));
+            string s = text.ToString();
+            Assert.True(ExactNumber.TryParse(s, out ExactNumber number));
+            double parsed = double.Parse(s, NumberStyles.Float, Invariant);
+            double? nearest = number.NearestDouble();
+            if (double.IsInfinity(parsed)) Assert.Null(nearest);
+            else Assert.Equal(BitConverter.DoubleToInt64Bits(parsed), BitConverter.DoubleToInt64Bits(nearest!.Value));
+            float parsedSingle = float.Parse(s, NumberStyles.Float, Invariant);
+            float? nearestSingle = number.NearestSingle();
+            if (float.IsInfinity(parsedSingle)) Assert.Null(nearestSingle);
+            else Assert.Equal(BitConverter.GetBytes(parsedSingle), BitConverter.GetBytes(nearestSingle!.Value));
+        }
+        // Exactly between two doubles, and between the least double and 0.
+        foreach (string s in new[] { "9007199254740993", "9007199254740995", "2.4703282292062327E-324", "2.4703282292062328E-324", "1.7976931348623158E+308", "1.7976931348623159E+308" })
+        {
+            Assert.True(ExactNumber.TryParse(s, out ExactNumber number));
+            double parsed = double.Parse(s, NumberStyles.Float, Invariant);
+            if (double.IsInfinity(parsed)) Assert.Null(number.NearestDouble());
+            else Assert.Equal(BitConverter.DoubleToInt64Bits(parsed), BitConverter.DoubleToInt64Bits(number.NearestDouble()!.Value));
+        }
     }
 #endif
 

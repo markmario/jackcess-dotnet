@@ -43,6 +43,9 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
 
     internal bool IsZero => Unscaled.IsZero;
 
+    /// <summary>Whether the number is below zero, or is -0.</summary>
+    internal bool IsNegative => Unscaled.Sign < 0 || NegativeZero;
+
     /// <summary>How many digits the number has: 1 for 0.</summary>
     internal int Digits => IsZero ? 1 : BigInteger.Abs(Unscaled).ToString(Invariant).Length;
 
@@ -213,9 +216,168 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
         return sign + digits.Substring(0, exponent + 1) + "." + digits.Substring(exponent + 1);
     }
 
+    /// <summary>
+    /// The double nearest the number - of two as near, the one with the even significand, as reading text gives - or
+    /// null when that is past the largest double. A number nearer 0 than the least double is 0, with its sign.
+    /// </summary>
+    internal double? NearestDouble()
+    {
+        if (NearestBinary(significandBits: 52, leastExponent: -1074, greatestExponent: 971, pastLargest: 310, nearerZero: -326) is not { } nearest)
+            return null;
+        BigInteger first = BigInteger.One << 52;
+        long bits = nearest.Significand < first
+            ? (long)nearest.Significand
+            : ((long)(nearest.Exponent + 1075) << 52) | (long)(nearest.Significand - first);
+        double value = BitConverter.Int64BitsToDouble(bits);
+        return IsNegative ? -value : value;
+    }
+
+    /// <summary>The float nearest the number, as for a double; null when that is past the largest float.</summary>
+    internal float? NearestSingle()
+    {
+        if (NearestBinary(significandBits: 23, leastExponent: -149, greatestExponent: 104, pastLargest: 40, nearerZero: -47) is not { } nearest)
+            return null;
+        BigInteger first = BigInteger.One << 23;
+        int bits = nearest.Significand < first
+            ? (int)nearest.Significand
+            : ((nearest.Exponent + 150) << 23) | (int)(nearest.Significand - first);
+        float value = BitConverter.ToSingle(BitConverter.GetBytes(bits), 0);
+        return IsNegative ? -value : value;
+    }
+
+    // The significand and exponent of the binary number nearest |this|, a tie going to the even significand: a
+    // significand of significandBits bits after its leading one, or fewer at the least exponent; null past the
+    // greatest. A number whose first digit is past ten to the power pastLargest is past it, and one whose first digit
+    // is before ten to the power nearerZero is nearer 0, without their digits being worked out.
+    private (BigInteger Significand, int Exponent)? NearestBinary(int significandBits, int leastExponent, int greatestExponent, int pastLargest, int nearerZero)
+    {
+        if (IsZero || Exponent < nearerZero) return (BigInteger.Zero, leastExponent);
+        if (Exponent > pastLargest) return null;
+
+        BigInteger numerator = BigInteger.Abs(Unscaled), denominator = BigInteger.One;
+        if (Scale >= 0) denominator = BigInteger.Pow(10, Scale); else numerator *= BigInteger.Pow(10, -Scale);
+
+        BigInteger least = BigInteger.One << significandBits, limit = BigInteger.One << (significandBits + 1);
+        int exponent = Math.Max(leastExponent, BitLength(numerator) - BitLength(denominator) - (significandBits + 1));
+        BigInteger quotient, remainder, divisor;
+        while (true)
+        {
+            // numerator / denominator = (quotient + remainder / divisor) × 2^exponent
+            if (exponent >= 0)
+            {
+                divisor = denominator << exponent;
+                quotient = BigInteger.DivRem(numerator, divisor, out remainder);
+            }
+            else
+            {
+                divisor = denominator;
+                quotient = BigInteger.DivRem(numerator << -exponent, divisor, out remainder);
+            }
+            if (quotient >= limit) exponent++;
+            else if (quotient < least && exponent > leastExponent) exponent--;
+            else break;
+        }
+
+        int half = (remainder << 1).CompareTo(divisor);
+        if (half > 0 || (half == 0 && !quotient.IsEven)) quotient += 1;
+        if (quotient == limit)
+        {
+            quotient >>= 1;
+            exponent++;
+        }
+        return exponent > greatestExponent ? null : (quotient, exponent);
+    }
+
+    private static int BitLength(BigInteger value)
+    {
+        byte[] bytes = value.ToByteArray();
+        int top = bytes.Length - 1;
+        while (top > 0 && bytes[top] == 0) top--;
+        int bits = top * 8;
+        for (int b = bytes[top]; b != 0; b >>= 1) bits++;
+        return bits;
+    }
+
+    // ── Text ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The number <paramref name="text"/> denotes, exactly, when it is a number as <see cref="NumberStyles.Float"/>
+    /// reads one in the invariant culture: white space around it, a sign, digits with a point among them or none, and
+    /// an exponent. "NaN" and "Infinity" are not numbers.
+    /// </summary>
+    internal static bool TryParse(string text, out ExactNumber number)
+    {
+        number = default;
+        int at = 0, end = text.Length;
+        while (at < end && IsWhite(text[at])) at++;
+        while (end > at && IsWhite(text[end - 1])) end--;
+
+        bool negative = false;
+        if (at < end && (text[at] == '+' || text[at] == '-'))
+        {
+            negative = text[at] == '-';
+            at++;
+        }
+
+        var digits = new System.Text.StringBuilder();
+        int places = 0;
+        bool point = false, anyDigit = false;
+        for (; at < end; at++)
+        {
+            char c = text[at];
+            if (c >= '0' && c <= '9')
+            {
+                anyDigit = true;
+                if (digits.Length > 0 || c != '0') digits.Append(c);
+                if (point) places++;
+            }
+            else if (c == '.' && !point) point = true;
+            else break;
+        }
+        if (!anyDigit) return false;
+
+        long exponent = 0;
+        if (at < end && (text[at] == 'e' || text[at] == 'E'))
+        {
+            at++;
+            bool negativeExponent = false;
+            if (at < end && (text[at] == '+' || text[at] == '-'))
+            {
+                negativeExponent = text[at] == '-';
+                at++;
+            }
+            int first = at;
+            for (; at < end && text[at] >= '0' && text[at] <= '9'; at++)
+                if (exponent < 1_000_000_000) exponent = exponent * 10 + (text[at] - '0');
+            if (at == first) return false;
+            if (negativeExponent) exponent = -exponent;
+        }
+        if (at != end) return false;
+
+        int trailing = 0;
+        while (trailing < digits.Length && digits[digits.Length - 1 - trailing] == '0') trailing++;
+        if (trailing == digits.Length)
+        {
+            number = new ExactNumber(BigInteger.Zero, 0, negativeZero: negative);
+            return true;
+        }
+        BigInteger unscaled = BigInteger.Parse(digits.ToString(0, digits.Length - trailing), NumberStyles.None, Invariant);
+        number = new ExactNumber(negative ? -unscaled : unscaled, (int)(places - trailing - exponent));
+        return true;
+    }
+
+    // The white space NumberStyles.AllowLeadingWhite and AllowTrailingWhite take.
+    private static bool IsWhite(char c) => c == ' ' || (c >= '\t' && c <= '\r');
+
     // ── Decimals ─────────────────────────────────────────────────────────────
 
     private static readonly BigInteger DecimalLimit = BigInteger.One << 96;
+
+    /// <summary>The number <paramref name="value"/> is, exactly.</summary>
+    internal static ExactNumber Of(long value) => new(value, 0);
+
+    /// <summary>The number <paramref name="value"/> is, exactly.</summary>
+    internal static ExactNumber Of(ulong value) => new(value, 0);
 
     /// <summary>The number <paramref name="value"/> is, exactly.</summary>
     internal static ExactNumber Of(decimal value)
