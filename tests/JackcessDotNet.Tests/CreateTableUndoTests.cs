@@ -224,6 +224,81 @@ public sealed class CreateTableUndoTests : IDisposable
     }
 
     [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_table_made_in_a_larger_change_that_is_taken_back_is_forgotten_and_refuses_what_is_asked_of_it(FileFormat format)
+    {
+        string path = Prepare(format);
+        try
+        {
+            using var db = Database.Open(path);
+            byte[] before = Bytes(path);
+            string view = ViewOf(db);
+
+            // A larger change - the table, then its rows - fails part-way and is taken back whole.
+            Table made = null!;
+            Assert.Throws<IOException>(() =>
+            {
+                using var change = db.File.BeginUndo();
+                made = db.CreateTable("New", Columns, new[] { "Id" }, Indexes);
+                for (int i = 0; i < 20; i++)
+                    made.Insert(new Row { ["Code"] = $"code {i}", ["Notes"] = new string('n', i * 300), ["Amount"] = i * 1.25m });
+                Assert.Same(made, db.GetTable("New"));
+                db.File.WritesBeforeFailure = 0;
+                try { made.Insert(new Row { ["Code"] = "the one that fails" }); }
+                finally { db.File.WritesBeforeFailure = null; }
+            });
+
+            // The file, and what the session shows of it, are as they were: the table is not listed or handed out.
+            Assert.True(before.AsSpan().SequenceEqual(Bytes(path)), "the file changed");
+            Assert.DoesNotContain("New", db.GetTableNames());
+            Assert.False(db.TryGetTable("New", out _));
+            Assert.Throws<ArgumentException>(() => db.GetTable("New"));
+            Assert.Equal(view, ViewOf(db));
+
+            // The Table handed out refuses everything asked of it, rather than read or write pages that are not its own.
+            Assert.Equal("Table 'New' is not in the database: the change that created it was taken back.",
+                         Assert.Throws<InvalidOperationException>(() => made.Insert(new Row { ["Code"] = "after" })).Message);
+            Assert.Throws<InvalidOperationException>(() => made.Rows.Count());
+            Assert.Throws<InvalidOperationException>(() => made.RowCount);
+            Assert.Throws<InvalidOperationException>(() => made.Columns);
+            Assert.Throws<InvalidOperationException>(() => made.FindRowByPrimaryKey(1));
+            Assert.Throws<InvalidOperationException>(() => made.CreateCursor());
+
+            // A table of that name is made again, in pages the one taken back had; the Table taken back is not it, and
+            // still refuses.
+            var again = db.CreateTable("New", Columns, new[] { "Id" }, Indexes);
+            Assert.NotSame(made, again);
+            Assert.Same(again, db.GetTable("New"));
+            again.Insert(new Row { ["Code"] = "kept", ["Notes"] = new string('k', 3_000), ["Amount"] = 2.5m });
+            Assert.Throws<InvalidOperationException>(() => made.Insert(new Row { ["Code"] = "after" }));
+            Assert.Throws<InvalidOperationException>(() => made.Rows.Count());
+
+            // A larger change that is kept keeps its table.
+            Table kept;
+            using (var change = db.File.BeginUndo())
+            {
+                kept = db.CreateTable("Kept", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id");
+                kept.Insert(new Row { ["Id"] = 1 });
+                change.Commit();
+            }
+            Assert.Same(kept, db.GetTable("Kept"));
+            kept.Insert(new Row { ["Id"] = 2 });
+        }
+        finally
+        {
+            File.Delete(path + ".copy" + Path.GetExtension(path));
+        }
+
+        using var after = Database.Open(path);
+        Assert.Equal(new[] { "Existing", "Kept", "New" }, after.GetTableNames().OrderBy(n => n, StringComparer.Ordinal));
+        var row = Assert.Single(after.GetTable("New").Rows);
+        Assert.Equal(("kept", 1), ((string)row["Code"]!, (int)row["Id"]!));
+        Assert.Equal(new[] { 1, 2 }, after.GetTable("Kept").Rows.Select(r => (int)r["Id"]!));
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(after, "New", expectedRows: 1));
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(after, "MSysObjects"));
+    }
+
+    [Theory]
     [InlineData(FileFormat.Access2000, 50)]
     [InlineData(FileFormat.Access2007, 42)]
     [InlineData(FileFormat.Access2010, 42)]

@@ -875,7 +875,23 @@ public sealed class Database : IDisposable
         propertyMaps.Written(propertyNames);
         var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
         _tables[tdefPage] = table;
+        // Made inside a larger change, the table is in the file only if that change is kept: taken back, it is
+        // forgotten, and the Table handed out refuses what is asked of it (#60). Made in a change of its own, it is
+        // committed already, and nothing is noted.
+        _file.Journal(() => ForgetTableTakenBack(tdefPage, table));
         return table;
+    }
+
+    /// <summary>
+    /// Forgets <paramref name="table"/>, created inside a change that has been taken back (#60): the file has
+    /// nothing of it, so it is no longer handed out, and the <see cref="Table"/> that was refuses everything asked
+    /// of it, as one dropped does - its pages may be another table's by then.
+    /// </summary>
+    private void ForgetTableTakenBack(int tdefPage, Table table)
+    {
+        if (_tables.TryGetValue(tdefPage, out var held) && ReferenceEquals(held, table))
+            _tables.Remove(tdefPage);
+        table.MarkTakenBack();
     }
 
     // A table's index maps follow its owned-pages and free-space maps on its usage-map page.
