@@ -283,28 +283,42 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Opens an existing .mdb / .accdb file with what <paramref name="options"/> says about it: the password of
-    /// an encrypted file (<see cref="DatabaseOpenOptions.Password"/>), and the format to read a file as when its
+    /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), and the format to read a file as when its
     /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>). With neither set this is
     /// <see cref="Open(string)"/>.
     /// <para>
-    /// With a password, an Access 97 or 2000-2003 file (.mdb) is read through Jet's RC4-based encryption, and
-    /// an .accdb through Office's: <b>Agile Encryption</b> (Office 2010+, MS-OFFCRYPTO §2.3.4.10–13) and
-    /// <b>ECMA Standard Encryption</b> (Office 2007, §2.3.4.5–9). An .accdb encrypted with RC4 CryptoAPI or an
-    /// extensible provider is refused with <see cref="NotSupportedException"/>. A file that is not encrypted is
-    /// opened as it is, and the password is not looked at.
+    /// A file is protected as its header says, and a password is checked as Access checks it: exactly, letter
+    /// case and all.
     /// </para>
+    /// <list type="bullet">
+    ///   <item>An Access 97 or Access 2000-2003 file (.mdb) with a database password opens with that password and
+    ///   no other. The password changes no page: the file is read and written as any other.</item>
+    ///   <item>An .mdb whose pages Access encoded (its Encrypt Database command) holds the key to them itself, and
+    ///   opens with any password or none, as Access opens it - unless it has a database password as well. Its
+    ///   pages are decoded as they are read and encoded as they are written.</item>
+    ///   <item>An .accdb with a password is encrypted with it: Agile Encryption (what Access 2010 and later make,
+    ///   MS-OFFCRYPTO §2.3.4.10–13), RC4 CryptoAPI (Access 2007's), or ECMA Standard Encryption (§2.3.4.5–9),
+    ///   whose non-standard form Jackcess-encrypt reads is read too. Its pages are decrypted as they are read and
+    ///   encrypted as they are written. One encrypted by an extensible provider is refused with
+    ///   <see cref="NotSupportedException"/>.</item>
+    ///   <item>A file that is not protected is opened as it is, and the password is not looked at.</item>
+    /// </list>
     /// <para>
     /// An Access 97 file is opened for reading only, whatever the options say (<see cref="IsReadOnly"/>).
     /// </para>
     /// </summary>
     /// <exception cref="InvalidCredentialException">
-    /// The password is not the file's, or the file is encrypted in a way the password cannot be checked against.
+    /// The file has a database password, or is an encrypted .accdb, and the password given is not its password or
+    /// none was given. Nothing of the file is read past its header.
     /// </exception>
     /// <exception cref="InvalidDataException">
     /// The file is not an Access database - it is too short, or has no signature - and no
     /// <see cref="DatabaseOpenOptions.FallbackFormat"/> says what to read it as.
     /// </exception>
-    /// <exception cref="NotSupportedException">The file is encrypted, or damaged, and no password was given.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is damaged - its catalog does not read, and its header names no protection that accounts for it -
+    /// or it is an .accdb encrypted in a way this library does not read.
+    /// </exception>
     /// <param name="path">The path of the file to open.</param>
     /// <param name="options">What is known about the file.</param>
     /// <returns>The database, open. The caller disposes it.</returns>
@@ -313,110 +327,7 @@ public sealed class Database : IDisposable
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
-
-        if (options.Password is { Length: > 0 } password)
-            return OpenWithPassword(path, password, options.FallbackFormat);
-        return options.FallbackFormat is { } fallback ? OpenAs(path, fallback) : Open(path);
-    }
-
-    private static Database OpenWithPassword(string path, string password, FileFormat? fallback)
-    {
-        // Sniff version + signature first.
-        Span<byte> head = stackalloc byte[0x15];
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-        {
-            int read = fs.Read(head);
-            if (read < 0x15)
-                throw new InvalidDataException($"File '{path}' is too short to be an Access database.");
-        }
-
-        FileFormat format;
-        if (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB"))
-            format = JetFormat.ForVersionCode(head[0x14]).Version;
-        else
-            format = fallback ?? throw new InvalidDataException(
-                $"File '{path}' is not a recognised Access database.");
-
-        return format is FileFormat.Access97 or FileFormat.Access2000
-            ? OpenWithJetCrypt   (path, format, password)
-            : OpenWithOfficeCrypt(path, format, password);
-    }
-
-    /// <summary>
-    /// Opens an .accdb that may be password-protected via Office Agile Encryption.
-    /// If the encoding-key slot in the header is zero, the file is unencrypted
-    /// and the password is silently ignored. Otherwise the codec is installed
-    /// (which itself verifies the password) and a decrypt-on-read database is
-    /// returned.
-    /// </summary>
-    private static Database OpenWithOfficeCrypt(string path, FileFormat version, string password)
-    {
-        var file = new PageFile(path, JetFormat.For(version), FileMode.Open);
-        try
-        {
-            byte[] header = file.ReadPage(0);
-            var codec = OfficeCryptCodecHandler.FromDbHeader(header, password);
-            if (codec is not null)
-                file.Codec = codec;
-
-            // Whether we installed a codec or not, the system catalog page now
-            // has to look like a TDEF. If it doesn't, we got the password wrong
-            // (or the file uses an unsupported codec we silently accepted).
-            byte[] catalogPage = file.ReadPage(JetFormat.PageSystemCatalog);
-            if (catalogPage[0] != JetFormat.PageTypeTableDef || catalogPage[1] != 0x01)
-                throw new InvalidCredentialException(
-                    $"Failed to decrypt '{path}' — wrong password, or the file uses an " +
-                    "encryption scheme not yet supported by this codec.");
-        }
-        catch
-        {
-            file.Dispose();
-            throw;
-        }
-        return new Database(file);
-    }
-
-    /// <summary>
-    /// Opens a Jet 3/4 (.mdb) file. The password is used only when page 2
-    /// doesn't decrypt as a TableDef in cleartext — in that case the file is
-    /// taken to be encrypted and <see cref="JetCryptCodecHandler"/> is installed
-    /// with the password as the master-key seed. Unencrypted files ignore the
-    /// password (no codec is installed).
-    /// </summary>
-    private static Database OpenWithJetCrypt(string path, FileFormat version, string password)
-    {
-        JetFormat format = version == FileFormat.Access97 ? JetFormat.Jet3 : JetFormat.Jet4;
-        var file = new PageFile(path, format, FileMode.Open);
-        try
-        {
-            // Try cleartext first — most .mdb files in the wild aren't encrypted.
-            byte[] catalogPage = file.ReadPage(JetFormat.PageSystemCatalog);
-            bool looksLikeTdef =
-                catalogPage[0] == JetFormat.PageTypeTableDef && catalogPage[1] == 0x01;
-            if (looksLikeTdef)
-                return new Database(file);   // Unencrypted — ignore the password.
-
-            // Page 2 doesn't decode as a TableDef in cleartext → assume encryption,
-            // install the codec, retry.
-            byte[] dbHeader = file.ReadPage(0);
-            var codec = JetCryptCodecHandler.FromDbHeader(dbHeader, password);
-            if (codec is null)
-                throw new InvalidCredentialException(
-                    $"'{path}' appears encrypted but no password was supplied " +
-                    "(or its verifier block is empty).");
-            file.Codec = codec;
-
-            byte[] retry = file.ReadPage(JetFormat.PageSystemCatalog);
-            if (retry[0] != JetFormat.PageTypeTableDef || retry[1] != 0x01)
-                throw new InvalidCredentialException(
-                    $"Failed to decrypt '{path}' — wrong password or unsupported encryption scheme.");
-        }
-        catch
-        {
-            file.Dispose();
-            throw;
-        }
-        return new Database(file);
+        return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null);
     }
 
     /// <summary>
@@ -424,15 +335,19 @@ public sealed class Database : IDisposable
     /// <paramref name="fallback"/> only when the header does not say - a file without the signature of an Access
     /// database. So an Access 97 file is read as one, and is read-only, whatever <paramref name="fallback"/> is,
     /// and an Access 2000 file opened with a fallback of <see cref="FileFormat.Access97"/> is the Access 2000
-    /// file it is, read and written as any other.
+    /// file it is, read and written as any other. A protected file is opened with <paramref name="password"/>, as
+    /// <see cref="Open(string, DatabaseOpenOptions)"/> describes.
     /// </summary>
-    private static Database OpenAs(string path, FileFormat fallback)
+    private static Database OpenFile(string path, FileFormat? fallback, string? password)
     {
-        JetFormat format = PageFile.FormatOf(path) ?? JetFormat.For(fallback);
+        var (format, hasHeader) = FormatOf(path, fallback);
         var file = new PageFile(path, format, FileMode.Open);
         try
         {
-            ThrowIfEncrypted(file, path);
+            // A file read in the fallback format has no header to say how it is protected: what its bytes there
+            // would say means nothing.
+            if (hasHeader) Unlock(file, path, password);
+            EnsureCatalogReads(file, path);
         }
         catch
         {
@@ -443,30 +358,98 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Sniffs whether the database appears encrypted by inspecting the system
-    /// catalog page (page 2). For unencrypted files this page starts with
-    /// 0x02 0x01 (TableDef header); encrypted files have those bytes XOR'd
-    /// against a key-derived stream and will start with anything else.
-    ///
-    /// We raise a clear error rather than letting downstream parsers fail with
-    /// cryptic messages.
+    /// The format of the file at <paramref name="path"/>, as its header names it - the signature at offset 0x04,
+    /// "Standard Jet DB" for an .mdb and "Standard ACE DB" for an .accdb, and the version byte at 0x14, none of
+    /// which a mask or a codec hides - and whether it has that header; <paramref name="fallback"/> for a file
+    /// that has none.
     /// </summary>
-    private static void ThrowIfEncrypted(PageFile file, string path)
+    /// <exception cref="InvalidDataException">The file has no such header, and there is no fallback.</exception>
+    private static (JetFormat Format, bool HasHeader) FormatOf(string path, FileFormat? fallback)
     {
-        // File may be smaller than 3 pages (corrupt / not yet populated) — skip
-        // the check rather than throw a spurious "encrypted" error.
+        Span<byte> head = stackalloc byte[0x15];
+        int read;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            read = fs.Read(head);
+
+        if (read == head.Length && (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB")))
+            return (JetFormat.ForVersionCode(head[0x14]), true);
+        if (fallback is { } format)
+            return (JetFormat.For(format), false);
+        throw new InvalidDataException(read < head.Length
+            ? $"File '{path}' is too short to be an Access database."
+            : $"File '{path}' is not a recognised Access database (missing 'Standard Jet/ACE DB' signature).");
+    }
+
+    /// <summary>
+    /// Checks the password of a protected file and gives the file the codec its pages need, as its header says
+    /// (see <see cref="Open(string, DatabaseOpenOptions)"/>). A file that is not protected is left as it is, and
+    /// the password is not looked at.
+    /// </summary>
+    /// <exception cref="InvalidCredentialException">The file needs a password, and <paramref name="password"/> is not it.</exception>
+    private static void Unlock(PageFile file, string path, string? password)
+    {
+        if (file.PageCount == 0) return;
+        byte[] header = file.ReadPage(0);
+        var format = file.Format;
+
+        if (format.Version is FileFormat.Access97 or FileFormat.Access2000)
+        {
+            // Access checks a database password exactly, and opens a file whose pages are encoded with no password
+            // at all: the key is in the header (tools/protected-fixtures.ps1).
+            string expected = HeaderMask.DatabasePassword(header, format);
+            if (expected.Length > 0 && !string.Equals(password, expected, StringComparison.Ordinal))
+                throw new InvalidCredentialException(password is null
+                    ? $"'{path}' has a database password: open it with a DatabaseOpenOptions that has its Password."
+                    : $"The password given is not the database password of '{path}'.");
+            if (JetCryptCodecHandler.FromDbHeader(header) is { } encoded)
+                file.Codec = encoded;
+            return;
+        }
+
+        // An .accdb with a password is encrypted with it: there is no reading it without.
+        if (password is null)
+        {
+            if (OfficeCryptCodecHandler.IsEncrypted(header))
+                throw new InvalidCredentialException(
+                    $"'{path}' is encrypted with a password: open it with a DatabaseOpenOptions that has its Password.");
+            return;
+        }
+        if (OfficeCryptCodecHandler.FromDbHeader(header, password) is { } encrypted)
+            file.Codec = encrypted;
+    }
+
+    /// <summary>
+    /// Refuses a file whose catalog page does not read as a table definition once what its header says of its
+    /// protection is accounted for: one that is damaged, or protected in a way this library does not read. A file
+    /// of fewer than three pages has no catalog to look at, and is let through.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The catalog page does not read.</exception>
+    private static void EnsureCatalogReads(PageFile file, string path)
+    {
         if (file.PageCount < 3) return;
         byte[] catalogPage = file.ReadPage(JetFormat.PageSystemCatalog);
-        if (catalogPage[0] != JetFormat.PageTypeTableDef || catalogPage[1] != 0x01)
-            throw new NotSupportedException(
-                $"File '{path}' appears to be encrypted or corrupt — the system catalog " +
-                $"page (page 2) does not start with the TableDef header (0x02 0x01). " +
-                $"If it is password-protected, open it with a DatabaseOpenOptions that has its Password.");
+        if (catalogPage[0] == JetFormat.PageTypeTableDef && catalogPage[1] == 0x01) return;
+
+        string why = file.Codec switch
+        {
+            OfficeCryptCodecHandler office =>
+                $"was decrypted with its password ({office.Scheme}), and its system catalog page (page 2) still does not " +
+                "read as a table definition: the file is damaged, or encrypted in a way this library does not read.",
+            JetCryptCodecHandler =>
+                "was decoded with the key its header holds, and its system catalog page (page 2) still does not read as " +
+                "a table definition: the file is damaged.",
+            _ =>
+                "appears to be encrypted or corrupt — the system catalog page (page 2) does not start with the TableDef " +
+                "header (0x02 0x01), and the file's header names no password or encryption that accounts for it.",
+        };
+        throw new NotSupportedException($"File '{path}' {why}");
     }
 
     /// <summary>
     /// Opens an existing .mdb / .accdb file, in the format its header names (the byte at offset 0x14): Access 97,
-    /// Access 2000-2003, or one of the .accdb formats, Access 2007 to Access 2019.
+    /// Access 2000-2003, or one of the .accdb formats, Access 2007 to Access 2019. An .mdb whose pages Access
+    /// encoded and that has no database password opens without one, as Access opens it; a file with a password
+    /// is opened with <see cref="Open(string, DatabaseOpenOptions)"/>, which describes what is protected how.
     /// <para>
     /// An Access 97 file is opened for reading only, as Jackcess opens one (<see cref="IsReadOnly"/>): its tables
     /// and rows are read, and every change to it - a row inserted, updated or deleted, a table created or
@@ -477,32 +460,14 @@ public sealed class Database : IDisposable
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="InvalidDataException">The file is not an Access database: it is too short, or has no signature.</exception>
-    /// <exception cref="NotSupportedException">
-    /// The file is encrypted, or damaged: open an encrypted one with <see cref="Open(string, DatabaseOpenOptions)"/>.
+    /// <exception cref="InvalidCredentialException">
+    /// The file has a database password, or is an encrypted .accdb: open it with
+    /// <see cref="Open(string, DatabaseOpenOptions)"/> and its password.
     /// </exception>
-    public static Database Open(string path)
-    {
-        Span<byte> head = stackalloc byte[0x15];
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-        {
-            int read = fs.Read(head);
-            if (read < 0x15)
-                throw new InvalidDataException($"File '{path}' is too short to be an Access database.");
-        }
-
-        // Validate the database-header signature at offset 0x04:
-        //   "Standard Jet DB" — Jet 3/4 (.mdb)
-        //   "Standard ACE DB" — ACE 12+ (.accdb)
-        // Any other content means the file isn't a recognisable Access database;
-        // failing here gives a much clearer error than letting the page parser
-        // crash on garbage bytes downstream.
-        if (!StartsWithSignature(head, "Standard Jet DB")
-         && !StartsWithSignature(head, "Standard ACE DB"))
-            throw new InvalidDataException(
-                $"File '{path}' is not a recognised Access database (missing 'Standard Jet/ACE DB' signature).");
-
-        return OpenAs(path, JetFormat.ForVersionCode(head[0x14]).Version);
-    }
+    /// <exception cref="NotSupportedException">
+    /// The file is damaged: its catalog does not read, and its header names no protection that accounts for it.
+    /// </exception>
+    public static Database Open(string path) => OpenFile(path, fallback: null, password: null);
 
     // ── Foreign keys ─────────────────────────────────────────────────────────
 

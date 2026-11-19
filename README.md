@@ -112,17 +112,35 @@ DateTime? born = read.GetValue<DateTime?>("Born");   // null
 ## Opening password-protected files
 
 ```csharp
-// Jet RC4 (.mdb, Access 97 / 2000–2003)
+// An .mdb with a database password, or an .accdb encrypted with a password: what the file is, its header says.
 using var db = Database.Open("Confidential.mdb", new DatabaseOpenOptions { Password = "passw0rd" });
-
-// .accdb encryption — Agile (Office 2010+), ECMA Standard (Office 2007),
-// RC4 CryptoAPI (Office 2002–2003), or Non-Standard AES — all auto-detected
-// from the EncryptionInfo header.
-using var db = Database.Open("Confidential.accdb", new DatabaseOpenOptions { Password = "passw0rd" });
 ```
 
-Wrong passwords throw `InvalidCredentialException` before any data page is
-parsed — no cryptic "page X corrupt" errors.
+A file is protected as its header says, and its password is checked as Access checks it: exactly, letter case and
+all (#46). Each kind below that Access's engine still makes was made by it (DAO 16, and Jet 4.0 for Access 97, in
+`tools/protected-fixtures.ps1`), opened here with its password, a wrong one and none, and compared table by table
+with what DAO reads; and what this library wrote to each was read, searched through its primary key, added to and
+compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
+
+| The file | Opens | Written |
+| --- | --- | --- |
+| An .mdb (Access 2000-2003) with a database password | with that password and no other | ✅ as any .mdb: the password changes no page |
+| An .mdb whose pages Access encoded (its Encrypt Database command, DAO's `dbEncrypt`) | with any password or none, as Access opens it - unless it has a database password too | ✅ each page is decoded as it is read and encoded as it is written: RC4 under the key the header holds |
+| An Access 97 .mdb with a database password, or encoded | as an Access 2000-2003 one | ❌ read-only, as every Access 97 file |
+| An .accdb with a password: Agile Encryption, which Access 2010 and later make, and ACE 16 for either .accdb format | with that password and no other | ✅ each page is decrypted as it is read and encrypted as it is written |
+| An .accdb in RC4 CryptoAPI (Access 2007's), or the non-standard AES Jackcess-encrypt reads | with that password and no other | ✅ the same; refereed with jackcess-encrypt's files of them, as ACE 16 makes neither |
+| An .accdb in ECMA Standard Encryption | with that password and no other | ✅ the same; no file of this kind was found to test against: its pages are written by the code the non-standard AES's are |
+| An .accdb encrypted by an extensible (external) provider | ❌ `NotSupportedException` | |
+
+- A file with a password opened with another, or with none, throws `InvalidCredentialException` before anything
+  past its header is read.
+- A file that is not protected opens whatever password is given: the password is not looked at.
+- A file whose catalog does not read, with nothing in its header to account for it, is refused as damaged with
+  `NotSupportedException`, whatever password is given.
+- An .mdb's password is at most 20 characters, which is all DAO takes; an Access 97 file keeps it in the code page
+  of its text (1252).
+- The descriptor Access writes for an Agile-encrypted database has no data-integrity element, so there is no hash
+  for a write to leave stale: Access reads what this library wrote as it reads its own.
 
 ## Composite (multi-column) primary keys
 
@@ -518,11 +536,11 @@ How the importer maps a CLR type to a column, and what comes back:
 | PropertyMap & MSysRelationships                   | ✅      |
 | Properties written: a table's, a column's, the database's own, Summary and Custom | ✅ Summary and Custom only where the database has their documents |
 | A column's Required and Allow Zero Length: read, written, enforced | ✅ |
-| Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
-| Password-protected `.accdb` (Agile Encryption, Office 2010+) | ✅ Read + write¹ |
-| Password-protected `.accdb` (ECMA Standard Encryption, Office 2007) | ✅ Read + write |
-| Password-protected `.accdb` (RC4 CryptoAPI, Office 2002–2003) | ✅ Read + write |
-| Password-protected `.accdb` (Non-Standard AES, compat mode 0) | ✅ Read + write |
+| Password-protected `.mdb`: a database password, checked as Access checks it | ✅ Read + write (Access 97: read) |
+| Encoded `.mdb` (Access's Encrypt Database, Jet RC4) | ✅ Read + write (Access 97: read), no password needed |
+| Password-protected `.accdb` (Agile Encryption, Access 2010+) | ✅ Read + write |
+| Password-protected `.accdb` (RC4 CryptoAPI, Access 2007) | ✅ Read + write |
+| Password-protected `.accdb` (ECMA Standard Encryption; Non-Standard AES, compat mode 0) | ✅ Read + write |
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
 | Foreign-key enforcement, with cascades (on by default) | ✅ |
@@ -531,11 +549,6 @@ How the importer maps a CLR type to a column, and what comes back:
 | Create a relationship, with referential integrity and cascades | ✅ |
 | Drop a column, index, table or relationship; rename a column, index or table | ✅ As Access writes each; not a table's last column, nor a complex column |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
-
-¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
-through this library round-trip cleanly through `Database.Open` with the password
-but Office Access may flag a stale integrity hash. Matches the upstream
-`jackcess-encrypt` limitation.
 
 ## What this fork changes
 
@@ -572,6 +585,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   it has no time zone, and is read with `DateTimeKind.Unspecified`.
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
+- **Protected files open as Access opens them**: an .mdb's database password is checked, an encoded .mdb is
+  read and written with the key its header holds, and every kind of protection Access makes is tested against a
+  file it made. See [Opening password-protected files](#opening-password-protected-files).
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
 
 Limits to know about:

@@ -3,12 +3,10 @@ namespace JackcessDotNet;
 /// <summary>
 /// Per-page encode/decode transformation applied by <see cref="PageFile"/> on
 /// every read and write. The default <see cref="NullCodecHandler"/> is the
-/// identity. For encrypted Access files (password-protected .accdb, MSISAM),
-/// an implementation would XOR each page against a key-derived keystream.
-///
-/// Today we ship only the null codec; encrypted files are detected in
-/// <see cref="Database.Open(string)"/> and rejected with a clear error so users
-/// don't get cryptic page-parse failures downstream.
+/// identity. <see cref="Database.Open(string, DatabaseOpenOptions)"/> gives a file
+/// the codec its header asks for: <see cref="JetCryptCodecHandler"/> for an .mdb
+/// whose pages Access encoded, <see cref="OfficeCryptCodecHandler"/> for an
+/// encrypted .accdb. A codec leaves page 0, the header, as it is.
 /// </summary>
 internal interface ICodecHandler
 {

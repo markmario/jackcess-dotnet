@@ -6,37 +6,32 @@ using System.Xml.Linq;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Office Crypto codec for password-protected <c>.accdb</c> databases. Covers
-/// two of the schemes Access can produce:
+/// Office Crypto codec for password-protected <c>.accdb</c> databases, as Jackcess-encrypt's
+/// <c>OfficeCryptCodecHandler</c> reads them. Covers the schemes Access can produce:
 ///
 /// <list type="bullet">
 ///   <item>
 ///     <b>Agile Encryption</b> (Office 2010+, vMajor=4, vMinor=4) —
 ///     MS-OFFCRYPTO §2.3.4.10–13. PBKDF2-style key derivation with configurable
-///     hash, AES in CBC mode for page crypto.
+///     hash, AES in CBC mode for page crypto. What ACE 16 gives a database it makes
+///     with a password, in either .accdb format (tools/protected-fixtures.ps1).
 ///   </item>
 ///   <item>
 ///     <b>ECMA Standard Encryption</b> (Office 2007, vMajor∈{2,3,4}, vMinor=2)
 ///     — MS-OFFCRYPTO §2.3.4.5–9. SHA-1 over 50 000 iterations, AES in ECB mode
-///     for page crypto, key size declared in the EncryptionHeader struct.
+///     for page crypto, key size declared in the EncryptionHeader struct; and the
+///     "non-standard" form of it Jackcess-encrypt reads, with no iterations.
 ///   </item>
+///   <item><b>RC4 CryptoAPI Encryption</b> (Access 2007's own) — MS-OFFCRYPTO §2.3.5.</item>
 /// </list>
 ///
-/// Both variants are read-only — encryption (write) is out of scope; encrypted
-/// files open and decode pages, attempts to write throw <see cref="NotSupportedException"/>.
+/// Every page but the first is decrypted as it is read and encrypted as it is written, so a file opened with its
+/// password is read and written like any other.
 /// </summary>
 internal sealed class OfficeCryptCodecHandler : ICodecHandler
 {
-    // Header / encryption-info offsets shared across all schemes.
-    private const int OffsetEncodingKey    = 0x3E;
-    private const int EncodingKeyLength    = 4;
+    // Where the EncryptionInfo structure starts in the header.
     private const int CryptStructureOffset = 0x299;
-
-    // Bytes 38..42 of BASE_HEADER_MASK (Jackcess's per-byte XOR mask for page 0,
-    // starting at offset OFFSET_MASKED_HEADER = 0x18). At rest the encoding-key
-    // slot (offset 0x3E = mask index 38) is XOR'd with these 4 bytes; we have
-    // to undo the mask before using the value as crypto input.
-    private static readonly byte[] HeaderMaskAtEncodingKey = { 0xFB, 0x8A, 0xBC, 0x4E };
 
     // Flags inside the EncryptionHeader (MS-OFFCRYPTO 2.3.2).
     private const int FCryptoApiFlag = 0x04;
@@ -79,55 +74,11 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
     /// encoding-key slot at 0x3E is zeroed).
     /// </summary>
     /// <exception cref="InvalidCredentialException">Password verification failed.</exception>
-    /// <exception cref="NotSupportedException">Scheme not implemented (RC4, extensible).</exception>
+    /// <exception cref="NotSupportedException">Scheme not implemented: extensible encryption, or an unknown version.</exception>
     public static OfficeCryptCodecHandler? FromDbHeader(byte[] headerPage, string password)
     {
-        if (headerPage is null || headerPage.Length < CryptStructureOffset + 2)
+        if (!TryReadEncryptionInfo(headerPage, out byte[] encodingKey, out int p, out int infoEnd, out int vMajor, out int vMinor))
             return null;
-
-        // Encoding-key slot all-zero → file isn't encrypted; ignore the password.
-        bool isBlank = true;
-        for (int i = 0; i < EncodingKeyLength; i++)
-            if (headerPage[OffsetEncodingKey + i] != 0) { isBlank = false; break; }
-        if (isBlank) return null;
-
-        byte[] encodingKey = new byte[EncodingKeyLength];
-        Buffer.BlockCopy(headerPage, OffsetEncodingKey, encodingKey, 0, EncodingKeyLength);
-
-        // The encoding key on disk is XOR'd against BASE_HEADER_MASK[38..42] —
-        // Jackcess Java does this de-obfuscation at the PageChannel layer before
-        // the codec ever sees page 0. We don't have that layer here, so undo
-        // the mask in place. (Same bytes for Jet 4 and Jet 12+ — only the trailing
-        // 2 bytes of the full mask differ between versions, way past our slot.)
-        for (int i = 0; i < EncodingKeyLength; i++)
-            encodingKey[i] ^= HeaderMaskAtEncodingKey[i];
-
-        // Re-check after demask: if the unmasked key is all zero, the file is
-        // unencrypted (the on-disk masked bytes happened to equal the mask).
-        bool unmaskedBlank = true;
-        for (int i = 0; i < EncodingKeyLength; i++)
-            if (encodingKey[i] != 0) { unmaskedBlank = false; break; }
-        if (unmaskedBlank) return null;
-
-        // u16 infoLen — declared length of the EncryptionInfo blob.
-        short infoLen = BitConverter.ToInt16(headerPage, CryptStructureOffset);
-        int infoStart = CryptStructureOffset + 2;
-        int infoEnd   = infoStart + infoLen;
-        if (infoEnd > headerPage.Length)
-            throw new InvalidDataException("EncryptionInfo struct extends past the header page.");
-
-        // Some unencrypted .accdb files have random non-zero bytes at the
-        // encoding-key offset (used for unrelated page scrambling, not crypto).
-        // If the EncryptionInfo length is zero or the version field is empty,
-        // the file isn't actually encrypted — bail out so the caller can open
-        // it with the null codec instead of failing the version dispatch.
-        if (infoLen <= 0) return null;
-
-        int p = infoStart;
-        int vMajor = BitConverter.ToUInt16(headerPage, p); p += 2;
-        int vMinor = BitConverter.ToUInt16(headerPage, p); p += 2;
-
-        if (vMajor == 0 && vMinor == 0) return null;
 
         byte[] pwdBytes = string.IsNullOrEmpty(password)
             ? Array.Empty<byte>()
@@ -152,6 +103,52 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
         throw new NotSupportedException(
             $"Unsupported Office encryption version: vMajor={vMajor}, vMinor={vMinor}.");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="headerPage"/> - page 0 of an .accdb, as the file holds it - says the file is
+    /// encrypted, so that it cannot be read without its password: what <see cref="FromDbHeader"/> returns a codec
+    /// for, whatever the password.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The header's EncryptionInfo runs past the page.</exception>
+    public static bool IsEncrypted(byte[] headerPage)
+        => TryReadEncryptionInfo(headerPage, out _, out _, out _, out _, out _);
+
+    /// <summary>
+    /// Reads where the header's EncryptionInfo is, and its version, when the header says the file is encrypted.
+    /// False for a file that is not: its encoding key is all zero, or its EncryptionInfo is empty or of version
+    /// 0.0 - some unencrypted .accdb files have bytes in the key's place that are not a key.
+    /// </summary>
+    private static bool TryReadEncryptionInfo(byte[] headerPage, out byte[] encodingKey, out int afterVersion,
+                                              out int infoEnd, out int vMajor, out int vMinor)
+    {
+        encodingKey = Array.Empty<byte>();
+        afterVersion = infoEnd = vMajor = vMinor = 0;
+        if (headerPage is null || headerPage.Length < CryptStructureOffset + 2)
+            return false;
+
+        // A file whose key bytes are all zero on disk is taken as not encrypted, as is one whose key, once the
+        // header's mask is off, is all zero (Jackcess takes the mask off as it reads page 0).
+        bool isBlank = true;
+        for (int i = 0; i < HeaderMask.EncodingKeyLength; i++)
+            if (headerPage[HeaderMask.EncodingKeyAt + i] != 0) { isBlank = false; break; }
+        if (isBlank) return false;
+
+        encodingKey = HeaderMask.EncodingKey(headerPage);
+        if (encodingKey.All(b => b == 0)) return false;
+
+        // u16 infoLen — declared length of the EncryptionInfo blob.
+        short infoLen = BitConverter.ToInt16(headerPage, CryptStructureOffset);
+        int infoStart = CryptStructureOffset + 2;
+        infoEnd = infoStart + infoLen;
+        if (infoEnd > headerPage.Length)
+            throw new InvalidDataException("EncryptionInfo struct extends past the header page.");
+        if (infoLen <= 0) return false;
+
+        vMajor = BitConverter.ToUInt16(headerPage, infoStart);
+        vMinor = BitConverter.ToUInt16(headerPage, infoStart + 2);
+        afterVersion = infoStart + 4;
+        return vMajor != 0 || vMinor != 0;
     }
 
     public byte[] DecodePage(byte[] rawPage, int pageNumber)
@@ -379,12 +376,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
         /// <summary>
         /// Inverse of <see cref="DecryptPage"/> — same key + page-derived IV,
-        /// AES-CBC encrypt instead of decrypt. The data-integrity HMAC in the
-        /// descriptor is NOT recomputed (it would require deriving the HMAC key
-        /// from the master key and re-hashing the whole encrypted stream),
-        /// so a re-encrypted file may be rejected by Office's integrity check.
-        /// Our own Database.Open does not enforce HMAC, so the
-        /// round-trip through this library is lossless.
+        /// AES-CBC encrypt instead of decrypt. The descriptor Access writes for a
+        /// database has no data-integrity element (a document's encrypted package
+        /// has one; a database's pages have none to keep), and Access reads, seeks,
+        /// adds to and compacts a file whose pages were written here.
         /// </summary>
         public static byte[] EncryptPage(
             AgileDescriptor d, byte[] keyValue, byte[] encodingKey,
@@ -837,7 +832,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
     private static byte[] ApplyPageNumber(byte[] encodingKey, int pageNumber)
     {
-        byte[] block = new byte[EncodingKeyLength];
+        byte[] block = new byte[HeaderMask.EncodingKeyLength];
         block[0] = (byte)((pageNumber       & 0xFF) ^ encodingKey[0]);
         block[1] = (byte)(((pageNumber>>8 ) & 0xFF) ^ encodingKey[1]);
         block[2] = (byte)(((pageNumber>>16) & 0xFF) ^ encodingKey[2]);

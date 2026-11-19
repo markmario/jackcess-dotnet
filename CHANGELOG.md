@@ -72,6 +72,23 @@ changed since 1.2.2.
   database DAO had created, nor drop a relationship it made.
 - **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
   is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
+- **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
+  (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
+  - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with
+    another, an Access 97 or 2000-2003 file that has one throws `InvalidCredentialException`. It opened with any
+    password, or none.
+  - **An encoded .mdb opens** (Access's Encrypt Database, DAO's `dbEncrypt`), with no password, as Access opens
+    one, and is read and written: its pages are RC4 under the four bytes its header holds at 0x3E, as
+    Jackcess-encrypt reads them. None opened before: the key was taken from the password, which the encoding does
+    not use.
+  - **An encrypted .accdb opened without a password throws `InvalidCredentialException`**; it was
+    `NotSupportedException`. A file whose catalog does not read, when its header names no protection, is refused
+    as damaged with `NotSupportedException` whatever password is given; with a password it was
+    `InvalidCredentialException`.
+  - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
+    searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
+    non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
+    "stale integrity hash" this README warned of does not arise.
 
 ### Breaking changes to the public API
 
