@@ -82,10 +82,11 @@ internal static class IndexKeys
     /// <summary>
     /// True when the key <see cref="Encode"/> makes of <paramref name="values"/> is the key Access writes for them,
     /// as far as it has been measured against ACE: the keys of every type this library writes, but for a Date/Time
-    /// Extended column, which Access keys by the bytes it stored, one of the two forms of which this library reads
-    /// as no value (#51); and for a key cut at <see cref="MaxKeyLength"/> in an index of several columns, only where
-    /// those columns are Text and Long, the shapes the cut was measured in (#56). An entry is judged by such a key
-    /// alone: anywhere else, what an index holds for a row is believed.
+    /// Extended column, which Access keys by the bytes it stored, in either of two forms, where this library keys
+    /// the date it reads as the first form (#51); and for a key cut at <see cref="MaxKeyLength"/> in an index of
+    /// several columns, only where those columns are Text and Long, the shapes the cut was measured in (#56). An
+    /// entry is judged by such a key alone: anywhere else, what an index holds for a row is believed, and the row is
+    /// not looked for through the index.
     /// </summary>
     public static bool MatchesAccess(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
@@ -163,7 +164,9 @@ internal static class IndexKeys
     /// Jackcess cuts it: their digest left the last byte cut off out. That byte is 0 in every key that ends in
     /// text, where the two digests are the same; it is not in a key of several columns that ends in a number, a
     /// date or the like after text that filled the entry, which a file such a version wrote holds under this key
-    /// (<see cref="TableIndexes.StoredUnder"/>).
+    /// (<see cref="TableIndexes.StoredUnder"/>). Leaving the byte out gives the digest of the same bytes with that
+    /// one 0, so this key of one value is Access's key of another - with the same text, (A, 1)'s is (A, 0)'s - and
+    /// an entry under it can be that other value's own.
     /// </summary>
     internal static byte[] TruncateAsEarlierVersions(byte[] key)
     {

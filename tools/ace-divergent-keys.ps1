@@ -10,11 +10,14 @@
 
       Ext   Id LONG primary key, Nt TEXT(20), D DATETIME2 with a unique index DUnique. Three rows inserted; then
             rows 2 and 3 changed by SQL UPDATE, which stores a Date/Time Extended value in the second form ACE
-            writes, keyed by Access from its stored bytes (#51): this library reads that form as no value.
+            writes, keyed by Access from its stored bytes (#51): this library keys the date it reads as the first.
       Cut   Id LONG primary key, A TEXT(255), K LONG with a unique index ByAK (A, K). Six rows whose key is cut at
             510 bytes and ends in K: the digest this library left the last byte out of before #56.
       Dbl   Id LONG primary key, X DOUBLE with a unique index XU: -0.0 and 1.5.
       Dt    Id LONG primary key, T DATETIME with a unique index TU: dates ACE computed, not whole milliseconds.
+      Pair  Id LONG primary key, A TEXT(255), X LONG, Nt TEXT(10) with a unique index ByAX (A, X): 255 of U+03A9
+            with X 0 and with X 1, whose keys differ only in the last byte cut off. The digest this library used
+            before #56 left that byte out, so the key it gives the second is Access's key of the first.
 
     Made by ACE 16 (DAO.DBEngine.120) as an Access 2016 .accdb, which has Date/Time Extended. The file holds the
     time it was made, so the fixture is committed, and this script is the record of how.
@@ -76,6 +79,19 @@ try {
         $db.Execute('INSERT INTO Dt (Id, T) VALUES (2, CDate(43831.1234567891234))', $dbFailOnError)
         $db.Execute("INSERT INTO Dt (Id, T) VALUES (3, DateAdd('s', 1, #2020-01-01 00:00:00#) + 0.000000001)", $dbFailOnError)
         $db.Execute('INSERT INTO Dt (Id, T) VALUES (4, CDate(-0.5))', $dbFailOnError)
+
+        $db.Execute('CREATE TABLE Pair (Id LONG CONSTRAINT PrimaryKey PRIMARY KEY, A TEXT(255), X LONG, Nt TEXT(10))', $dbFailOnError)
+        $db.Execute('CREATE UNIQUE INDEX ByAX ON Pair (A, X)', $dbFailOnError)
+        $rs = $db.OpenRecordset('Pair', 1)
+        foreach ($row in @(@(1, 0), @(2, 1))) {
+            $rs.AddNew()
+            $rs.Fields.Item('Id').Value = [int]$row[0]
+            $rs.Fields.Item('A').Value = [string]$omega
+            $rs.Fields.Item('X').Value = [int]$row[1]
+            $rs.Fields.Item('Nt').Value = [string]'ace'
+            $rs.Update()
+        }
+        $rs.Close()
     }
     finally { $db.Close() }
 }

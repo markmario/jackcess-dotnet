@@ -16,9 +16,11 @@ namespace JackcessDotNet.Tests;
 /// one this library makes as Access does (<see cref="IndexKeys.MatchesAccess"/>).
 /// <para>
 /// Assets/ace-divergent-keys.accdb (tools/ace-divergent-keys.ps1) is a file ACE made, with rows whose keys this
-/// library does not make as Access does: Date/Time Extended values in the second form ACE stores, which this
-/// library reads as no value (#51), and keys of several columns cut at 510 bytes, which it did not make as Access
-/// does before #56. The other files here are made by the tests, as an earlier version of this library left them.
+/// library does not make as Access does: Date/Time Extended values in the second form ACE stores, which ACE keys by
+/// those bytes and this library by the date it reads (#51), and keys of several columns cut at 510 bytes, which it
+/// did not make as Access does before #56. Assets/ace-second-form-foreign-key.accdb
+/// (tools/ace-second-form-foreign-key.ps1) has a relationship on such a Date/Time Extended column. The other files
+/// here are made by the tests, as an earlier version of this library left them.
 /// </para>
 /// </summary>
 public sealed class AccessEntriesTests : IDisposable
@@ -67,9 +69,9 @@ public sealed class AccessEntriesTests : IDisposable
     // ── A file Access made ──────────────────────────────────────────────────
 
     // A row added to each table of ACE's file, the indexes believed or verified: every entry Access wrote is
-    // where it was, byte for byte, beside the new rows'. Verified, Ext's rows 2 and 3, whose values this library
-    // reads as no value, were entered under the key of no value, and their entries taken out of the unique index -
-    // three rows under one key, which ACE could then neither find nor update.
+    // where it was, byte for byte, beside the new rows'. Verified, at b462fcb - which read the second form of Ext's
+    // rows 2 and 3 as no value - they were entered under the key of no value, and their entries taken out of the
+    // unique index: three rows under one key, which ACE could then neither find nor update.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -96,6 +98,35 @@ public sealed class AccessEntriesTests : IDisposable
                 Assert.True(before[table].IsSubsetOf(after), $"{table}: entries ACE wrote are gone: {string.Join("; ", before[table].Except(after).Take(4))}");
                 Assert.Equal(before[table].Count + db.GetTable(table).Indexes.Count, after.Count);   // and one more an index
             }
+    }
+
+    // ── Keys that differ in the last byte cut off ───────────────────────────
+
+    // Pair holds (Ω, 0) and (Ω, 1), which ACE took. The key the digest before #56 gives (Ω, 1) - and (Ω, 2) - is
+    // ACE's key of (Ω, 0), and the one it gives (Ω, 8356114) ACE's key of (Ω, 1). None is a duplicate of the row
+    // whose entry is under that key: (Ω, 1) is rewritten, and (Ω, 2) and (Ω, 8356114) added, as ACE takes them;
+    // (Ω, 0) and (Ω, 1) again are refused, as ACE refuses them. Each of the three was refused.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Rows_ACE_took_whose_keys_differ_only_in_the_last_byte_cut_off_are_no_duplicates(bool verify)
+    {
+        string omega = new('Ω', 255);
+        using var db = Database.Open(Copy("ace-divergent-keys.accdb"));
+        db.VerifyIndexes = verify;
+        var pair = db.GetTable("Pair");
+        pair.UpdateByPrimaryKey(2, new Row { ["Nt"] = "engine" });
+        pair.Insert(new Row { ["Id"] = 3, ["A"] = omega, ["X"] = 2, ["Nt"] = "engine" });
+        pair.Insert(new Row { ["Id"] = 4, ["A"] = omega, ["X"] = 8356114, ["Nt"] = "engine" });
+
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => pair.Insert(new Row { ["Id"] = 5, ["A"] = omega, ["X"] = 0 }));
+        Assert.Throws<ConstraintViolationException>(() => pair.Insert(new Row { ["Id"] = 5, ["A"] = omega, ["X"] = 1 }));
+        Assert.Throws<ConstraintViolationException>(() => pair.UpdateByPrimaryKey(3, new Row { ["X"] = 1 }));
+        IndexChecks.AssertUnchanged(before, db);
+
+        Assert.Equal(new[] { "engine", "engine", "engine" }, pair.Rows.Where(r => (int)r["Id"]! > 1).Select(r => (string)r["Nt"]!));
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Pair", expectedRows: 4));   // each row under ACE's key
     }
 
     // ── Keys ACE made of a value's second form ──────────────────────────────

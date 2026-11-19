@@ -366,6 +366,73 @@ public sealed class CutKeyTests : IDisposable
         Assert.Equal((2, 1, 7), Count(CutAs(db, "UniqueAN")));
     }
 
+    // An entry cut the earlier way is under the key Access gives another value: row 2's, (Ω, 2000)'s, is Access's key
+    // of (Ω, 1792), whose last byte cut off is 0. (Ω, 2001), which differs from row 2 only in that byte, is under the
+    // same key the earlier way, and is no duplicate of row 2, whose row holds 2000: it is taken, as Access takes it,
+    // where it was refused. (Ω, 1792) itself is refused, as Access refuses it, trusting the entry - unless the index is
+    // verified, which makes the entry row 2's wrong one.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_value_whose_key_differs_from_an_entry_cut_the_earlier_way_only_in_the_last_byte_is_taken(bool verify)
+    {
+        using var db = OpenEarlierFixture();
+        db.VerifyIndexes = verify;
+        var pairs = db.GetTable("Pairs");
+        pairs.Insert(new Row { ["Id"] = 20, ["A"] = Omega255, ["K"] = 5, ["N"] = 2001 });
+
+        var at1792 = new Row { ["Id"] = 21, ["A"] = Omega255, ["K"] = 5, ["N"] = 1792 };
+        if (verify) pairs.Insert(at1792);
+        else Assert.Throws<ConstraintViolationException>(() => pairs.Insert(at1792));
+
+        Assert.Equal(verify ? (2, 9, 0) : (2, 1, 7), Count(CutAs(db, "UniqueAN")));
+    }
+
+    // ── Values whose keys differ in the last byte cut off ───────────────────
+
+    // The earlier digest of a key is Access's of the same key with the last byte cut off 0: the key the earlier way
+    // gives (Ω, 1), (Ω, 255) or (Ω, 7) is the one Access gives (Ω, 0), and the one it gives (Ω, 8356114) the one
+    // Access gives (Ω, 1) - 0x7F8101, by which their last bytes cut off differ, is a multiple of the polynomial. A
+    // unique index takes each of these values after 255 of U+03A9 beside the others, as ACE takes it, and refuses each
+    // a second time: an entry found under the earlier way's key alone is a duplicate only when its row has the value.
+    // They were refused, verified or not.
+    public static TheoryData<DataType, object[], bool> LastBytes()
+    {
+        var data = new TheoryData<DataType, object[], bool>();
+        foreach (bool verify in new[] { false, true })
+        {
+            data.Add(DataType.Int32, new object[] { 0, 1, 255, 256, 300, 8356114 }, verify);
+            data.Add(DataType.Int16, new object[] { (short)0, (short)1, (short)7, (short)200 }, verify);
+            data.Add(DataType.Byte, new object[] { (byte)0, (byte)1, (byte)7, (byte)200 }, verify);
+            data.Add(DataType.Boolean, new object[] { true, false }, verify);
+        }
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(LastBytes))]
+    public void Values_whose_keys_differ_only_in_the_last_byte_cut_off_are_no_duplicates(DataType type, object[] values, bool verify)
+    {
+        using var db = NewDatabase(general: false);
+        db.VerifyIndexes = verify;
+        var table = db.CreateTable("LastByte", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("X", type),
+        }, new[] { "Id" }, new[] { new IndexDefinition("UniqueAX", "A", "X") { IsUnique = true } });
+
+        int id = 0;
+        foreach (object x in values)
+            table.Insert(new Row { ["Id"] = ++id, ["A"] = Omega255, ["X"] = x });
+
+        var before = IndexChecks.AllPages(db);
+        foreach (object x in values)
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 100, ["A"] = Omega255, ["X"] = x }));
+        Assert.Throws<ConstraintViolationException>(() => table.UpdateByPrimaryKey(1, new Row { ["X"] = values[1] }));
+        IndexChecks.AssertUnchanged(before, db);
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "LastByte", expectedRows: values.Length));
+    }
+
     // With VerifyIndexes, a unique index is looked at before a row is compared with it, and an entry cut the
     // earlier way is not its row's: it is taken out, and the row entered under Access's key, when the table is
     // next changed. An index that is not unique is not looked at: its entries are moved as their rows are written.

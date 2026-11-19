@@ -94,7 +94,10 @@ changed since 1.2.2.
   unique), and DAO seeks, updates and deletes the rows this library writes. An entry a version since the cut
   wrote the earlier way is found, and taken out with its row; a rewritten row is entered under Access's key,
   and with `Database.VerifyIndexes` an index of Text and Long columns that is looked at has such entries
-  replaced when the table is next changed.
+  replaced when the table is next changed. The earlier way's key of a value is Access's key of another - the
+  same with the last byte cut off 0, so (A, 1)'s and (A, 255)'s are (A, 0)'s - and an entry found under it alone
+  is counted as a duplicate, or followed to a row, only when the row it points at has the value: such rows are
+  both taken, in a file of Access's or of this library's, and a second row with either value is refused.
 
 - **Table definitions of more than one page** are read whole, written and changed (#37). A table whose
   definition Access put on several pages has all its columns' names and takes rows; a column, an index or a

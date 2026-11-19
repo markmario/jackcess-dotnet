@@ -753,7 +753,7 @@ entry for such a key:
 | --- | --- | --- | --- | --- |
 | Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
 | This library | the same bytes as Access | found | the same | entry removed |
-| This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry | found | seen by a unique index; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
+| This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry - Access's key of the same values with the last byte 0 | found | seen by a unique index when the row it points at has the value; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
 | This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
 
 - **Lookups** of a value whose key is cut read the table instead of searching
@@ -767,7 +767,10 @@ entry for such a key:
 - **Uniqueness** follows Access: two values cut to the same entry are
   duplicates, whichever way the existing one is stored. A file an earlier
   release wrote may hold two such rows (their whole keys differed); neither
-  can then be rewritten until the other is deleted.
+  can then be rewritten until the other is deleted. A key cut with the earlier
+  digest is Access's key of another value - with the same text, (A, 1)'s and
+  (A, 255)'s are (A, 0)'s - so an entry found under it alone is a duplicate only
+  when the row it points at has the new row's value: the row is read.
 - **Deletes and updates** remove the entry the row actually has, cut either
   way or whole, matched by its row. A row with no entry at all - earlier
   releases kept only the primary key - has nothing to remove, and that is not
