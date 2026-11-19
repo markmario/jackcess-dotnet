@@ -14,9 +14,11 @@ namespace JackcessDotNet;
 /// Each lookup goes through the index (<see cref="IndexCursor.FindRowsByEntry"/>), so it costs a few pages
 /// however many rows the table has, and values are matched as an index cursor matches them: a null joins no
 /// row. A Date/Time of a row that was read from the table is joined on the number the row stores, as Access
-/// joins it, unless the row has been given a value in that column since it was read: the value given is joined
-/// on then, as a <see cref="DateTime"/> is looked for. A joiner holds nothing open and reads the tables as they
-/// are when it is asked.
+/// joins it, and a Date/Time Extended joined to one on the bytes the row stores, as an Access relationship joins
+/// a child to its parent - by the bytes of the form Access wrote, not by the date they say - unless the row has
+/// been given a value in that column since it was read: the value given is joined on then, as a
+/// <see cref="DateTime"/> is looked for. A joiner holds nothing open and reads the tables as they are when it is
+/// asked.
 /// </summary>
 public sealed class Joiner
 {
@@ -139,15 +141,18 @@ public sealed class Joiner
 
         // A date is joined on the number its row stores, as Access joins it, and not on the DateTime it was read
         // as, which is that number rounded: a row that was read from the table is asked for the number of each
-        // such column it has not been given a value in since; one it has is joined on the value given.
+        // such column it has not been given a value in since; one it has is joined on the value given. An extended
+        // date joined to another is joined on its row's bytes, as Access's relationship joins it (#51): the two
+        // forms Access writes a date in are two keys.
         if (fromRow is Row read && ReferenceEquals(read.Source, FromTable))
         {
             var dates = FromTable.Columns
-                .Where(c => c.DataType == DataType.DateTime && _fromColumns.Contains(c.Name) && !read.WasAssigned(c.Name))
+                .Where(c => c.DataType is DataType.DateTime or DataType.DateTimeExtended && _fromColumns.Contains(c.Name) && !read.WasAssigned(c.Name))
                 .ToList();
             if (dates.Count > 0 && FromTable.ReadRowAt(read.Pointer, dates) is { } stored)
                 for (int i = 0; i < values.Length; i++)
-                    if (values[i] is DateTime && stored.TryGetValue(_fromColumns[i], out var number) && number is double)
+                    if (values[i] is DateTime && stored.TryGetValue(_fromColumns[i], out var number)
+                        && (number is double || number is StoredExtendedDate && ToIndex.Columns[i].Column.DataType == DataType.DateTimeExtended))
                         values[i] = number;
         }
         return values;

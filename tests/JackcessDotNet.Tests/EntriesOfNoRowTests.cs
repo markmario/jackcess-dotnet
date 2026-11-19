@@ -114,6 +114,30 @@ public sealed class EntriesOfNoRowTests : IDisposable
     }
 
     /// <summary>
+    /// Verified, the row that is 7, found under 2, is given another key, 77: its entry under 2 is its wrong one, taken
+    /// out by the update - which reads the row as it is being written, and enters it under 77 - and the update's own
+    /// entry under 77 is the one already there. The row is in the index once. Entered by both, it was there twice, and
+    /// DAO compacted the file without the key (ExportMdb.Interop's EarlierEngineFilesInAccessTests).
+    /// </summary>
+    [Fact]
+    public void with_indexes_verified_a_row_found_under_a_key_it_does_not_have_and_given_another_is_entered_under_it_once()
+    {
+        using (var db = Database.Open(_path))
+        {
+            db.VerifyIndexes = true;
+            var cursor = db.GetTable("Renamed").CreateCursor();
+            Assert.NotNull(cursor.FindRow("Id", 7));
+            cursor.UpdateCurrentRow(new Row { ["Id"] = 77 });
+        }
+
+        Assert.Empty(InTheIndex("Renamed", "PrimaryKey", 2));
+        Assert.Empty(InTheIndex("Renamed", "PrimaryKey", 7));
+        Assert.Equal(new[] { "77" }, InTheIndex("Renamed", "PrimaryKey", 77));
+        using var read = Database.Open(_path);
+        IndexChecks.AssertEveryIndexHoldsTheRows(read, "Renamed", expectedRows: 2);
+    }
+
+    /// <summary>
     /// Another row is 7 already, added while the key, believed, held nothing under 7 - as ACE adds it. Verified, the
     /// row that was found under 2 is entered under 7 beside it all the same: the two are duplicates whatever the
     /// key says, and a row is not left without an entry for having had a wrong one. The new row is the one found
