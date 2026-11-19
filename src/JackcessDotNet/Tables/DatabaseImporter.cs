@@ -49,6 +49,11 @@ namespace JackcessDotNet;
 /// property.
 /// </para>
 /// <para>
+/// A key on <see cref="string"/>s that run past 255 characters is on a Memo column, as Access keeps one: its index keys
+/// are a value's first 255 characters, so two values equal in those are one key, and the second is refused as a
+/// duplicate (<see cref="ConstraintViolationException"/>), as Access refuses it.
+/// </para>
+/// <para>
 /// A date is held to the millisecond, which is what a Date/Time value is written and read at; a date before
 /// 1 January 100, the first a Date/Time column holds - <see cref="DateTime.MinValue"/> among them - is refused.
 /// </para>
@@ -139,8 +144,8 @@ public static class DatabaseImporter
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The database is an Access 97 file, which is only read; or the primary key is on a column whose index keys this
-    /// library does not write (a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
-    /// <see cref="long"/> or a <see cref="uint"/> - a Memo, an OLE Object). Nothing is imported.
+    /// library does not write: a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
+    /// <see cref="long"/> or a <see cref="uint"/> - or a Binary or OLE Object, a <c>byte[]</c>. Nothing is imported.
     /// </exception>
     public static Table ImportTable(this Database database, DataTable table, ImportOptions options)
     {
@@ -325,8 +330,8 @@ public static class DatabaseImporter
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The database is an Access 97 file, which is only read; or the primary key is on a column whose index keys this
-    /// library does not write (a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
-    /// <see cref="long"/> or a <see cref="uint"/> - a Memo, an OLE Object). Nothing is imported.
+    /// library does not write: a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
+    /// <see cref="long"/> or a <see cref="uint"/> - or a Binary or OLE Object, a <c>byte[]</c>. Nothing is imported.
     /// </exception>
     public static Table ImportTable<T>(this Database database, IEnumerable<T> items, ImportOptions options)
     {

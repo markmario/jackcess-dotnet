@@ -641,7 +641,9 @@ An import holds every value of its source exactly, or refuses before anything is
   `[Required]` or of a value type that is not nullable, makes a required column - Access's Required property, which
   Access and this library hold rows to; an AutoNumber and a Yes/No are not given it. A `DataTable`'s primary key of
   several columns is the table's key, in its order; several `[Key]` properties make a key of several columns, in the
-  order of their `[Column(Order = n)]` where they give one, and then as they are declared.
+  order of their `[Column(Order = n)]` where they give one, and then as they are declared. A key on strings that run
+  past 255 characters is on a Memo, as Access keeps one: its keys are a value's first 255 characters, so two values
+  equal in those are a duplicate, as Access takes them (measured with DAO).
 - **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
   holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` to a Decimal
   or Currency column as the number it is when the column holds that, and otherwise as the number its round-trip

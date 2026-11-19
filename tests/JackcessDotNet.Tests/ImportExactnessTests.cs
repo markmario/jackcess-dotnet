@@ -486,6 +486,51 @@ public sealed class ImportExactnessTests : IDisposable
         [Key] public long Id { get; set; }
     }
 
+    // A string key whose values run past 255 characters is a Memo key, as Access keeps one: its index keys are a
+    // value's first 255 characters, so values equal in those are one key, and a second is refused - as DAO 16 refuses
+    // it, in such a table and in one with a Memo key DAO made itself (measured: the same first 255 and something
+    // after them, the same 300, the first 255 and no more are refused; 254 of them, and a difference within the first
+    // 255, are taken).
+    [Fact]
+    public void A_string_key_past_255_characters_is_a_Memo_key_of_a_values_first_255_characters_as_Access_keeps_it()
+    {
+        using (var db = Database.Create(_accdb, FileFormat.Access2010))
+            db.ImportTable(new[] { new StringKeyed { K = new string('k', 300), X = 1 } });
+
+        using (var db = Database.Open(_accdb))
+        {
+            var table = db.GetTable("StringKeyed");
+            Assert.Equal(DataType.Memo, ColumnNamed(table, "K").DataType);
+            foreach (var (key, taken) in new[]
+                     {
+                         (new string('k', 299) + "q", false),
+                         (new string('k', 300), false),
+                         (new string('k', 255), false),
+                         (new string('k', 254), true),
+                         (new string('k', 200) + "q" + new string('k', 99), true),
+                     })
+            {
+                if (taken) table.Insert(new Row { ["K"] = key, ["X"] = 2 });
+                else Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["K"] = key, ["X"] = 2 }));
+            }
+        }
+
+        // Two of a source's values equal in their first 255 characters are refused whole, as any duplicate key is.
+        File.Delete(_accdb);
+        Database.Create(_accdb, FileFormat.Access2010).Dispose();
+        RefusedAndUnchanged<ConstraintViolationException>(_accdb, db => db.ImportTable(new[]
+        {
+            new StringKeyed { K = new string('k', 300), X = 1 },
+            new StringKeyed { K = new string('k', 299) + "q", X = 2 },
+        }));
+    }
+
+    private sealed class StringKeyed
+    {
+        [Key] public string? K { get; set; }
+        public int X { get; set; }
+    }
+
     private sealed class DecimalKeyed
     {
         [Key] public decimal Price { get; set; }
