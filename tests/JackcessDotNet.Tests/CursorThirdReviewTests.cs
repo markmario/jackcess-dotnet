@@ -137,6 +137,49 @@ public sealed class CursorThirdReviewTests : IDisposable
         }
     }
 
+    // ── What keeping a change for undoing costs ──────────────────────────────
+
+    [Fact]
+    public void Keeping_a_change_for_undoing_reads_no_page_a_second_time()
+    {
+        Row Make(int i) => new()
+        {
+            ["Id"] = i, ["Doc"] = $"ABC.{i % 97:D4}.{i:D5}", ["Title"] = new string('t', 10 + i % 40), ["D"] = new DateTime(2020, 1, 1).AddDays(i),
+            ["Notes"] = i % 3 == 0 ? new string('n', 300 + i % 1700) : null,
+        };
+        using (var db = Database.Create(_path))
+        {
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Doc", DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("Title", DataType.Text) { MaxLength = 255 }, new ColumnDefinition("D", DataType.DateTime),
+                new ColumnDefinition("Notes", DataType.Memo),
+            }, new[] { "Id" }, new[] { new IndexDefinition("ByDoc", "Doc") });
+            db.GetTable("T").InsertRange(Enumerable.Range(1, 400).Select(Make));
+        }
+
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            // Each change its own scope, writing over pages the file had when it began: rows onto the table's last
+            // page, long values onto pages with room, the definition, the index's pages, a row grown past its page.
+            for (int i = 401; i <= 700; i++) table.Insert(Make(i));
+            for (int i = 1; i <= 120; i++)
+            {
+                var row = table.FindRowByPrimaryKey(i * 5)!;
+                row["Title"] = new string('u', i % 2 == 0 ? 255 : 12);
+                if (i % 3 == 0) row["Doc"] = $"XYZ.{i:D5}";
+                table.Update(row);
+            }
+            for (int i = 2; i <= 600; i += 12) table.Delete(table.FindRowByPrimaryKey(i)!);
+            table.InsertRange(Enumerable.Range(701, 50).Select(Make));
+
+            // A page a change writes over was read by it, or is one the file keeps: its image costs no read.
+            Assert.Equal(0, db.File.UndoReadCount);
+            IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 750 - 50);
+        }
+    }
+
     // ── When a cursor is told ────────────────────────────────────────────────
 
     [Fact]

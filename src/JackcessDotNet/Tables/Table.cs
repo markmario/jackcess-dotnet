@@ -469,7 +469,7 @@ public sealed class Table
         EnsureTakesRows();
 
         var given    = AutoNumberValuesIn(row);
-        var identity = row.Identity;
+        var identity = given is not null ? row.Identity : default;
         int rowPtr;
         IReadOnlyList<TableIndexes.Entry> entries;
 
@@ -499,17 +499,17 @@ public sealed class Table
                 _indexes.Add(entries, rowPtr, looked);
                 undo?.Commit();
             }
-            catch
+            catch when (given is not null)
             {
                 // Nothing of the row stays in the file: it goes back to the caller as it came - its values, which
                 // row it is and what it was given. The counter is written with the row count, so it has not moved,
-                // and the next insert is given this row's number.
-                if (given is not null)
-                    foreach (var (name, had, value) in given)
-                    {
-                        if (had) row[name] = value;
-                        else     row.Remove(name);
-                    }
+                // and the next insert is given this row's number. Only the AutoNumber values change the row before
+                // it is written, so a table with none has nothing to give back: its refusal is not caught.
+                foreach (var (name, had, value) in given)
+                {
+                    if (had) row[name] = value;
+                    else     row.Remove(name);
+                }
                 row.Identity = identity;
                 throw;
             }
