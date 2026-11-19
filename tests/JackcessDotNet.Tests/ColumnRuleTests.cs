@@ -221,6 +221,120 @@ public sealed class ColumnRuleTests : IDisposable
         Assert.Null(row["TextReq"]);
     }
 
+    // ── A value a cascade gives a column ─────────────────────────────────────
+
+    /// <summary>
+    /// P, keyed by its text K, with rows 'a' and 'b'; C, whose K refers to it, with two rows of 'a' and one of
+    /// 'b'. The relationship cascades updates, and deletes by making the children's K null.
+    /// </summary>
+    private void ParentAndChild(bool childAllowsZeroLength, bool childRequired)
+    {
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var parent = db.CreateTable("P", new[] { new ColumnDefinition("K", DataType.Text) { MaxLength = 20 }, new ColumnDefinition("T", DataType.Text) }, "K");
+        var child = db.CreateTable("C", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("K", DataType.Text) { MaxLength = 20, AllowZeroLength = childAllowsZeroLength, IsRequired = childRequired },
+        }, "Id");
+        db.CreateRelationship(new RelationshipDefinition("P", "K", "C", "K") { HasReferentialIntegrity = true, CascadeUpdates = true, CascadeNullOnDelete = true });
+        parent.Insert(new Row { ["K"] = "a", ["T"] = "one" });
+        parent.Insert(new Row { ["K"] = "b", ["T"] = "two" });
+        child.Insert(new Row { ["Id"] = 1, ["K"] = "a" });
+        child.Insert(new Row { ["Id"] = 2, ["K"] = "a" });
+        child.Insert(new Row { ["Id"] = 3, ["K"] = "b" });
+    }
+
+    private List<string> Children()
+    {
+        using var db = Database.Open(_path);
+        return db.GetTable("C").Rows.OrderBy(r => r["Id"]).Select(r => $"{r["Id"]}={r["K"] ?? "null"}").ToList();
+    }
+
+    [Fact]
+    public void A_cascade_that_would_give_a_column_a_zero_length_string_it_does_not_take_is_refused_whole()
+    {
+        // Asked of ACE: "Cannot perform cascading operation. It would cause field 'C.K' to become a zero-length
+        // string, which is not allowed." The parent is not changed either.
+        ParentAndChild(childAllowsZeroLength: false, childRequired: false);
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            var refused = Assert.Throws<ConstraintViolationException>(() => db.GetTable("P").UpdateByPrimaryKey("a", new Row { ["K"] = "" }));
+            Assert.Contains("C.K", refused.Message);
+            Assert.Contains("zero-length", refused.Message);
+        }
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused cascade changed the file");
+
+        // Another key cascades, and a delete makes the children's key null: the column is not required.
+        using (var db = Database.Open(_path))
+        {
+            db.GetTable("P").UpdateByPrimaryKey("b", new Row { ["K"] = "z" });
+            db.GetTable("P").DeleteRow("K", "a");
+        }
+        Assert.Equal(new[] { "1=null", "2=null", "3=z" }, Children());
+    }
+
+    [Fact]
+    public void A_cascade_gives_a_required_column_a_zero_length_string_it_allows_and_no_null()
+    {
+        ParentAndChild(childAllowsZeroLength: true, childRequired: true);
+        using (var db = Database.Open(_path))
+            db.GetTable("P").UpdateByPrimaryKey("a", new Row { ["K"] = "" });
+        Assert.Equal(new[] { "1=", "2=", "3=b" }, Children());
+
+        // Asked of ACE: "It would cause field 'C.K' to become Null, which is not allowed."
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+            Assert.Throws<ConstraintViolationException>(() => db.GetTable("P").DeleteRow("K", "b"));
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused cascade changed the file");
+    }
+
+    // ── Values a caller did not give: a column added to a table with rows, and an import ──────────────────
+
+    [Fact]
+    public void A_required_column_is_added_to_a_table_with_rows_which_keep_no_value_in_it()
+    {
+        // Asked of ACE and DAO: ALTER TABLE ... ADD COLUMN x LONG NOT NULL, and a required field appended with
+        // DAO, are both taken by a table with rows; the rows read null there and are still updated in other
+        // columns, and a new row needs a value.
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) }, "Id");
+            table.Insert(new Row { ["Id"] = 1, ["Name"] = "before" });
+            table.AddColumn(new ColumnDefinition("Req", DataType.Int32) { IsRequired = true });
+            Assert.Null(table.Rows.Single()["Req"]);
+            table.UpdateByPrimaryKey(1, new Row { ["Name"] = "after" });
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 2, ["Name"] = "new" }));
+            table.Insert(new Row { ["Id"] = 2, ["Name"] = "new", ["Req"] = 5 });
+        }
+        using var read = Database.Open(_path);
+        Assert.Equal(new object?[] { null, 5 }, read.GetTable("T").Rows.OrderBy(r => r["Id"]).Select(r => r["Req"]));
+    }
+
+    [Fact]
+    public void Rows_an_import_adds_to_a_table_that_is_there_are_held_to_its_columns()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { IsRequired = true, AllowZeroLength = false } }, "Id");
+
+        var source = new System.Data.DataTable("T");
+        source.Columns.Add("Id", typeof(int));
+        source.Columns.Add("Name", typeof(string));
+        source.Rows.Add(1, "one");
+        using (var db = Database.Open(_path))
+            db.ImportTable(source, new ImportOptions { AppendIfExists = true });
+
+        foreach (object bad in new object[] { DBNull.Value, "" })
+        {
+            source.Rows.Clear();
+            source.Rows.Add(2, bad);
+            using var db = Database.Open(_path);
+            Assert.Throws<ConstraintViolationException>(() => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
+        }
+        using var read = Database.Open(_path);
+        Assert.Equal(new object?[] { 1 }, read.GetTable("T").Rows.Select(r => r["Id"]));
+    }
+
     [Fact]
     public void A_table_an_earlier_version_made_has_no_properties_and_takes_the_rows_it_took()
     {

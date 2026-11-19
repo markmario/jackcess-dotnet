@@ -460,6 +460,11 @@ with `ConstraintViolationException`:
   though DAO reports the property as false. Spaces are not a zero-length string;
 - an insert is checked in every column, an update only in the columns it gives a value: a row that already
   breaks a rule in another column is still updated, as Access updates it;
+- a cascade is held to them too: an update or delete of a parent whose cascade would give a child's column a
+  null it requires a value in place of, or a zero-length string it does not take, is refused whole, parent and
+  all, as Access refuses it ("Cannot perform cascading operation");
+- a required column can be added to a table that has rows, as in Access: the rows have no value in it, are
+  still updated in other columns, and a new row needs one;
 - a table made by an earlier version of this library has no properties, so nothing new is refused in it.
 
 `ColumnDefinition.AllowZeroLength` is `true` unless set, as for a field made in Access's table designer; a field
