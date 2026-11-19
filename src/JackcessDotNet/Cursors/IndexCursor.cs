@@ -29,6 +29,15 @@ namespace JackcessDotNet;
 /// index's <c>Seek</c> put a date literal against a row.
 /// </para>
 /// <para>
+/// A Date/Time Extended value is keyed by the bytes its row stores, and Access writes a date in two forms: its
+/// <c>INSERT</c> in one, its SQL <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset in another. A
+/// <see cref="DateTime"/> looked for in such a column is looked for under the key of each form, so a lookup finds the
+/// rows in either - where Access's own <c>=</c> through an index finds the first form alone. In a range's entry or
+/// given to <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first
+/// form, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in the
+/// second form is where its bytes are, which is not always where its date is.
+/// </para>
+/// <para>
 /// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
 /// anything else: another cursor, <see cref="Table.Update"/>. A row whose key in the index changes moves in the
 /// cursor's order, and the cursor is told. Going one way, the cursor gives each row once: a row it has come to
@@ -958,14 +967,25 @@ public sealed class IndexCursor : Cursor
     /// The values of the leading columns make one key, and the entries that begin with it are the part. A
     /// <see cref="DateTime"/> looked for in a Date/Time column is not one key: every number that reads as it is
     /// looked for, so the part runs from the least of them to the greatest, under the key of the columns before
-    /// it - and, for a time on 30 December 1899, which a number and its negative both read as, there are two.
+    /// it - and, for a time on 30 December 1899, which a number and its negative both read as, there are two. Nor
+    /// is one looked for in a Date/Time Extended column: Access keys a value by its bytes, and writes a date in two
+    /// forms (<see cref="ExtendedDateTimeCodec.FormsOf"/>), so there is a part for each form's key. The first form's
+    /// is also the key versions of this library from db6f93b made of a row in either form. Those from 2930d3f made the
+    /// key of no value of a row in the second form, which is not looked under for a date: that part holds every row
+    /// with no value, and each would be read for every date looked for.
+    /// </para>
+    /// <para>
+    /// Bytes of a Date/Time Extended value in another form than the first, as a row stores them - a <see cref="Joiner"/>
+    /// looks for a row's - are looked for under their key and under the key versions from db6f93b made of such bytes,
+    /// the first form of the date they read (<see cref="StoredExtendedDate.AsEarlierVersionsRead"/>), a part each,
+    /// where the rows are matched by their bytes. Not under the key of no value, for the same reason as a date.
     /// </para>
     /// </summary>
     private List<(byte[] From, byte[]? Before)>? PartsFor(IReadOnlyList<(Column Column, object? Value)> pattern)
     {
         var columns = new List<IndexColumn>();
         var values  = new List<object?>();
-        DateTime? date = null;
+        DateTime? date = null, extended = null;
         foreach (var indexColumn in _index.Columns)
         {
             int at = -1;
@@ -979,25 +999,54 @@ public sealed class IndexCursor : Cursor
                 date = asked;
                 break;
             }
+            if (indexColumn.Column.DataType == DataType.DateTimeExtended && pattern[at].Value is DateTime given)
+            {
+                extended = given;
+                break;
+            }
         }
         if (columns.Count == 0) return null;
 
         var parts = new List<(byte[] From, byte[]? Before)>();
         try
         {
-            byte[]? Key(object? last)
+            byte[]? KeyOf(object?[] given)
             {
-                var given = values.ToArray();
-                given[given.Length - 1] = last;
                 if (!IndexKeys.CanSearch(columns, given)) return null;
                 byte[] key = IndexKeys.EncodeWhole(columns, given);
                 return key.Length <= LongestKeyOf(columns.Count) ? key : null;
             }
+            byte[]? Key(object? last)
+            {
+                var given = values.ToArray();
+                given[given.Length - 1] = last;
+                return KeyOf(given);
+            }
 
+            if (extended is { } when)
+            {
+                // Each form Access writes the date in is a key of its own, and a row with the date is under one of
+                // them: ACE's INSERT writes the first, its SQL UPDATE and DAO's AddNew and Edit on a dynaset the
+                // second (#51).
+                foreach (byte[] form in ExtendedDateTimeCodec.FormsOf(when))
+                {
+                    if (Key(new StoredExtendedDate(form)) is not { } key) return null;
+                    parts.Add((key, IndexEntryWalker.AfterAllBeginningWith(key)));
+                }
+                parts.Sort((x, y) => IndexEntryWalker.CompareKeys(x.From, y.From));
+                return parts;
+            }
             if (date is not { } looked)
             {
                 if (Key(values[values.Count - 1]) is not { } key) return null;
                 parts.Add((key, IndexEntryWalker.AfterAllBeginningWith(key)));
+                // Bytes of a Date/Time Extended value in another form than the first - a row's, as a Joiner looks
+                // for it - are also under the key versions from db6f93b made of the date they read, a part of its
+                // own, where the rows are matched by their bytes (TableIndexes.EarlierVersionsEntriesOf).
+                foreach (var earlier in StoredExtendedDate.AsEarlierVersionsRead(values, asFrom2930d3f: false))
+                    if (KeyOf(earlier) is { } other && !parts.Any(part => IndexEntryWalker.CompareKeys(part.From, other) == 0))
+                        parts.Add((other, IndexEntryWalker.AfterAllBeginningWith(other)));
+                parts.Sort((x, y) => IndexEntryWalker.CompareKeys(x.From, y.From));
                 return parts;
             }
 
@@ -1097,6 +1146,12 @@ public sealed class IndexCursor : Cursor
 /// Access's <c>ORDER BY</c>: before 31 December 1899 not the dates' order, since a day's times run back from its
 /// midnight there; and rows whose dates read as one but are stored as different numbers in the order of the
 /// numbers first and of the columns after the date within one number.
+/// </para>
+/// <para>
+/// A <see cref="DateTime"/> for a Date/Time Extended column is the key of the bytes Access's <c>INSERT</c> writes for
+/// it, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them (measured):
+/// a row Access stored in its other form, the time of day in whole seconds, is where its bytes are, which is not
+/// always where its date is.
 /// </para>
 /// </summary>
 public sealed class IndexRange

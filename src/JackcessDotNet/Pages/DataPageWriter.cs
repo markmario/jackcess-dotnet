@@ -261,8 +261,9 @@ internal sealed class DataPageWriter
         }
 
         // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
-        // index keys were made of it (a date as the double stored), for its entries to be found. A long value
-        // that is kept and is in no index is not read at all: nothing asks what it holds.
+        // index keys were made of it (a date as the double stored, an extended date as its 42 bytes), for its
+        // entries to be found. A long value that is kept and is in no index is not read at all: nothing asks what
+        // it holds.
         var old    = new Row();
         var merged = new Row();
         foreach (var col in table.Columns)
@@ -273,10 +274,10 @@ internal sealed class DataPageWriter
             object? existing = decoder.Decode(rowBytes, col);
             if (existing is not null)
                 merged[col.Name] = existing;
-            object? keyed = col.DataType == DataType.DateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+            object? keyed = col.DataType is DataType.DateTime or DataType.DateTimeExtended ? decoder.DecodeForKey(rowBytes, col) : existing;
             if (keyed is not null)
                 old[col.Name] = keyed;
-            if (keepStoredDates && keyed is double)
+            if (keepStoredDates && keyed is double or StoredExtendedDate)
                 merged[col.Name] = keyed;
         }
         foreach (var kvp in newValues)
@@ -462,9 +463,9 @@ internal sealed class DataPageWriter
 
     /// <summary>
     /// The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, as its index keys are made
-    /// of them (<see cref="RowDecoder.DecodeForKey"/>: a date as the double stored), or null when no row of the
-    /// table is there: what a pointer from an index is checked against. One page is read, and the long-value pages
-    /// of the columns asked for.
+    /// of them (<see cref="RowDecoder.DecodeForKey"/>: a date as the double stored, an extended date as its bytes),
+    /// or null when no row of the table is there: what a pointer from an index is checked against. One page is read,
+    /// and the long-value pages of the columns asked for.
     /// </summary>
     internal Row? ReadRowAt(TableDefinition table, int rowPtr, IReadOnlyList<Column> columns)
     {

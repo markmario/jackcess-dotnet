@@ -27,6 +27,9 @@ internal static class ExtendedDateTimeCodec
     private const int Digits        = 19;
     private const int TimeAt        = Digits + 1;
     private const int TrailerAt     = TimeAt + Digits;
+
+    /// <summary>Where the third number begins, the count of the fraction's digits: 7 in Access's first form, 0 in its second.</summary>
+    internal const int CountAt = TrailerAt + 1;
     private const long DaysInRange  = 3652059;   // DateTime.MaxValue's day, and one more
 
     /// <summary>
@@ -84,6 +87,36 @@ internal static class ExtendedDateTimeCodec
         bytes[TrailerAt]     = (byte)':';
         bytes[TrailerAt + 1] = (byte)'7';
         return bytes;
+    }
+
+    /// <summary>
+    /// The 42 bytes of <paramref name="value"/> in Access's second form, as its SQL <c>UPDATE</c> writes a value -
+    /// the time of day in whole seconds and a count of 0 - or null for a value with a fraction of a second, which
+    /// that form does not hold.
+    /// </summary>
+    public static byte[]? EncodeInSeconds(DateTime value)
+    {
+        long time = value.Ticks % TimeSpan.TicksPerDay;
+        if (time % TimeSpan.TicksPerSecond != 0) return null;
+        var bytes = new byte[Size];
+        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay);
+        bytes[Digits] = (byte)':';
+        WriteDigits(bytes, TimeAt, time / TimeSpan.TicksPerSecond);
+        bytes[TrailerAt]     = (byte)':';
+        bytes[TrailerAt + 1] = (byte)'0';
+        return bytes;
+    }
+
+    /// <summary>
+    /// The bytes of each form Access writes <paramref name="value"/> in: the one its <c>INSERT</c> writes
+    /// (<see cref="Encode"/>), and for a value in whole seconds the one its SQL <c>UPDATE</c> writes
+    /// (<see cref="EncodeInSeconds"/>). Access keys each form by its bytes, so a row with the value is under one of
+    /// their keys.
+    /// </summary>
+    public static IEnumerable<byte[]> FormsOf(DateTime value)
+    {
+        yield return Encode(value);
+        if (EncodeInSeconds(value) is { } inSeconds) yield return inSeconds;
     }
 
     // One of the two numbers, in its nineteen bytes: digits - Access fills the field with them - which may have

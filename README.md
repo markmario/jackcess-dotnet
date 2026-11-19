@@ -219,6 +219,19 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     come in the index's order, which is the numbers', as Access's `ORDER BY` has them: before 31 December 1899 a
     day's times run back from its midnight. A `Joiner` joins a row that was read on its stored number, as
     Access's join does, unless the row has been given a date in that column since.
+  - *A Date/Time Extended* is the 42 bytes the row stores, which Access keys and orders a value by
+    ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)): its `INSERT` writes a date in one form, and its
+    SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset in another, the time of day in whole seconds (measured;
+    on a table-type recordset the two write a layout of their own, which is read as null:
+    [#64](https://github.com/markmario/jackcess-dotnet/issues/64)). A `DateTime` finds every row whose bytes say that
+    date: through an index under the key of each form, where Access's own `=` through an index finds the first form
+    alone (measured; without an index it finds both). A value in a form that reads as its
+    date and that Access was not seen to write - a space or a plus sign among its digits - is found by a cursor over
+    the table, and not through an index, which holds it under a key of its own. In a range's entry and given to
+    `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
+    Access's `BETWEEN` through an index puts it (measured): a row in the second form is where its bytes are. A
+    `Joiner` joins a row that was read on its stored bytes, as a relationship does, unless the row has been given a
+    date in that column since.
   - A null is never a match.
 - **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
@@ -458,10 +471,10 @@ answered with the row that no longer has it, and that row is not found under the
   next leaf's first, one page more, since the next leaf can begin under the same key.
 - **An entry that points at a row of the table is believed**, as Access believes it, whatever this library
   makes of that row's values: a row with its key is refused as a duplicate, and the entry stays. This library's
-  key for a row may not be the one Access wrote - a Date/Time Extended value in the second form ACE stores is
-  read as no value ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - and an entry Access wrote,
-  taken out on that judgement, is a row Access can then neither find, update nor delete. A row an index does not
-  hold is a duplicate of nothing, as it is to Access, unless `VerifyIndexes` is set.
+  key for a row may not be the one Access wrote - a key cut at 510 bytes in an index of several columns other than
+  Text and Long, which was not measured - and an entry Access wrote, taken out on that judgement, is a row Access
+  can then neither find, update nor delete. A row an index does not hold is a duplicate of nothing, as it is to
+  Access, unless `VerifyIndexes` is set.
 - **With `VerifyIndexes`**, every entry an index was seen to hold that points at no row goes when the table's
   indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where that
   key is one this library makes as Access does, is that row's wrong one: a row with the entry's key is taken,
@@ -469,17 +482,32 @@ answered with the row that no longer has it, and that row is not found under the
   had a wrong one. What is under that key already is looked at the same way, an entry that is itself a wrong one
   being moved in its turn; beside a row that does have the key the row is entered all the same - the two are
   duplicates whatever the index says. An entry goes and its row's own comes, or neither: a failure part-way is
-  undone. A key is one this library makes as Access does for every type it writes but Date/Time Extended, and,
-  cut at 510 bytes in an index of several columns, only where those columns are Text and Long, the shapes that
-  were measured.
-- **A key this library may not make as Access does** - a Date/Time Extended value, which ACE can store in a
-  second form and key otherwise ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - is never looked
-  for through an index, with or without `VerifyIndexes`: the table is read for it, so a relationship's child or
-  parent is found however ACE keyed it. When a row with such a key is deleted or rewritten, its entry is looked for
-  under this library's key, as any row's is, and a row in the form this library writes - and ACE's `INSERT` - costs
-  what a Date/Time row does. Only when the row has no entry there, a value ACE stored in its second form, are its
-  entries found by the row they point at - every leaf of the index read - so that none is left pointing where the
-  row was.
+  undone. An update of the row itself enters it under its new key once: an entry an index holds already is never
+  added again. A key is one this library makes as Access does for every type it writes - a Date/Time Extended
+  value's made of the bytes its row stores, as Access makes it (below) - and, cut at 510 bytes in an index of
+  several columns, only where those columns are Text and Long, the shapes that were measured.
+- **A key this library may not make as Access does** - one cut at 510 bytes in an index of several columns other
+  than Text and Long - is never looked for through an index, with or without `VerifyIndexes`: the table is read
+  for it, so a relationship's child or parent is found however Access keyed it. When a row with such a key is
+  deleted or rewritten, its entry is looked for under this library's key, as any row's is, and only when the row has
+  no entry there are its entries found by the row they point at - every leaf of the index read - so that none is
+  left pointing where the row was.
+- **A row whose Date/Time Extended value is in another form than the one this library writes** may have its entry
+  where a version of this library before [#51](https://github.com/markmario/jackcess-dotnet/issues/51) put it, when
+  such a version added the index or rewrote the row: under the key of the date it read, in the first form, or of no
+  value - for Access's second form, before db6f93b. When the row is deleted or its date rewritten and it has no
+  entry under the key of its bytes, the entry is looked for under each of those keys, one way down the tree each to
+  the key and the row, and taken out when it points at the row. A relationship's search for such a row, a unique
+  index's for its duplicate, and a `Joiner`'s by its bytes look under the first form's key too, and read each row
+  found there - the row looked for only when it has the very bytes, the others the rows with the date in the first
+  form - and a `DateTime` looked for through an index is looked for under that key, which is its first form's. No
+  search looks under the key of no value: every row with no value is under it, as an index that does not ignore
+  nulls holds them (Access's default for a unique index and a relationship's), and each would be read. So a row the
+  versions from 2930d3f to db6f93b entered there - ten hours of `main`, never released - is found when it is deleted
+  or its date rewritten, and with `VerifyIndexes`, which reads the table when an index holds a row under another key
+  than its own; trusting the index, a relationship, a unique index and a `Joiner` do not find it, as Access does
+  not. With `VerifyIndexes`, in an index it looks at (a unique index, or a relationship's), such an entry is the
+  row's wrong one, and is moved to the key of the row's bytes.
 
 An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
 insert reads are the ones it read before. An index that is not unique is not looked at this way without
@@ -489,6 +517,10 @@ library either way: each row found is read and compared.
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
 earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
 beside it is the same for unique indexes and a primary key, made by `tools/legacy-unique-indexes.ps1`.
+`ace-extended-date-forms.accdb` holds Date/Time Extended values in every form Access reads a date from, with
+indexes ACE made over them (`tools/ace-extended-date-forms.ps1`); `engine-913240c-extended-date-keys.accdb` and
+`engine-c89bfe4-extended-date-keys.accdb` are copies of it that this library changed at those commits
+(`tools/earlier-extended-date-keys.ps1`).
 
 Keys are matched as Access matches them - as its indexes hold them:
 
@@ -499,6 +531,12 @@ Keys are matched as Access matches them - as its indexes hold them:
   column.
 - **Numbers are matched as stored.** A Double or Single by its bits: 0 and -0 are two keys, and so are a Double
   and the next Double after it. A Date/Time by the double the row stores, which a `DateTime` does not always hold.
+- **A Date/Time Extended by the 42 bytes the row stores**, as Access matches it
+  ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)). Access writes a date in more than one form - its
+  `INSERT` with the time of day in 100-nanosecond units, its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset
+  in whole seconds - and a child whose bytes are another form of its parent's date has no parent: Access refuses its
+  insert, and a relationship created over it. A `DateTime` a caller gives is the form `INSERT` writes, which is the
+  form this library writes.
 - **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
   A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
 
@@ -888,7 +926,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Large Number and Date/Time Extended columns** (Access 2016 and 2019) are read, written, created and
   indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
   9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
-  it has no time zone, and is read with `DateTimeKind.Unspecified`.
+  it has no time zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row
+  stores, in whichever form Access wrote them, as Access makes it. A value DAO stored through a table-type
+  recordset (`dbOpenTable`), whose `AddNew` and `Edit` write a layout of their own, is read as null
+  ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)).
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **Protected files open as Access opens them**: an .mdb's database password is checked, an encoded .mdb is
