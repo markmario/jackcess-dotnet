@@ -634,7 +634,9 @@ An import holds every value of its source exactly, or refuses before anything is
 - **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
   holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` and a
   `decimal` to each other's columns when the value converts back to the one given); text to a numeric, Yes/No,
-  Date/Time or GUID column when it reads as one in the invariant culture; any of these to Text or Memo as its
+  Date/Time or GUID column when it reads as one in the invariant culture (text with an offset to a Date/Time
+  column is the UTC time it denotes, and text without one the time it says, whatever the machine's time zone);
+  any of these to Text or Memo as its
   invariant text (a `double` in its round-trip form, a date in ISO 8601) when that fits; bytes to a Binary column
   that holds that many. A Yes/No column takes no null, which Access would read as No, and no number.
 - An `IEnumerable<T>` is read whole, every object, before anything is written.

@@ -240,7 +240,8 @@ internal static class TypeMapper
     ///   which only 0 and 1 would read back as they were.</item>
     ///   <item>A Date/Time column takes a date from 1 January 100, the first it holds, to the millisecond it is
     ///   read and written at; Date/Time Extended any <see cref="DateTime"/>. A <see cref="DateTimeOffset"/> is its
-    ///   UTC date and time.</item>
+    ///   UTC date and time, and so is text with an offset; text without one is the date and time it says, whatever
+    ///   the machine's time zone.</item>
     /// </list>
     /// </summary>
     /// <exception cref="NotHeldException">The column does not hold the value exactly.</exception>
@@ -443,7 +444,9 @@ internal static class TypeMapper
         {
             DateTime d       => d,
             DateTimeOffset o => o.UtcDateTime,
-            string s when DateTime.TryParse(s, Invariant, DateTimeStyles.None, out DateTime parsed) => parsed,
+            // Text with an offset is the UTC time it denotes, as a DateTimeOffset is; text without one is the time it
+            // says. Neither depends on the machine's time zone.
+            string s when DateTimeOffset.TryParse(s, Invariant, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed) => parsed.UtcDateTime,
             _ => throw NotOfType(value, $"a {(extended ? "Date/Time Extended" : "Date/Time")} column takes dates"),
         };
         if (!extended && date < FirstDateTime)
