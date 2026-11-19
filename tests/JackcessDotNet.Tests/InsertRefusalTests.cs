@@ -97,7 +97,7 @@ public sealed class InsertRefusalTests : IDisposable
         AssertRefuses(table, because);
     }
 
-    // A text index in an order the engine writes no keys for (here 1049, Access's Russian order).
+    // A text index in an order the engine writes no keys for (here 1055, Access's Turkish order).
     [Fact]
     public void A_table_with_a_text_index_in_another_language_s_order_says_what_insert_throws()
     {
@@ -110,9 +110,9 @@ public sealed class InsertRefusalTests : IDisposable
             }, new[] { "N" }, new[] { new IndexDefinition("ByCode", "Code") })
               .Insert(new Row { ["N"] = 1, ["Code"] = "a" });
 
-            // The indexed column now says sort order 1049.
+            // The indexed column now says sort order 1055.
             var (tdef, page, columnDefs) = DefinitionOf(db, "Coded");
-            page[columnDefs + 1 * 25 + 11] = 0x19;
+            page[columnDefs + 1 * 25 + 11] = 0x1F;
             db.File.WritePage(tdef, page);
         }
 
