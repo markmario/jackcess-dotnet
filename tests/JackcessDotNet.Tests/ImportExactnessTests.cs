@@ -584,8 +584,24 @@ public sealed class ImportExactnessTests : IDisposable
         source.Rows[2]["Id"] = 1;   // the row the table already has
 
         RefusedAndUnchanged<ConstraintViolationException>(_path, db => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
-        using var reopen = Database.Open(_path);
-        Assert.Single(reopen.GetTable("T").Rows);
+        using (var reopen = Database.Open(_path))
+            Assert.Single(reopen.GetTable("T").Rows);
+
+        // The session that refused it appends the rows afterwards and finds each through the key: nothing of the
+        // first try is held, in the table's rows or in its index.
+        using (var db = Database.Open(_path))
+        {
+            Assert.Throws<ConstraintViolationException>(() => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
+            source.Rows[2]["Id"] = 6;
+            db.ImportTable(source, new ImportOptions { AppendIfExists = true });
+            var table = db.GetTable("T");
+            Assert.Equal(4, table.RowCount);
+            foreach (int id in new[] { 1, 4, 5, 6 })
+                Assert.NotNull(table.FindRowByPrimaryKey(id));
+        }
+        using var after = Database.Open(_path);
+        Assert.Equal(new[] { 1, 4, 5, 6 }, after.GetTable("T").Rows.Select(r => (int)r["Id"]!).OrderBy(id => id));
+        Assert.Equal("c", after.GetTable("T").FindRowByPrimaryKey(6)!["X"]);
     }
 
     [Fact]
