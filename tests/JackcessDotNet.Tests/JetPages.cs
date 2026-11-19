@@ -176,7 +176,7 @@ internal static class JetPages
     /// <summary>The real index blocks of the TDEF on <paramref name="tdefPage"/>, in block order.</summary>
     public static List<IndexBlock> IndexBlocks(PageFile file, int tdefPage)
     {
-        byte[] p = file.ReadPage(tdefPage);
+        byte[] p = TdefBuffer.Read(file, tdefPage);
         int numCols = ByteUtil.GetShort(p, 45);
         int numReal = ByteUtil.GetInt(p, 51);
         int pos = 63 + numReal * 12 + numCols * 25;
@@ -201,7 +201,7 @@ internal static class JetPages
     /// </summary>
     public static List<(int Page, int Row, Row Values)> Rows(PageFile file, int tdefPage, bool forKeys = false)
     {
-        var info = TdefReader.Read(file.ReadPage(tdefPage), file.Format);
+        var info = TdefReader.Read(TdefBuffer.Read(file, tdefPage), file.Format);
         var decoder = new RowDecoder(file.Format, info.Columns, forKeys ? new LvalReader(file) : null);
         var (umapPage, umapRow) = OwnedPagesMap(file, tdefPage);
         var result = new List<(int, int, Row)>();
@@ -273,4 +273,7 @@ internal static class JetPages
         }
         return (true, free, mapPages);
     }
+
+    /// <summary>Whether the global usage map calls <paramref name="pageNumber"/> free: a page Access may hand out.</summary>
+    public static bool IsFree(PageFile file, int pageNumber) => GlobalFreePages(file, file.PageCount).Free.Contains(pageNumber);
 }

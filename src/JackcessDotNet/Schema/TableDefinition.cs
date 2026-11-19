@@ -93,9 +93,9 @@ internal sealed class TableDefinition
     public IReadOnlyList<Index> Indexes { get; internal set; } = Array.Empty<Index>();
 
     /// <summary>
-    /// True when the table has indexes this library did not read: its definition runs past its first page, into
-    /// the index blocks. Such a table is not changed - a row written without its index entries is one Access
-    /// does not find through them.
+    /// True when the table has indexes this library did not read: its definition is damaged - its index blocks
+    /// run past its end, or it names an index column or block it has not. Such a table is not changed - a row
+    /// written without its index entries is one Access does not find through them.
     /// </summary>
     internal bool HasUnreadIndexes { get; set; }
 
@@ -113,8 +113,8 @@ internal sealed class TableDefinition
     internal int MaxVarColumnCount { get; set; }
 
     /// <summary>
-    /// True when the table's columns were not all read: its definition runs past its first page before the column
-    /// names end. Such a table's rows are not written - a row laid out by half the columns is not one Access reads.
+    /// True when the table's columns were not all read: its definition is damaged, and ends before the column
+    /// names do. Such a table's rows are not written - a row laid out by half the columns is not one Access reads.
     /// </summary>
     internal bool HasUnreadColumns { get; set; }
 
@@ -143,7 +143,7 @@ internal sealed class TableDefinition
         return new[]
         {
             new Index(PrimaryKeyIndexName, columns, PrimaryKeyIndexPage, indexNumber: 0,
-                      flags: UnknownIndexFlag | UniqueIndexFlag, indexType: PrimaryKeyIndexType,
+                      flags: UnknownIndexFlag | UniqueIndexFlag | RequiredIndexFlag, indexType: PrimaryKeyIndexType,
                       indexDataNumber: 0, usedPagesUmapPage: PrimaryKeyIndexUmapPage, usedPagesUmapRow: PrimaryKeyIndexUmapRow),
         };
     }
@@ -152,8 +152,8 @@ internal sealed class TableDefinition
 
     /// <summary>
     /// Serialises the table definition to a byte array that is ready to be written
-    /// as a TDEF page.  The page is exactly <see cref="JetFormat.PageSize"/> bytes;
-    /// unused trailing space is left as zero.
+    /// to its pages (<see cref="TdefBuffer.Write"/>): at least <see cref="JetFormat.PageSize"/> bytes,
+    /// and as many as the definition takes when that is more than a page; unused trailing space is left as zero.
     ///
     /// Layout produced (Jet4):
     ///   [0..62]   TDEF header  (63 bytes)
@@ -200,20 +200,16 @@ internal sealed class TableDefinition
         int contentSize = headerSize + idxDefSection + colDefsSize + nameSection
                         + idxColBlocks + idxInfoBlocks + idxNameSection
                         + lvalSection + trailerSize;
-        if (contentSize > format.PageSize)
-            throw new NotSupportedException(
-                $"Table '{Name}''s definition takes {contentSize} bytes, more than its page holds ({format.PageSize}); " +
-                "a definition over more than one page is not written.");
-
-        // The page buffer is always a full page; content starts at byte 0.
-        var page = new byte[format.PageSize];
+        // The buffer is a full page at the least; content starts at byte 0. A definition longer than a page is
+        // laid out as one run of bytes, and put on its pages when it is written.
+        var page = new byte[Math.Max(contentSize, format.PageSize)];
 
         // ── 8-byte page prefix ────────────────────────────────────────────────
         page[0] = JetFormat.PageTypeTableDef;
         page[1] = 0x01;
         page[2] = 0x00;
         page[3] = 0x00;
-        ByteUtil.PutInt(page, 4, 0);   // next-TDEF-page = 0 (single-page table def)
+        ByteUtil.PutInt(page, 4, 0);   // next-TDEF-page: set when the definition is put on its pages
 
         int pos = 8;
 
@@ -388,7 +384,9 @@ internal sealed class TableDefinition
             p += 1;                                                 // relIndexType
             ByteUtil.PutInt(page, p, InvalidIndexNumber);  p += 4;   // relIndexNumber
             p += 4;                                                 // relTablePage
-            p += 2;                                                 // cascadeUpdates + cascadeDeletes
+            // cascadeUpdates + cascadeDeletes: 4 in each, as Access writes them in a slot that is no relationship's.
+            page[p++] = TdefEditor.NoRelationshipCascade;
+            page[p++] = TdefEditor.NoRelationshipCascade;
             page[p] = index.IndexType;
             pos = slotStart + format.SizeIndexInfoBlock;
         }

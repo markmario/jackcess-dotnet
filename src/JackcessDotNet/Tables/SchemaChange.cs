@@ -9,7 +9,7 @@ namespace JackcessDotNet;
 /// write the same changes.
 /// <para>
 /// Each change is all or nothing. What can refuse it - a name taken, a type not written, rows that are duplicates
-/// in a unique index or refer to no parent, a definition with no room left on its page - is found before anything
+/// in a unique index or refer to no parent - is found before anything
 /// is written, and what is written is written inside <see cref="PageFile.BeginUndo"/>, so a change that fails
 /// part-way is taken back. Either way the file is byte for byte what it was.
 /// </para>
@@ -17,13 +17,13 @@ namespace JackcessDotNet;
 /// What differs from Access, deliberately. A new index's pages, and a new long-value column's, are listed in usage
 /// maps on a page of their own (as for a table this library creates), where Access finds room on the table's
 /// usage-map page first. A column added is never filled in for the rows already there, so an AutoNumber column is
-/// added only to a table with no rows - Access numbers the rows it has. And a definition is never let run onto a
-/// second page (<see cref="TdefEditor"/>).
+/// added only to a table with no rows - Access numbers the rows it has. A
+/// definition that no longer fits its pages goes on to another, as Access's does (<see cref="TdefBuffer"/>).
 /// </para>
 /// </summary>
 internal static class SchemaChange
 {
-    private const int MaxNameLength = 64;
+    internal const int MaxNameLength = 64;
     private const int MaxColumns    = 255;
 
     // ── A column ─────────────────────────────────────────────────────────────
@@ -61,9 +61,16 @@ internal static class SchemaChange
                 throw new NotSupportedException($"Table '{table.Name}' already has an AutoNumber column. Nothing was changed.");
         }
 
-        var editor = new TdefEditor(page, format, table.Name);
+        var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         bool isLong = given.DataType.IsLongValue();
-        editor.EnsureRoomFor(editor.SizeOfColumn(given.Name, isLong));
+
+        // A dropped column keeps its number, so a table that has had 255 columns takes no more, however few it
+        // has now: Access refuses the next ("Too many fields defined") until the file is compacted, which numbers
+        // the columns afresh (#37). A column numbered past 254 would be one no row's null mask has a bit for.
+        if (editor.MaxColumnCount >= MaxColumns)
+            throw new ArgumentException(
+                $"Table '{table.Name}' has had {MaxColumns} columns, counting those dropped from it, the most a table has: " +
+                "a dropped column keeps its number until the file is compacted in Access. Nothing was changed.", nameof(given));
 
         // The table's own column, a copy of the caller's: numbered after every column the table has ever had, so
         // that no row written before it has its bit in a null mask, and placed after the values those rows hold.
@@ -103,7 +110,7 @@ internal static class SchemaChange
                 maps = new LvalUmapRef(umapPage, 0, umapPage, 1);
             }
             editor.AddColumn(column, columnId, maps);
-            file.WritePage(table.TdefPageNumber, editor.ToPage());
+            TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
             if (version is { } newer) DatabaseHeader.RaiseVersion(file, newer);
             // The column's properties, where Access keeps what the definition asked of it (#41, #33).
             if (withProperties) db.AddColumnProperties(table, column);
@@ -134,13 +141,27 @@ internal static class SchemaChange
         if (index.IgnoreNulls) flags |= TableDefinition.IgnoreNullsIndexFlag;
         if (index.IsRequired)  flags |= TableDefinition.RequiredIndexFlag;
 
+        byte indexType = 0;
+        if (index.IsPrimaryKey)
+        {
+            // A primary key is unique and requires its values, whatever else is asked of it: Access writes its
+            // block with both flags (0x89) and its slot as type 1, where it writes the table's other indexes' as 0.
+            if (index.IgnoreNulls)
+                throw new ArgumentException($"Primary key '{index.Name}' cannot ignore nulls: a primary key takes none.", nameof(index));
+            if (table.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey) is { } key)
+                throw new ArgumentException(
+                    $"Table '{table.Name}' already has a primary key, '{key.Name}': a table has one. Nothing was changed.", nameof(index));
+            flags     = TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag | TableDefinition.RequiredIndexFlag;
+            indexType = TableDefinition.PrimaryKeyIndexType;
+        }
+
         var columns = index.Columns.Select(name => new IndexColumn(
             ColumnOf(table, name, $"Index '{index.Name}'"),
             index.DescendingColumns.Contains(name, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList();
 
         // An index like one the table has - the same columns, each sorted the same way, and the same flags -
         // shares its tree, as Jackcess shares it.
-        var planned = Plan(file, table, index.Name, columns, flags, indexType: 0, shares: existing => existing.Flags == flags);
+        var planned = Plan(file, table, index.Name, columns, flags, indexType, shares: existing => existing.Flags == flags);
 
         using (var undo = file.BeginUndo())
         {
@@ -175,19 +196,16 @@ internal static class SchemaChange
         internal List<(byte[] Key, int RowPointer)> Entries { get; set; } = new();
 
         internal int DistinctKeys { get; set; }
-
-        /// <summary>The bytes the index adds to the table's definition.</summary>
-        internal int DefinitionBytes { get; set; }
     }
 
     /// <summary>
     /// Checks an index <paramref name="table"/> is to be given and makes its entries, writing nothing: its name is
-    /// free, the table has room for another index and its definition for this one's bytes (and
-    /// <paramref name="alsoAdded"/> more, which the same change adds), every column's keys are ones this library
-    /// writes, and - unless a tree already there is shared - every row has a key the index takes.
+    /// free, the table has room for another index (and <paramref name="alsoIndexes"/> more, which the same change
+    /// adds), every column's keys are ones this library writes, and - unless a tree already there is shared -
+    /// every row has a key the index takes.
     /// </summary>
     private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
-                                     byte flags, byte indexType, Func<Index, bool> shares, int alsoAdded = 0, int alsoIndexes = 0)
+                                     byte flags, byte indexType, Func<Index, bool> shares, int alsoIndexes = 0)
     {
         if (table.Indexes.Any(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{table.Name}' already has an index named '{name}'. Nothing was changed.");
@@ -208,9 +226,8 @@ internal static class SchemaChange
             && shares(existing));
         planned.SharedData = shared?.IndexDataNumber;
 
-        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
-        planned.DefinitionBytes = editor.SizeOfIndexSlot(name) + (shared is null ? editor.SizeOfIndexData : 0);
-        editor.EnsureRoomFor(planned.DefinitionBytes + alsoAdded);
+        // The definition is one that can be changed: laid out as its header says.
+        TdefEditor.Load(file, table.TdefPageNumber, table.Name);
 
         if (shared is null) BuildEntries(file, planned);
         return planned;
@@ -316,26 +333,41 @@ internal static class SchemaChange
         }
 
         // The definition as it now is: an index added to the same table earlier in this change is in it.
-        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
+        var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         if (data < 0)
             data = editor.AddIndexData(planned.Columns, planned.Flags, root, umapPage, 0, planned.Entries.Count, planned.DistinctKeys);
 
         int number = NextIndexNumber(editor);
         editor.AddIndexSlot(SlotPosition(editor.SlotNames, planned.Name, db.Catalog.TextSortOrder), planned.Name, number, data,
                             planned.IndexType, foreignKey);
-        file.WritePage(table.TdefPageNumber, editor.ToPage());
+        TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
         return number;
     }
 
-    /// <summary>The number the next index of a table is given: one past the highest it has.</summary>
-    private static int NextIndexNumber(TdefEditor editor) => editor.SlotNumbers.DefaultIfEmpty(-1).Max() + 1;
+    /// <summary>
+    /// The number the next index of a table is given: the lowest no index of it has, as Access was seen to
+    /// number one - the number of an index that was dropped is given again - so a table's index numbers stay
+    /// below the number of indexes a table has (#37).
+    /// </summary>
+    private static int NextIndexNumber(TdefEditor editor) => LowestFree(editor.SlotNumbers, skip: 0);
+
+    /// <summary>The lowest number not among <paramref name="taken"/>, after <paramref name="skip"/> lower ones that are free too.</summary>
+    private static int LowestFree(IEnumerable<int> taken, int skip)
+    {
+        var used = new HashSet<int>(taken);
+        for (int number = 0; ; number++)
+        {
+            if (used.Contains(number)) continue;
+            if (skip-- == 0) return number;
+        }
+    }
 
     /// <summary>
     /// Where a new index's slot goes among a table's: Access keeps them in the order of their names, as its
     /// catalog sorts text, so the slot goes before the first whose name sorts after its own. (Jackcess puts a new
     /// one last.) A name no key is made for is placed by its letters, without regard to case.
     /// </summary>
-    private static int SlotPosition(IReadOnlyList<string> names, string name, SortOrder order)
+    internal static int SlotPosition(IReadOnlyList<string> names, string name, SortOrder order)
     {
         var codes = TextIndexCodes.For(order);
         byte[]? KeyOf(string text)
@@ -359,7 +391,7 @@ internal static class SchemaChange
 
     // ── A relationship ───────────────────────────────────────────────────────
 
-    private const int NoReferentialIntegrityFlag = 0x00000002;
+    internal const int NoReferentialIntegrityFlag = 0x00000002;
     private const int OneToOneFlag               = 0x00000001;
     private const int CascadeUpdatesFlag         = 0x00000100;
     private const int CascadeDeletesFlag         = 0x00001000;
@@ -367,7 +399,7 @@ internal static class SchemaChange
     private const int LeftOuterJoinFlag          = 0x01000000;
     private const int RightOuterJoinFlag         = 0x02000000;
 
-    private const string RelationshipsTable = "MSysRelationships";
+    internal const string RelationshipsTable = "MSysRelationships";
 
     internal static Relationship CreateRelationship(Database db, PageFile file, RelationshipDefinition definition)
     {
@@ -401,9 +433,11 @@ internal static class SchemaChange
         if (definition.JoinType == JoinType.LeftOuter)  flags |= LeftOuterJoinFlag;
         if (definition.JoinType == JoinType.RightOuter) flags |= RightOuterJoinFlag;
         // One to one when each side's columns have a unique index of their own, as Access's Relationships window
-        // and Jackcess mark it. To Access the mark is more than a description: the foreign key's index is then a
-        // unique one (below).
-        bool oneToOne = UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null;
+        // and Jackcess mark it - or as the caller says, which is DAO's way: it marks a relationship only when
+        // told to. To Access the mark is more than a description: the foreign key's index is then a unique one
+        // (below), built when the foreign key has none.
+        bool oneToOne = definition.IsOneToOne
+            ?? (UniqueIndexOn(parent, fromColumns) is not null && UniqueIndexOn(child, toColumns) is not null);
         if (oneToOne) flags |= OneToOneFlag;
 
         if (!db.TryGetTable(RelationshipsTable, out var relationships))
@@ -486,7 +520,7 @@ internal static class SchemaChange
                              toColumns.Select(c => new IndexColumn(c, ascending)).ToList(), oneToOne ? unique : plain,
                              TdefEditor.IndexTypeForeignKey,
                              shares: existing => existing.Flags == (oneToOne ? unique : plain),
-                             alsoAdded: sameTable ? primary.DefinitionBytes : 0, alsoIndexes: sameTable ? 1 : 0);
+                             alsoIndexes: sameTable ? 1 : 0);
         }
 
         using (var undo = file.BeginUndo())
@@ -499,10 +533,11 @@ internal static class SchemaChange
                 // Each side's slot names the other's index by its number, so both are settled before either is written.
                 // A table related to itself has both: the foreign key's index takes the next number and the
                 // referenced side's the one after, as DAO numbers them, so it is written first.
-                int secondaryNumber = NextIndexNumber(new TdefEditor(file.ReadPage(child.Definition.TdefPageNumber), file.Format, toName));
+                var childSlots = TdefEditor.Load(file, child.Definition.TdefPageNumber, toName).SlotNumbers;
+                int secondaryNumber = LowestFree(childSlots, skip: 0);
                 int primaryNumber   = sameTable
-                    ? secondaryNumber + 1
-                    : NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
+                    ? LowestFree(childSlots, skip: 1)
+                    : NextIndexNumber(TdefEditor.Load(file, parent.Definition.TdefPageNumber, fromName));
                 var fromPrimary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
                     definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNullOnDelete);
@@ -539,7 +574,7 @@ internal static class SchemaChange
     private static string PrimaryIndexName(TableDefinition table, int numbersTaken)
     {
         var taken = new HashSet<string>(table.Indexes.Select(ix => ix.Name), StringComparer.OrdinalIgnoreCase);
-        int number = table.Indexes.Select(ix => ix.IndexNumber).DefaultIfEmpty(-1).Max() + 1 + numbersTaken;
+        int number = LowestFree(table.Indexes.Select(ix => ix.IndexNumber), skip: numbersTaken);
         for (int n = number; ; n++)
         {
             char letter = n < 26 ? (char)('A' + n) : (char)('a' + (n - 26) % 26);
@@ -555,7 +590,7 @@ internal static class SchemaChange
     /// Access makes itself for a referenced table's index - .rB, .rC... - from being anyone else's: given ".rB"
     /// for a relationship of a table to itself, this library once wrote two indexes of that name into the table.
     /// </summary>
-    private static void EnsureValidName(string name, string ofWhat, string parameter)
+    internal static void EnsureValidName(string name, string ofWhat, string parameter)
     {
         if (name.Length > 0 && name[0] != ' ' && !name.Any(c => c is '.' or '!' or '`' or '[' or ']' || char.IsControl(c))) return;
         throw new ArgumentException(
@@ -584,15 +619,16 @@ internal static class SchemaChange
     // ── Shared ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Refuses to change a table whose definition was not read whole - it runs past its first page - since what
-    /// would be written back is only what was read.
+    /// Refuses to change a table whose definition was not read whole - its columns' names or its indexes run past
+    /// its end, or it names an index column or block it has not - since what would be written back is only what
+    /// was read.
     /// </summary>
-    private static void EnsureReadWhole(TableDefinition table)
+    internal static void EnsureReadWhole(TableDefinition table)
     {
         if (table.HasUnreadColumns || table.HasUnreadIndexes)
             throw new NotSupportedException(
-                $"Table '{table.Name}' is not changed: its definition runs over more than one page, or names an index column " +
-                "or block it has not, and this library reads and writes a definition of one page only. Nothing was changed.");
+                $"Table '{table.Name}' is not changed: its definition is damaged - its columns or indexes run past its end, " +
+                "or it names an index column or block it has not. Nothing was changed.");
     }
 
     private static Column ColumnOf(TableDefinition table, string name, string what)
@@ -603,7 +639,7 @@ internal static class SchemaChange
     /// After a change is written: every <see cref="Table"/> open on the table reads its definition again, and the
     /// relationships are read again by whatever keeps them.
     /// </summary>
-    private static void Changed(Database db, PageFile file, int tdefPage)
+    internal static void Changed(Database db, PageFile file, int tdefPage)
     {
         file.DefinitionChanged(tdefPage);
         db.SchemaChanged();

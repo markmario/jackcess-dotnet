@@ -96,6 +96,8 @@ JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
 JackcessDotNet.Database.FileFormat.get -> JackcessDotNet.FileFormat
+JackcessDotNet.Database.DropRelationship(string! name) -> void
+JackcessDotNet.Database.DropTable(string! name) -> void
 JackcessDotNet.Database.GetRelationships() -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Relationship!>!
 JackcessDotNet.Database.GetSystemTableNames() -> System.Collections.Generic.IReadOnlyList<string!>!
 JackcessDotNet.Database.GetTable(string! name) -> JackcessDotNet.Table!
@@ -106,6 +108,7 @@ static JackcessDotNet.Database.Open(string! path, JackcessDotNet.DatabaseOpenOpt
 JackcessDotNet.Database.Path.get -> string!
 JackcessDotNet.Database.ShareLongValuePages.get -> bool
 JackcessDotNet.Database.ShareLongValuePages.set -> void
+JackcessDotNet.Database.RenameTable(string! name, string! newName) -> void
 JackcessDotNet.Database.SummaryProperties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.TryGetTable(string! name, out JackcessDotNet.Table? table) -> bool
 JackcessDotNet.Database.UserDefinedProperties.get -> JackcessDotNet.PropertyMap!
@@ -185,6 +188,8 @@ JackcessDotNet.IndexDefinition.DescendingColumns.get -> System.Collections.Gener
 JackcessDotNet.IndexDefinition.IgnoreNulls.get -> bool
 JackcessDotNet.IndexDefinition.IgnoreNulls.set -> void
 JackcessDotNet.IndexDefinition.IndexDefinition(string! name, params string![]! columns) -> void
+JackcessDotNet.IndexDefinition.IsPrimaryKey.get -> bool
+JackcessDotNet.IndexDefinition.IsPrimaryKey.set -> void
 JackcessDotNet.IndexDefinition.IsRequired.get -> bool
 JackcessDotNet.IndexDefinition.IsRequired.set -> void
 JackcessDotNet.IndexDefinition.IsUnique.get -> bool
@@ -260,6 +265,8 @@ JackcessDotNet.RelationshipDefinition.FromColumnNames.get -> System.Collections.
 JackcessDotNet.RelationshipDefinition.FromTableName.get -> string!
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.get -> bool
 JackcessDotNet.RelationshipDefinition.HasReferentialIntegrity.set -> void
+JackcessDotNet.RelationshipDefinition.IsOneToOne.get -> bool?
+JackcessDotNet.RelationshipDefinition.IsOneToOne.set -> void
 JackcessDotNet.RelationshipDefinition.JoinType.get -> JackcessDotNet.JoinType
 JackcessDotNet.RelationshipDefinition.JoinType.set -> void
 JackcessDotNet.RelationshipDefinition.Name.get -> string?
@@ -309,6 +316,8 @@ JackcessDotNet.Table.CreateIndexCursor(JackcessDotNet.IndexRange! range) -> Jack
 JackcessDotNet.Table.CreateIndexCursor(string! indexName) -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.CreateIndexCursor(string! indexName, JackcessDotNet.IndexRange! range) -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.Delete(JackcessDotNet.Row! row) -> void
+JackcessDotNet.Table.DropColumn(string! name) -> void
+JackcessDotNet.Table.DropIndex(string! name) -> void
 JackcessDotNet.Table.FindRowByPrimaryKey(params object?[]! primaryKey) -> JackcessDotNet.Row?
 JackcessDotNet.Table.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
 JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void
@@ -317,6 +326,8 @@ JackcessDotNet.Table.InsertRefusal.get -> string?
 JackcessDotNet.Table.LastAutoNumber.get -> int
 JackcessDotNet.Table.Name.get -> string!
 JackcessDotNet.Table.Properties.get -> JackcessDotNet.PropertyMap!
+JackcessDotNet.Table.RenameColumn(string! name, string! newName) -> void
+JackcessDotNet.Table.RenameIndex(string! name, string! newName) -> void
 JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.Table.Update(JackcessDotNet.Row! row) -> void

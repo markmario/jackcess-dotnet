@@ -50,6 +50,32 @@ changed since 1.2.2.
   delete of a row whose values are on another page left one page changed, and an insert could leave a page added
   or a row without its index entries.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
+- **Table definitions of more than one page** are read whole, written and changed (#37). A table whose
+  definition Access put on several pages has all its columns' names and takes rows; a column, an index or a
+  relationship that takes a definition past its page is added, where it was refused; and a table whose
+  definition is longer than a page is created.
+- **A definition that ends within eight bytes of the end of a page has the page Access gives it after that
+  one** (#37); this fixes a defect on main. Access puts a definition on the fewest pages that hold its length
+  and eight bytes more, so one of 4,089 to 4,096 bytes has a second page with none of it, one of 8,177 to 8,184
+  a third. A table created with a definition of 4,089 to 4,096 bytes, or a column added that took one there,
+  was written on its one page, as Jackcess writes it, and Access then opened nothing of the file, `.mdb` or
+  `.accdb`: "Unrecognized database format".
+  Each page's free space is Access's too: the last page's is what the pages hold less the length and eight
+  bytes, and every other page's 0.
+- **A table whose definition goes on to a page that is not its own** - one the file has not, one already read,
+  or one that is no definition page - is opened, and read by the columns its sound pages name; nothing is
+  written to it or changed in it (#37).
+- **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
+  value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
+  has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
+  `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
+  which is not the key Access makes for it.
+- **A new table or relationship has its owner's entry in `MSysACEs`**, with the others its container passes
+  on, as Access gives them (#37). Without it, Access in an `.mdb` did not read a table this library made in a
+  database DAO had created, nor drop a relationship it made.
+- **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
+  is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
 
 ### Breaking changes to the public API
 
@@ -170,6 +196,13 @@ changes with them.
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
+- **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
+- **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;
+  `Database.DropRelationship`, `DropTable` and `RenameTable`. Jackcess has none of them: each is written as
+  Access was measured to write it, and what Access refuses is refused.
+- **`RelationshipDefinition.IsOneToOne`** (#37): a relationship is marked one to one, or left unmarked, as the
+  caller says, where it was marked only when both sides were unique. Marked, its foreign key's index is a
+  unique one, built over the rows.
 - **Properties are written** (#27). `PropertyMap.Set`, `Remove` and `Save` change the properties of a table
   (`Table.Properties`) and of a column (`Column.Properties`), and `TryGetProperty` gives a property's type and
   whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`

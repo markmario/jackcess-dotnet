@@ -354,8 +354,9 @@ public sealed class SecondReviewTests : IDisposable
 
     // ── Refusals before pages ───────────────────────────────────────────────
 
-    // What the table's definition cannot hold is found before a page is added: a key of eleven columns, and names
-    // too long for one TDEF page.
+    // What a table cannot have is found before a page is added: a key of eleven columns, and more columns than a
+    // table has. (Names too long for one definition page were refused here too, until a definition went on to
+    // another page as Access's does: #37.)
     [Fact]
     public void A_table_its_definition_cannot_hold_is_refused_before_a_page_is_added()
     {
@@ -366,8 +367,8 @@ public sealed class SecondReviewTests : IDisposable
         Assert.Throws<ArgumentException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
         Assert.Equal(pages, db.File.PageCount);
 
-        var named = Enumerable.Range(0, 120).Select(i => Long($"{i:D3}" + new string('x', 60))).ToArray();
-        Assert.Throws<NotSupportedException>(() => db.CreateTable("Long names", named));
+        var many = Enumerable.Range(0, 256).Select(i => Long($"C{i:D3}")).ToArray();
+        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Too many", many));
         Assert.Equal(pages, db.File.PageCount);
     }
 }

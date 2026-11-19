@@ -159,19 +159,21 @@ public sealed class RowLayoutTests : IDisposable
     }
 
     [Fact]
-    public void A_table_whose_columns_run_past_its_definition_s_first_page_is_read_and_not_written_to()
+    public void A_table_whose_columns_were_not_all_read_is_read_and_not_written_to()
     {
-        // common2V2003's MSP_PROJECTS has 74 columns: their names end on a second page, which is not read.
-        CopyOf("V2003", "common2V2003.mdb");
+        // A definition that ends before its columns' names do: a damaged one. (One that goes on to a second page,
+        // as common2V2003's MSP_PROJECTS does, is read whole and written to: MultiPageDefinitionTests.)
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32) }).Insert(new Row { ["A"] = 1 });
         byte[] before = File.ReadAllBytes(_path);
         using (var db = Database.Open(_path))
         {
-            var table = db.GetTable("MSP_PROJECTS");
-            Assert.True(table.Definition.HasUnreadColumns);
+            var table = db.GetTable("T");
+            table.Definition.HasUnreadColumns = true;
             Assert.Single(table.Rows);
-            Assert.Throws<NotSupportedException>(() => table.Insert(new Row { [table.Columns[0].Name] = 1 }));
+            Assert.Throws<NotSupportedException>(() => table.Insert(new Row { ["A"] = 2 }));
             var refused = Assert.Throws<NotSupportedException>(() => new RowEncoder(db.File.Format, table.Definition).Encode(new Row()));
-            Assert.Contains("first page", refused.Message);
+            Assert.Contains("ends before its columns' names do", refused.Message);
         }
         Assert.Equal(before, File.ReadAllBytes(_path));
     }
