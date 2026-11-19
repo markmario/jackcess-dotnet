@@ -68,4 +68,14 @@ public sealed class IndexDefinition
 
     /// <summary>True for an index that holds no entry for a row whose index columns are all null.</summary>
     public bool IgnoreNulls { get; set; }
+
+    /// <summary>
+    /// True for the table's primary key, to give a table that has none with <see cref="Table.AddIndex"/>: an index
+    /// that refuses a second row with the same values and a row with a null in any of its columns, whatever
+    /// <see cref="IsUnique"/> and <see cref="IsRequired"/> say. Access names a primary key "PrimaryKey". A table
+    /// is created with its primary key by naming the key's columns to
+    /// <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, IEnumerable{string}?, IEnumerable{IndexDefinition})"/>,
+    /// which refuses a definition that has this set.
+    /// </summary>
+    public bool IsPrimaryKey { get; set; }
 }

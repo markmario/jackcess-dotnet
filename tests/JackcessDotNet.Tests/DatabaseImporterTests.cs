@@ -26,7 +26,7 @@ public sealed class DatabaseImporterTests : IDisposable
     [InlineData(typeof(byte),           DataType.Byte)]
     [InlineData(typeof(short),          DataType.Int16)]
     [InlineData(typeof(int),            DataType.Int32)]
-    [InlineData(typeof(long),           DataType.Int32)]
+    [InlineData(typeof(long),           DataType.Int64)]
     [InlineData(typeof(float),          DataType.Single)]
     [InlineData(typeof(double),         DataType.Double)]
     [InlineData(typeof(decimal),        DataType.Currency)]
@@ -567,19 +567,58 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Equal(expected, TypeMapper.MapClrType(clr));
     }
 
+    // A long is a Large Number, which an .accdb has: its values come back whole. (It was a Long Integer, and a
+    // value past 32 bits stopped the import at its row: #38, #44.)
     [Fact]
-    public void TypeMapper_LongTruncatesTo32Bit_OnImport()
+    public void A_long_is_imported_into_an_accdb_as_a_Large_Number()
     {
-        // Confirms the documented asymmetry: long → Long (32-bit) → int on read.
         var dt = new DataTable("L");
         dt.Columns.Add("Id", typeof(int));
         dt.Columns.Add("V",  typeof(long));
         dt.Rows.Add(1, 123456789L);
-        using (var db = Database.Create(_path, FileFormat.Access2000))
+        dt.Rows.Add(2, long.MaxValue);
+        dt.Rows.Add(3, long.MinValue);
+        dt.Rows.Add(4, DBNull.Value);
+        using (var db = Database.Create(_path, FileFormat.Access2010))
+        {
             db.ImportTable(dt);
+            db.ImportTable(new[] { new WithLong { Id = 5, V = 5_000_000_000L } }, new ImportOptions { TableName = "Objects" });
+        }
 
         using var reopen = Database.Open(_path);
-        Assert.Equal(123456789, reopen.GetTable("L").Rows.Single()["V"]);
+        Assert.Equal(FileFormat.Access2016, reopen.FileFormat);
+        Assert.Equal(DataType.Int64, reopen.GetTable("L").Columns.Single(c => c.Name == "V").DataType);
+        Assert.Equal(new object?[] { 123456789L, long.MaxValue, long.MinValue, null }, reopen.GetTable("L").Rows.Select(r => r["V"]));
+        Assert.Equal(5_000_000_000L, reopen.GetTable("Objects").Rows.Single()["V"]);
+        Assert.Equal(5_000_000_000L, reopen.GetTable("Objects").ReadRows<WithLong>().Single().V);
+    }
+
+    // An .mdb has no Large Number: the table is refused before it is made, and nothing of the file changes.
+    [Fact]
+    public void A_long_is_refused_in_an_mdb_before_the_table_is_made()
+    {
+        var dt = new DataTable("L");
+        dt.Columns.Add("Id", typeof(int));
+        dt.Columns.Add("V",  typeof(long));
+        dt.Rows.Add(1, 1L);
+        Database.Create(_path, FileFormat.Access2000).Dispose();
+        byte[] before = File.ReadAllBytes(_path);
+
+        using (var db = Database.Open(_path))
+        {
+            var refused = Assert.Throws<NotSupportedException>(() => db.ImportTable(dt));
+            Assert.Contains("'V'", refused.Message);
+            Assert.Contains(".accdb", refused.Message);
+            Assert.Throws<NotSupportedException>(() => db.ImportTable(new[] { new WithLong { Id = 1, V = 1 } }, new ImportOptions { TableName = "Objects" }));
+            Assert.Empty(db.GetTableNames());
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+    }
+
+    private sealed class WithLong
+    {
+        public int Id { get; set; }
+        public long V { get; set; }
     }
 
     // ── PK / AutoNumber attribute paths ──────────────────────────────────────

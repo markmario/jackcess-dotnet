@@ -262,31 +262,22 @@ public sealed class AddColumnTests : IDisposable
         AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("Things").AddColumn(Col("Files", DataType.Complex)));
     }
 
-    // A definition is kept to its page: the library reads no more of one, so a table whose definition ran on
-    // would be one it could no longer write rows to. The column that would not fit is refused, and the table is
-    // as writable after as before.
+    // A table has at most 255 columns, in Access as here: the 256th is refused, and the table - whose definition
+    // by then runs over several pages (MultiPageDefinitionTests) - is as writable after as before.
     [Fact]
-    public void A_column_that_would_take_the_definition_past_its_page_is_refused_and_the_table_is_still_written()
+    public void A_column_past_the_255_a_table_has_is_refused_and_the_table_is_still_written()
     {
-        int added = 0;
         using (var db = CreateWithRows(5))
         {
             var table = db.GetTable("Things");
-            NotSupportedException? refused = null;
-            while (refused is null && added < 250)
-            {
-                var column = Col(new string((char)('a' + added % 26), 50) + added.ToString("D4"), DataType.Int32);
-                var pages = IndexChecks.AllPages(db);
-                try { table.AddColumn(column); added++; }
-                catch (NotSupportedException e)
-                {
-                    refused = e;
-                    IndexChecks.AssertUnchanged(pages, db);
-                }
-            }
-            Assert.NotNull(refused);
-            Assert.Contains("one page", refused!.Message);
-            Assert.InRange(added, 20, 40);   // 25 bytes and a name of 110 for each, in a page of 4,096
+            for (int added = 0; added < 252; added++)
+                table.AddColumn(Col(new string((char)('a' + added % 26), 50) + added.ToString("D4"), DataType.Int32));
+            Assert.Equal(255, table.Columns.Count);
+
+            var pages = IndexChecks.AllPages(db);
+            var refused = Assert.Throws<ArgumentException>(() => table.AddColumn(Col("OneTooMany", DataType.Int32)));
+            Assert.Contains("255 columns", refused.Message);
+            IndexChecks.AssertUnchanged(pages, db);
 
             Assert.Null(table.InsertRefusal);
             table.Insert(new Row { ["Id"] = 6, ["Name"] = "six", [table.Columns[^1].Name] = 66 });
@@ -294,7 +285,7 @@ public sealed class AddColumnTests : IDisposable
 
         using var reopened = Database.Open(_path);
         var read = reopened.GetTable("Things");
-        Assert.Equal(3 + added, read.Columns.Count);
+        Assert.Equal(255, read.Columns.Count);
         Assert.Null(read.InsertRefusal);
         Assert.Equal(66, read.FindRowByPrimaryKey(6)![read.Columns[^1].Name]);
         Assert.Equal(6, read.Rows.Count());

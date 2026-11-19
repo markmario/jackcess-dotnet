@@ -75,7 +75,7 @@ public sealed class AccessMadeIndexTests : IDisposable
     {
         static List<(int Block, int Slot)> Magics(Database db, Table table)
         {
-            byte[] p = db.File.ReadPage(table.Definition.TdefPageNumber);
+            byte[] p = TdefBuffer.Read(db.File, table.Definition.TdefPageNumber);
             int numCols = ByteUtil.GetShort(p, 45), slots = ByteUtil.GetInt(p, 47), blocks = ByteUtil.GetInt(p, 51);
             int pos = 63 + blocks * 12 + numCols * 25;
             for (int i = 0; i < numCols; i++) pos += 2 + ByteUtil.GetShort(p, pos);

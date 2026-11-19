@@ -131,7 +131,8 @@ Limits to know about:
 - `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
   which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
   such a column.
-- An import (`DatabaseImporter`) still makes a `long` property a `Long` column, not a Large Number.
+- An import (`DatabaseImporter`) makes a `long` column or property a Large Number, so a table with one is
+  imported into an `.accdb` and refused in an `.mdb`, before the table is made.
 
 ## Building and testing
 
@@ -382,8 +383,8 @@ refused (`NotSupportedException`): rows of such a table are not yet written corr
 
 ## Changing a table, and creating a relationship
 
-A table that already has rows - one Access made or one this library made - can be given a column or an index,
-and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do
+A table that already has rows - one Access made or one this library made - can be given a column, an index or
+a primary key, and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do
 ([qcatco/exportmdb.interop#37](https://github.com/qcatco/exportmdb.interop/issues/37)):
 
 ```csharp
@@ -398,6 +399,16 @@ db.CreateRelationship(new RelationshipDefinition("Customers", "Id", "Orders", "C
     HasReferentialIntegrity = true,
     CascadeDeletes = true,
 });
+
+db.GetTable("Notes").AddIndex(new IndexDefinition("PrimaryKey", "Id") { IsPrimaryKey = true });
+
+orders.RenameColumn("Placed", "PlacedOn");
+orders.RenameIndex("ByCustomerAndDate", "ByCustomer");
+orders.DropIndex("ByCustomer");
+orders.DropColumn("Shipped");
+db.DropRelationship("CustomersOrders");
+db.RenameTable("Orders", "Sales");
+db.DropTable("Notes");
 ```
 
 Each change is all or nothing: what can refuse it is found before anything is written, and what is written is
@@ -412,8 +423,10 @@ index slots.
 - **An index** is built over the rows already there and kept on every write after. It is refused for what an
   insert would be: two rows with one key in a unique index (rows with a null in it aside), a null in an index
   that requires its values, a column whose keys this library does not write (Decimal, Binary, OLE, Complex, text
-  in another sort order), a value no key is made for. An index like one the table has shares its tree. A
-  primary key cannot be added to a table that has none.
+  in another sort order), a value no key is made for. An index like one the table has shares its tree.
+- **A primary key** is an index with `IsPrimaryKey` set, added to a table that has none: unique, and requiring
+  its values, as Access writes one. It is refused when two rows have one key or a row has a null in it, and
+  when the table has a primary key already.
 - **A relationship** is a row of `MSysRelationships` for each pair of columns and an entry in the catalog. With
   referential integrity it also has the two indexes Access keeps for one: on the referenced table one named
   `.rB`, `.rC`... that shares the tree of the unique index on the referenced columns - there must be one - and
@@ -429,17 +442,52 @@ index slots.
   the referenced side's after it, and named by that number, as DAO writes them.
 - **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
   Relationships window and Jackcess mark it, and its foreign key's index is then unique, as Access makes it
-  (Jackcess gives it a plain one).
+  (Jackcess gives it a plain one). `RelationshipDefinition.IsOneToOne` says otherwise: `true` marks a
+  relationship whatever indexes there are, as DAO does when told to, and the foreign key's unique index is
+  built over the rows - refused when two of them refer to one parent; `false` leaves it unmarked.
 - **Where Access and Jackcess differ, Access is followed**: a name that is taken is refused, not changed; a
   cycle of cascading relationships is allowed; a table's index slots stay in the order of their names; a new
   index's block carries the counts Access puts there.
-- **A table's definition stays on one page**, which is all this library reads of one. A column or an index that
-  would take it further is refused, and a table whose definition already runs over pages is not changed: no
-  table is left that the library could then not write rows to. (Jackcess writes definitions of several pages.)
+- **A table's definition goes on to as many pages as Access gives it**: a table with many columns or long names
+  is created, read, written to and changed like any other, up to the 255 columns and 32 indexes a table has.
+  Access puts a definition on the fewest pages that hold its length and eight bytes more, so one that ends in
+  the last eight bytes of a page has a page after it with none of it. Jackcess writes such a definition on the
+  page it fills, and Access then opens nothing of the file; here Access is followed.
 - **Usage maps.** A new index's pages, and a new Memo or OLE column's, are listed in usage maps on a page of
   their own - 4 KB each - as for a table this library creates; Access finds room on the table's usage-map page
   first.
-- Nothing is dropped or renamed: no column, index or relationship.
+- **Permissions.** A new table or relationship has, in `MSysACEs`, the entries its container passes on, its
+  owner's among them, as Access gives them: without the owner's, Access in an `.mdb` would not change what
+  this library made.
+
+A column, an index, a relationship or a table can be dropped, and a column, an index or a table renamed (#37).
+Jackcess does neither, so what is dropped or renamed is written as Access (DAO) was measured to write it; Access
+is the only referee, and what it refuses is refused:
+
+- **Dropping an index** takes it out of the table's definition. Its tree's pages go back to the file, unless
+  another index of the table shares the tree. A primary key is dropped by its index's name. An index a
+  relationship keeps, and the unique index or primary key a relationship with referential integrity refers to
+  a table's rows by, are not dropped while the relationship is there.
+- **Dropping a column** takes it out of the definition, with the properties Access keeps for it, and gives a
+  Memo or OLE column's long values back to the file. The rows are not rewritten - Access does not rewrite them
+  either: each keeps the bytes it had for the column, which nothing reads, until the file is compacted. A column
+  in an index or in a relationship, with or without referential integrity, is not dropped. Access drops a
+  table's last column; this library refuses to, as it does a complex column. A dropped column keeps its number
+  until the file is compacted, so a table that has had 255 columns takes no more, however few it has: Access
+  refuses the next ("Too many fields defined") and so does `AddColumn`, until Access compacts the file.
+- **Dropping a relationship** takes out its rows in `MSysRelationships`, its entry in the catalog and, with
+  referential integrity, its index on each table.
+- **Dropping a table** takes its entry out of the catalog and the relationships in which it refers to another
+  table, or to itself, with it. A table another table refers to is not dropped. A `Table` got for it before
+  throws `InvalidOperationException` from then on.
+- **Renaming** a column changes its name in the definition, in its relationships and in its properties; an
+  index's, in the definition, where its slot moves to where the new name sorts; a table's, in the catalog and
+  in its relationships. A name Access does not allow, or that is taken, is refused; one that differs only in
+  case is taken. A saved query goes on naming a column or table by the name it had, as it does when Access's
+  engine renames one. A relationship's index keeps its name, and a system table its own.
+- **Pages given back** are free in the database's own map of its pages, with their bytes left as they were, as
+  Access leaves them: Access uses them again, and compacting the file removes them. This library adds pages
+  at the end of the file and does not itself take a freed one.
 
 ## Properties, Required and Allow Zero Length
 
@@ -537,7 +585,9 @@ db.ImportTable(moreRows, new ImportOptions { AppendIfExists = true });
 POCO mapping respects `[Key]`, `[Column("X")]`, `[MaxLength]`, `[NotMapped]`,
 and `[DatabaseGenerated(Identity)]`. Long strings (>255 chars) auto-promote
 to Memo; large byte arrays (>255 bytes) to OLE. Unmappable types can fall
-back to `Memo` via `ImportOptions.FallbackUnmappableToString = true`.
+back to `Memo` via `ImportOptions.FallbackUnmappableToString = true`. A `long`
+is a Large Number, which only an `.accdb` has: in an `.mdb` the table is refused
+before it is made.
 
 ## Exporting back
 
@@ -574,9 +624,10 @@ materialising the whole table.
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
 | Foreign-key enforcement, with cascades (on by default) | ✅ |
-| Add a column or an index to a table that has rows | ✅ While the definition fits one page; no AutoNumber column for a table with rows; no primary key |
+| Add a column, an index or a primary key to a table that has rows | ✅ No AutoNumber column for a table with rows |
+| Table definitions of more than one page | ✅ Read, written and changed |
 | Create a relationship, with referential integrity and cascades | ✅ |
-| Drop or rename a column, index, table or relationship | ❌ Not yet |
+| Drop a column, index, table or relationship; rename a column, index or table | ✅ As Access writes each; not a table's last column, nor a complex column |
 | Queries (`MSysQueries`)                           | ❌ Not yet |
 
 ¹ Agile write doesn't recompute the DataIntegrity HMAC, so files modified
