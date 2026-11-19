@@ -1,13 +1,6 @@
-<!-- qcat-repository-image:start -->
-<p align="center">
-  <img src=".github/repository-card.png" alt="jackcess-dotnet repository image" width="320" />
-</p>
-<!-- qcat-repository-image:end -->
-
-# JackcessDotNet
+# Jackcess.Net
 
 [![NuGet](https://img.shields.io/nuget/v/Jackcess.Net?logo=nuget)](https://www.nuget.org/packages/Jackcess.Net)
-[![Ported from](https://img.shields.io/badge/ported%20from-mehran--ghanizadeh%2Fjackcess--dotnet-181717?logo=github)](https://github.com/mehran-ghanizadeh/jackcess-dotnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Pure managed library for reading and writing Microsoft Access (`.mdb` / `.accdb`) files.
@@ -74,121 +67,6 @@ git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-
 
 A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a release build has a
 real version (see [Releasing](#releasing)).
-
-## What this fork changes
-
-Each of these was found by having Access or ACE open a file the engine wrote.
-
-- **Four target frameworks:** `net10.0`, `net11.0`, `net48` and `netstandard2.0`, each of them tested.
-- **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
-  Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
-- **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
-  also stay in insertion order. A page holds at most 255 rows.
-- **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
-  to 1,024 bytes there, and Access showed `#Error` for those values.
-- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
-  and for General (Access 2010 and later).
-- **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
-  enforced. Access answers through them after the engine adds, changes or deletes rows.
-- **An insert fills AutoNumber columns from the table's own counter**, as Access does.
-- **Foreign keys are enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
-  on by default).
-- **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
-  engine writes, a long memo in several pieces included.
-- **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
-- **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
-  byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
-  rows to them; and **Access generates the GUID** of a Replication ID AutoNumber the engine made. See
-  [Properties](#properties-required-and-allow-zero-length).
-- **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
-  for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
-  DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
-  Jackcess's.
-- **Large Number and Date/Time Extended columns** (Access 2016 and 2019) are read, written, created and
-  indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
-  9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
-  it has no time zone, and is read with `DateTimeKind.Unspecified`.
-- **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
-  out again and write over them.
-- **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
-
-Limits to know about:
-
-- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
-  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
-  order or any other sort order, or a column type it makes no key for. It still reads such a table.
-  See [Text index keys](#text-index-keys-sort-orders-and-limits).
-- A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
-  throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
-  asks each before it writes to any.
-- Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
-  creating one, or changing anything in one, is refused with `NotSupportedException`.
-- A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
-  before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
-  the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
-  it does when Access adds the table: an Access older than that then refuses to open the file. Jackcess
-  refuses the table instead.
-- `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
-  which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
-  such a column.
-- An import (`DatabaseImporter`) makes a `long` column or property a Large Number, so a table with one is
-  imported into an `.accdb` and refused in an `.mdb`, before the table is made.
-
-## Building and testing
-
-You need the **.NET 11 SDK**, which builds every target, `net11.0` included; an earlier SDK cannot restore the
-project, and `global.json` asks for 11.0.100 or later. The tests run on Microsoft Testing Platform (`global.json`
-selects it), which `dotnet test` runs from the 10 SDK on. The .NET Framework 4.8 tests run on Windows only.
-
-```
-dotnet build JackcessDotNet.slnx --configuration Release
-dotnet test JackcessDotNet.slnx --configuration Release
-```
-
-- The tests are xUnit.net v3 and run on .NET 10, .NET 11 and .NET Framework 4.8: `dotnet test` runs all three,
-  and `--framework net48` runs one.
-- The `netstandard2.0` assembly is not one a test project can target, so the same tests run against it with
-  `-p:NetStandardAsset=true`, on .NET 10 (as an application on .NET 8 or 9 loads it) and on .NET Framework 4.8
-  (as one on 4.7.2 does). `LibraryAssemblyTests` fails if the assembly loaded is not the one the build was for.
-  That build goes to `bin/Release-netstandard`, beside the ordinary one:
-  `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true`
-- Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
-  A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
-- `./tools/corpus.ps1` checks every corpus file against `tests/corpus/MANIFEST.sha256`. CI runs it before building.
-- The engine's tests read back what the engine wrote. Whether Access accepts a file is tested where ACE
-  is installed, in ExportMdb.Interop's suite.
-
-Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
-Older issue numbers in comments and in this README, such as `qcatco/exportmdb.interop#64`, are in
-ExportMdb.Interop's tracker, where the work was tracked until this repository had its own.
-
-## Releasing
-
-A release is a `vX.Y.Z` tag on `main`, and the tag is the version: there is no version to edit and no bump
-commit. Merge, then tag the merge commit and push the tag. `.github/workflows/publish.yml` then:
-
-1. **Checks the tag** (`scripts/Assert-ReleaseTag.ps1`) before building anything: a plain `vX.Y.Z`, on `main`'s
-   own line (the merge commit, not a commit inside a pull request), above every release so far, at or above
-   `MinimumReleaseVersion` in the project file, and not already released. A refused tag publishes nothing;
-   delete it, fix what it tripped over, and tag again.
-2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the four
-   frameworks, `LICENSE` and `NOTICE`, and the assembly, file and product versions of each DLL.
-3. **Waits for approval** of the `nuget` environment, then pushes the package and its symbols to nuget.org
-   through [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) - there is no
-   API key in the repository - and makes a GitHub Release.
-
-Every other run of that workflow - a pull request, a push to `main`, a run by hand - rehearses the same steps at
-`<next version>-ci.<run>` and publishes nothing.
-
-Before tagging, move what `src/JackcessDotNet/PublicAPI.Unshipped.txt` lists into `PublicAPI.Shipped.txt`, and give
-`CHANGELOG.md`'s Unreleased section the version. A change that removes or changes public API raises
-`MinimumReleaseVersion` to the next major in the same pull request.
-
-**`.github/workflows/nuget-publish.yml` stays disabled** in the repository's Actions settings: never enable it,
-never delete it, and never put a workflow back at that path. A tag runs the workflow of the commit it points at,
-and every commit before publish.yml carries upstream's release job there, which published any `v*` tag with no
-check. Disabling the workflow at that path stops it on every commit, old ones included. publish.yml's
-`retired-workflow` job fails while it is enabled, and the publish job waits on it.
 
 ## Quick start
 
@@ -699,6 +577,30 @@ IEnumerable<Customer> cs = db.GetTable("Customers").ReadRows<Customer>();
 The `IEnumerable<T>` path is lazy via `yield`, so `Take(n)` stops early without
 materialising the whole table.
 
+## Type round-trip cheat sheet
+
+How the importer maps a CLR type to a column, and what comes back:
+
+| CLR type | `DataType` | Notes |
+| --- | --- | --- |
+| `bool` | `Boolean` | |
+| `byte` / `sbyte` | `Byte` | |
+| `short` / `ushort` | `Int16` | both come back as `short` |
+| `int` / `uint` | `Int32` | both come back as `int` |
+| `long` | `Int64` | Large Number: an `.accdb` only; in an `.mdb` the table is refused before it is made |
+| `ulong` | `Int32` | a value past 32 bits stops the import at its row (`OverflowException`) |
+| `float` / `double` | `Single` / `Double` | |
+| `decimal` | `Currency` | 4 decimal places; create a `Decimal` column yourself for more |
+| `DateTime` | `DateTime` | `Kind` is dropped |
+| `DateTimeOffset` | `DateTime` | stored as UTC |
+| `Guid` | `Guid` | |
+| `string` / `char` | `Text` | the source's maximum length, 255 when it has none |
+| `string` over 255 | `Memo` | promoted on its maximum length |
+| `byte[]` | `Binary` | the source's maximum length, 50 when it has none |
+| `byte[]` over 255 | `OleObject` | promoted on its maximum length |
+| `Nullable<T>` | as `T` | |
+| `enum` | its underlying type | comes back as the enum on read |
+
 ## Status
 
 | Feature                                           | Status |
@@ -737,6 +639,65 @@ materialising the whole table.
 through this library round-trip cleanly through `Database.Open` with the password
 but Office Access may flag a stale integrity hash. Matches the upstream
 `jackcess-encrypt` limitation.
+
+## What this fork changes
+
+Each of these was found by having Access or ACE open a file the engine wrote.
+
+- **Four target frameworks:** `net10.0`, `net11.0`, `net48` and `netstandard2.0`, each of them tested.
+- **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
+  Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
+- **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
+  also stay in insertion order. A page holds at most 255 rows.
+- **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
+  to 1,024 bytes there, and Access showed `#Error` for those values.
+- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
+  and for General (Access 2010 and later).
+- **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
+  enforced. Access answers through them after the engine adds, changes or deletes rows.
+- **An insert fills AutoNumber columns from the table's own counter**, as Access does.
+- **Foreign keys are enforced** on insert, update and delete, with cascades (`EnforceForeignKeys`,
+  on by default).
+- **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
+  engine writes, a long memo in several pieces included.
+- **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
+  byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
+  rows to them; and **Access generates the GUID** of a Replication ID AutoNumber the engine made. See
+  [Properties](#properties-required-and-allow-zero-length).
+- **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
+  for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
+  DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
+  Jackcess's.
+- **Large Number and Date/Time Extended columns** (Access 2016 and 2019) are read, written, created and
+  indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
+  9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
+  it has no time zone, and is read with `DateTimeKind.Unspecified`.
+- **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
+  out again and write over them.
+- **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
+
+Limits to know about:
+
+- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
+  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
+  order or any other sort order, or a column type it makes no key for. It still reads such a table.
+  See [Text index keys](#text-index-keys-sort-orders-and-limits).
+- A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
+  throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
+  asks each before it writes to any.
+- Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
+  creating one, or changing anything in one, is refused with `NotSupportedException`.
+- A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
+  before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
+  the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
+  it does when Access adds the table: an Access older than that then refuses to open the file. Jackcess
+  refuses the table instead.
+- `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
+  which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
+  such a column.
+- An import (`DatabaseImporter`) makes a `long` column or property a Large Number, so a table with one is
+  imported into an `.accdb` and refused in an `.mdb`, before the table is made.
 
 ## Text index keys: sort orders and limits
 
@@ -917,26 +878,61 @@ all of this: its one row over 256 bytes has no value past them, none of its inde
 shared prefix (one has two entries, the rest one), and no index of it is more than two levels deep. ACE 16
 neither makes nor opens an Access 97 file.
 
-## Type round-trip cheat sheet
+## Building and testing
 
-| CLR type          | Jet column        | Notes                                  |
-| ----------------- | ----------------- | -------------------------------------- |
-| `bool`            | `Boolean`         |                                        |
-| `byte`            | `Byte`            |                                        |
-| `short`/`ushort`  | `Int` (16-bit)    | both come back as `short`              |
-| `int`/`uint`      | `Long` (32-bit)   | both come back as `int`                |
-| `long`/`ulong`    | `Long` (32-bit)   | **truncated to 32 bits**               |
-| `float`/`double`  | `Float`/`Double`  |                                        |
-| `decimal`         | `Money`           | 4-decimal precision; use `Numeric` for more |
-| `DateTime`        | `ShortDateTime`   | `Kind` is dropped                      |
-| `DateTimeOffset`  | `ShortDateTime`   | stored as UTC                          |
-| `Guid`            | `Guid`            |                                        |
-| `string` ≤255     | `Text`            |                                        |
-| `string` >255     | `Memo`            | auto-promoted on `MaxLength`           |
-| `byte[]` ≤255     | `Binary`          |                                        |
-| `byte[]` >255     | `Ole`             | auto-promoted on `MaxLength`           |
-| `Nullable<T>`     | underlying `T`    |                                        |
-| `enum`            | underlying type   | round-trips back to the enum on read   |
+You need the **.NET 11 SDK**, which builds every target, `net11.0` included; an earlier SDK cannot restore the
+project, and `global.json` asks for 11.0.100 or later. The tests run on Microsoft Testing Platform (`global.json`
+selects it), which `dotnet test` runs from the 10 SDK on. The .NET Framework 4.8 tests run on Windows only.
+
+```
+dotnet build JackcessDotNet.slnx --configuration Release
+dotnet test JackcessDotNet.slnx --configuration Release
+```
+
+- The tests are xUnit.net v3 and run on .NET 10, .NET 11 and .NET Framework 4.8: `dotnet test` runs all three,
+  and `--framework net48` runs one.
+- The `netstandard2.0` assembly is not one a test project can target, so the same tests run against it with
+  `-p:NetStandardAsset=true`, on .NET 10 (as an application on .NET 8 or 9 loads it) and on .NET Framework 4.8
+  (as one on 4.7.2 does). `LibraryAssemblyTests` fails if the assembly loaded is not the one the build was for.
+  That build goes to `bin/Release-netstandard`, beside the ordinary one:
+  `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true`
+- Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
+  A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
+- `./tools/corpus.ps1` checks every corpus file against `tests/corpus/MANIFEST.sha256`. CI runs it before building.
+- The engine's tests read back what the engine wrote. Whether Access accepts a file is tested where ACE
+  is installed, in ExportMdb.Interop's suite.
+
+Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
+Older issue numbers in comments and in this README, such as `qcatco/exportmdb.interop#64`, are in
+ExportMdb.Interop's tracker, where the work was tracked until this repository had its own.
+
+## Releasing
+
+A release is a `vX.Y.Z` tag on `main`, and the tag is the version: there is no version to edit and no bump
+commit. Merge, then tag the merge commit and push the tag. `.github/workflows/publish.yml` then:
+
+1. **Checks the tag** (`scripts/Assert-ReleaseTag.ps1`) before building anything: a plain `vX.Y.Z`, on `main`'s
+   own line (the merge commit, not a commit inside a pull request), above every release so far, at or above
+   `MinimumReleaseVersion` in the project file, and not already released. A refused tag publishes nothing;
+   delete it, fix what it tripped over, and tag again.
+2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the four
+   frameworks, `LICENSE` and `NOTICE`, and the assembly, file and product versions of each DLL.
+3. **Waits for approval** of the `nuget` environment, then pushes the package and its symbols to nuget.org
+   through [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) - there is no
+   API key in the repository - and makes a GitHub Release.
+
+Every other run of that workflow - a pull request, a push to `main`, a run by hand - rehearses the same steps at
+`<next version>-ci.<run>` and publishes nothing.
+
+Before tagging, move what `src/JackcessDotNet/PublicAPI.Unshipped.txt` lists into `PublicAPI.Shipped.txt`, and give
+`CHANGELOG.md`'s Unreleased section the version. A change that removes or changes public API raises
+`MinimumReleaseVersion` to the next major in the same pull request.
+
+**`.github/workflows/nuget-publish.yml` stays disabled** in the repository's Actions settings: never enable it,
+never delete it, and never put a workflow back at that path. A tag runs the workflow of the commit it points at,
+and every commit before publish.yml carries upstream's release job there, which published any `v*` tag with no
+check. Disabling the workflow at that path stops it on every commit, old ones included. publish.yml's
+`retired-workflow` job fails while it is enabled, and the publish job waits on it.
 
 ## Version history
 
