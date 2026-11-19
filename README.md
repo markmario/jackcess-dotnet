@@ -168,6 +168,10 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   giving again the rows it passed but not the row it is on; a savepoint keeps what the cursor had given, kept up
   as rows move. A cursor is told of a change once it is in the file for good, and holds a few stretches of its
   index however many rows it moves.
+- **A scan in a table's own order gives the rows the table had when it began** - `Table.Rows`, and a cursor from
+  when it lists the table's pages, which it does again each time it is put before the first row or after the last.
+  A row inserted while it goes is not given, whichever page the row goes to: a new one, or one where a delete or an
+  update left room, which can be a page the scan has still to come to. A row deleted while it goes is passed.
 - **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
   was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
   column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes

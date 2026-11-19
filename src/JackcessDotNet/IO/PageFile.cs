@@ -76,6 +76,9 @@ internal sealed class PageFile : IDisposable
     /// <summary>The slots of the rows deleted in this session, which a page begun again keeps (<see cref="DataPageWriter"/>).</summary>
     internal DeletedRowSlots DeletedRowSlots => _deletedRowSlots ??= new DeletedRowSlots(this);
 
+    /// <summary>The scans of tables in their own order going on in this session, told of the rows each table gains.</summary>
+    internal TableScans TableScans { get; } = new TableScans();
+
     /// <summary>
     /// The indexes looked at in this session (<see cref="VerifyIndexes"/>), by the table's definition page and the
     /// index's block in it, each with the rows of its table it does not hold - none, for an index that holds

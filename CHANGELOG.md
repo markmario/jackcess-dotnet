@@ -284,11 +284,13 @@ changed since 1.2.2.
   row there and an update or a delete through it is still refused. The free-space map was left empty, so Access added
   a page for the first row it wrote to a table this library had filled. A table nothing is deleted from still takes
   its rows on its last page, in insertion order; after deletes, a row goes to an earlier page, as in Access, and is
-  read there in the table's order. Finding room costs no more as a table grows: the map is read once a session, and
-  a listed page tried without room for the row leaves it, so a run of inserts tries at most as many pages as it has
-  inserts and the map lists pages. One insert can try every listed page, when none has room for it - a row larger
-  than any room a delete left, in a table with rows deleted all over it - and takes each off the map, as Access does:
-  with 2,000 pages listed, 3,012 pages read and 1,008 written for that one row.
+  read there in the table's order. A scan in that order - `Table.Rows`, a cursor - gives no row inserted after it
+  began, whichever page the row goes to: one inserted into room a delete left can be on a page the scan has still to
+  come to, as before only a row on the last page could. Finding room costs no more as a table grows: the map is read
+  once a session, and a listed page tried without room for the row leaves it, so a run of inserts tries at most as
+  many pages as it has inserts and the map lists pages. One insert can try every listed page, when none has room for
+  it - a row larger than any room a delete left, in a table with rows deleted all over it - and takes each off the
+  map, as Access does: with 2,000 pages listed, 3,012 pages read and 1,008 written for that one row.
 - **A long value's chain goes to pages an earlier session emptied** (#58). Only a value of one chunk looked at the
   column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
   change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's

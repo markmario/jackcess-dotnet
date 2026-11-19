@@ -17,8 +17,10 @@ namespace JackcessDotNet;
 /// <see cref="Table.Update"/> and <see cref="Table.Delete"/> do. It holds no handle and needs no disposing; like
 /// the <see cref="Database"/> it reads, it is for one thread at a time.
 /// <para>
-/// It lists the table's pages when it is created, and again each time it is put before the first row or after
-/// the last: rows on pages the table gains in between are not visited.
+/// It lists the table's pages the first time it moves or is asked where it is, and again each time it is put before
+/// the first row or after the last, and gives the rows they hold then: a row inserted in between is not visited,
+/// whichever page it goes to - one the table gains, or one where a delete or an update left room - and a row deleted
+/// in between is passed.
 /// </para>
 /// </summary>
 public class Cursor : IEnumerable<Row>
@@ -27,8 +29,10 @@ public class Cursor : IEnumerable<Row>
     private readonly TableDefinition _definition;
     private readonly Table           _table;
     private readonly RowDecoder      _decoder;
-    // The table's pages, listed when the cursor first needs them: a cursor over an index never does.
+    // The table's pages, listed when the cursor first needs them - a cursor over an index never does - and what it
+    // gives of them: the rows they held then (TableScan).
     private List<int>?               _pages;
+    private TableScan?               _scan;
     private List<int>                _ownedPages => _pages ??= OwnedPages();
 
     internal PageFile        File       => _file;
@@ -59,7 +63,11 @@ public class Cursor : IEnumerable<Row>
     }
 
     private List<int> OwnedPages()
-        => UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, _file.Format, _file);
+    {
+        var pages = UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, _file.Format, _file);
+        (_scan ??= _file.TableScans.Begin(_definition.TdefPageNumber)).Restart(pages);
+        return pages;
+    }
 
     /// <summary>The table whose rows the cursor reads.</summary>
     public Table Table => _table;
@@ -252,9 +260,13 @@ public class Cursor : IEnumerable<Row>
         }
     }
 
-    // The slots a pointer can name on a page: Jet addresses a row on its page with one byte.
+    // The slots of a page the cursor gives rows from: those the page had when the cursor listed the table's pages, of
+    // which a pointer can name 256 - Jet addresses a row on its page with one byte.
     private int SlotsOn(int pageNumber)
-        => Math.Min((int)ByteUtil.GetShort(PageAt(pageNumber), _file.Format.OffsetDataNumRows), 256);
+    {
+        int slots = ByteUtil.GetShort(PageAt(pageNumber), _file.Format.OffsetDataNumRows);
+        return Math.Min(_scan?.Slots(pageNumber, slots) ?? slots, 256);
+    }
 
     /// <summary>Where the cursor is, to come back to (<see cref="Restore"/>).</summary>
     private protected virtual object Place()

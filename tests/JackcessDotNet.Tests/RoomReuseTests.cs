@@ -600,6 +600,80 @@ public sealed class RoomReuseTests : IDisposable
         return page[start];
     }
 
+    // ── A scan, and the rows inserted while it goes ──────────────────────────
+
+    /// <summary>
+    /// Each row a cursor comes to is moved, by an insert of a copy and a delete of the row: the copies go to the room the
+    /// deletes leave, on the page the cursor is on or one it has passed, and to pages the table gains. The cursor gives
+    /// the rows the table had when it began, and no copy; put before the first row again, it gives the copies.
+    /// </summary>
+    [Fact]
+    public void A_cursor_gives_no_row_inserted_after_it_began_into_room_its_own_deletes_left()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        for (int id = 1; id <= 90; id++) Put(table, id, 200);
+        var pages = Owned(db, table);
+
+        var given = new List<int>();
+        var cursor = table.CreateCursor();
+        while (cursor.MoveNext())
+        {
+            int id = (int)cursor.Current!["Id"]!;
+            given.Add(id);
+            Put(table, id + 1000, 200);
+            cursor.DeleteCurrentRow();
+        }
+        Assert.Equal(Enumerable.Range(1, 90), given);
+        Assert.Contains(table.Rows, row => pages.Contains(row.Id!.Value.PageNumber));   // copies went where the cursor went
+
+        var again = new List<int>();
+        cursor.MoveBeforeFirst();
+        while (cursor.MoveNext()) again.Add((int)cursor.Current!["Id"]!);
+        Assert.Equal(Enumerable.Range(1001, 90), again.OrderBy(id => id));
+    }
+
+    [Fact]
+    public void A_cursor_going_back_gives_no_row_inserted_after_it_began_on_a_page_it_has_still_to_come_to()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        for (int id = 1; id <= 30; id++) Put(table, id, 200);
+        int first = Where(table, 1).PageNumber;
+        Delete(table, 2);                                      // the first page has room for a row
+
+        var cursor = table.CreateCursor();
+        cursor.MoveAfterLast();
+        var given = new List<int>();
+        while (cursor.MovePrevious())
+        {
+            given.Add((int)cursor.Current!["Id"]!);
+            if (given.Count == 1) Put(table, 31, 200);
+        }
+        Assert.Equal(new RowId(first, 9), Where(table, 31));
+        Assert.Equal(Enumerable.Range(1, 30).Where(id => id != 2).Reverse(), given);
+    }
+
+    [Fact]
+    public void An_enumeration_of_the_table_s_rows_gives_no_row_inserted_on_a_page_it_has_still_to_come_to()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        for (int id = 1; id <= 90; id++) Put(table, id, 200);
+        int sixth = Where(table, 50).PageNumber;
+        Delete(table, 50);                                     // a page further on has room for a row
+
+        var given = new List<int>();
+        foreach (var row in table.Rows)
+        {
+            given.Add((int)row["Id"]!);
+            if (given.Count == 1) Put(table, 91, 200);
+        }
+        Assert.Equal(new RowId(sixth, 9), Where(table, 91));
+        Assert.Equal(Enumerable.Range(1, 90).Where(id => id != 50), given);
+        Assert.Equal(90, table.Rows.Count());                  // the next enumeration gives it
+    }
+
     // ── A row updated back and forth ─────────────────────────────────────────
 
     /// <summary>

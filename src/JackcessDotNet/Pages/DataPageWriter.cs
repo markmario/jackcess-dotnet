@@ -225,6 +225,8 @@ internal sealed class DataPageWriter
         ByteUtil.PutShort(page, JetFormat.OffsetDataFreeSpace, (short)(freeSpace - needed));
 
         _file.WritePage(pageNumber, page);
+        // A scan of the table that has begun gives no row in this slot: the row is inserted after it began.
+        _file.TableScans.NewFrom(tdefPageNumber, pageNumber, rowCount);
         return rowCount;   // 0-based row index on this page
     }
 
