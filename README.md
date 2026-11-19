@@ -281,12 +281,19 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   (DAO, ACE 16) and written the same.
 - **Rows can be updated while they are gone through** - with `Table.Rows`, a cursor, an index cursor's rows of
   an entry, or a `Joiner` - and each is come to once. In a table's own order no row moves. In an index's order
-  a row moves when the update changes its key in that index: a cursor over the index is told, by whoever made
-  the update, and does not give a second time a row it has given already, whichever way it is going.
-- **Only what changed is written.** `Update(row)` writes the values that were changed in the `Row` since it was
-  read; the rest are left as the file has them, unread: a long value is neither read nor written again, and a
-  Date/Time keeps every digit Access stored. (A byte array changed in place is not seen to have changed: give
-  the row a new one.) An update changes the row, its long values and its index entries together or not at all.
+  a row moves when an update changes its key in that index, and a cursor over the index is told, by whoever made
+  the update (an insert, and an entry an index that ignores nulls gains or loses, too). Going one way the
+  cursor gives each row once: a row it has given is passed if its entry has moved ahead of the cursor, and a
+  row it has not given is given when the cursor comes to its entry, wherever it has been meanwhile. A cursor
+  that turns back begins again from where it is, giving again the rows it passed but not the row it is on; a
+  savepoint keeps what the cursor had given, kept up as rows move.
+- **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
+  was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
+  column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes
+  none; so does this), and written when it is not what the file holds now. Every other column is left as the
+  file has it, unread: a long value is neither read nor written again, and a Date/Time keeps every digit Access
+  stored. (A byte array changed in place and not given to the row again is not assigned.) An insert, an update
+  and a delete each change the row, its long values and its index entries together or not at all.
 - **An index cursor keeps to its index.** Its rows are the index's entries, in their order, and every lookup
   goes through that index or refuses the values: an entry has at most as many values as the index has columns.
   With fewer it stands for every row with those values in its leading columns.
@@ -296,20 +303,29 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     not `'é'`, and `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a
     character keyed by its neighbours) it is equal when it is the same text. Text is never read as a number.
   - *Numbers* are equal across number types; a Double or Single by its bits.
-  - *A Date/Time* is the number the row stores. A `DateTime` finds every row whose number **reads as** that
-    `DateTime` - so the date read from a row finds the row again, which `DateTime.ToOADate()` does not for
-    about a third of the dates Access computes (`DateAdd`, a date plus fractions of a day). Through an index
-    that is the small range of numbers that read as it; a range's bound given as a `DateTime` takes in, or
-    leaves out, all of them. A `double` finds the row that stores exactly that number, and
-    `cursor.GetCurrentRowDateNumber(column)` gives it, so two dates within a millisecond are told apart. A
-    `Joiner` joins a row that was read on its stored number, as Access's join does.
+  - *A Date/Time* is the number the row stores. A `DateTime` - taken first to what it reads as once stored, to
+    the millisecond, so `DateTime.Now` finds the row written with it - finds every row whose number **reads
+    as** that `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not
+    for about a third of the dates Access computes (`DateAdd`, a date plus fractions of a day). Through an index
+    that is the small range of numbers that read as it (two, for a time of 30 December 1899, which -0.25 and
+    0.25 both read as). In a range's entry, in any place, and given to `FindClosestRowByEntry`, a `DateTime` is
+    put against a row by the date its number reads as: a range of dates has the rows whose dates are in it.
+    A `double` is the number itself: it finds the row that stores exactly that number, and
+    `cursor.GetCurrentRowDateNumber(column)` gives it, so two dates within a millisecond are told apart; in a
+    range it is put against the numbers, as Access's `BETWEEN` and an index's `Seek` put a date literal
+    (measured: `BETWEEN #12/30/1899 05:00# AND #12/30/1899 07:00#` leaves out a 06:00 stored as -0.25). The rows
+    come in the index's order, which is the numbers', as Access's `ORDER BY` has them: before 31 December 1899 a
+    day's times run back from its midnight. A `Joiner` joins a row that was read on its stored number, as
+    Access's join does, unless the row has been given a date in that column since.
   - A null is never a match.
 - **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
   other than General - Legacy and General, a character Access keys by its neighbours, or a key longer than an
   entry holds (below). `FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
-- **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); and a null is not found by
-  looking for null, where Jackcess finds one.
+- **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); a null is not found by
+  looking for null, where Jackcess finds one; and the room an emptied overflow slot or a deleted row leaves on a
+  page is not used again, so a row updated back and forth past its page's room makes the file grow until Access
+  compacts it (#58).
 
 ## Opening password-protected files
 

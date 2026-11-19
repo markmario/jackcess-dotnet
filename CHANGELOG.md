@@ -45,6 +45,11 @@ changed since 1.2.2.
   `Column.AllowZeroLength` is `false` for a column that is not Text or Memo.
 - **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
   added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
+- **An insert and a delete are written whole or not at all**, as an update is: a failure while one is being
+  written takes back what it wrote, and an insert gives the row back with the AutoNumber values it came with. A
+  delete of a row whose values are on another page left one page changed, and an insert could leave a page added
+  or a row without its index entries.
+- **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 ### Breaking changes to the public API
 
@@ -72,9 +77,11 @@ changes with them.
 - **`Table.UpdateByPrimaryKey(key, values)` and `Table.DeleteRow(column, value)` are removed:
   `Table.Update(row)` and `Table.Delete(row)`** take a row that was read from the table - by `Rows`, a cursor
   or `FindRowByPrimaryKey` - and find it by where it was read (`Row.Id`), so a table with a key of several
-  columns, or with none, is updated and deleted like any other (#34). `Update` writes only the values changed
-  in the `Row` since it was read. A row that was not read from the table is refused with `ArgumentException`,
-  and one that has been deleted since with `InvalidOperationException`.
+  columns, or with none, is updated and deleted like any other (#34). `Update` assigns the columns the `Row`
+  has been given a value in since it was read, as Access's `Edit` and `Update` do: each is held to its column's
+  Required and Allow Zero Length even when the value is the one the row already has, as Access holds it, and is
+  written when it is not what the file holds now. A row that was not read from the table is refused with
+  `ArgumentException`, and one that has been deleted since with `InvalidOperationException`.
 - **A row keeps its place when it is updated** (#29), as Access keeps it: rewritten in its slot when it still
   fits its page, and otherwise moved to another page with its slot left pointing there (an overflow row), to
   come home when it fits again. An update used to delete the row and add it again at the end of the table, so
@@ -90,12 +97,18 @@ changes with them.
   the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
   A lookup that finds a row leaves the cursor on it, and one that finds none leaves the cursor where it was;
   a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
-  a cast, `(string)null`, now that there is an overload taking an `IndexRange`.
+  a cast, `(string)null`, now that there is an overload taking an `IndexRange`. Rows can be inserted, updated
+  and deleted while an index cursor goes through them: going one way it gives each row once, wherever updates
+  move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A savepoint
+  keeps what the cursor had come to, as rows move.
 - **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
-  that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` finds every row
-  that reads as it, through an index as by reading the table - a lookup through an index used to look for
-  `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. A range's bound given as
-  a `DateTime` takes in, or leaves out, every number that reads as it.
+  that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` - taken first to
+  what it reads as once stored, to the millisecond, so that `DateTime.Now` finds the row written with it - finds
+  every row that reads as it, through an index as by reading the table: a lookup through an index used to look
+  for `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. In a range's entry,
+  in whichever place, and given to `FindClosestRowByEntry`, a `DateTime` is put against a row by the date the
+  row's number reads as, a time of 30 December 1899 stored as a negative number among them; Access's `BETWEEN`
+  goes by the numbers, as a `double` in a range does.
 - **Text is found as its column's sort order has it**, which is Access's `=`: without regard to case or to
   spaces at the end, by a cursor over a table and a cursor over an index alike. It was matched character for
   character once found, and by a table cursor a number-like text matched any text that was the same number
