@@ -46,6 +46,13 @@ internal static class PropertyMapReader
     /// </summary>
     public static PropertyMaps Read(byte[]? propBytes, JetFormat format)
     {
+        var maps = ReadBlocks(propBytes, format);
+        maps.Saved();   // they are what the file has
+        return maps;
+    }
+
+    private static PropertyMaps ReadBlocks(byte[]? propBytes, JetFormat format)
+    {
         var maps = new PropertyMaps();
         if (propBytes is null || propBytes.Length == 0) return maps;
 
@@ -174,7 +181,14 @@ internal static class PropertyMapReader
 
     private static object? DecodeValue(byte[] buf, int pos, int len, DataType dt, JetFormat format)
     {
-        if (len == 0) return null;
+        // A value of no length is Text or bytes of none, as DAO reads it (''), and no value of any other type.
+        if (len == 0)
+            return dt switch
+            {
+                DataType.Text or DataType.Memo        => string.Empty,
+                DataType.Binary or DataType.OleObject => Array.Empty<byte>(),
+                _                                     => null,
+            };
         return dt switch
         {
             DataType.Boolean       => buf[pos] != 0,

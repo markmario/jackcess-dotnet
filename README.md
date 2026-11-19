@@ -435,7 +435,15 @@ string? title = (string?)db.SummaryProperties["Title"];
 ```
 
 - **`Set` and `Remove` change the map; `Save` writes it.** A table's own properties and its columns' are one
-  value in the file, so saving any of those maps saves them all. A save is written whole or not at all.
+  value in the file, so saving any of those maps saves them all. A save is written whole or not at all, and a
+  save with nothing changed writes nothing. Until a change is saved it is the map's alone: `Column.IsRequired`,
+  `Column.AllowZeroLength` and what rows are refused for follow the file, as Access would see it.
+- **A save rewrites the object's row in the catalog**, which moves it and leaves the place it had unused, as
+  any row this library updates does: a file whose properties are saved many times grows by that much each
+  time, until Access compacts it.
+- **Names and values are Access's.** A property's name is 1 to 64 characters, with no period, exclamation
+  mark, grave accent, square bracket or control character and no space at its start; a value is not text or
+  bytes of no length, which Access takes for no value. `Set` refuses the others, as DAO refuses them.
 - **What Access wrote goes back as it was.** A property that was read and not changed is written with the bytes
   and flags it had, and the names the file lists keep their places: a value saved with nothing changed is the
   same bytes. (Jackcess lists the names again and encodes every value again.)
@@ -466,6 +474,13 @@ with `ConstraintViolationException`:
 - a required column can be added to a table that has rows, as in Access: the rows have no value in it, are
   still updated in other columns, and a new row needs one;
 - a table made by an earlier version of this library has no properties, so nothing new is refused in it.
+
+Where a table's properties cannot be written - a database whose catalog sorts in an order other than General
+and General - Legacy, or a table whose properties were not all read - `AddColumn` still adds a column that is
+what was asked for with no property at all (not required, and for Text and Memo allowing a zero-length string:
+the default definition), and refuses, before anything is written, one that is required, does not allow a
+zero-length string or is a Replication ID AutoNumber. `CreateTable` is refused in such a database already,
+whatever its columns: the table's row cannot be added to the catalog.
 
 `ColumnDefinition.AllowZeroLength` is `true` unless set, as for a field made in Access's table designer; a field
 made with DAO does not allow a zero-length string unless asked. A column's default value is not filled in: a

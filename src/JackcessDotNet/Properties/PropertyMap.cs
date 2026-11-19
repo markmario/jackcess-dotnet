@@ -16,7 +16,9 @@ namespace JackcessDotNet;
 /// A property is added or changed with <see cref="Set(string, object)"/> and taken away with
 /// <see cref="Remove"/>; neither writes to the file. <see cref="Save"/> writes them. The properties of a table
 /// and of its columns are kept together in the file, so saving one of those maps saves the changes made to the
-/// others too.
+/// others too. Until they are saved the changes are this map's alone: what the library does by a column's
+/// properties (<see cref="Column.IsRequired"/>, <see cref="Column.AllowZeroLength"/>) follows the file, as Access
+/// would see it.
 /// </para>
 /// </summary>
 public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
@@ -25,6 +27,10 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     internal const short DefaultType = 0x00;
     /// <summary>The block type of a column's properties.</summary>
     internal const short ColumnType = 0x01;
+
+    // The longest name Access gives a property, and the characters it gives none.
+    private const int MaxNameLength = 64;
+    private static readonly char[] RefusedInNames = { '.', '!', '`', '[', ']' };
 
     // A property's value is a 16-bit length of bytes inside an entry whose own length is 16 bits.
     private const int MaxValueBytes = short.MaxValue - 8;
@@ -102,20 +108,28 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     /// Gives the property named <paramref name="name"/> the value <paramref name="value"/>. A property the map
     /// has keeps its type and whether it is a DDL property, and <paramref name="value"/> is converted to that
     /// type. A property it does not have is added, with the type Access keeps a property of that name as
-    /// (<c>DefaultValue</c> a Memo, <c>Required</c> a Yes/No, <c>Description</c> a Memo and so on, as in
-    /// Jackcess) or, for any other name, the type of the value: a <see cref="string"/> is Text, a
+    /// (<c>DefaultValue</c> a Memo, <c>Required</c> a Yes/No, <c>Format</c> Text and so on, as in Jackcess, but
+    /// that <c>Description</c> is Text, as Access's table designer writes it) or, for any other name, the type
+    /// of the value: a <see cref="string"/> is Text, a
     /// <see cref="bool"/> Yes/No, a <see cref="byte"/> Byte, a <see cref="short"/> Integer, an <see cref="int"/>
     /// Long Integer, a <see cref="float"/> Single, a <see cref="double"/> Double, a <see cref="decimal"/>
     /// Currency, a <see cref="DateTime"/> Date/Time, a <see cref="Guid"/> Replication ID and a byte array an OLE
     /// Object. A <see cref="long"/> has no type: Access keeps no property as a Large Number. Nothing is written
     /// until <see cref="Save"/>.
     /// </summary>
-    /// <param name="name">The property's name: 1 to 16,383 characters.</param>
-    /// <param name="value">The property's value. A property has no null value: <see cref="Remove"/> takes one away.</param>
+    /// <param name="name">The property's name: 1 to 64 characters.</param>
+    /// <param name="value">
+    /// The property's value. A property has no null value, and no text or bytes of no length, which Access
+    /// takes for none ("User-defined properties do not support a Null value"): <see cref="Remove"/> takes a
+    /// property away.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="value"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// The name is empty or too long; the value is of a type no property is kept as, cannot be converted to the
-    /// property's type, or is longer than a property holds (32,759 bytes: 16,379 characters of text).
+    /// The name is not one Access gives a property: empty, longer than 64 characters, beginning with a space, or
+    /// with a period, an exclamation mark, a grave accent, a square bracket or a control character in it. Or the
+    /// value is of a type no property is kept as, cannot be converted to the property's type, is beyond the
+    /// type's range, is text or bytes of no length, or is longer than a property holds (32,759 bytes: 16,379
+    /// characters of text).
     /// </exception>
     public void Set(string name, object value)
     {
@@ -139,7 +153,7 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     /// whether it is a DDL property; one that is added is a DDL property when Access keeps a property of that
     /// name as one. Nothing is written until <see cref="Save"/>.
     /// </summary>
-    /// <param name="name">The property's name: 1 to 16,383 characters.</param>
+    /// <param name="name">The property's name: 1 to 64 characters.</param>
     /// <param name="dataType">
     /// The type the value is kept as: Yes/No, Byte, Integer, Long Integer, Currency, Single, Double, Date/Time,
     /// Replication ID, Text, Memo, Binary or OLE Object.
@@ -147,8 +161,9 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     /// <param name="value">The property's value, converted to <paramref name="dataType"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="value"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// The name is empty or too long; <paramref name="dataType"/> is not a type a property is kept as; or the
-    /// value cannot be converted to it, or is longer than a property holds.
+    /// The name is not one Access gives a property (<see cref="Set(string, object)"/> says which);
+    /// <paramref name="dataType"/> is not a type a property is kept as; or the value cannot be converted to it, is
+    /// beyond its range, has no length, or is longer than a property holds.
     /// </exception>
     public void Set(string name, DataType dataType, object value)
     {
@@ -164,14 +179,15 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     /// <paramref name="dataType"/>, and says whether it is a DDL property: one Access lets only a user who may
     /// change the object's design change. Nothing is written until <see cref="Save"/>.
     /// </summary>
-    /// <param name="name">The property's name: 1 to 16,383 characters.</param>
+    /// <param name="name">The property's name: 1 to 64 characters.</param>
     /// <param name="dataType">The type the value is kept as (<see cref="Set(string, DataType, object)"/> lists them).</param>
     /// <param name="value">The property's value, converted to <paramref name="dataType"/>.</param>
     /// <param name="isDdl">Whether the property is a DDL property (<see cref="Property.IsDdl"/>).</param>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="value"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// The name is empty or too long; <paramref name="dataType"/> is not a type a property is kept as; or the
-    /// value cannot be converted to it, or is longer than a property holds.
+    /// The name is not one Access gives a property (<see cref="Set(string, object)"/> says which);
+    /// <paramref name="dataType"/> is not a type a property is kept as; or the value cannot be converted to it, is
+    /// beyond its range, has no length, or is longer than a property holds.
     /// </exception>
     public void Set(string name, DataType dataType, object value, bool isDdl)
     {
@@ -186,7 +202,13 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     private void Put(string name, DataType dataType, object value, byte flags)
     {
         object kept = PropertyMapWriter.Convert(value, dataType, name);
-        if (PropertyMapWriter.Encode(kept, dataType).Length > MaxValueBytes)
+        int length = PropertyMapWriter.Encode(kept, dataType).Length;
+        // DAO refuses a property a zero-length value, on making it and on changing it.
+        if (length == 0)
+            throw new ArgumentException(
+                $"The value of property '{name}' has no length, which Access takes for no value: a property has one, or is removed.",
+                nameof(value));
+        if (length > MaxValueBytes)
             throw new ArgumentException(
                 $"The value of property '{name}' is longer than a property holds ({MaxValueBytes} bytes; text is two bytes a character).",
                 nameof(value));
@@ -197,7 +219,14 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     {
         if (name is null) throw new ArgumentNullException(nameof(name));
         if (name.Length == 0) throw new ArgumentException("A property's name cannot be empty.", nameof(name));
-        if (name.Length * 2 > short.MaxValue) throw new ArgumentException("A property's name is at most 16,383 characters.", nameof(name));
+        // What DAO refuses a property's name for ("... is not a valid name"). A longer name it cut to 64
+        // characters when it read one this library had written, and lost the value.
+        if (name.Length > MaxNameLength)
+            throw new ArgumentException($"A property's name is at most {MaxNameLength} characters; '{name}' has {name.Length}.", nameof(name));
+        if (name[0] == ' ' || name.IndexOfAny(RefusedInNames) >= 0 || name.Any(char.IsControl))
+            throw new ArgumentException(
+                $"'{name}' is not a name Access gives a property: a name has no period, exclamation mark, grave accent, square bracket " +
+                "or control character in it, and no space at its start.", nameof(name));
     }
 
     /// <summary>
@@ -221,7 +250,8 @@ public sealed class PropertyMap : IReadOnlyCollection<PropertyMap.Property>
     /// row in the catalog (<c>MSysObjects</c>). A table's own properties and its columns' are one value, so the
     /// changes made to any of those maps are written together. A property that was read from the file and not
     /// changed is written with the bytes it had, and the names the file lists keep their places, so Access finds
-    /// what it wrote as it wrote it. The value is written whole or, when writing it fails, not at all.
+    /// what it wrote as it wrote it. The value is written whole or, when writing it fails, not at all. When
+    /// nothing has been changed since the properties were read or last saved, nothing is written.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The map is of a column that is in no table of an open database, so there is nowhere to write it.
@@ -315,10 +345,52 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
     /// <summary>What writes the maps to the file; null for maps that belong to no open database.</summary>
     internal Action<PropertyMaps>? Saver { get; set; }
 
-    /// <summary>Counts the changes made to any of the maps, for what is worked out from them to know it is stale.</summary>
+    /// <summary>Whether a map has been changed since the maps were read or last written.</summary>
+    internal bool IsDirty { get; private set; }
+
+    /// <summary>Counts the times the maps were read or written, for what is worked out from the file's state to know it is stale.</summary>
     internal int Version { get; private set; }
 
-    internal void Changed() => Version++;
+    internal void Changed() => IsDirty = true;
+
+    // What each column's properties say of it in the file: Required, and Allow Zero Length when it has one.
+    private readonly Dictionary<string, (bool Required, bool? AllowZeroLength)> _saved = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether the file has the column as required. A change not yet saved does not count: Access does not see it.</summary>
+    internal bool SavedRequired(string column) => _saved.TryGetValue(column, out var rules) && rules.Required;
+
+    /// <summary>What the file's AllowZeroLength property of the column says, or null when it has none.</summary>
+    internal bool? SavedAllowZeroLength(string column) => _saved.TryGetValue(column, out var rules) ? rules.AllowZeroLength : null;
+
+    private static (bool, bool?) RulesOf(PropertyMap map)
+        => (map["Required"] is true, map.TryGetValue("AllowZeroLength", out var allow) ? allow is not false : null);
+
+    /// <summary>Notes that the maps are as the file has them: just read, or just written.</summary>
+    internal void Saved()
+    {
+        _saved.Clear();
+        foreach (var map in _inOrder)
+            if (map.Type == PropertyMap.ColumnType) _saved[map.Name] = RulesOf(map);
+        IsDirty = false;
+        Version++;
+    }
+
+    /// <summary>
+    /// Takes in the properties of a column that were written to the file apart from these maps - a column just
+    /// added - with the names the file now lists. What had been changed here and not saved stays so.
+    /// </summary>
+    internal void Adopt(PropertyMap written, IReadOnlyList<string> names)
+    {
+        bool wasDirty = IsDirty;
+        var map = GetOrAdd(written.Name, written.Type);
+        foreach (var property in map.ToList()) map.Remove(property.Name);
+        foreach (var property in written) map.Add(property);
+        Names.Clear();
+        Names.AddRange(names);
+        _saved[written.Name] = RulesOf(written);
+        IsDirty = wasDirty;
+        Version++;
+    }
 
     /// <summary>The unnamed (table-level) property map, made when there is none.</summary>
     public PropertyMap Default => GetOrAdd(string.Empty, PropertyMap.DefaultType);
@@ -359,12 +431,15 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
     {
         Names.Clear();
         Names.AddRange(names);
+        Saved();
     }
 
     internal void Save()
     {
         if (Saver is null)
             throw new InvalidOperationException("The properties belong to no open database, so they cannot be saved.");
+        // Nothing changed, nothing written: a row of the catalog rewritten moves, and leaves its old place dead.
+        if (!IsDirty) return;
         Saver(this);
     }
 

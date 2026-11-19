@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
     Makes tests/JackcessDotNet.Tests/Assets/dao-properties.mdb: an Access 2000 database made by DAO alone, with
-    the properties Access keeps for columns, a table and the database.
+    the properties Access keeps for columns, a table and the database. And dao-swedish.mdb beside it: a database
+    whose catalog sorts in an order this library writes no keys for.
 
 .DESCRIPTION
     Access keeps what a field is asked for beyond its type - Required, Allow Zero Length, a default value - as
@@ -24,8 +25,13 @@
     The database has two properties of its own, AppTitle and CustomDbLong. It has no SummaryInfo or UserDefined
     document: Access's own interface adds those, not DAO.
 
-    The file is not the same bytes on every run (it holds the time it was made), so the fixture is committed, and
-    this script is how it was made. It needs DAO (Microsoft Access, or the Access Database Engine
+    dao-swedish.mdb is made with the Swedish/Finnish sort order (LANGID 0x041D). Its catalog's names are keyed
+    in that order, so this library adds no row to MSysObjects and rewrites none: no table is created there and
+    no property written. It has one table, People (Id LONG, Name TEXT(30)) with one row, made by DAO, which
+    gives each field its Required and AllowZeroLength properties. A column is still added to it.
+
+    The files are not the same bytes on every run (each holds the time it was made), so they are committed, and
+    this script is how they were made. It needs DAO (Microsoft Access, or the Access Database Engine
     redistributable) of the bitness of the PowerShell that runs it.
 
 .PARAMETER Path
@@ -109,3 +115,22 @@ finally {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($engine)
 }
 "made $Path"
+
+$swedish = Join-Path (Split-Path $Path) 'dao-swedish.mdb'
+if (Test-Path $swedish) { Remove-Item $swedish }
+$engine = New-Object -ComObject DAO.DBEngine.120
+try {
+    $db = $engine.CreateDatabase($swedish, ';LANGID=0x041D;CP=1252;COUNTRY=0', $dbVersion40)
+    $table = $db.CreateTableDef('People')
+    Add-Field $table 'Id' $dbLong
+    Add-Field $table 'Name' $dbText 30
+    $db.TableDefs.Append($table)
+    $db.Execute("INSERT INTO People (Id, Name) VALUES (1, 'Asa')")
+    $db.Close()
+}
+finally {
+    $table = $null; $db = $null
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($engine)
+}
+"made $swedish"

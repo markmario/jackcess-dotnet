@@ -741,7 +741,7 @@ internal sealed class ForeignKeyEnforcer
         internal bool IsRequired(string column)
         {
             var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
-            return asked.IsRequired || Table.PropertyMaps.Get(asked.Name)?["Required"] is true;
+            return asked.IsRequired;
         }
 
         /// <summary>Whether the column is Text or Memo and its Allow Zero Length property says no.</summary>

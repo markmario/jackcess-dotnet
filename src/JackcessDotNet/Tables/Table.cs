@@ -764,7 +764,11 @@ public sealed class Table
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
     /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
     /// or would run, over more than one page, which is all this library reads of one - so a table is never left
-    /// that it could no longer write rows to. Nothing is changed.
+    /// that it could no longer write rows to; or the column is required, does not allow a zero-length string or is
+    /// a Guid AutoNumber - which Access keeps as properties of the column - and the table's properties cannot be
+    /// written: the database's catalog sorts in an order other than General and General - Legacy, or the
+    /// properties in the file were not all read. A column that needs no property is added there without one.
+    /// Nothing is changed.
     /// </exception>
     public Column AddColumn(ColumnDefinition column)
     {

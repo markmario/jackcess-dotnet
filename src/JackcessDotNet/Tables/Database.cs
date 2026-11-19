@@ -1109,44 +1109,57 @@ public sealed class Database : IDisposable
             catalog.RewriteRowAt(row.RowPointer, change);
             undo.Commit();
         }
-        if (!withinUndo) maps.Written(names);
+        maps.Written(names);
     }
 
     /// <summary>
-    /// Writes the properties a column this library adds is given (<see cref="ColumnProperties"/>), with the
-    /// table's others. Called inside the undo scope of the change that adds the column, which takes it back
-    /// with the column if it fails.
+    /// Whether the properties of <paramref name="column"/>, a column about to be added to
+    /// <paramref name="table"/>, can be written: asked before anything is. Where they cannot - the catalog has an
+    /// index whose keys this library does not write (a database that sorts in an order other than General and
+    /// General - Legacy), or the table's properties were not read whole - a column that is what was asked for with
+    /// no property at all is still added, without them: false is returned. One whose definition only a property
+    /// can say is refused.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The column needs a property and the table's cannot be written.</exception>
+    internal bool ColumnPropertiesCanBeWritten(TableDefinition table, Column column)
+    {
+        string? why = null;
+        if (_catalog.FindObject(table.TdefPageNumber) is not { } row)
+            why = "the catalog has no row for the table";
+        else if (PropertyMapReader.Read(row.Properties, _file.Format).UnreadReason is { } unread)
+            why = $"the ones in the file were not all read ({unread}), and writing those that were would lose the rest";
+        else if (GetTable("MSysObjects").InsertRefusal is { } refusal)
+            why = refusal.TrimEnd('.');
+        if (why is null) return true;
+
+        if (ColumnProperties.Needs(column) is not { } needs) return false;
+        throw new NotSupportedException(
+            $"Column '{column.Name}' is not added to '{table.Name}': {needs} is kept as a property of the column, and the table's " +
+            $"properties cannot be written: {why}. Nothing was changed.");
+    }
+
+    /// <summary>
+    /// Writes the properties a column this library adds is given (<see cref="ColumnProperties"/>): the column's
+    /// block, added to the table's properties as the file holds them. What a caller has changed in the table's
+    /// maps and not saved is not written with it. Called inside the undo scope of the change that adds the
+    /// column, which takes it back with the column if it fails; the table's open maps take the column's
+    /// properties in once they are written.
     /// </summary>
     internal void AddColumnProperties(TableDefinition table, Column column)
     {
         int id = table.TdefPageNumber;
-        PropertyMaps maps;
-        if (_tables.TryGetValue(id, out var open))
-            maps = open.PropertyMaps;
-        else
-            maps = PropertyMapReader.Read(_catalog.FindObject(id)?.Properties, _file.Format);
+        var inFile = PropertyMapReader.Read(_catalog.FindObject(id)?.Properties, _file.Format);
 
         // A block Access left for a column of this name that is gone is not this column's.
-        var earlier = maps.Get(column.Name)?.ToList();
-        if (earlier is not null)
-            foreach (var property in earlier)
-                maps.Get(column.Name)!.Remove(property.Name);
-        try
-        {
-            ColumnProperties.Add(maps, column);
-            SaveProperties(maps, () => _catalog.FindObject(id), $"table '{table.Name}'", withinUndo: true);
-        }
-        catch
-        {
-            // The column is not added: the maps go back to what the file has.
-            if (maps.Get(column.Name) is { } map)
-            {
-                foreach (var property in map.ToList()) map.Remove(property.Name);
-                if (earlier is not null)
-                    foreach (var property in earlier) map.Add(property);
-            }
-            throw;
-        }
+        if (inFile.Get(column.Name) is { } leftover)
+            foreach (var property in leftover.ToList())
+                leftover.Remove(property.Name);
+        ColumnProperties.Add(inFile, column);
+        if (inFile.Get(column.Name) is not { Count: > 0 } written) return;   // a Long AutoNumber has none
+
+        SaveProperties(inFile, () => _catalog.FindObject(id), $"table '{table.Name}'", withinUndo: true);
+        if (_tables.TryGetValue(id, out var open))
+            open.PropertyMaps.Adopt(written, inFile.Names);
     }
 
     // ── Changing the schema ──────────────────────────────────────────────────

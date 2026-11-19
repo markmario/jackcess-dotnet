@@ -33,6 +33,20 @@ internal static class ColumnProperties
         map.Set("Required", column.IsRequired);
     }
 
+    /// <summary>
+    /// What of <paramref name="column"/>'s definition only a property can say, or null when a column with no
+    /// property at all is what was asked for: Access takes a column without the properties as not required, and
+    /// as one that takes a zero-length string.
+    /// </summary>
+    internal static string? Needs(Column column)
+    {
+        if (column.IsAutoNumber)
+            return column.DataType == DataType.Guid ? "the default value GenGUID() of a Replication ID AutoNumber" : null;
+        if (column.IsRequired) return "IsRequired";
+        if (column.DataType is DataType.Text or DataType.Memo && !column.AllowZeroLength) return "AllowZeroLength = false";
+        return null;
+    }
+
     /// <summary>The properties of a table being made with <paramref name="columns"/>.</summary>
     internal static PropertyMaps For(IEnumerable<Column> columns)
     {

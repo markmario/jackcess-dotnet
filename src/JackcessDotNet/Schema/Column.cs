@@ -52,10 +52,11 @@ public sealed class Column
     /// where Access keeps it (<see cref="Properties"/>, "Required"). <c>false</c> for a column that has no such
     /// property, as Access takes it. A row with no value in a required column is refused
     /// (<see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/>). A Yes/No column always has a value,
-    /// so nothing is refused for it.
+    /// so nothing is refused for it. It is the property as the file has it: one changed with
+    /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
     public bool IsRequired
-        => Owner is { } table ? table.PropertyMaps.Get(Name)?["Required"] is true : _isRequired;
+        => Owner is { } table ? table.PropertyMaps.SavedRequired(Name) : _isRequired;
 
     // What the column was defined with, until a table has it: then the table's properties say.
     private bool _isRequired;
@@ -70,11 +71,12 @@ public sealed class Column
     /// Text or Memo column that has no such property: Access takes a zero-length string in one, though DAO then
     /// reports the property as <c>false</c>. Always <c>false</c> for a column of another type, which holds no
     /// string. A zero-length string in a column that does not allow one is refused (<see cref="Table.Insert"/>,
-    /// <see cref="Table.UpdateByPrimaryKey"/>).
+    /// <see cref="Table.UpdateByPrimaryKey"/>). It is the property as the file has it: one changed with
+    /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
     public bool AllowZeroLength
         => DataType is DataType.Text or DataType.Memo
-           && (Owner is { } table ? table.PropertyMaps.Get(Name)?["AllowZeroLength"] is not false : _allowZeroLength);
+           && (Owner is { } table ? table.PropertyMaps.SavedAllowZeroLength(Name) ?? true : _allowZeroLength);
 
     /// <summary>For a Decimal column, the most digits a value has (1-28).</summary>
     public byte Precision { get; }
