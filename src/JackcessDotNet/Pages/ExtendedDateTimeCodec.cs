@@ -45,6 +45,16 @@ internal static class ExtendedDateTimeCodec
     internal const int CountAt = TrailerAt + 1;
     private const long DaysInRange  = 3652059;   // DateTime.MaxValue's day, and one more
 
+    // The layout DAO's table-type recordset writes: the day in fifteen digits.
+    private const int TableTypeDayDigits = 15;
+
+    /// <summary>
+    /// How many bytes a value DAO's table-type recordset writes begins with that say its date: the day, the time and
+    /// the count, the colons between them, and the zero byte that ends the value (<see cref="TableTypeStart"/>). The
+    /// bytes after them are whatever DAO's buffer held.
+    /// </summary>
+    internal const int TableTypeKnownBytes = TableTypeDayDigits + 1 + Digits + 2 + 1;
+
     // 10 to each count Access reads: the count of the fraction's digits is less than 10.
     private static readonly ulong[] PowersOfTen =
         { 1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000 };
@@ -129,9 +139,9 @@ internal static class ExtendedDateTimeCodec
     public static byte[] Encode(DateTime value)
     {
         var bytes = new byte[Size];
-        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay);
+        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay, Digits);
         bytes[Digits] = (byte)':';
-        WriteDigits(bytes, TimeAt, value.Ticks % TimeSpan.TicksPerDay);
+        WriteDigits(bytes, TimeAt, value.Ticks % TimeSpan.TicksPerDay, Digits);
         bytes[TrailerAt]     = (byte)':';
         bytes[TrailerAt + 1] = (byte)'7';
         return bytes;
@@ -147,24 +157,43 @@ internal static class ExtendedDateTimeCodec
         long time = value.Ticks % TimeSpan.TicksPerDay;
         if (time % TimeSpan.TicksPerSecond != 0) return null;
         var bytes = new byte[Size];
-        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay);
+        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay, Digits);
         bytes[Digits] = (byte)':';
-        WriteDigits(bytes, TimeAt, time / TimeSpan.TicksPerSecond);
+        WriteDigits(bytes, TimeAt, time / TimeSpan.TicksPerSecond, Digits);
         bytes[TrailerAt]     = (byte)':';
         bytes[TrailerAt + 1] = (byte)'0';
         return bytes;
     }
 
     /// <summary>
-    /// The bytes of each form Access writes <paramref name="value"/> in: the one its <c>INSERT</c> writes
+    /// The bytes of each form Access writes <paramref name="value"/> in whole: the one its <c>INSERT</c> writes
     /// (<see cref="Encode"/>), and for a value in whole seconds the one its SQL <c>UPDATE</c> writes
-    /// (<see cref="EncodeInSeconds"/>). Access keys each form by its bytes, so a row with the value is under one of
-    /// their keys.
+    /// (<see cref="EncodeInSeconds"/>). Access keys each form by its bytes, so a row with the value in one of them is
+    /// under one of their keys. A row DAO's table-type recordset wrote is under a key that begins with the bytes of
+    /// <see cref="TableTypeStart"/>, the rest of it being whatever DAO's buffer held.
     /// </summary>
     public static IEnumerable<byte[]> FormsOf(DateTime value)
     {
         yield return Encode(value);
         if (EncodeInSeconds(value) is { } inSeconds) yield return inSeconds;
+    }
+
+    /// <summary>
+    /// The <see cref="TableTypeKnownBytes"/> bytes a value DAO's table-type recordset writes for
+    /// <paramref name="value"/> begins with (#64), measured with DAO 16: the day in fifteen digits, a colon, the time
+    /// of day in units of 100 nanoseconds in nineteen, ":7", and the zero byte that ends the value -
+    /// <c>000000000737425:0000000110451234567:7\0</c>, whether DAO was given the value as text or as a date. The four
+    /// bytes DAO writes after these are whatever its buffer held.
+    /// </summary>
+    public static byte[] TableTypeStart(DateTime value)
+    {
+        var bytes = new byte[TableTypeKnownBytes];
+        WriteDigits(bytes, 0, value.Ticks / TimeSpan.TicksPerDay, TableTypeDayDigits);
+        bytes[TableTypeDayDigits] = (byte)':';
+        WriteDigits(bytes, TableTypeDayDigits + 1, value.Ticks % TimeSpan.TicksPerDay, Digits);
+        bytes[TableTypeDayDigits + 1 + Digits]     = (byte)':';
+        bytes[TableTypeDayDigits + 1 + Digits + 1] = (byte)'7';
+        return bytes;
     }
 
     // One of the three numbers, read as Access reads it (Decode): from 'at' to the end of the value. Null for an error.
@@ -213,9 +242,9 @@ internal static class ExtendedDateTimeCodec
         return number;
     }
 
-    private static void WriteDigits(byte[] bytes, int offset, long number)
+    private static void WriteDigits(byte[] bytes, int offset, long number, int digits)
     {
-        for (int i = Digits - 1; i >= 0; i--)
+        for (int i = digits - 1; i >= 0; i--)
         {
             bytes[offset + i] = (byte)('0' + number % 10);
             number /= 10;

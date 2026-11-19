@@ -29,13 +29,16 @@ namespace JackcessDotNet;
 /// index's <c>Seek</c> put a date literal against a row.
 /// </para>
 /// <para>
-/// A Date/Time Extended value is keyed by the bytes its row stores, and Access writes a date in two forms: its
-/// <c>INSERT</c> in one, its SQL <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset in another. A
-/// <see cref="DateTime"/> looked for in such a column is looked for under the key of each form, so a lookup finds the
-/// rows in either - where Access's own <c>=</c> through an index finds the first form alone. In a range's entry or
-/// given to <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first
-/// form, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in the
-/// second form is where its bytes are, which is not always where its date is.
+/// A Date/Time Extended value is keyed by the bytes its row stores, and Access writes a date in three layouts: its
+/// <c>INSERT</c> in one, its SQL <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset in another, and
+/// DAO's <c>AddNew</c> and <c>Edit</c> on a table-type recordset in a third, whose last four bytes are whatever DAO's
+/// buffer held. A <see cref="DateTime"/> looked for in such a column is looked for under the key of each of the first
+/// two and among the keys that begin with the third's other bytes, so a lookup finds the rows in any of them - where
+/// Access's own <c>=</c> through an index finds the first alone. In a range's entry or given to
+/// <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first form, and
+/// rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in another
+/// layout is where its bytes are, which is not always where its date is. A row in the third, whose day has fewer
+/// digits, comes after every row of the other two from the year 2 on.
 /// </para>
 /// <para>
 /// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
@@ -969,10 +972,13 @@ public sealed class IndexCursor : Cursor
     /// looked for, so the part runs from the least of them to the greatest, under the key of the columns before
     /// it - and, for a time on 30 December 1899, which a number and its negative both read as, there are two. Nor
     /// is one looked for in a Date/Time Extended column: Access keys a value by its bytes, and writes a date in two
-    /// forms (<see cref="ExtendedDateTimeCodec.FormsOf"/>), so there is a part for each form's key. The first form's
-    /// is also the key versions of this library from db6f93b made of a row in either form. Those from 2930d3f made the
-    /// key of no value of a row in the second form, which is not looked under for a date: that part holds every row
-    /// with no value, and each would be read for every date looked for.
+    /// forms whole (<see cref="ExtendedDateTimeCodec.FormsOf"/>), so there is a part for each form's key, and in a
+    /// third whose last bytes are no part of it (<see cref="ExtendedDateTimeCodec.TableTypeStart"/>), whose part is
+    /// every key that begins with the bytes before those. The first form's key is also the key versions of this
+    /// library from db6f93b made of a row in either of the first two forms. Those from 2930d3f made the key of no
+    /// value of a row in the second form, and every version that keyed the date it read (#51) of a row in the third,
+    /// which is not looked under for a date: that part holds every row with no value, and each would be read for
+    /// every date looked for.
     /// </para>
     /// <para>
     /// Bytes of a Date/Time Extended value in another form than the first, as a row stores them - a <see cref="Joiner"/>
@@ -1025,14 +1031,22 @@ public sealed class IndexCursor : Cursor
 
             if (extended is { } when)
             {
-                // Each form Access writes the date in is a key of its own, and a row with the date is under one of
-                // them: ACE's INSERT writes the first, its SQL UPDATE and DAO's AddNew and Edit on a dynaset the
+                // Each form Access writes the date in whole is a key of its own, and a row with the date is under one
+                // of them: ACE's INSERT writes the first, its SQL UPDATE and DAO's AddNew and Edit on a dynaset the
                 // second (#51).
                 foreach (byte[] form in ExtendedDateTimeCodec.FormsOf(when))
                 {
                     if (Key(new StoredExtendedDate(form)) is not { } key) return null;
                     parts.Add((key, IndexEntryWalker.AfterAllBeginningWith(key)));
                 }
+                // DAO's AddNew and Edit on a table-type recordset write a third layout, whose last four bytes are
+                // whatever DAO's buffer held (#64): its rows of the date are under the keys that begin with the
+                // bytes before those.
+                var tableType = new byte[ExtendedDateTimeCodec.Size];
+                ExtendedDateTimeCodec.TableTypeStart(when).CopyTo(tableType, 0);
+                if (Key(new StoredExtendedDate(tableType)) is not { } whole) return null;
+                byte[] start = whole.AsSpan(0, whole.Length - IndexKeys.ExtendedDateKeyBytesAfter(ExtendedDateTimeCodec.TableTypeKnownBytes)).ToArray();
+                parts.Add((start, IndexEntryWalker.AfterAllBeginningWith(start)));
                 parts.Sort((x, y) => IndexEntryWalker.CompareKeys(x.From, y.From));
                 return parts;
             }

@@ -113,6 +113,20 @@ internal static class IndexKeys
     }
 
     /// <summary>
+    /// How many bytes of a Date/Time Extended column's part of a key come after the ones that hold the first
+    /// <paramref name="stored"/> of its 42 stored bytes: a key that ends with such a part, less this many bytes, is
+    /// what the key of every value whose bytes begin with those begins with (#64).
+    /// </summary>
+    internal static int ExtendedDateKeyBytesAfter(int stored)
+    {
+        // A flag, then the 42 bytes in segments of eight, each followed by a length byte, the last segment filled
+        // out with zeros (EncodeColumn): the stored byte at i is at 1 + i + i / 8.
+        const int partLength = 1 + (ExtendedDateTimeCodec.Size / 8 + 1) * 9;
+        int last = stored - 1;
+        return partLength - (1 + last + last / 8 + 1);
+    }
+
+    /// <summary>
     /// True when a row with <paramref name="values"/> in <paramref name="columns"/> is surely at the key
     /// <see cref="Encode"/> makes, so that a search of the index that misses means there is no such row: every
     /// value is one a key is made for (<see cref="CanEncode(Column, object?)"/>), and the key is no longer than an

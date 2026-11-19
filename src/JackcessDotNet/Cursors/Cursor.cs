@@ -507,13 +507,14 @@ public class Cursor : IEnumerable<Row>
     /// whose number reads as that, so the date read from a row, or written to it, finds the row again; and a
     /// <see cref="double"/> the row that stores exactly that number (<see cref="GetCurrentRowDateNumber"/> gives
     /// a row's), so two dates less than a millisecond apart are told apart. A Date/Time Extended is the 42 bytes the
-    /// row stores, which Access writes a date in two forms of - one by its <c>INSERT</c>, one by its SQL
-    /// <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset - and a <see cref="DateTime"/> finds every
-    /// row whose bytes say that date, in either form. A null is never a match: a row with no value in a column is not
-    /// found by looking for null. A cursor over a table and one over an index find the same rows, but for a Date/Time
-    /// Extended value in a form that reads as its date and that Access was not seen to write - a space or a plus sign
-    /// among its digits - which only a cursor over the table finds by its date: an index holds it under a key of its
-    /// own.
+    /// row stores, which Access writes a date in three layouts of - one by its <c>INSERT</c>, one by its SQL
+    /// <c>UPDATE</c>, DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset and its own forms and datasheets, and one by DAO's
+    /// <c>AddNew</c> and <c>Edit</c> on a table-type recordset - and a <see cref="DateTime"/> finds every row whose
+    /// bytes say that date, read as Access reads them, in whichever layout. A null is never a match: a row with no value
+    /// in a column is not found by looking for null. A cursor over a table and one over an index find the same rows, but
+    /// for a Date/Time Extended value in a form that reads as its date and that Access was not seen to write - a space
+    /// or a plus sign among its digits - which only a cursor over the table finds by its date: an index holds it under a
+    /// key of its own.
     /// </para>
     /// </summary>
     /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>

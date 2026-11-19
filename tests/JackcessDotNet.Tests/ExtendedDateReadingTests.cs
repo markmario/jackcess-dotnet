@@ -282,4 +282,23 @@ public sealed class ExtendedDateReadingTests
         Assert.Equal(Expected(expected), ExtendedDateTimeCodec.DecodeAsEarlierVersions(bytes, 0));
         Assert.Equal(Expected(expected), new StoredExtendedDate(bytes).DateAsEarlierVersionsRead(secondFormAsDate: true));
     }
+
+    // ── What a lookup looks under ───────────────────────────────────────────
+
+    [Fact]
+    public void The_bytes_a_table_type_recordset_writes_a_date_with_begin_with_its_day_in_fifteen_digits()
+    {
+        Assert.Equal(38, ExtendedDateTimeCodec.TableTypeKnownBytes);
+        Assert.Equal("000000000737425:0000000110451234567:7\0", Latin(ExtendedDateTimeCodec.TableTypeStart(Expected(D)!.Value)));
+        Assert.Equal("000000000000000:0000000000000000000:7\0", Latin(ExtendedDateTimeCodec.TableTypeStart(DateTime.MinValue)));
+        Assert.Equal("000000003652058:0000000863999999999:7\0", Latin(ExtendedDateTimeCodec.TableTypeStart(DateTime.MaxValue)));
+
+        // The 38 bytes are the first 43 of a column's key of 55: what follows them is the 39th and 40th bytes, the
+        // fifth segment's length byte, the last two bytes, their filling and the last segment's length byte.
+        Assert.Equal(12, IndexKeys.ExtendedDateKeyBytesAfter(ExtendedDateTimeCodec.TableTypeKnownBytes));
+        Assert.Equal(55, IndexKeys.EncodeColumn(DataType.DateTimeExtended, ascending: true, DateTime.MinValue).Length);
+        Assert.Equal(7, IndexKeys.ExtendedDateKeyBytesAfter(ExtendedDateTimeCodec.Size));   // the filling and the 2
+    }
+
+    private static string Latin(byte[] bytes) => new(bytes.Select(b => (char)b).ToArray());
 }
