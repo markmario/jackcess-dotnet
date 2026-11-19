@@ -240,14 +240,51 @@ in Access since.** Compacting rebuilds the indexes, and the option is then needl
   the table's rows while it is read.
 - **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
   is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
-- **What it does not catch.** An entry is still believed for what it points at: the value a row had before its
-  primary key was changed is refused as a duplicate, though no row has it. And a row added under a value whose
-  only entry points at a row long gone is added beside that entry, where Access does not find it through the
-  index until the file is compacted
-  ([qcatco/exportmdb.interop#79](https://github.com/qcatco/exportmdb.interop/issues/79)). Nothing here rebuilds
-  an index: `DBEngine.CompactDatabase` does.
+- **Every entry seen to point at no row is taken out** when the table's indexes are next changed, whatever the
+  key, and an entry seen to be a row's wrong one is moved to the row's key where that key is certain (below). A
+  row with no entry at all is not given one: nothing here rebuilds an index, and `DBEngine.CompactDatabase` does.
 
-An entry whose row has gone does no harm either way: each row found is read and compared.
+**Entries that are no row's** ([#36](https://github.com/markmario/jackcess-dotnet/issues/36)). Those versions also
+left entries behind: one that points where a row was, and one under the value a row had before its primary key
+was changed, pointing at the row under the value it has. Access follows both. Measured with ACE on such a file:
+a query that comes to the first fails with "Not a valid bookmark" - for the key, and for any range that passes
+it - and goes on failing when the row that has the key has an entry beside it; a query for the second's key is
+answered with the row that no longer has it, and that row is not found under the value it has.
+
+- **An entry that points at no row** - a slot deleted or never used, a row number past the page's rows, a page
+  that is not one of the table's - is no row's duplicate, and when an entry is added or taken out under a key a
+  unique index compares and the tree holds another under that key, it is taken out. A long key an earlier
+  version wrote whole is looked for in that form too, and a removal that takes out a leaf's last entry reads the
+  next leaf's first, one page more, since the next leaf can begin under the same key.
+- **An entry that points at a row of the table is believed**, as Access believes it, whatever this library
+  makes of that row's values: a row with its key is refused as a duplicate, and the entry stays. This library's
+  key for a row may not be the one Access wrote - a Date/Time Extended value in the second form ACE stores is
+  read as no value ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - and an entry Access wrote,
+  taken out on that judgement, is a row Access can then neither find, update nor delete. A row an index does not
+  hold is a duplicate of nothing, as it is to Access, unless `VerifyIndexes` is set.
+- **With `VerifyIndexes`**, every entry an index was seen to hold that points at no row goes when the table's
+  indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where that
+  key is one this library makes as Access does, is that row's wrong one: a row with the entry's key is taken,
+  the entry goes, and the row is entered under its own key, so that no row is left without an entry for having
+  had a wrong one. What is under that key already is looked at the same way, an entry that is itself a wrong one
+  being moved in its turn; beside a row that does have the key the row is entered all the same - the two are
+  duplicates whatever the index says. An entry goes and its row's own comes, or neither: a failure part-way is
+  undone. A key is one this library makes as Access does for every type it writes but Date/Time Extended, and,
+  cut at 510 bytes in an index of several columns, only where those columns are Text and Long, the shapes that
+  were measured.
+- **A key this library may not make as Access does** - a Date/Time Extended value, which ACE can store in a
+  second form and key otherwise ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - is never looked
+  for through an index, with or without `VerifyIndexes`: the table is read for it, so a relationship's child or
+  parent is found however ACE keyed it. When a row with such a key is deleted or rewritten, its entry is looked for
+  under this library's key, as any row's is, and a row in the form this library writes - and ACE's `INSERT` - costs
+  what a Date/Time row does. Only when the row has no entry there, a value ACE stored in its second form, are its
+  entries found by the row they point at - every leaf of the index read - so that none is left pointing where the
+  row was.
+
+An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
+insert reads are the ones it read before. An index that is not unique is not looked at this way without
+`VerifyIndexes` - its entries under one key are its rows' - and an entry whose row has gone does no harm to this
+library either way: each row found is read and compared.
 
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
 earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
@@ -586,8 +623,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   also stay in insertion order. A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
-- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007)
-  and for General (Access 2010 and later).
+- **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),
+  for the orders of nine other locales that have its keys, and for General (Access 2010 and later). An
+  Access 97 file's text indexes are searched, in Access 97's General order.
 - **Every index of a table is kept on every write**, not the primary key alone, and unique indexes are
   enforced. Access answers through them after the engine adds, changes or deletes rows.
 - **An insert fills AutoNumber columns from the table's own counter**, as Access does.
@@ -617,10 +655,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 
 Limits to know about:
 
-- Text keys are written in the General - Legacy and General orders only. The engine refuses, before
-  changing anything, to write to a table with an index whose keys it cannot write: text in Access 97's
-  order or any other sort order, or a column type it makes no key for. It still reads such a table.
-  See [Text index keys](#text-index-keys-sort-orders-and-limits).
+- Text keys are written in the General - Legacy and General orders, and in the orders of the locales whose
+  keys are General - Legacy's. The engine refuses, before changing anything, to write to a table with an
+  index whose keys it cannot write: text in any other sort order, or a column type it makes no key for. It
+  still reads such a table. See [Text index keys](#text-index-keys-sort-orders-and-limits).
 - A table can be asked first: `Table.InsertRefusal` is why it takes no row - the message `Insert` would
   throw - or null when it takes rows, and asking changes nothing. A caller that writes to several tables
   asks each before it writes to any.
@@ -640,26 +678,63 @@ Limits to know about:
 
 ## Text index keys: sort orders and limits
 
-An index entry's key for text depends on the column's sort order. The library
-writes, and searches by, the keys of two orders, each checked byte for byte
-against the keys Microsoft's own engine (ACE 16) writes:
+An index entry's key for text depends on the column's sort order: a code, which
+is a locale's LCID, and in an Access 2000 or later file a version. The library
+makes the keys of the orders below, each checked byte for byte against the keys
+Microsoft's own engine writes.
+
+Written, and searched by:
 
 - **General - Legacy** (sort order 1033, version 0): Access 2000 to 2007, and
   what a new database gets by default in later versions.
 - **General** (1033, version 1): what Access 2010 and later can make a new
   database in. A table created in such a file sorts as the file does.
+- **The orders of nine other locales, version 0**, whose keys are those of
+  General - Legacy: Arabic (1025), German (1031), Greek (1032), Hebrew (1037),
+  Italian (1040), Dutch (1043), Russian (1049, DAO's `dbLangCyrillic`), British
+  English (2057) and Portuguese (2070). A database made in such a locale - by
+  DAO's `CreateDatabase` with that locale, or by Access with it as the "New
+  database sort order" - gives every Text and Memo column the locale's LCID in
+  place of 1033. ACE 16 was had to index 1,013,302 values in a database of each
+  (`tools/ace-text-keys.ps1 -Locale`): every character of the BMP alone and
+  between two letters, every pair of letters of Latin-1 and Latin Extended-A and
+  of characters within the Greek, Cyrillic, Hebrew, Arabic and Thai blocks,
+  letters with each combining mark, runs of ASCII, 500,000 values of two to
+  eight characters, and the values of the General - Legacy golden files. Every
+  key is the one ACE writes for the value in a database of locale 1033. A table
+  created in such a file sorts as the file does.
 
-What it does not do, and refuses rather than write a key Access cannot find:
+Searched by, in a file that is only read:
 
-- **Access 97's order, and any other sort order** (for example 1049, Russian).
-  A file whose catalog sorts in one is not given a table, and a table with an
-  index on a Text or Memo column that sorts in one is not inserted into,
-  updated or deleted from.
-  Such a file is still read; its text indexes are not searched, its tables are
-  scanned. ACE 12's keys for Access 97's order are kept in
-  `tests/JackcessDotNet.Tests/IndexKeys` for a later port
-  (qcatco/exportmdb.interop#26). An Access 97 file is not written to at all:
-  see [Access 97 files are read-only](#access-97-files-are-read-only).
+- **Access 97's General order** (1033 in an Access 97 file). An Access 97 file
+  is not written to at all (see
+  [Access 97 files are read-only](#access-97-files-are-read-only)); a row is
+  found through a text index of one instead of by reading its table. The codes
+  are Jackcess's `General97IndexCodes`, with what ACE writes otherwise: a
+  character keyed as two letters (Œ, Æ, ß) takes a place for each among the
+  accents. Access 97 keeps text in code page 1252, and a value with a character
+  that code page has not, or whose key is longer than the 255 bytes an entry
+  there holds, is looked for by reading the table. The keys are those the 32-bit
+  ACE 12.0 and Jet 4.0 write in an Access 97 file (ACE 16 opens none): every
+  character of the code page alone and in every pair, and 40,000 longer values,
+  were compared, and every text key in the nine files Access 97 itself wrote, in
+  the corpus, is the key made of its row's values.
+
+Refused, rather than write a key Access cannot find:
+
+- **Any other sort order.** ACE's keys were measured to differ from General -
+  Legacy's for Chinese (1028, 2052), Czech, Danish and Norwegian, French,
+  Hungarian, Icelandic, Japanese, Korean, Lithuanian, Polish, Romanian, Slovak,
+  Slovenian, Croatian, Spanish (1034, 3082), Swedish and Finnish, Thai, Turkish,
+  Ukrainian and Vietnamese - a few letters in most, and in Thai and Ukrainian
+  only among other characters, which is why a locale that was not measured is
+  refused too. The version 1 order of a locale other than 1033, which Access
+  2010 and later can make a database in and DAO cannot, was not measured, nor
+  were Access 97's other orders. A file whose catalog sorts in such an order is
+  not given a table, and a table with an index on a Text or Memo column that
+  sorts in one is not inserted into, updated or deleted from. Such a file is
+  still read; its text indexes are not searched, its tables are scanned. Jackcess
+  writes none of them either.
 - **A value in an indexed Text or Memo column, or a table name, with a
   character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
   々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
@@ -675,32 +750,51 @@ What it does not do, and refuses rather than write a key Access cannot find:
 ### Keys longer than 510 bytes
 
 Access keeps no index key longer than 510 bytes. It cuts a longer one there
-and ends it in a two-byte digest of the rest - a key of one column, of a Memo
-(its first 255 characters) or of several columns together. A file can hold
-three kinds of entry for such a key:
+and ends it in a two-byte digest of every byte it cut off (their remainder by
+the CRC-16 polynomial 0x8005) - a key of one column, of a Memo (its first 255
+characters) or of several columns together. A file can hold four kinds of
+entry for such a key:
 
 | Written by | Stored as | Read / lookup | Insert, update | Delete |
 | --- | --- | --- | --- | --- |
 | Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
-| This library, since it cut keys | the same bytes as Access | found | the same | entry removed |
+| This library | the same bytes as Access | found | the same | entry removed |
+| This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry - Access's key of the same values with the last byte 0 | found | seen by a unique index when the row it points at has the value; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
 | This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
 
 - **Lookups** of a value whose key is cut read the table instead of searching
   the index, so a row is found whichever way its entry is stored.
-- **Writes** always store the cut key. Updating a row whose entry was whole
-  replaces it with a cut one; nothing converts rows that are not written.
+- **Writes** always store Access's cut key. Updating a row whose entry was
+  whole, or cut with the earlier digest, replaces it with Access's; nothing
+  converts rows that are not written, except that with
+  `Database.VerifyIndexes` an index that is looked at (a unique one, or a
+  relationship's) of Text and Long columns has entries cut with the earlier
+  digest replaced when its table is next changed.
 - **Uniqueness** follows Access: two values cut to the same entry are
   duplicates, whichever way the existing one is stored. A file an earlier
   release wrote may hold two such rows (their whole keys differed); neither
-  can then be rewritten until the other is deleted.
-- **Deletes and updates** remove the entry the row actually has, cut or whole,
-  matched by its row. A row with no entry at all - earlier releases kept only
-  the primary key - has nothing to remove, and that is not an error.
+  can then be rewritten until the other is deleted. A key cut with the earlier
+  digest is Access's key of another value - with the same text, (A, 1)'s and
+  (A, 255)'s are (A, 0)'s - so an entry found under it alone is a duplicate only
+  when the row it points at has the new row's value: the row is read.
+- **Deletes and updates** remove the entry the row actually has, cut either
+  way or whole, matched by its row. A row with no entry at all - earlier
+  releases kept only the primary key - has nothing to remove, and that is not
+  an error.
 - Access itself does not seek a whole key: until such a row is rewritten,
-  Access finds it by a scan but not through the index.
+  Access finds it by a scan but not through the index. Nor does it find, update
+  or delete a row whose entry is cut with the earlier digest ("The search key
+  was not found in any record") until the row is rewritten here or the file is
+  compacted in Access.
+- ACE's SQL does not find a row by `=` through an index whose key for the value
+  is cut - a row Access wrote itself no more than one this library wrote - where
+  DAO's `Seek` through the same index does.
 
 `tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
-earlier release wrote, made by `tools/legacy-long-keys.ps1`.
+earlier release wrote, made by `tools/legacy-long-keys.ps1`, and
+`engine-913240c-cut-keys.mdb` one this library wrote with the earlier digest,
+made by `tools/earlier-cut-keys.ps1`. `IndexKeys/cut-keys-*.tsv` hold the
+entries ACE wrote for keys of several columns, made by `tools/ace-cut-keys.ps1`.
 
 ## Rows and long values: what to know
 
@@ -768,8 +862,8 @@ have been deleted - and a row Access moved to another page is read where its poi
   Added to in the default placement, such a file gets no value on a page that may hold the end of a chain.
 - **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
   looks at no page that cannot take the value, however many the column has. A page is listed in the column's
-  free-space map while it has 264 bytes or more free, which is where ACE was seen to list one (it listed none
-  with 258 or fewer), and only once a value is on it. The first long value written to a column in a session
+  free-space map while it has 258 bytes or more free, which is where ACE lists one (it lists none with 257 or
+  fewer), and only once a value is on it. The first long value written to a column in a session
   reads the pages its map lists, once.
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two

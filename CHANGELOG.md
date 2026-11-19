@@ -46,6 +46,61 @@ changed since 1.2.2.
 - **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
   added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
 
+- **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
+  left an entry where a row had been, and an entry under the value a row had before its primary key was changed.
+  ACE fails a query that comes to the first ("Not a valid bookmark") and answers one for the second's key with
+  the wrong row. An entry that points at no row - a slot deleted or never used, a page that is not the table's -
+  is no row's duplicate, and goes when an entry is added or taken out under its key; with
+  `Database.VerifyIndexes`, every such entry an index was seen to hold goes when the table is next changed. An
+  entry that points at a row of the table is believed, as Access believes it: a row with its key is refused, and
+  the entry stays, whatever this library makes of the row's values - its key for them may not be the one Access
+  wrote, and an entry Access wrote taken out on that judgement is a row Access can then neither find nor update.
+  Only with `Database.VerifyIndexes`, and where the row's key is one this library makes as Access does (not a
+  Date/Time Extended column, #51; not a key cut at 510 bytes in an index of several columns other than Text and
+  Long), is such an entry the row's wrong one: a row with its key is taken, the entry goes, and the row is entered
+  under its own key. A removal that takes out a leaf's last entry reads the next leaf's first, one page more, for
+  another entry under the key. An index with no such entry costs nothing more to write to.
+- **A Date/Time Extended key is never looked for through an index**, and a row with one takes its entries with it
+  however ACE keyed them. ACE stores such a value in a second form after an SQL `UPDATE` and keys it by those
+  bytes (#51): a search by this library's key missed the row, so that, enforcing foreign keys, a parent was deleted
+  from under a child ACE had keyed so - ACE refuses that delete - and a removal by that key left the row's entry
+  pointing at no row, which ACE then listed as a row and took a child of. The table is read for such a key, as for
+  one no index can be searched for, with or without `Database.VerifyIndexes`. A row's entry is taken out under this
+  library's key, as any row's is, so a row in the form this library and ACE's `INSERT` write costs what a Date/Time
+  row does; only a row with no entry there, one ACE stored in its second form, has its entries found by the row they
+  point at, every leaf of the index read. This fixes a defect on `main`.
+
+- **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
+  Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
+  sizes between could not be made with text. A value goes onto a page Access left with 258 to 263 bytes where
+  Access would put it, and such a page is no longer taken out of the map.
+
+- **Text keys in the orders of nine more locales, and Access 97's text indexes searched** (#23). A database
+  made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
+  German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
+  General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
+  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
+  General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
+  and ß among accented letters).
+
+- **A key of several columns cut at 510 bytes is Access's** (#56); this fixes a defect on `main`, which no
+  release has had. Access ends a cut key in a digest of every byte it cut off; this library left the last of
+  them out, as Jackcess does. That byte is 0 in a key that ends in text, so keys of one column, a Memo's and keys
+  that end in a text column were Access's; a key that ends in a number, a date or the like after text that
+  filled the entry was not, and Access could neither update nor delete such a row ("The search key was not
+  found in any record") nor find it by `Seek`. In a unique index two rows whose values differ only in the last
+  byte of such a key were taken for duplicates, where Access takes both. The digest is now Access's: compared
+  with the entries ACE 16 wrote, in General - Legacy and in General, 448 of them in seven indexes (a text key cut
+  in the first, middle and last column, before a Long ascending and descending, after another text, and
+  unique), and DAO seeks, updates and deletes the rows this library writes. An entry a version since the cut
+  wrote the earlier way is found, and taken out with its row; a rewritten row is entered under Access's key,
+  and with `Database.VerifyIndexes` an index of Text and Long columns that is looked at has such entries
+  replaced when the table is next changed. The earlier way's key of a value is Access's key of another - the
+  same with the last byte cut off 0, so (A, 1)'s and (A, 255)'s are (A, 0)'s - and an entry found under it alone
+  is counted as a duplicate, or followed to a row, only when the row it points at has the value: such rows are
+  both taken, in a file of Access's or of this library's, and a second row with either value is refused.
+
 - **Table definitions of more than one page** are read whole, written and changed (#37). A table whose
   definition Access put on several pages has all its columns' names and takes rows; a column, an index or a
   relationship that takes a definition past its page is added, where it was refused; and a table whose

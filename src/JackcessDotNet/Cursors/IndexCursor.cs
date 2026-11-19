@@ -7,7 +7,7 @@ namespace JackcessDotNet;
 /// <see cref="Table.FindRowByPrimaryKey"/> does it in one call.
 /// <para>
 /// A row is found through an index when the index's keys are ones this library makes, whoever wrote the index.
-/// Otherwise - a text index in a sort order other than General - Legacy and General, a column with no index -
+/// Otherwise - a text index in a sort order whose keys it does not make, a column with no index -
 /// the table is read from its first row and each row's values are compared. Either way a row is compared with
 /// the values asked for before it is returned, and a null is never a match: a row with no value in a column is
 /// not found by looking for null.

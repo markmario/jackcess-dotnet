@@ -130,7 +130,9 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// Where no index on the columns can be searched - a table made without one on its foreign key, an index
-    /// whose keys this library does not write, a parent key that is null - the table is read from end to end,
+    /// whose keys this library does not write, a parent key that is null, a key this library may not make as Access
+    /// does (a Date/Time Extended one, which ACE can store in a second form keyed otherwise, #51) - the table is
+    /// read from end to end,
     /// once in the change, and all its rows are held until the change is written: the row's place and the columns
     /// its indexes and relationships name, some 200 bytes a row with numeric keys (about 60 MB and a second for a
     /// table of 300,000 rows). A change that would rewrite a row of a table whose rows this library does not
@@ -175,7 +177,9 @@ public sealed class Database : IDisposable
     /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
     /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows
     /// is not searched for a relationship - the table is read instead - until this library has rewritten or
-    /// deleted them. Set it before the first change; an index is looked at once.
+    /// deleted them. A row whose key this library may not make as Access does - a Date/Time Extended value, which
+    /// ACE can store in a second form keyed otherwise (#51) - is one the index lacks unless its entry is under the
+    /// key this library makes. Set it before the first change; an index is looked at once.
     /// </para>
     /// <para>
     /// <b>What it costs:</b> one reading of the table, and of the indexes' leaf pages, for the first such change
@@ -187,11 +191,19 @@ public sealed class Database : IDisposable
     /// columns, and a table filled in the session that made it cost nothing.
     /// </para>
     /// <para>
-    /// <b>What it does not catch:</b> an entry is still believed for what it points at. A value a row had before
-    /// one of those versions changed its primary key is refused as a duplicate, though no row has it; and a row
-    /// added under a value whose only entry points at a row long gone is added beside that entry, where Access
-    /// does not find it through the index until the file is compacted (qcatco/exportmdb.interop#79). Nothing
-    /// here rebuilds an index.
+    /// <b>Entries that are no row's:</b> those versions also left entries behind - one that points where a row
+    /// was, and one under the value a row had before its primary key was changed, which points at the row under
+    /// the value it has. Access follows both: it fails a query that comes to the first ("Not a valid bookmark")
+    /// and answers one for the second's key with that row. With or without this option, an entry that points at
+    /// no row is no row's duplicate, and goes when an entry is added or taken out under its key (#36); an entry
+    /// that points at a row of the table is believed, as Access believes it, and a row with its key is refused.
+    /// With the option, every entry an index was seen to hold that points at no row is taken out when the table's
+    /// indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where
+    /// that key is one this library makes as Access does, is the row's wrong one: a row with the entry's key is
+    /// taken, the entry goes, and the row is entered under its own key. Where this library's key for a row may not
+    /// be Access's - a Date/Time Extended column (#51), or a key cut at 510 bytes in an index of several columns
+    /// other than Text and Long ones - the entry is believed with the option too. A row with no entry at all is
+    /// not given one: compacting the file in Access rebuilds its indexes.
     /// </para>
     /// </summary>
     public bool VerifyIndexes
@@ -627,7 +639,7 @@ public sealed class Database : IDisposable
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
-    ///   or Complex column, or text in a sort order other than General - Legacy and General; or the database is
+    ///   or Complex column, or text in a sort order whose keys it does not make; or the database is
     ///   an Access 97 file, which is only read. Nothing is created.
     /// </exception>
     public Table CreateTable(string name, IEnumerable<ColumnDefinition> columns,

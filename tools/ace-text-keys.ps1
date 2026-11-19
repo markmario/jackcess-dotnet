@@ -23,6 +23,11 @@
                      (-EngineProgId DAO.DBEngine.36) writes the same keys
     The script stops if the Text column's definition does not hold the order asked for.
 
+    -Locale makes the database in another locale's sort order: it is the string DAO's CreateDatabase takes, as
+    DAO's dbLang constants spell it (";LANGID=0x0419;CP=1251;COUNTRY=0" is dbLangCyrillic), with -Order
+    GeneralLegacy for a Jet4 .mdb or Access97 for a Jet3 one. The sort order the column then has is not checked:
+    it is written in the file's header, which is how the order a locale gives is found out.
+
     Access97 needs a 32-bit process where that ACE is the 32-bit one beside a 64-bit Office, as Jet 4.0 always is:
       C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -File tools\ace-text-keys.ps1 -Order Access97 ...
 
@@ -47,7 +52,9 @@ param(
     # The DAO engine to use in place of the order's own, by ProgID: DAO.DBEngine.36 is Jet 4.0.
     [string]$EngineProgId,
     # Index the values in a Memo column in place of a Text(255) one: Access keys a Memo by its first 255 characters.
-    [switch]$Memo
+    [switch]$Memo,
+    # The locale DAO creates the database in, in place of General (";LANGID=0x0409;CP=1252;COUNTRY=0").
+    [string]$Locale
 )
 
 $ErrorActionPreference = 'Stop'
@@ -228,7 +235,7 @@ try {
         Copy-Item (Join-Path $PSScriptRoot '..\tests\corpus\V2010\common1V2010.accdb') $path
         $db = $engine.OpenDatabase($path)
     }
-    else { $db = $engine.CreateDatabase($path, ';LANGID=0x0409;CP=1252;COUNTRY=0', $version) }
+    else { $db = $engine.CreateDatabase($path, $(if ($Locale) { $Locale } else { ';LANGID=0x0409;CP=1252;COUNTRY=0' }), $version) }
     try {
         $db.Execute('CREATE TABLE TextKeys (KeyNumber LONG, KeyText ' + $(if ($Memo) { 'MEMO' } else { 'TEXT(255)' }) + ')')
         $db.Execute('CREATE INDEX ByNumber ON TextKeys (KeyNumber)')
@@ -256,7 +263,8 @@ $file = [IO.File]::ReadAllBytes($path)
 $layout = [JetIndexPages]::LayoutOf($file)
 $tdef = [JetIndexPages]::FindTdef($file, $layout, 'KeyNumber')
 $sortOrder = [JetIndexPages]::SortOrder($file, $layout, $tdef, 1)
-if ($sortOrder -ne $expected) { throw "KeyText sorts in $sortOrder, not $expected ($Order): no keys written." }
+if ($Locale -and $Order -eq 'General') { throw '-Locale makes a database: use it with -Order GeneralLegacy or Access97.' }
+if (-not $Locale -and $sortOrder -ne $expected) { throw "KeyText sorts in $sortOrder, not $expected ($Order): no keys written." }
 
 $byNumber = $null; $ascending = @{}; $descending = @{}
 foreach ($root in [JetIndexPages]::IndexRoots($file, $layout, $tdef)) {
@@ -274,6 +282,7 @@ $made = switch ($Order) {
     'GeneralLegacy' { "General - Legacy (sort order 1033 version 0) text index keys written by ACE $engineVersion ($progId) into a Jet4 .mdb it created" }
     'Access97'      { "Access 97 (Jet3; sort order 1033) text index keys written by $(if ($progId -eq 'DAO.DBEngine.36') { 'Jet 4.0, DAO' } else { 'ACE' }) $engineVersion ($progId, 32-bit) into a Jet3 .mdb it created" }
 }
+if ($Locale) { $made = "Text index keys in the sort order $sortOrder (the bytes of the column's definition), which DAO's CreateDatabase gives a $(if ($Order -eq 'Access97') { 'Jet3' } else { 'Jet4' }) .mdb made with the locale `"$Locale`", written by $(if ($progId -eq 'DAO.DBEngine.36') { 'Jet 4.0, DAO' } else { 'ACE' }) $engineVersion ($progId)" }
 $output = New-Object System.Collections.Generic.List[string]
 $output.Add("# $made,")
 $output.Add('# ascending (7F...) and descending (80...). One value per line: its code points in hex, then the two')
