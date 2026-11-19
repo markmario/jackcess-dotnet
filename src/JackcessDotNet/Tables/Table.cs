@@ -158,8 +158,9 @@ public sealed class Table
 
     /// <summary>
     /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
-    /// (MSysObjects.LvProp) the first time they are asked for. Empty for a table Access keeps none for. A
-    /// column's properties are the column's: <see cref="Column.Properties"/>.
+    /// (MSysObjects.LvProp) when the table is opened. Empty for a table Access keeps none for. A column's
+    /// properties are the column's: <see cref="Column.Properties"/>. <see cref="PropertyMap.Set(string, object)"/>
+    /// and <see cref="PropertyMap.Save"/> change them.
     /// </summary>
     public PropertyMap Properties => PropertyMaps.Default;
 

@@ -36,8 +36,9 @@ public sealed class Column
     public int Ordinal { get; internal set; }
 
     /// <summary>
-    /// The properties Access keeps for the column - its Description, Caption, Format and the like - read from
-    /// the table's properties the first time they are asked for. Empty for a column Access keeps none for.
+    /// The properties Access keeps for the column - its Description, Caption, Format and the like - read with
+    /// its table's. Empty for a column Access keeps none for. <see cref="PropertyMap.Set(string, object)"/>
+    /// changes them, and <see cref="PropertyMap.Save"/> writes them with the table's others.
     /// </summary>
     public PropertyMap Properties => Owner?.PropertiesOf(this) ?? (_noProperties ??= new PropertyMap(Name, PropertyMap.ColumnType));
 
