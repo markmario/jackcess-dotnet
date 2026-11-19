@@ -224,6 +224,83 @@ internal static class UsageMap
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="mapRow"/> of <paramref name="page"/> is a row that is there: one of the page's
+    /// rows, and not a deleted one.
+    /// </summary>
+    internal static bool IsLiveRow(byte[] page, int mapRow, JetFormat format)
+        => page[0] == JetFormat.PageTypeData
+           && mapRow >= 0 && mapRow < ByteUtil.GetShort(page, format.OffsetDataNumRows)
+           && (ByteUtil.GetUShort(page, format.OffsetDataRowTable + mapRow * JetFormat.SizeRowEntry) & DeletedRowFlag) == 0;
+
+    private const int DeletedRowFlag  = 0x8000;
+    private const int DeletedRowFlags = 0xC000;
+
+    /// <summary>
+    /// Gives every page of the usage map at <paramref name="mapRow"/> of page <paramref name="umapPageNumber"/>
+    /// back to the file, with the map pages a reference map has, and takes the map's row off its page: what
+    /// Access does with the usage map of an index, a long-value column or a table it drops (#37). When the page
+    /// then holds no row, it is given back too. A row that is not there is left alone.
+    /// </summary>
+    internal static void Free(PageFile file, int umapPageNumber, int mapRow)
+    {
+        var format = file.Format;
+        if (umapPageNumber <= 0 || umapPageNumber >= file.PageCount) return;
+        byte[] page = file.ReadPage(umapPageNumber);
+        if (!IsLiveRow(page, mapRow, format)) return;
+
+        foreach (int owned in GetOwnedPages(page, mapRow, format, file))
+            GlobalUsageMap.MarkFree(file, owned);
+
+        int rowStart = GetRowStart(page, mapRow, format);
+        int rowLen   = GetRowLength(page, mapRow, format);
+        if (rowLen >= 5 && page[rowStart] == MapTypeReference)
+            for (int i = 0; i < (rowLen - 1) / 4; i++)
+                if (ByteUtil.GetInt(page, rowStart + 1 + i * 4) is > 0 and var mapPage)
+                    GlobalUsageMap.MarkFree(file, mapPage);
+
+        if (DeleteRow(file, umapPageNumber, mapRow))
+            GlobalUsageMap.MarkFree(file, umapPageNumber);
+    }
+
+    /// <summary>
+    /// Takes row <paramref name="row"/> off the data page <paramref name="pageNumber"/> as Access was seen to
+    /// take a usage map's row off its page: the rows after it move up over its bytes, each row's place in the
+    /// page's row table moves with it, the row's own entry is left pointing at where it ended with both of the
+    /// deleted flags (0xC000), and the page's free space grows by the row's length. The rows keep their numbers,
+    /// which is how a definition names them. Returns whether the page then holds no row.
+    /// </summary>
+    internal static bool DeleteRow(PageFile file, int pageNumber, int row)
+    {
+        var format = file.Format;
+        byte[] page = file.ReadPage(pageNumber);
+        int rows = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+        if (IsLiveRow(page, row, format))
+        {
+            int start  = GetRowStart(page, row, format);
+            int length = GetRowLength(page, row, format);
+            int lowest = start;
+            for (int r = row + 1; r < rows; r++)
+                lowest = Math.Min(lowest, GetRowStart(page, r, format));
+
+            Array.Copy(page, lowest, page, lowest + length, start - lowest);
+            Array.Clear(page, lowest, length);
+            for (int r = row + 1; r < rows; r++)
+            {
+                int at    = format.OffsetDataRowTable + r * JetFormat.SizeRowEntry;
+                int entry = ByteUtil.GetUShort(page, at);
+                ByteUtil.PutShort(page, at, unchecked((short)((entry & ~JetFormat.RowOffsetMask) | ((entry & JetFormat.RowOffsetMask) + length))));
+            }
+            ByteUtil.PutShort(page, format.OffsetDataRowTable + row * JetFormat.SizeRowEntry, unchecked((short)(DeletedRowFlags | (start + length))));
+            ByteUtil.PutShort(page, JetFormat.OffsetDataFreeSpace, (short)(ByteUtil.GetShort(page, JetFormat.OffsetDataFreeSpace) + length));
+            file.WritePage(pageNumber, page);
+        }
+
+        for (int r = 0; r < rows; r++)
+            if (IsLiveRow(page, r, format)) return false;
+        return true;
+    }
+
     /// <summary>The pages one reference map page covers: (page size - 4) x 8, 32,736 for Jet4.</summary>
     private static int PagesPerMapPage(JetFormat format) => (format.PageSize - RefMapBitmapStart) * 8;
 

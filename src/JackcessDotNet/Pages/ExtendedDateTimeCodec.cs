@@ -42,23 +42,36 @@ internal static class ExtendedDateTimeCodec
     /// shows is not a date the bytes say:
     /// </para>
     /// <list type="bullet">
-    /// <item>a third number other than 7. It is the count of digits of the fraction; Access writes no other, and
-    /// its reading of others is not one rule - three digits, 123, it shows as .0000123 - while eight or nine
-    /// are finer than a <see cref="DateTime"/>;</item>
+    /// <item>a third number other than 7 or 0. It is the count of digits of the fraction, and Access's reading of
+    /// others is not one rule - three digits, 123, it shows as .0000123 - while eight or nine are finer than a
+    /// <see cref="DateTime"/>;</item>
     /// <item>a number with something other than a digit in it, which Access reads up to there (a day number
     /// 73742X is day 73742, in the year 202), and a number with no digit, which it reads as zero;</item>
     /// <item>a day after 31 December 9999, which it shows as 30 December 1899, and a time of day of a day or
     /// more, which it shows as 24:00:00.</item>
     /// </list>
     /// Jackcess looks at neither colons nor trailer, and takes each byte of the numbers less '0' for a digit.
+    /// <para>
+    /// A third number of 0 is Access's own too (#38): the time of day is then in whole seconds -
+    /// <c>0000000000000737425:0000000000000011045:0</c> is 2 January 2020, 03:04:05 - and it is what Access writes
+    /// when the value comes to the column through a Date/Time, as every value its SQL <c>UPDATE</c> sets does, from
+    /// text or from another Date/Time Extended column alike. DAO reads it as that date and time, and so does this.
+    /// </para>
     /// </summary>
     public static DateTime? Decode(byte[] row, int offset)
     {
-        if (row[offset + Digits] != ':' || row[offset + TrailerAt] != ':' || row[offset + TrailerAt + 1] != '7') return null;
+        if (row[offset + Digits] != ':' || row[offset + TrailerAt] != ':') return null;
+        long unit = row[offset + TrailerAt + 1] switch
+        {
+            (byte)'7' => 1,
+            (byte)'0' => TimeSpan.TicksPerSecond,
+            _         => 0,
+        };
+        if (unit == 0) return null;
         if (row[offset + Size - 1] is >= (byte)'0' and <= (byte)'9') return null;
         if (ReadNumber(row, offset) is not { } days || days >= DaysInRange) return null;
-        if (ReadNumber(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay) return null;
-        return new DateTime(days * TimeSpan.TicksPerDay + time, DateTimeKind.Unspecified);
+        if (ReadNumber(row, offset + TimeAt) is not { } time || time >= TimeSpan.TicksPerDay / unit) return null;
+        return new DateTime(days * TimeSpan.TicksPerDay + time * unit, DateTimeKind.Unspecified);
     }
 
     /// <summary>The 42 bytes of <paramref name="value"/>, as Access writes them.</summary>

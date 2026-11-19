@@ -122,4 +122,14 @@ public sealed class RelationshipDefinition
 
     /// <summary>How a query Access designs joins the two tables. It changes nothing about which rows are allowed.</summary>
     public JoinType JoinType { get; set; }
+
+    /// <summary>
+    /// Whether the relationship is marked one to one (<see cref="Relationship.IsOneToOne"/>). Null (the default)
+    /// marks it when the columns on each side have a unique index or primary key of their own, as Access's
+    /// Relationships window does. <c>true</c> marks it whatever indexes there are, as DAO does when told to: with
+    /// <see cref="HasReferentialIntegrity"/> the foreign key's index is then a unique one, built over the rows
+    /// already there, so creating the relationship is refused when two of them refer to one row. <c>false</c>
+    /// leaves it unmarked, and the foreign key's index an ordinary one, though both sides are unique.
+    /// </summary>
+    public bool? IsOneToOne { get; set; }
 }

@@ -664,8 +664,9 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, or two indexes
-    /// have one name. Nothing is created.
+    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, two indexes
+    /// have one name, or an index definition is a primary key (<see cref="IndexDefinition.IsPrimaryKey"/>).
+    /// Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
@@ -811,7 +812,7 @@ public sealed class Database : IDisposable
 
         // 6. Now serialise — the index blocks, slots and names are included.
         byte[] tdefBytes = tableDef.Serialize(format);
-        _file.WritePage(tdefPage, tdefBytes);
+        TdefBuffer.Write(_file, _allocator, tdefPage, tdefBytes);
 
         // 7. Register the table in MSysObjects.
         _catalog.InsertTableEntry(name, tdefPage, properties);
@@ -903,13 +904,18 @@ public sealed class Database : IDisposable
             planned.Add(new PlannedIndex(
                 TableDefinition.PrimaryKeyIndexName,
                 pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key", ofPrimaryKey: true), TableDefinition.AscendingColumnFlag)).ToList(),
-                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag,
+                // Unique and required (0x89), as Access writes a primary key's block.
+                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag | TableDefinition.RequiredIndexFlag,
                 TableDefinition.PrimaryKeyIndexType));
         }
 
         foreach (var index in secondary)
         {
             if (index is null) throw new ArgumentException("An index definition must not be null.", nameof(secondary));
+            if (index.IsPrimaryKey)
+                throw new ArgumentException(
+                    $"Index '{index.Name}' is a primary key: a table is created with its primary key by naming the key's columns, " +
+                    "not by an index definition.", nameof(secondary));
             if (planned.Any(p => string.Equals(p.Name, index.Name, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException($"Table '{table}' is given two indexes named '{index.Name}'.", nameof(secondary));
             foreach (string descending in index.DescendingColumns)
@@ -1003,7 +1009,7 @@ public sealed class Database : IDisposable
     internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
     {
         var format   = file.Format;
-        var tdefPage = file.ReadPage(tdefPageNum);
+        var tdefPage = TdefBuffer.Read(file, tdefPageNum, out _, out bool isBroken);
         var info     = TdefReader.Read(tdefPage, format);
 
         var tableDef = new TableDefinition(name, info.Columns)
@@ -1013,10 +1019,10 @@ public sealed class Database : IDisposable
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
             Indexes        = info.Indexes,
-            HasUnreadIndexes = info.HasUnreadIndexes,
+            HasUnreadIndexes = info.HasUnreadIndexes || isBroken,
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
-            HasUnreadColumns  = info.HasUnreadColumns,
+            HasUnreadColumns  = info.HasUnreadColumns || isBroken,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)
@@ -1170,6 +1176,47 @@ public sealed class Database : IDisposable
             open.PropertyMaps.Adopt(written, inFile.Names);
     }
 
+    /// <summary>
+    /// Whether a column that is about to be dropped or renamed has properties in the file, which go or follow it:
+    /// asked before anything is written. A column with none needs nothing of the table's properties.
+    /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The column has properties and the table's cannot be written: they were not read whole, or the catalog has
+    /// an index whose keys this library does not write.
+    /// </exception>
+    internal bool ColumnHasPropertiesToChange(TableDefinition table, string column, string whatIsNotDone)
+    {
+        if (_catalog.FindObject(table.TdefPageNumber) is not { } row) return false;
+        var inFile = PropertyMapReader.Read(row.Properties, _file.Format);
+        string? why = inFile.UnreadReason is { } unread
+            ? $"the ones in the file were not all read ({unread}), and writing those that were would lose the rest"
+            : inFile.Get(column) is null ? null : GetTable("MSysObjects").InsertRefusal?.TrimEnd('.');
+        if (inFile.UnreadReason is null && inFile.Get(column) is null) return false;
+        if (why is null) return true;
+        throw new NotSupportedException(
+            $"Column '{column}' of '{table.Name}' is not {whatIsNotDone}: Access keeps properties for it, and the table's " +
+            $"properties cannot be written: {why}. Nothing was changed.");
+    }
+
+    /// <summary>
+    /// Takes a dropped column's properties out of the table's, as the file holds them, or - with
+    /// <paramref name="newName"/> - gives a renamed column's its new name: what Access was seen to do with a
+    /// column's block for each (#37). Written by the one writer of properties (<see cref="SaveProperties"/>),
+    /// inside the undo scope of the change to the column; what a caller has changed in the table's maps and not
+    /// saved is not written with it, and the table's open maps then have the same change made to them.
+    /// </summary>
+    internal void ChangeColumnProperties(TableDefinition table, string column, string? newName)
+    {
+        int id = table.TdefPageNumber;
+        var inFile = PropertyMapReader.Read(_catalog.FindObject(id)?.Properties, _file.Format);
+        bool changed = newName is null ? inFile.RemoveColumn(column) : inFile.RenameColumn(column, newName);
+        if (!changed) return;
+
+        SaveProperties(inFile, () => _catalog.FindObject(id), $"table '{table.Name}'", withinUndo: true);
+        if (_tables.TryGetValue(id, out var open))
+            open.PropertyMaps.AdoptColumnChange(column, newName);
+    }
+
     // ── Changing the schema ──────────────────────────────────────────────────
 
     /// <summary>The catalog, for a change to the schema that registers an object in it.</summary>
@@ -1212,13 +1259,106 @@ public sealed class Database : IDisposable
     /// columns have no unique index (or primary key) on exactly them. Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;
-    /// or a table's definition runs, or would run, over more than one page. Nothing is changed.
+    /// The file is an Access 97 one, or the foreign key is on a column whose index keys this library does not
+    /// write. Nothing is changed.
     /// </exception>
     public Relationship CreateRelationship(RelationshipDefinition definition)
     {
         ThrowIfDisposed();
         return SchemaChange.CreateRelationship(this, _file, definition ?? throw new ArgumentNullException(nameof(definition)));
+    }
+
+    /// <summary>
+    /// Drops the relationship named <paramref name="name"/>, whatever the case of its letters, as DAO's
+    /// <c>Relations.Delete</c> and Access's Relationships window do: its rows in <c>MSysRelationships</c>, its
+    /// entry in the catalog and the permissions on it and, when it has referential integrity, the index Access
+    /// keeps for it on each of its tables. An index that was built for it goes with its pages; one that shared
+    /// another index's tree leaves that index as it was. The tables' rows are not touched.
+    /// <para>
+    /// Everything is found before anything is written, and what is written is taken back if writing it fails: a
+    /// refused change leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The relationship's name (<see cref="Relationship.Name"/>).</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The database has no relationship of that name. Nothing is changed.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one, or a system table that holds the relationship has an index whose keys this
+    /// library does not write. Nothing is changed.
+    /// </exception>
+    public void DropRelationship(string name)
+    {
+        ThrowIfDisposed();
+        SchemaRemoval.DropRelationship(this, _file, name ?? throw new ArgumentNullException(nameof(name)));
+    }
+
+    /// <summary>
+    /// Drops the table named <paramref name="name"/>, whatever the case of its letters, with its rows, as
+    /// Access's <c>DROP TABLE</c> does: its entry in the catalog and the permissions on it go, the relationships
+    /// in which it refers to another table - or to itself - go with it, and every page it has is given back to
+    /// the file, for Access to use again. A <see cref="Table"/> got for it before is of no further use: whatever
+    /// is asked of it throws <see cref="InvalidOperationException"/>.
+    /// <para>
+    /// Everything is found before anything is written, and what is written is taken back if writing it fails: a
+    /// refused change leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The table's name.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The database has no table of that name, or the name is empty. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Another table refers to the table in a relationship, as Access refuses it: drop the relationship first
+    /// (<see cref="DropRelationship"/>). Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table, or has a complex column (attachments or several
+    /// values); or a system table that lists it has an index whose keys this library does not write. Nothing is
+    /// changed.
+    /// </exception>
+    public void DropTable(string name)
+    {
+        ThrowIfDisposed();
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        int tdefPage = SchemaRemoval.DropTable(this, _file, name);
+        if (_tables.TryGetValue(tdefPage, out var dropped))
+        {
+            dropped.MarkDropped();
+            _tables.Remove(tdefPage);
+        }
+    }
+
+    /// <summary>
+    /// Gives the table named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>TableDef.Name</c> does: in the catalog, and in every relationship
+    /// the table is part of. The table's rows, columns and indexes are not touched. A saved query that names the
+    /// table goes on naming it as it was, as it does when Access's engine renames one. A <see cref="Table"/> got
+    /// for the table before has the new name (<see cref="Table.Name"/>) from then on.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the table's only in the case of its letters is taken; the name the table has changes nothing.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the table has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The database has no table named <paramref name="name"/>, or the name is empty; or
+    /// <paramref name="newName"/> is the name of another table or query, or one Access does not allow: empty,
+    /// more than 64 characters, with a period, an exclamation mark, a grave accent, a square bracket or a control
+    /// character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table; or the catalog has an index whose keys this
+    /// library does not write, for the name or at all. Nothing is changed.
+    /// </exception>
+    public void RenameTable(string name, string newName)
+    {
+        ThrowIfDisposed();
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        int tdefPage = SchemaRename.RenameTable(this, _file, name, newName);
+        if (_tables.TryGetValue(tdefPage, out var renamed) && renamed.Name != newName)
+            renamed.Renamed(newName);
     }
 
     /// <summary>

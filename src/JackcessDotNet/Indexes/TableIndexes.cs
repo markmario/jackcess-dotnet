@@ -138,8 +138,8 @@ internal sealed class TableIndexes
     public string? WhyNotKept()
     {
         if (_table.HasUnreadIndexes)
-            return $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which runs over " +
-                   "more than one page or names an index column or block it has not. The table is left as it was.";
+            return $"{_table.Name}'s indexes cannot be kept: they were not all read from its definition, which ends before " +
+                   "they do or names an index column or block it has not. The table is left as it was.";
         foreach (var tree in Trees)
         {
             if (tree.Columns.Count == 0 || tree.Target.RootPage <= 0)

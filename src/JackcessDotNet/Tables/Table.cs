@@ -67,9 +67,21 @@ public sealed class Table
         foreach (var column in definition.Columns) column.Owner = this;
     }
 
+    // Set when the table has been dropped (Database.DropTable): there is nothing of it left to read.
+    private bool _dropped;
+
+    /// <summary>Marks the table as dropped: everything asked of it from then on is refused.</summary>
+    internal void MarkDropped() => _dropped = true;
+
+    /// <summary>Reads the definition again under the name the table has been given (Database.RenameTable).</summary>
+    internal void Renamed(string name)
+        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
+
     // Reads the definition again when it has been changed since it was read.
     private void Refresh()
     {
+        if (_dropped)
+            throw new InvalidOperationException($"Table '{_readDefinition.Name}' has been dropped from the database.");
         int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
         if (version != _readAtVersion)
             Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber), version);
@@ -113,8 +125,8 @@ public sealed class Table
     /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate"/> throw for it,
     /// which they throw by asking this. The table has an index whose keys this library does not write as Access
     /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
-    /// rows cannot be written by - a calculated column, columns that run past its first page, or two columns in
-    /// one place. Such a table is still read.
+    /// rows cannot be written by - a calculated column, columns whose names run past the definition's end, or two
+    /// columns in one place. Such a table is still read.
     /// <para>
     /// A caller about to write to several tables can ask each first, and so write to none when one of them
     /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
@@ -757,18 +769,18 @@ public sealed class Table
     /// <param name="column">The column to add.</param>
     /// <returns>The table's new column.</returns>
     /// <exception cref="ArgumentException">
-    /// The table already has a column of that name, or 255 columns; or the definition is not one a table can
+    /// The table already has a column of that name, or 255 columns, or has had 255 counting those dropped from
+    /// it (a dropped column keeps its number until the file is compacted in Access, which refuses the next
+    /// column too: "Too many fields defined"); or the definition is not one a table can
     /// have (<see cref="ColumnDefinition"/>). Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
-    /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
-    /// or would run, over more than one page, which is all this library reads of one - so a table is never left
-    /// that it could no longer write rows to; or the column is required, does not allow a zero-length string or is
-    /// a Guid AutoNumber - which Access keeps as properties of the column - and the table's properties cannot be
-    /// written: the database's catalog sorts in an order other than General and General - Legacy, or the
-    /// properties in the file were not all read. A column that needs no property is added there without one.
-    /// Nothing is changed.
+    /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the column is required, does
+    /// not allow a zero-length string or is a Guid AutoNumber - which Access keeps as properties of the column -
+    /// and the table's properties cannot be written: the database's catalog sorts in an order other than General
+    /// and General - Legacy, or the properties in the file were not all read. A column that needs no property is
+    /// added there without one. Nothing is changed.
     /// </exception>
     public Column AddColumn(ColumnDefinition column)
     {
@@ -782,6 +794,10 @@ public sealed class Table
     /// INDEX</c> and Jackcess's <c>IndexBuilder.addToTable</c> do. From then on it is kept on every insert, update
     /// and delete, like the table's other indexes, and a unique one refuses a duplicate. An index on the columns,
     /// in the order and with the flags, of one the table already has shares that index's tree, as in Access.
+    /// An index that is a primary key (<see cref="IndexDefinition.IsPrimaryKey"/>) gives a table that has none
+    /// its primary key, as Access's <c>ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY</c> and Jackcess's
+    /// <c>IndexBuilder.withPrimaryKey</c> do: <see cref="FindRowByPrimaryKey"/> and
+    /// <see cref="UpdateByPrimaryKey"/> then find rows by it, and a relationship can refer to it.
     /// <para>
     /// The rows are read and every key made before anything is written, and what is written is taken back if
     /// writing it fails: a refused index leaves the file byte for byte as it was. This <see cref="Table"/>, and
@@ -790,25 +806,142 @@ public sealed class Table
     /// </summary>
     /// <returns>The table's new index.</returns>
     /// <exception cref="ArgumentException">
-    /// The table already has an index of that name, or 32 indexes; or the index sorts descending a column that
-    /// is not one of its own.
+    /// The table already has an index of that name, or 32 indexes; the index sorts descending a column that
+    /// is not one of its own; or it is a primary key and the table has one, or it is to ignore nulls.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
-    /// Two rows of the table have the same values in a unique index, or a row has a null in an index that
-    /// requires its values. Nothing is changed.
+    /// Two rows of the table have the same values in a unique index or a primary key, or a row has a null in a
+    /// primary key or an index that requires its values. Nothing is changed.
     /// </exception>
     /// <exception cref="InvalidOperationException">A column the index names is not in the table. Nothing is changed.</exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
     /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order whose keys it does not make),
-    /// or a row holds a value no key is made for; or the table's definition runs, or would run, over
-    /// more than one page. Nothing is changed.
+    /// or a row holds a value no key is made for. Nothing is changed.
     /// </exception>
     public Index AddIndex(IndexDefinition index)
     {
         if (index is null) throw new ArgumentNullException(nameof(index));
         SchemaChange.AddIndex(Owner(), _file, _definition, index);
         return Indexes.First(ix => string.Equals(ix.Name, index.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Drops the column named <paramref name="name"/>, whatever the case of its letters, as Access's <c>ALTER
+    /// TABLE ... DROP COLUMN</c> does. The column leaves the table's definition, with the properties Access keeps
+    /// for it; a Memo or OLE column's long values are given back to the file. The rows are not rewritten: each
+    /// keeps the bytes it had for the column, which nothing reads any more, and the other columns keep their
+    /// places in a row - what Access does too. Compacting the file in Access writes the rows without them.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. This
+    /// <see cref="Table"/>, and any other open on the same table, is without the column from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name of the column to drop.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The table has no column of that name. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The column is part of an index or of a relationship, with referential integrity or without, as Access
+    /// refuses it: drop that first (<see cref="DropIndex"/>, <see cref="Database.DropRelationship"/>). Nothing is
+    /// changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table; the column is the table's only one, or a complex
+    /// one (attachments or several values); or the column has properties and the table's cannot be written (the
+    /// catalog sorts in an order this library writes no keys for, or the properties in the file were not all
+    /// read). Nothing is changed.
+    /// </exception>
+    public void DropColumn(string name)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        SchemaRemoval.DropColumn(Owner(), _file, _definition, name);
+    }
+
+    /// <summary>
+    /// Drops the index named <paramref name="name"/>, whatever the case of its letters, as Access's <c>DROP
+    /// INDEX</c> does: a primary key is dropped by its index's name. The index leaves the table's definition and
+    /// the pages of its tree are given back to the file, unless another index of the table shares the tree.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. This
+    /// <see cref="Table"/>, and any other open on the same table, no longer keeps the index.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name of the index to drop.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The table has no index of that name. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The index is one a relationship keeps (<see cref="Index.IsForeignKey"/>), or the unique index or primary
+    /// key a relationship with referential integrity refers to the table's rows by, as Access refuses it: drop
+    /// the relationship first (<see cref="Database.DropRelationship"/>). Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one, or the table is a system table. Nothing is changed.</exception>
+    public void DropIndex(string name)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        SchemaRemoval.DropIndex(Owner(), _file, _definition, name);
+    }
+
+    /// <summary>
+    /// Gives the column named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>Field.Name</c> does: in the table's definition, in every
+    /// relationship the column is part of, and in the properties Access keeps for the column, which stay the
+    /// column's: one that is required is required under its new name. The rows are not
+    /// touched, nor the table's indexes, which know a column by its number. A saved query that names the column
+    /// goes on naming it as it was, as it does when Access's engine renames one.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the column's only in the case of its letters is taken; the name the column has changes
+    /// nothing. This <see cref="Table"/>, and any other open on the same table, has the column under its new
+    /// name from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the column has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table has no column named <paramref name="name"/>; or <paramref name="newName"/> is another column's
+    /// name, or one Access does not allow: empty, more than 64 characters, with a period, an exclamation mark, a
+    /// grave accent, a square bracket or a control character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table; the column is a complex one (attachments or
+    /// several values); or the column has properties and the table's cannot be written (the catalog sorts in an
+    /// order this library writes no keys for, or the properties in the file were not all read). Nothing is changed.
+    /// </exception>
+    public void RenameColumn(string name, string newName)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        SchemaRename.RenameColumn(Owner(), _file, _definition, name, newName);
+    }
+
+    /// <summary>
+    /// Gives the index named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>Index.Name</c> does. A primary key is renamed like any other
+    /// index. The index's tree is not touched.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the index's only in the case of its letters is taken; the name the index has changes nothing.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the index has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table has no index named <paramref name="name"/>; or <paramref name="newName"/> is another index's
+    /// name, or one Access does not allow: empty, more than 64 characters, with a period, an exclamation mark, a
+    /// grave accent, a square bracket or a control character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The index is one a relationship keeps (<see cref="Index.IsForeignKey"/>): its name is the relationship's,
+    /// or one Access made for it. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one, or the table is a system table. Nothing is changed.</exception>
+    public void RenameIndex(string name, string newName)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        SchemaRename.RenameIndex(Owner(), _file, _definition, name, newName);
     }
 
     private Database Owner()

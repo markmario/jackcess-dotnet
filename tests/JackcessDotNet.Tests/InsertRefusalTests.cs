@@ -90,7 +90,6 @@ public sealed class InsertRefusalTests : IDisposable
     [InlineData("V2007", "blobV2007.accdb", "Table1", "Complex column, whose keys this library does not write")]   // an index on an attachment column
     [InlineData("V2003", "indexCodesV2003.mdb", "Table7", "Decimal column, whose keys this library does not write")] // a Decimal index
     [InlineData("V1997", "common1V1997.mdb", "Table1", "Access 97 (Jet 3) files are read-only in this library")]   // an Access 97 file: that before any other reason
-    [InlineData("V2000", "common2V2000.mdb", "MSP_PROJECTS", "were not all read from its definition")]            // a definition over several pages
     [InlineData("V2010", "calcFieldV2010.accdb", "Table1", "is calculated")]
     public void A_table_Access_made_that_takes_no_row_says_what_insert_throws(string version, string file, string table, string because)
     {
@@ -152,25 +151,29 @@ public sealed class InsertRefusalTests : IDisposable
         AssertRefuses("T", "same place", table => table.Columns[1].FixedDataOffset = 2);
     }
 
-    // The corpus's tables whose columns run past the definition's first page have indexes there too, which an
-    // insert meets first (the test below); here a table is marked as one whose columns were not all read.
+    // A definition that ends before its columns' names do is a damaged one: here a table is marked as one whose
+    // columns were not all read. (A definition over several pages is read whole, and its table written to: #37.)
     [Fact]
     public void A_table_whose_columns_were_not_all_read_says_what_insert_throws()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32) }).Insert(new Row { ["A"] = 1 });
 
-        AssertRefuses("T", "runs past its first page", table => table.Definition.HasUnreadColumns = true);
+        AssertRefuses("T", "ends before its columns' names do", table => table.Definition.HasUnreadColumns = true);
     }
 
     // The refusals come in the order an insert meets them, so the one asked for is the one thrown: here a table
-    // with indexes and columns on a second page of its definition (74 columns) says the indexes.
+    // whose indexes and whose columns were not all read says the indexes.
     [Fact]
     public void A_table_refused_for_two_reasons_says_the_one_insert_throws()
     {
-        CopyOf("V2003", "common2V2003.mdb");
-        using (var db = Database.Open(_path))
-            Assert.True(db.GetTable("MSP_PROJECTS").Definition.HasUnreadColumns);
-        AssertRefuses("MSP_PROJECTS", "indexes cannot be kept: they were not all read");
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32) }, primaryKey: "A").Insert(new Row { ["A"] = 1 });
+
+        AssertRefuses("T", "indexes cannot be kept: they were not all read", table =>
+        {
+            table.Definition.HasUnreadColumns = true;
+            table.Definition.HasUnreadIndexes = true;
+        });
     }
 }

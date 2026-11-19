@@ -4,10 +4,10 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Parses the binary content of a Table-Definition (TDEF) page and extracts the
-/// column list plus the Usage-Map references.
+/// Parses a table definition (TDEF) and extracts the column list plus the Usage-Map references. The definition
+/// is read whole, as <see cref="TdefBuffer"/> gives it: its first page and the bytes of every page it goes on to.
 ///
-/// TDEF page layout (Jet4 / Access 2000+):
+/// TDEF layout (Jet4 / Access 2000+):
 ///   [0..62]  TDEF header   (SizeTdefHeader = 63 bytes)
 ///   [63..]   Index row-count blocks  (numIndexes × SizeIndexDefinition)  ← before columns
 ///   [..]     Column definitions      (numCols    × 25 bytes)
@@ -33,8 +33,8 @@ internal static class TdefReader
         // its rows carry: both count the columns Access has deleted, which keep their numbers and places.
         int MaxColumnCount = 0,
         int MaxVarColumnCount = 0,
-        // The columns' names ran past the definition's first page, which is all that is read: the columns are
-        // not all known as Access has them. Reading goes on with what there is; a row is not written by them.
+        // The columns' names ran past the end of the definition, so the columns are not all known as Access has
+        // them: the definition is damaged. Reading goes on with what there is; a row is not written by them.
         bool HasUnreadColumns = false);
 
     /// <summary>Number of slots in an index column block's column array (always 10 in real Access).</summary>
@@ -43,8 +43,8 @@ internal static class TdefReader
     private const short ColumnUnused = unchecked((short)0xFFFF);
 
     /// <summary>
-    /// Reads the TDEF binary and returns the column list and umap references.
-    /// Only Jet4 is fully supported; Jet3 is a best-effort read.
+    /// Reads the TDEF binary - the whole definition (<see cref="TdefBuffer.Read(PageFile, int)"/>) - and returns
+    /// the column list and umap references. Only Jet4 is fully supported; Jet3 is a best-effort read.
     /// </summary>
     public static TdefInfo Read(byte[] page, JetFormat format)
     {
@@ -127,8 +127,8 @@ internal static class TdefReader
         int pos = colDefStart + numCols * colHdrSize;
 
         // Read column names and patch them in
-        // A definition too long for one page goes on to another (the page's bytes 4-7 name it), which is not
-        // read: a column whose name does not end on this page has no name, and the columns after it none either.
+        // A column whose name does not end inside the definition has no name, and the columns after it none
+        // either: only a damaged definition has one.
         int namesRead = 0;
         for (int i = 0; i < numCols && pos + format.SizeNameLength <= page.Length; i++)
         {
@@ -140,11 +140,8 @@ internal static class TdefReader
         bool columnsIncomplete = namesRead < numCols;
 
         // ── Index column blocks + slots + names ──────────────────────────────
-        // Wrapped in try/fallback: a TDEF whose index sections spill past the
-        // current page (via the next-TDEF-page pointer at bytes 4-7) would cause
-        // out-of-bounds reads. Multi-page TDEF traversal is a future slice — for
-        // now, bail to the old skip-with-arithmetic behaviour so plan A's reads
-        // continue working.
+        // A definition whose counts put its index sections past its end is damaged:
+        // they are skipped by arithmetic and not parsed, so reading goes on.
         IReadOnlyList<Index> indexes;
         bool indexesIncomplete = false;
         int indexBlocksEnd = pos
@@ -153,8 +150,7 @@ internal static class TdefReader
 
         if (indexBlocksEnd > page.Length)
         {
-            // Multi-page TDEF: skip past the index sections without parsing them,
-            // matching the pre-step1 behaviour.
+            // Skip past the index sections without parsing them.
             indexes = Array.Empty<Index>();
             pos = indexBlocksEnd;
             for (int i = 0; i < numIndexSlots && pos + format.SizeNameLength <= page.Length; i++)
@@ -199,7 +195,7 @@ internal static class TdefReader
             FreeSpaceUmapRow:     freeRow,
             LvalColumnUmapPages:  lvalUmapPages,
             Indexes:              indexes,
-            // Index blocks past the first page are not parsed, and a block or slot that names a column or a
+            // Index blocks past the definition's end are not parsed, and a block or slot that names a column or a
             // block the definition has not is left out or cut short: the table has indexes that are not in
             // Indexes as Access has them. Reading tolerates that; a write must not trust them.
             HasUnreadIndexes:     indexesIncomplete || numIndexes > 0 && indexBlocksEnd > page.Length,
