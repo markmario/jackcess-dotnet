@@ -46,15 +46,20 @@ changed since 1.2.2.
 - **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
   added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
 
-- **Entries that are no row's are taken out** (#36). A version of this library that did not keep every index
+- **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
   left an entry where a row had been, and an entry under the value a row had before its primary key was changed.
   ACE fails a query that comes to the first ("Not a valid bookmark") and answers one for the second's key with
-  the wrong row, whether or not the right row has an entry beside it. A unique index's entry is now believed
-  only when the row it points at has its key: a row with a value no row has is taken, where it was refused as a
-  duplicate with "another row holds" that value. When an entry is added or taken out under a key that has such
-  entries they are taken out, and a row found under a key it does not have is entered under its own; with
-  `Database.VerifyIndexes`, every entry an index was seen to hold that is no row's goes when the table is next
-  changed. An index with no such entry costs nothing more to write to.
+  the wrong row. An entry that points at no row - a slot deleted or never used, a page that is not the table's -
+  is no row's duplicate, and goes when an entry is added or taken out under its key; with
+  `Database.VerifyIndexes`, every such entry an index was seen to hold goes when the table is next changed. An
+  entry that points at a row of the table is believed, as Access believes it: a row with its key is refused, and
+  the entry stays, whatever this library makes of the row's values - its key for them may not be the one Access
+  wrote, and an entry Access wrote taken out on that judgement is a row Access can then neither find nor update.
+  Only with `Database.VerifyIndexes`, and where the row's key is one this library makes as Access does (not a
+  Date/Time Extended column, #51; not a key cut at 510 bytes in an index of several columns other than Text and
+  Long), is such an entry the row's wrong one: a row with its key is taken, the entry goes, and the row is entered
+  under its own key. A removal that takes out a leaf's last entry reads the next leaf's first, one page more, for
+  another entry under the key. An index with no such entry costs nothing more to write to.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
@@ -81,8 +86,8 @@ changed since 1.2.2.
   in the first, middle and last column, before a Long ascending and descending, after another text, and
   unique), and DAO seeks, updates and deletes the rows this library writes. An entry a version since the cut
   wrote the earlier way is found, and taken out with its row; a rewritten row is entered under Access's key,
-  and with `Database.VerifyIndexes` an index that is looked at has such entries replaced when the table is next
-  changed.
+  and with `Database.VerifyIndexes` an index of Text and Long columns that is looked at has such entries
+  replaced when the table is next changed.
 
 ### Breaking changes to the public API
 

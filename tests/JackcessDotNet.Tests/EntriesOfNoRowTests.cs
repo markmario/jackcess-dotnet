@@ -9,9 +9,12 @@ namespace JackcessDotNet.Tests;
 /// Access follows either - ACE fails a query that comes to the first ("Not a valid bookmark"), a range as well
 /// as the key itself, and answers a query for the second's key with the row that no longer has it - and it does
 /// so whether or not the row that does have the key has an entry of its own beside it. So when this library adds
-/// or takes out an entry under a key a unique index compares, and the tree holds another under that key, the ones
-/// that are no row's are taken out, and a row found under a key it does not have is entered under its own.
-/// ExportMdb.Interop's EarlierEngineFilesInAccessTests asks ACE through the index afterwards.
+/// or takes out an entry under a key a unique index compares, and the tree holds another under that key, one that
+/// points at no row is taken out. One that points at a row is believed, as Access believes it, whatever this
+/// library makes of that row's key (<see cref="AccessEntriesTests"/>): the row is a duplicate. Only with
+/// <see cref="Database.VerifyIndexes"/>, the row's key being one this library makes as Access does, is the entry
+/// the row's wrong one, taken out, and the row entered under its own. ExportMdb.Interop's
+/// EarlierEngineFilesInAccessTests asks ACE through the index afterwards.
 /// <para>
 /// The file is Assets/engine-3ad3aed-rows-in-unique-indexes.mdb (<see cref="LegacyUniqueIndexTests"/> says how it
 /// was made): CodeUnique has an entry for 200 that points at no row, and Renamed's primary key an entry for 2
@@ -75,14 +78,31 @@ public sealed class EntriesOfNoRowTests : IDisposable
         Assert.Throws<ConstraintViolationException>(() => read.GetTable("Codes").Insert(Code(7, 200)));
     }
 
+    // Believed, the entry for 2 is the row's that it points at, whatever that row's key: a row with Id 2 is refused,
+    // as ACE refuses it in this file, and nothing changes.
     [Fact]
-    public void a_row_added_under_a_key_whose_entry_points_at_a_row_with_another_key_is_taken_and_that_row_is_entered_under_its_own()
+    public void a_row_added_under_a_key_whose_entry_points_at_a_row_is_refused_whatever_that_row_s_key()
+    {
+        using var db = Database.Open(_path);
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" }));
+        IndexChecks.AssertUnchanged(before, db);
+        Assert.Equal(new[] { "7" }, InTheIndex(db, "Renamed", "PrimaryKey", 2));
+    }
+
+    // Verified, the row's key is seen to be 7, which this library makes as Access does: the entry for 2 is its
+    // wrong one, the row with Id 2 is taken, and the row that is 7 is entered under 7.
+    [Fact]
+    public void with_indexes_verified_a_row_added_under_a_key_whose_entry_points_at_a_row_with_another_key_is_taken_and_that_row_is_entered_under_its_own()
     {
         Assert.Equal(new[] { "7" }, InTheIndex("Renamed", "PrimaryKey", 2));
         Assert.Empty(InTheIndex("Renamed", "PrimaryKey", 7));
 
         using (var db = Database.Open(_path))
+        {
+            db.VerifyIndexes = true;
             db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" });
+        }
 
         Assert.Equal(new[] { "2" }, InTheIndex("Renamed", "PrimaryKey", 2));
         Assert.Equal(new[] { "7" }, InTheIndex("Renamed", "PrimaryKey", 7));
@@ -94,18 +114,20 @@ public sealed class EntriesOfNoRowTests : IDisposable
     }
 
     /// <summary>
-    /// Another row is 7 already, added while the key held nothing under 7. The row that was found under 2 is
-    /// entered under 7 beside it all the same: the two are duplicates whatever the key says, and a row is not left
-    /// without an entry for having had a wrong one. The new row is the one found under 2.
+    /// Another row is 7 already, added while the key, believed, held nothing under 7 - as ACE adds it. Verified, the
+    /// row that was found under 2 is entered under 7 beside it all the same: the two are duplicates whatever the
+    /// key says, and a row is not left without an entry for having had a wrong one. The new row is the one found
+    /// under 2.
     /// </summary>
     [Fact]
     public void a_row_found_under_a_key_it_does_not_have_is_entered_under_its_own_beside_a_row_that_has_it()
     {
         using (var db = Database.Open(_path))
+            db.GetTable("Renamed").Insert(new Row { ["Id"] = 7, ["Name"] = "second 7" });   // added: the key has nothing under 7
+        using (var db = Database.Open(_path))
         {
-            var renamed = db.GetTable("Renamed");
-            renamed.Insert(new Row { ["Id"] = 7, ["Name"] = "second 7" });   // added: the key has nothing under 7
-            renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" });
+            db.VerifyIndexes = true;
+            db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" });
         }
 
         using var read = Database.Open(_path);
@@ -116,8 +138,9 @@ public sealed class EntriesOfNoRowTests : IDisposable
 
     /// <summary>
     /// Entries in a chain: 1 points at the row that is 2, and 2 at the row that is 3, which has no entry under 3.
-    /// A row added as 1 moves the first to 2, and what is under 2 is not a row that is 2 either: it moves to 3 in
-    /// its turn. Taken for a row with the key because it points at a row, it left the row that is 2 with no entry.
+    /// Believed, the entry for 1 is a row's, and a row added as 1 is refused with nothing changed. Verified, a row
+    /// added as 1 moves the first to 2, and what is under 2 is not a row that is 2 either: it moves to 3 in its
+    /// turn. Taken for a row with the key because it points at a row, it left the row that is 2 with no entry.
     /// </summary>
     [Fact]
     public void entries_that_each_point_at_the_row_of_the_next_key_are_each_moved_to_their_row_s_own()
@@ -145,7 +168,16 @@ public sealed class EntriesOfNoRowTests : IDisposable
             }
 
             using (var db = Database.Open(path))
+            {
+                var before = IndexChecks.AllPages(db);
+                Assert.Throws<ConstraintViolationException>(() => db.GetTable("T").Insert(new Row { ["Id"] = 1, ["Name"] = "row 1" }));
+                IndexChecks.AssertUnchanged(before, db);
+            }
+            using (var db = Database.Open(path))
+            {
+                db.VerifyIndexes = true;
                 db.GetTable("T").Insert(new Row { ["Id"] = 1, ["Name"] = "row 1" });
+            }
 
             using var read = Database.Open(path);
             IndexChecks.AssertEveryIndexHoldsTheRows(read, "T", expectedRows: 4);
@@ -155,8 +187,8 @@ public sealed class EntriesOfNoRowTests : IDisposable
 
     /// <summary>
     /// An entry goes and its row's own comes, or neither: the file is made to fail at each page write of the
-    /// insert in turn, and after every failure the row that is 7 has one entry in the key, under 2 as it was or
-    /// under 7 - never none.
+    /// insert in turn, indexes verified, and after every failure the row that is 7 has one entry in the key, under
+    /// 2 as it was or under 7 - never none.
     /// </summary>
     [Fact]
     public void a_row_keeps_an_entry_whichever_page_write_fails_while_its_entry_is_moved()
@@ -168,6 +200,7 @@ public sealed class EntriesOfNoRowTests : IDisposable
             bool done;
             using (var db = Database.Open(_path))
             {
+                db.VerifyIndexes = true;
                 db.File.WritesBeforeFailure = writes;
                 try { db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" }); done = true; }
                 catch (IOException) { done = false; }
@@ -239,9 +272,12 @@ public sealed class EntriesOfNoRowTests : IDisposable
         finally { File.Delete(path); }
     }
 
-    /// <summary>The same for an entry under a whole key that points at a row with another code: it goes, and that row keeps the entry it has.</summary>
+    /// <summary>
+    /// The same for an entry under a whole key that points at a row with another code: believed, it is that row's,
+    /// and a row with the long code is refused; verified, it goes, and that row keeps the entry it has.
+    /// </summary>
     [Fact]
-    public void an_entry_under_a_whole_key_that_points_at_a_row_with_another_key_goes_too()
+    public void an_entry_under_a_whole_key_that_points_at_a_row_with_another_key_goes_too_with_indexes_verified()
     {
         string path = LongKeyFile("engine-696ca52-long-keys-row-deleted.mdb");
         try
@@ -262,7 +298,17 @@ public sealed class EntriesOfNoRowTests : IDisposable
                 WriterOf(db).Remove(target, whole, gone);
                 WriterOf(db).Insert(target, whole, other);
                 Assert.Equal((24, 25, 0), CodedKey(db));   // every entry points at a row: one of them at the wrong one
-
+            }
+            using (var db = Database.Open(path))
+            {
+                var before = IndexChecks.AllPages(db);
+                Assert.Throws<ConstraintViolationException>(() => db.GetTable("Coded").Insert(new Row { ["Code"] = Long255, ["N"] = 99 }));
+                IndexChecks.AssertUnchanged(before, db);
+            }
+            using (var db = Database.Open(path))
+            {
+                db.VerifyIndexes = true;
+                var coded = db.GetTable("Coded");
                 coded.Insert(new Row { ["Code"] = Long255, ["N"] = 99 });
                 Assert.Equal((25, 25, 0), CodedKey(db));
                 Assert.Equal(99, coded.FindRowByPrimaryKey(Long255)?["N"]);
@@ -279,7 +325,7 @@ public sealed class EntriesOfNoRowTests : IDisposable
         using (var db = Database.Open(_path))
         {
             db.GetTable("Codes").Validate(Code(6, 200));
-            db.GetTable("Renamed").Validate(new Row { ["Id"] = 2, ["Name"] = "new 2" });
+            Assert.Throws<ConstraintViolationException>(() => db.GetTable("Renamed").Validate(new Row { ["Id"] = 2, ["Name"] = "new 2" }));
         }
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a check altered the file");
     }

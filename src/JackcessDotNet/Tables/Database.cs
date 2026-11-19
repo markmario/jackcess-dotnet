@@ -190,12 +190,16 @@ public sealed class Database : IDisposable
     /// <b>Entries that are no row's:</b> those versions also left entries behind - one that points where a row
     /// was, and one under the value a row had before its primary key was changed, which points at the row under
     /// the value it has. Access follows both: it fails a query that comes to the first ("Not a valid bookmark")
-    /// and answers one for the second's key with that row. With or without this option, a unique index's entry
-    /// is believed only when the row it points at has its key, so a value no row has is taken; and when an entry
-    /// is added or taken out under a key that has such entries, they are taken out, and a row found under a key
-    /// it does not have is entered under its own (#36). With the option, every entry an
-    /// index was seen to hold that is no row's is taken out when the table's indexes are next changed, whatever
-    /// the key. A row with no entry at all is not given one: compacting the file in Access rebuilds its indexes.
+    /// and answers one for the second's key with that row. With or without this option, an entry that points at
+    /// no row is no row's duplicate, and goes when an entry is added or taken out under its key (#36); an entry
+    /// that points at a row of the table is believed, as Access believes it, and a row with its key is refused.
+    /// With the option, every entry an index was seen to hold that points at no row is taken out when the table's
+    /// indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where
+    /// that key is one this library makes as Access does, is the row's wrong one: a row with the entry's key is
+    /// taken, the entry goes, and the row is entered under its own key. Where this library's key for a row may not
+    /// be Access's - a Date/Time Extended column (#51), or a key cut at 510 bytes in an index of several columns
+    /// other than Text and Long ones - the entry is believed with the option too. A row with no entry at all is
+    /// not given one: compacting the file in Access rebuilds its indexes.
     /// </para>
     /// </summary>
     public bool VerifyIndexes

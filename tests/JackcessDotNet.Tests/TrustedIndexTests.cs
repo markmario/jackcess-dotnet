@@ -145,9 +145,7 @@ public sealed class TrustedIndexTests : IDisposable
     /// <summary>
     /// The statements ACE was given, in the order it was given them, and what it did with each: it added the
     /// second row with Code 300, with Code 250 and with Id 7, and refused Id 2, which the primary key has an
-    /// entry for, and Code 100, which a row has. This library does the same but for Id 2: the entry for 2 points
-    /// at the row that is 7, so no row has 2, and the row is taken and that entry taken out (#36) - ACE, asked
-    /// for Id 2 through the key, then answers with the new row and not with a row that is 7.
+    /// entry for, and Code 100, which a row has.
     /// </summary>
     [Fact]
     public void a_duplicate_of_a_row_a_unique_index_does_not_hold_is_added_as_access_adds_it()
@@ -162,13 +160,12 @@ public sealed class TrustedIndexTests : IDisposable
             codes.Insert(new Row { ["Id"] = 5, ["Code"] = 250, ["Name"] = "c5" });
             renamed.Insert(new Row { ["Id"] = 7, ["Name"] = "r7" });
 
-            renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" });
-            Assert.Throws<ConstraintViolationException>(() => renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "another 2" }));
+            Assert.Throws<ConstraintViolationException>(() => renamed.Insert(new Row { ["Id"] = 2, ["Name"] = "r2" }));
             Assert.Throws<ConstraintViolationException>(() => codes.Insert(new Row { ["Id"] = 8, ["Code"] = 100, ["Name"] = "c8" }));
         }
 
         Assert.Equal(new[] { "1 100", "2 250", "3 300", "4 300", "5 250" }, Rows("Codes", "Id", "Code"));
-        Assert.Equal(new[] { "1 r1", "2 new 2", "7 r2", "7 r7" }, Rows("Renamed", "Id", "Name").OrderBy(r => r, StringComparer.Ordinal));
+        Assert.Equal(new[] { "1 r1", "7 r2", "7 r7" }, Rows("Renamed", "Id", "Name"));
     }
 
     /// <summary>

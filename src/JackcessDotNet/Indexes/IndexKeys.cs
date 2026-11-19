@@ -79,6 +79,23 @@ internal static class IndexKeys
     public static bool IsCut(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
         => EncodeWhole(columns, values).Length > MaxKeyLength;
 
+    /// <summary>
+    /// True when the key <see cref="Encode"/> makes of <paramref name="values"/> is the key Access writes for them,
+    /// as far as it has been measured against ACE: the keys of every type this library writes, but for a Date/Time
+    /// Extended column, which Access keys by the bytes it stored, one of the two forms of which this library reads
+    /// as no value (#51); and for a key cut at <see cref="MaxKeyLength"/> in an index of several columns, only where
+    /// those columns are Text and Long, the shapes the cut was measured in (#56). An entry is judged by such a key
+    /// alone: anywhere else, what an index holds for a row is believed.
+    /// </summary>
+    public static bool MatchesAccess(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+    {
+        foreach (var column in columns)
+            if (column.Column.DataType == DataType.DateTimeExtended) return false;
+        return columns.Count == 1
+            || columns.All(c => c.Column.DataType is DataType.Text or DataType.Int32)
+            || !IsCut(columns, values);
+    }
+
     /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
     internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {

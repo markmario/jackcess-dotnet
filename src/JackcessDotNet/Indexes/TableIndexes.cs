@@ -28,12 +28,15 @@ namespace JackcessDotNet;
 /// (<see cref="HoldsEveryRow"/>), and a unique index is looked at the same way before a row is compared with it,
 /// the rows it does not hold being compared too (<see cref="EnsureNoDuplicates"/>).
 ///
-/// One thing an index says is not taken at its word, since Access cannot use the file it leaves: an entry that
-/// is no row's - one that points at no row, or at a row that does not have its key, as a version of this library
-/// that did not keep the index left them (#36). A unique index's entry is another row's only when that row has
-/// the key; and when an entry is added or taken out under a key such entries are under, they are taken out
-/// (<see cref="TakeOutIfNoRows"/>), and a row found under a key it does not have is entered under its own. An
-/// index that is as its rows are has none, and no row is read to find out.
+/// An entry that points at no row is not taken at its word, since Access fails a query that comes to one: a
+/// version of this library that did not keep the index left them (#36). Such an entry is no row's duplicate, and
+/// when an entry is added or taken out under a key such entries are under, they are taken out
+/// (<see cref="TakeOutIfNoRows"/>). An entry that points at a row of the table is believed, as Access believes it,
+/// whatever this library makes of the row's values, which it may not key as Access does: it makes a row with its
+/// key a duplicate, and stays. Only with <see cref="Database.VerifyIndexes"/>, and where the row's key is one this
+/// library makes as Access does (<see cref="IndexKeys.MatchesAccess"/>), is an entry under another key the row's
+/// wrong one, moved to the row's own key. An index that is as its rows are has no such entry, and no row is read
+/// to find out.
 /// </summary>
 internal sealed class TableIndexes
 {
@@ -253,9 +256,9 @@ internal sealed class TableIndexes
                 if (forEntry) writer.RememberPagesRead();
             }
             var notHeld = RowsNotHeldBy(tree);
-            foreach (var (_, holder) in StoredUnder(writer, entry))
+            foreach (var (stored, holder) in StoredUnder(writer, entry))
             {
-                if (holder == replacedRowPointer || !IsOfItsRow(tree, entry.Key, holder)) continue;
+                if (holder == replacedRowPointer || !IsDuplicateOf(tree, stored, holder)) continue;
                 throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             }
             if (notHeld.AnotherHas(entry.Key, replacedRowPointer))
@@ -374,8 +377,9 @@ internal sealed class TableIndexes
         // Room for every row at once, by the definition's count of them (kept within reason, should it be wrong).
         int rows    = Math.Min(Math.Max(ByteUtil.GetInt(_file.ReadPage(_table.TdefPageNumber), format.TdefOffsetNumRows), 0), 1 << 24);
         var unfound = trees.Select(_ => new Dictionary<int, byte[]>(rows)).ToList();
-        // The rows a tree is not asked about: their columns all null in an index that ignores nulls, or a value no
-        // key is made for. An entry that points at one is left as it is.
+        // The rows a tree is not asked about: their columns all null in an index that ignores nulls, a value no
+        // key is made for, or a key this library does not make as Access does (IndexKeys.MatchesAccess), which
+        // cannot say whose an entry is. An entry that points at one is left as it is.
         var unasked = trees.Select(_ => new HashSet<int>()).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
@@ -397,6 +401,7 @@ internal sealed class TableIndexes
                     bool keyed = !(nulls == values.Length && tree.IgnoreNulls);
                     for (int i = 0; keyed && i < values.Length; i++)
                         keyed = IndexKeys.CanEncode(tree.Columns[i].Column, values[i]);
+                    keyed = keyed && IndexKeys.MatchesAccess(tree.Columns, values);
                     if (keyed) unfound[t][RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
                     else unasked[t].Add(RowPointer.Pack(pageNumber, r));
                 }
@@ -535,10 +540,16 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Takes the entry (<paramref name="key"/>, <paramref name="pointer"/>) out of <paramref name="tree"/> when it
-    /// is no row's: it points at no row, or at a row that does not have that key. Access follows such an entry:
-    /// it fails a query that comes to the first kind ("Not a valid bookmark"), and answers one for the key with
-    /// the row of the second. A row found under a key it does not have is entered under its own, so that Access
-    /// finds it by the values it has: no row is left without an entry for having had a wrong one.
+    /// is no row's: it points at no row - a slot deleted or never used, or a page that is not one of the table's.
+    /// Access fails a query that comes to such an entry ("Not a valid bookmark").
+    /// <para>
+    /// An entry that points at a row of the table is believed, as Access believes it, whatever this library makes
+    /// of the row's values: its key for them may not be the one Access wrote, and an entry Access wrote taken out
+    /// on that judgement is a row Access can then neither find nor update. Only with
+    /// <see cref="Database.VerifyIndexes"/>, and where the row's key is one this library makes as Access does
+    /// (<see cref="IndexKeys.MatchesAccess"/>), is an entry under another key the row's wrong one: it goes, and the
+    /// row is entered under its own key, so that it is not left without an entry for having had a wrong one.
+    /// </para>
     /// <para>
     /// All of it or none: the entry goes and the row's own comes inside one undo scope (the one already open,
     /// when a larger change has one), so a failure part-way leaves the index as it was.
@@ -547,7 +558,7 @@ internal sealed class TableIndexes
     private void TakeOutIfNoRows(IndexWriter writer, Tree tree, byte[] key, int pointer)
     {
         var row = RowAt(tree, pointer);
-        if (IsItsRows(row, key)) return;
+        if (IsItsRows(row, key) || row.IsRow && !_file.VerifyIndexes) return;
 
         var entered = new List<int>();
         if (_file.IsUndoing) Move(writer, tree, key, pointer, row, entered, depth: 0);
@@ -575,7 +586,8 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Takes the entry (<paramref name="key"/>, <paramref name="pointer"/>), which is not <paramref name="row"/>'s,
-    /// out of the tree, and enters the row, when there is one, under its own key. What is under that key already
+    /// out of the tree, and enters the row, when there is one, under its own key - which happens only with
+    /// <see cref="Database.VerifyIndexes"/> (<see cref="TakeOutIfNoRows"/>). What is under that key already
     /// is looked at the same way first: an entry that points at no row goes, and one that points at a row with
     /// yet another key is moved in its turn (an earlier version could leave 1 pointing at the row that is 2 and 2
     /// at the row that is 3). An entry of a row that does have the key stays, and the row is entered beside it:
@@ -601,17 +613,30 @@ internal sealed class TableIndexes
         entered.Add(pointer);
     }
 
-    /// <summary>Whether an entry under <paramref name="key"/> is the entry of <paramref name="row"/>, which it points at: a row that has that key, or one no key is made for, which is believed.</summary>
+    /// <summary>
+    /// Whether an entry under <paramref name="key"/> is the entry of <paramref name="row"/>, which it points at: a
+    /// row that has that key, or one whose key this library does not make as Access does, which is believed.
+    /// </summary>
     private static bool IsItsRows(Pointee row, byte[] key)
         => row.IsRow && (row.Own is not { } own || KeysMatch(key, own.Key));
 
-    /// <summary>Whether the entry (<paramref name="key"/>, <paramref name="pointer"/>) of <paramref name="tree"/> points at a row that has that key.</summary>
-    private bool IsOfItsRow(Tree tree, byte[] key, int pointer) => IsItsRows(RowAt(tree, pointer), key);
+    /// <summary>
+    /// Whether the entry (<paramref name="key"/>, <paramref name="pointer"/>), under the key of a row about to be
+    /// written to a unique index of <paramref name="tree"/>, makes that row a duplicate. It does when it points at
+    /// a row of the table: Access trusts its index and refuses the row, and so does this library, whatever it makes
+    /// of that row's values - its key for them may not be the one Access wrote. With
+    /// <see cref="Database.VerifyIndexes"/> it does not when that row's key is one this library makes as Access
+    /// does (<see cref="IndexKeys.MatchesAccess"/>) and is another: the entry is then the row's wrong one, and is
+    /// moved to the row's own key when the table is next changed. An entry that points at no row makes no row a
+    /// duplicate.
+    /// </summary>
+    private bool IsDuplicateOf(Tree tree, byte[] key, int pointer)
+        => IsLiveRow(pointer) && (!_file.VerifyIndexes || IsItsRows(RowAt(tree, pointer), key));
 
     // A key as an entry holds it and a row's key, which is cut: a whole key an earlier version wrote is the row's
     // when, cut, it is. One an earlier version cut with another digest (Entry.EarlierKey) is not: Access cannot
-    // update or delete a row under it, so it is taken out and the row entered under its own key, as an entry of no
-    // row is (#56).
+    // update or delete a row under it, so with VerifyIndexes it is moved to the row's own key, as a row's wrong
+    // entry is (#56).
     private static bool KeysMatch(byte[] stored, byte[] rowsKey)
         => (stored.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(stored) : stored).AsSpan().SequenceEqual(rowsKey);
 
@@ -628,7 +653,11 @@ internal sealed class TableIndexes
         /// <summary>False when no row of the table is there.</summary>
         internal bool   IsRow    { get; }
 
-        /// <summary>The row's own entry in the tree, by its values; null when one of them is a value no key is made for.</summary>
+        /// <summary>
+        /// The row's own entry in the tree, by its values; null when its key may not be the one Access writes: a
+        /// value no key is made for, or a key this library does not make as Access does
+        /// (<see cref="IndexKeys.MatchesAccess"/>), or values that cannot be read.
+        /// </summary>
         internal Entry? Own      { get; }
 
         /// <summary>False for a row the tree holds no entry for: its columns all null in an index that ignores nulls.</summary>
@@ -645,8 +674,10 @@ internal sealed class TableIndexes
     private Pointee RowAt(Tree tree, int rowPointer)
     {
         if (!IsLiveRow(rowPointer)) return default;
+        // A row whose key may not be Access's is a row all the same, and what the index holds for it is believed.
+        var believed = new Pointee(isRow: true, own: null, hasEntry: true);
         byte[] page = _file.ReadPage(RowPointer.Page(rowPointer));
-        if (DataRows.Read(_file, page, RowPointer.Row(rowPointer)) is not { } rowBytes) return default;
+        if (DataRows.Read(_file, page, RowPointer.Row(rowPointer)) is not { } rowBytes) return believed;
 
         _keyDecoder ??= new RowDecoder(_file.Format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
         var row = new Row();
@@ -657,7 +688,8 @@ internal sealed class TableIndexes
         var values = ValuesIn(tree, row, out int nulls);
         for (int i = 0; i < values.Length; i++)
             if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i]))
-                return new Pointee(isRow: true, own: null, hasEntry: true);
+                return believed;
+        if (!IndexKeys.MatchesAccess(tree.Columns, values)) return believed;
 
         return new Pointee(isRow: true, EntryOf(tree, values, nulls > 0),
                            hasEntry: !(nulls == values.Length && tree.IgnoreNulls));

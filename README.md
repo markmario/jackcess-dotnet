@@ -344,33 +344,43 @@ in Access since.** Compacting rebuilds the indexes, and the option is then needl
   the table's rows while it is read.
 - **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
   is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
-- **Every entry seen to be no row's is taken out** when the table's indexes are next changed, whatever the key
-  (below). A row with no entry at all is not given one: nothing here rebuilds an index, and
-  `DBEngine.CompactDatabase` does.
+- **Every entry seen to point at no row is taken out** when the table's indexes are next changed, whatever the
+  key, and an entry seen to be a row's wrong one is moved to the row's key where that key is certain (below). A
+  row with no entry at all is not given one: nothing here rebuilds an index, and `DBEngine.CompactDatabase` does.
 
 **Entries that are no row's** ([#36](https://github.com/markmario/jackcess-dotnet/issues/36)). Those versions also
 left entries behind: one that points where a row was, and one under the value a row had before its primary key
 was changed, pointing at the row under the value it has. Access follows both. Measured with ACE on such a file:
 a query that comes to the first fails with "Not a valid bookmark" - for the key, and for any range that passes
 it - and goes on failing when the row that has the key has an entry beside it; a query for the second's key is
-answered with the row that no longer has it, and that row is not found under the value it has. With or without
-`VerifyIndexes`:
+answered with the row that no longer has it, and that row is not found under the value it has.
 
-- a unique index's entry is believed only when the row it points at has its key, so a value no row has is
-  taken, where Access with the same file refuses it;
-- when an entry is added or taken out under a key a unique index compares, and the tree holds another under that
-  key, the ones that are no row's are taken out, and a row found under a key it does not have is entered under
-  its own, so no row is left without an entry for having had a wrong one. What is under that key already is
-  looked at the same way, an entry that is itself a wrong one being moved in its turn; beside a row that does
-  have the key the row is entered all the same - the two are duplicates whatever the index says. An entry goes
-  and its row's own comes, or neither: a failure part-way is undone. A long key an earlier version wrote whole
-  is looked for in that form too. Access then finds the rows through the index. An index that is as its rows
-  are has no such entry, and nothing is read to look for one: the pages an insert reads are the ones it read
-  before.
+- **An entry that points at no row** - a slot deleted or never used, a row number past the page's rows, a page
+  that is not one of the table's - is no row's duplicate, and when an entry is added or taken out under a key a
+  unique index compares and the tree holds another under that key, it is taken out. A long key an earlier
+  version wrote whole is looked for in that form too, and a removal that takes out a leaf's last entry reads the
+  next leaf's first, one page more, since the next leaf can begin under the same key.
+- **An entry that points at a row of the table is believed**, as Access believes it, whatever this library
+  makes of that row's values: a row with its key is refused as a duplicate, and the entry stays. This library's
+  key for a row may not be the one Access wrote - a Date/Time Extended value in the second form ACE stores is
+  read as no value ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - and an entry Access wrote,
+  taken out on that judgement, is a row Access can then neither find, update nor delete. A row an index does not
+  hold is a duplicate of nothing, as it is to Access, unless `VerifyIndexes` is set.
+- **With `VerifyIndexes`**, every entry an index was seen to hold that points at no row goes when the table's
+  indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where that
+  key is one this library makes as Access does, is that row's wrong one: a row with the entry's key is taken,
+  the entry goes, and the row is entered under its own key, so that no row is left without an entry for having
+  had a wrong one. What is under that key already is looked at the same way, an entry that is itself a wrong one
+  being moved in its turn; beside a row that does have the key the row is entered all the same - the two are
+  duplicates whatever the index says. An entry goes and its row's own comes, or neither: a failure part-way is
+  undone. A key is one this library makes as Access does for every type it writes but Date/Time Extended, and,
+  cut at 510 bytes in an index of several columns, only where those columns are Text and Long, the shapes that
+  were measured.
 
-An index that is not unique is not looked at this way without `VerifyIndexes` - its entries under one key are
-its rows' - and an entry whose row has gone does no harm to this library either way: each row found is read and
-compared.
+An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
+insert reads are the ones it read before. An index that is not unique is not looked at this way without
+`VerifyIndexes` - its entries under one key are its rows' - and an entry whose row has gone does no harm to this
+library either way: each row found is read and compared.
 
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
 earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
@@ -696,8 +706,8 @@ entry for such a key:
   whole, or cut with the earlier digest, replaces it with Access's; nothing
   converts rows that are not written, except that with
   `Database.VerifyIndexes` an index that is looked at (a unique one, or a
-  relationship's) has entries cut with the earlier digest replaced when its
-  table is next changed.
+  relationship's) of Text and Long columns has entries cut with the earlier
+  digest replaced when its table is next changed.
 - **Uniqueness** follows Access: two values cut to the same entry are
   duplicates, whichever way the existing one is stored. A file an earlier
   release wrote may hold two such rows (their whole keys differed); neither

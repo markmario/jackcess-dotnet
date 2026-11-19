@@ -294,7 +294,7 @@ internal sealed class IndexWriter
     /// last entry's child becomes the tail), an entry copying the last entry under a page follows it when that
     /// changes, and a root left with one child gives way to it. An entry the tree does not hold is no change.
     /// Returns whether the tree holds another entry under <paramref name="key"/> beside the one taken out, as
-    /// <see cref="Insert"/> does; false when it held no such entry.
+    /// <see cref="Insert"/> does, the first of the next leaf among them; false when it held no such entry.
     /// </summary>
     internal bool Remove(Target target, byte[] key, int rowPointer)
     {
@@ -312,6 +312,14 @@ internal sealed class IndexWriter
         int at = page.Entries.FindIndex(e => Compare(e, entry) == 0);
         if (at < 0) return false;
         bool another = HasNeighbourUnder(key, page.Entries, at - 1, at + 1, path);
+        // Entries are in the order of their keys and then of their rows, so the leaf after this one can begin under
+        // the key of this one's last entry: when that is the one taken out, the next leaf's first entry is read too
+        // - one page more for a removal at the end of a leaf, and none for any other.
+        if (!another && at == page.Entries.Count - 1 && page.Next > 0)
+        {
+            var next = ReadFor(target, page.Next);
+            another = next.Entries.Count > 0 && CompareBytes(next.Entries[0].Key, key) == 0;
+        }
         page.Entries.RemoveAt(at);
         page.Level = 0;
 

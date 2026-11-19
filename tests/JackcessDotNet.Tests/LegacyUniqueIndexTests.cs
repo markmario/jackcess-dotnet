@@ -140,10 +140,12 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     }
 
     /// <summary>
-    /// An entry is believed when it is a row's: when the row it points at has its key. Codes 200 is an entry that
-    /// points where a row was, and Renamed 2 one that points at the row that is now 7: no row has either value,
-    /// so each is taken, once (#36). The entry that was no row's goes when the new row's is added, and the row
-    /// that is 7 is entered under 7 - so the index leads to the new row, as ACE was seen to need, and to no other.
+    /// Verified, an entry is believed when it is a row's: when the row it points at has its key, made as Access
+    /// makes it. Codes 200 is an entry that points where a row was, and Renamed 2 one that points at the row that
+    /// is now 7: no row has either value, so each is taken, once (#36). The entry that was no row's goes when the
+    /// new row's is added, and the row that is 7 is entered under 7 - so the index leads to the new row, as ACE was
+    /// seen to need, and to no other. (Believed, as an index is by default, Renamed 2 is a row's, and refused:
+    /// <see cref="EntriesOfNoRowTests"/>.)
     /// </summary>
     [Fact]
     public void a_value_a_row_had_before_the_earlier_release_changed_it_is_taken_and_the_entry_that_was_left_goes()

@@ -1,0 +1,239 @@
+using System.IO;
+using JackcessDotNet.Util;
+using Xunit;
+
+namespace JackcessDotNet.Tests;
+
+/// <summary>
+/// What an index says of a row that is there is believed (a review of #52). An entry is judged a row's by making
+/// the row's key and comparing, and where this library's key for a row is not the one Access wrote, an entry
+/// Access wrote looks like one that is no row's. Taken out on that judgement, ACE could not then find, update or
+/// delete the row, and took a duplicate of it; believed, nothing is lost. So an entry that points at a row of the
+/// table is never taken out or moved by default, and makes a row with its key a duplicate whatever this library
+/// makes of the row it points at. One that points at no row - a slot deleted or never used, a page that is not one
+/// of the table's - may go when an entry is added or taken out under its key, and is no row's duplicate. With
+/// <see cref="Database.VerifyIndexes"/>, a row's wrong entry is moved to the row's own key only where that key is
+/// one this library makes as Access does (<see cref="IndexKeys.MatchesAccess"/>).
+/// <para>
+/// Assets/ace-divergent-keys.accdb (tools/ace-divergent-keys.ps1) is a file ACE made, with rows whose keys this
+/// library does not make as Access does: Date/Time Extended values in the second form ACE stores, which this
+/// library reads as no value (#51), and keys of several columns cut at 510 bytes, which it did not make as Access
+/// does before #56. The other files here are made by the tests, as an earlier version of this library left them.
+/// </para>
+/// </summary>
+public sealed class AccessEntriesTests : IDisposable
+{
+    private readonly List<string> _paths = new();
+
+    public void Dispose()
+    {
+        foreach (var path in _paths)
+            if (File.Exists(path)) File.Delete(path);
+    }
+
+    private string Copy(string asset)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"access_entries_{Guid.NewGuid():N}{Path.GetExtension(asset)}");
+        _paths.Add(path);
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", asset), path);
+        File.SetAttributes(path, FileAttributes.Normal);
+        return path;
+    }
+
+    private string NewPath()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"access_entries_{Guid.NewGuid():N}.mdb");
+        _paths.Add(path);
+        return path;
+    }
+
+    private static IndexWriter WriterOf(Database db) => new(db.File, new PageAllocator(db.File));
+
+    private static int PointerOf(Table table, string column, object value)
+    {
+        var cursor = table.CreateCursor();
+        while (cursor.MoveNext())
+            if (Equals(cursor.Current![column], value)) return cursor.CurrentRowPointer;
+        throw new InvalidOperationException($"{table.Name} has no row with {column} {value}.");
+    }
+
+    /// <summary>Every entry of every index of <paramref name="table"/>, as "index key -> page/row".</summary>
+    private static HashSet<string> EntriesOf(Database db, string table)
+        => db.GetTable(table).Indexes.SelectMany(ix => JetPages.LeafEntries(db.File, ix.RootPageNumber)
+                                                       .Select(e => $"{ix.Name} {e.Hex} -> {e.RowPage}/{e.Row}")).ToHashSet();
+
+    private static readonly string[] DivergentTables = { "Ext", "Cut", "Dbl", "Dt" };
+
+    // ── A file Access made ──────────────────────────────────────────────────
+
+    // A row added to each table of ACE's file, the indexes believed or verified: every entry Access wrote is
+    // where it was, byte for byte, beside the new rows'. Verified, Ext's rows 2 and 3, whose values this library
+    // reads as no value, were entered under the key of no value, and their entries taken out of the unique index -
+    // three rows under one key, which ACE could then neither find nor update.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_row_added_leaves_every_entry_ACE_wrote_where_it_was(bool verify)
+    {
+        string path = Copy("ace-divergent-keys.accdb");
+        var before = new Dictionary<string, HashSet<string>>();
+        using (var db = Database.Open(path))
+            foreach (string table in DivergentTables) before[table] = EntriesOf(db, table);
+
+        using (var db = Database.Open(path))
+        {
+            db.VerifyIndexes = verify;
+            db.GetTable("Ext").Insert(new Row { ["Id"] = 10, ["Nt"] = "new", ["D"] = new DateTime(2021, 5, 5) });
+            db.GetTable("Cut").Insert(new Row { ["Id"] = 10, ["A"] = "x", ["K"] = 1 });
+            db.GetTable("Dbl").Insert(new Row { ["Id"] = 10, ["X"] = 2.5 });
+            db.GetTable("Dt").Insert(new Row { ["Id"] = 10, ["T"] = new DateTime(2021, 5, 5) });
+        }
+
+        using (var db = Database.Open(path))
+            foreach (string table in DivergentTables)
+            {
+                var after = EntriesOf(db, table);
+                Assert.True(before[table].IsSubsetOf(after), $"{table}: entries ACE wrote are gone: {string.Join("; ", before[table].Except(after).Take(4))}");
+                Assert.Equal(before[table].Count + db.GetTable(table).Indexes.Count, after.Count);   // and one more an index
+            }
+    }
+
+    // ── Entries an earlier version left ─────────────────────────────────────
+
+    /// <summary>
+    /// A unique index on Code as a version that kept only the primary key left it: row A, whose Code is now 2, has
+    /// its entry under 1, as it was, and none under 2; row B, whose Code is 1, was added with no entry.
+    /// </summary>
+    private string StaleEntryAndARowWithout()
+    {
+        string path = NewPath();
+        using var db = Database.Create(path, FileFormat.Access2000);
+        var t = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Code", DataType.Int32) },
+                               new[] { "Id" }, new[] { new IndexDefinition("U", "Code") { IsUnique = true } });
+        t.Insert(new Row { ["Id"] = 1, ["Code"] = 2 });   // A
+        t.Insert(new Row { ["Id"] = 2, ["Code"] = 1 });   // B
+        var u      = t.Indexes.Single(ix => ix.Name == "U");
+        var target = IndexWriter.Target.For(t.Definition.TdefPageNumber, u);
+        byte[] Key(int code) => IndexKeys.Encode(u.Columns, new object?[] { code });
+        int a = PointerOf(t, "Id", 1), b = PointerOf(t, "Id", 2);
+        var writer = WriterOf(db);
+        writer.Remove(target, Key(2), a);
+        writer.Insert(target, Key(1), a);
+        writer.Remove(target, Key(1), b);
+        return path;
+    }
+
+    // A third row with Code 1 is a duplicate of B. Believed, the entry under 1 is a row's, so the row is refused,
+    // as ACE refuses it; verified, the index is known to lack B, which has 1, so it is refused too. Taken, as it
+    // was, the file held two rows with Code 1, and DAO's compaction dropped the index.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_duplicate_of_a_row_the_index_lacks_is_refused_beside_another_row_s_stale_entry(bool verify)
+    {
+        string path = StaleEntryAndARowWithout();
+        using var db = Database.Open(path);
+        db.VerifyIndexes = verify;
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("T").Insert(new Row { ["Id"] = 3, ["Code"] = 1 }));
+        IndexChecks.AssertUnchanged(before, db);
+    }
+
+    // The same of a primary key whose entries an earlier version left in a cycle: 1 points at the row that is 2, 2
+    // at the row that is 3, 3 at the row that is 1. A row with Id 1 is a duplicate, believed or verified.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_duplicate_of_a_primary_key_whose_entries_are_in_a_cycle_is_refused(bool verify)
+    {
+        string path = NewPath();
+        using (var db = Database.Create(path, FileFormat.Access2000))
+        {
+            var t = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 } }, new[] { "Id" });
+            foreach (int id in new[] { 1, 2, 3 }) t.Insert(new Row { ["Id"] = id, ["Name"] = "row " + id });
+            var pk     = t.Indexes.Single();
+            var target = IndexWriter.Target.For(t.Definition.TdefPageNumber, pk);
+            byte[] Key(int id) => IndexKeys.Encode(pk.Columns, new object?[] { id });
+            int r1 = PointerOf(t, "Id", 1), r2 = PointerOf(t, "Id", 2), r3 = PointerOf(t, "Id", 3);
+            var writer = WriterOf(db);
+            writer.Remove(target, Key(1), r1); writer.Remove(target, Key(2), r2); writer.Remove(target, Key(3), r3);
+            writer.Insert(target, Key(1), r2); writer.Insert(target, Key(2), r3); writer.Insert(target, Key(3), r1);
+        }
+        using (var db = Database.Open(path))
+        {
+            db.VerifyIndexes = verify;
+            var before = IndexChecks.AllPages(db);
+            Assert.Throws<ConstraintViolationException>(() => db.GetTable("T").Insert(new Row { ["Id"] = 1, ["Name"] = "new 1" }));
+            IndexChecks.AssertUnchanged(before, db);
+        }
+    }
+
+    // ── Where a row is ──────────────────────────────────────────────────────
+
+    // A row Access moved to another page (an overflow row: its slot holds where its values went) is a row of the
+    // table. An entry that points at it is a row's: a row with that entry's key is refused, and the entry stays.
+    [Fact]
+    public void An_entry_that_points_at_a_row_Access_moved_to_another_page_is_a_row_s()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"access_entries_{Guid.NewGuid():N}.mdb");
+        _paths.Add(path);
+        File.Copy(TestCorpus.File("V2000", "overflowV2000.mdb") ?? throw new FileNotFoundException("overflowV2000.mdb"), path);
+        File.SetAttributes(path, FileAttributes.Normal);
+        using var db = Database.Open(path);
+        var table = db.GetTable("Table1");
+        table.AddIndex(new IndexDefinition("U", "data1") { IsUnique = true });
+        table = db.GetTable("Table1");
+
+        // An overflow row: a slot with 0x4000 alone.
+        int moved = -1;
+        foreach (int page in UsageMap.GetOwnedPages(db.File.ReadPage(table.Definition.UmapPageNumber), table.Definition.OwnedPagesRow, db.File.Format, db.File))
+        {
+            byte[] bytes = db.File.ReadPage(page);
+            for (int row = 0; row < ByteUtil.GetShort(bytes, db.File.Format.OffsetDataNumRows) && moved < 0; row++)
+                if ((ByteUtil.GetUShort(bytes, db.File.Format.OffsetDataRowTable + row * JetFormat.SizeRowEntry) & JetFormat.DeletedRowFlags) == JetFormat.OverflowRowFlag)
+                    moved = RowPointer.Pack(page, row);
+        }
+        Assert.True(moved >= 0, "the file has no overflow row");
+
+        // Its entry moved under a value no row has, as an earlier version could leave an updated row's.
+        var u      = table.Indexes.Single(ix => ix.Name == "U");
+        var target = IndexWriter.Target.For(table.Definition.TdefPageNumber, u);
+        var own    = table.ReadRowAt(moved, table.Columns)!;
+        var writer = WriterOf(db);
+        writer.Remove(target, IndexKeys.Encode(u.Columns, new object?[] { own.TryGetValue("data1", out var value) ? value : null }), moved);
+        writer.Insert(target, IndexKeys.Encode(u.Columns, new object?[] { "nobody's" }), moved);
+
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["data1"] = "nobody's" }));
+        IndexChecks.AssertUnchanged(before, db);
+    }
+
+    // ── A removal that sees the next leaf ───────────────────────────────────
+
+    // A dead entry under a row's key, the first of the leaf after the one that holds the row's entry: entries are in
+    // the order of their keys and then of their rows, so the next leaf can begin with the same key. The row is
+    // deleted, and the dead entry goes with it, as it does when it is beside it on the same leaf.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_deleted_row_takes_a_dead_entry_under_its_key_with_it_from_the_next_leaf_too(bool sameLeaf)
+    {
+        using var db = Database.Create(NewPath(), FileFormat.Access2000);
+        var t = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Code", DataType.Text) { MaxLength = 200 } },
+                               new[] { "Id" }, new[] { new IndexDefinition("U", "Code") { IsUnique = true } });
+        for (int i = 0; i < 300; i++) t.Insert(new Row { ["Id"] = i, ["Code"] = i.ToString("D4") + new string('k', 150) });
+        var u      = t.Indexes.Single(ix => ix.Name == "U");
+        var target = IndexWriter.Target.For(t.Definition.TdefPageNumber, u);
+        var first  = JetPages.TreePages(db.File, u.RootPageNumber).Single(p => p.IsLeaf && p.Prev == 0);
+        var last   = sameLeaf ? first.Entries[^2] : first.Entries[^1];
+        int row    = RowPointer.Pack(last.RowPage, last.Row);
+        int dead   = RowPointer.Pack(last.RowPage, 250);   // past the page's rows
+        WriterOf(db).Insert(target, last.Key, dead);
+        var nextFirst = JetPages.ReadIndexPage(db.File, first.Next).Entries[0];
+        Assert.Equal(!sameLeaf, RowPointer.Pack(nextFirst.RowPage, nextFirst.Row) == dead);
+
+        t.DeleteRowAt(row);
+        Assert.DoesNotContain(JetPages.LeafEntries(db.File, u.RootPageNumber), e => RowPointer.Pack(e.RowPage, e.Row) == dead);
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: 299));
+    }
+}
