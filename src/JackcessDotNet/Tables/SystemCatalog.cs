@@ -13,7 +13,8 @@ namespace JackcessDotNet;
 ///   • that row's entries in MSysObjects' indexes (Id, and ParentIdName, through
 ///     which Access finds a table by name);
 ///   • rows in MSysACEs giving the new table the permissions the Tables container
-///     passes on, with their entries in MSysACEs' index.
+///     passes on - to its owner too, as Access gives them - with their entries in
+///     MSysACEs' index.
 /// </summary>
 internal sealed class SystemCatalog
 {
@@ -44,10 +45,8 @@ internal sealed class SystemCatalog
     private const short CatalogTypeContainer = 3;
 
     /// <summary>
-    /// The permissions a SID holds on the Tables container, passed on to tables
-    /// created in it, that Access gives it on a new table: in the Access-made
-    /// tables of the test corpus, a table has one ACE for each inheritable
-    /// container ACE holding all of these bits, with the same ACM.
+    /// The permissions the owner of a new table is given when its container passes
+    /// none on at all: everything Access gives a SID on a table.
     /// </summary>
     private const int TableFullAccess = 0x000FFEFF;
 
@@ -119,24 +118,37 @@ internal sealed class SystemCatalog
         AddIndexEntries(catalogDef, row, rowPtr);
 
         if (acesDef is not null)
-            InsertAccessControlEntries(acesDef, tablesId, tdefPageNumber, owner);
+            InsertAccessControlEntries(acesDef, tablesId, tdefPageNumber, owner, CreatorOwner(ReadRows(catalogDef, ColName, ColType, ColOwner)));
     }
 
     /// <summary>
-    /// Gives the new object <paramref name="objectId"/> an ACE, not inheritable, for
-    /// each inheritable ACE of the Tables container holding <see cref="TableFullAccess"/>,
-    /// with that ACE's SID and ACM - what Access writes for a table it creates. A
-    /// container without one gives the owner those permissions.
+    /// Gives the new object <paramref name="objectId"/> the permissions its container
+    /// passes on, as Access was seen to give them to a table and to a relationship it
+    /// creates, in files Access made and in this library's own (#37): an ACE, not
+    /// inheritable, for each SID that an inheritable ACE of the container names, with
+    /// that ACE's ACM - and where the container's ACE names the creator of whatever
+    /// is made in it (<paramref name="creatorOwner"/>), the ACE is the new object's
+    /// owner's. A SID named twice has one ACE, with the permissions of both. A
+    /// container that passes nothing on gives the owner everything.
+    /// <para>
+    /// The owner's ACE is what lets Access change the object in an .mdb: without it,
+    /// DAO refuses to read a table this library made in a database DAO created, or to
+    /// drop a relationship it made ("no delete permission").
+    /// </para>
     /// </summary>
-    private void InsertAccessControlEntries(TableDefinition acesDef, int tablesId, int objectId, byte[]? owner)
+    private void InsertAccessControlEntries(TableDefinition acesDef, int tablesId, int objectId, byte[]? owner, byte[]? creatorOwner)
     {
-        var granted = ReadRows(acesDef, AceAcm, AceInheritable, AceObjectId, AceSid)
-            .Where(ace => Value(ace, AceObjectId) is int id && id == tablesId
-                       && Value(ace, AceInheritable) is true
-                       && Value(ace, AceAcm) is int acm && (acm & TableFullAccess) == TableFullAccess
-                       && Value(ace, AceSid) is byte[])
-            .Select(ace => ((int)Value(ace, AceAcm)!, (byte[])Value(ace, AceSid)!))
-            .ToList();
+        var granted = new List<(int Acm, byte[] Sid)>();
+        foreach (var ace in ReadRows(acesDef, AceAcm, AceInheritable, AceObjectId, AceSid))
+        {
+            if (Value(ace, AceObjectId) is not int id || id != tablesId || Value(ace, AceInheritable) is not true
+                || Value(ace, AceAcm) is not int acm || Value(ace, AceSid) is not byte[] sid)
+                continue;
+            if (owner is not null && creatorOwner is not null && sid.AsSpan().SequenceEqual(creatorOwner)) sid = owner;
+            int at = granted.FindIndex(g => g.Sid.AsSpan().SequenceEqual(sid));
+            if (at < 0) granted.Add((acm, sid));
+            else granted[at] = (granted[at].Acm | acm, sid);
+        }
         if (granted.Count == 0 && owner is not null)
             granted.Add((TableFullAccess, owner));
 
@@ -255,7 +267,8 @@ internal sealed class SystemCatalog
         AddIndexEntries(entry.Catalog, row, rowPtr);
 
         if (entry.Aces is not null)
-            InsertAccessControlEntries(entry.Aces, entry.ContainerId, entry.ObjectId, entry.Owner);
+            InsertAccessControlEntries(entry.Aces, entry.ContainerId, entry.ObjectId, entry.Owner,
+                                       CreatorOwner(ReadRows(entry.Catalog, ColName, ColType, ColOwner)));
     }
 
     /// <summary>The name the catalog has for table <paramref name="name"/>, as it spells it, or null when there is no such table.</summary>
@@ -275,6 +288,23 @@ internal sealed class SystemCatalog
             && Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable);
         return system is not null && Value(system, ColOwner) is byte[] { Length: 2 } sid
             ? new[] { (byte)(sid[0] ^ 0x01), (byte)(sid[1] ^ 0x02) }
+            : null;
+    }
+
+    /// <summary>
+    /// The SID a container's ACE names for "whoever creates an object here": the system
+    /// objects' owner with 0x0007 mixed in, in every file looked at - made by DAO and
+    /// from this library's templates, .mdb and .accdb - as the Admin user's is that
+    /// owner with 0x0102 (<see cref="AdminOwner"/>). Null when MSysObjects' own owner
+    /// is not a 2-byte SID.
+    /// </summary>
+    private static byte[]? CreatorOwner(IEnumerable<Row> catalog)
+    {
+        var system = catalog.FirstOrDefault(r =>
+            Value(r, ColName) is string name && name == "MSysObjects"
+            && Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable);
+        return system is not null && Value(system, ColOwner) is byte[] { Length: 2 } sid
+            ? new[] { sid[0], (byte)(sid[1] ^ 0x07) }
             : null;
     }
 
