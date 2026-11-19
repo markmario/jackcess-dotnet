@@ -46,10 +46,19 @@ internal sealed class PageFile : IDisposable
     internal long UndoReadCount { get; private set; }
 
     /// <summary>
-    /// A number that changes whenever the file's pages may have: when one is written, and when a change is taken
-    /// back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by.
+    /// A number that changes whenever this handle writes the file's pages: when one is written, and when a change is
+    /// taken back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by, when
+    /// no one else writes to the file (<see cref="SharedWithWriters"/>).
     /// </summary>
     internal long ChangeStamp { get; private set; }
+
+    /// <summary>
+    /// Whether another program, or another <see cref="Database"/>, may write to the file while this one has it open:
+    /// a file held only to be read shares writing (the constructor). Its pages can change between two readings though
+    /// nothing is written here, so <see cref="ChangeStamp"/> says nothing of them, and a reader keeps a page no longer
+    /// than one move of a cursor (#62).
+    /// </summary>
+    internal bool SharedWithWriters => _openedToRead || _readOnly;
 
     /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written

@@ -40,7 +40,8 @@ public class Cursor : IEnumerable<Row>
     private int  _rowIndex;
     private Row? _currentRow;
 
-    // The page last read, kept while nothing has been written to the file.
+    // The page last read, kept while nothing has been written to the file - and, when another program may write to
+    // it, for one move only (BeginMoving).
     private byte[]? _page;
     private int     _pageNumber = -1;
     private long    _pageStamp;
@@ -150,9 +151,18 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     private protected object BeginMoving()
     {
+        // Another program may write to a file opened only to be read, between two moves: what the cursor kept of its
+        // pages at the last is read again at this one (#62). Within a move, it is kept.
+        if (_moving == 0 && _file.SharedWithWriters) ForgetKeptPages();
         _moving++;
         return Place();
     }
+
+    /// <summary>
+    /// Lets go of the pages the cursor keeps from one move to the next - the data page it is on, and an index cursor's
+    /// leaf - so that the next move reads them from the file again.
+    /// </summary>
+    private protected virtual void ForgetKeptPages() => _page = null;
 
     /// <summary>
     /// Ends what <see cref="BeginMoving"/> began: the cursor is put back to <paramref name="restoreTo"/>, or, when

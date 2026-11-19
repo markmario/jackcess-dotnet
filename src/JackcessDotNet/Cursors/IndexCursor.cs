@@ -203,6 +203,12 @@ public sealed class IndexCursor : Cursor
         return null;
     }
 
+    private protected override void ForgetKeptPages()
+    {
+        base.ForgetKeptPages();
+        _entries.Forget();
+    }
+
     // The entry after the cursor's place, within the range's keys; null at their end.
     private (byte[] Key, int RowPointer)? EntryAfterPlace()
     {
