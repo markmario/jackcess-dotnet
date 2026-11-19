@@ -21,18 +21,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 9.0.x as well as 8.0.x: the solution is a .slnx, and .slnx support only
-      # arrived in the 9.0.2xx SDK. Our global.json rolls forward to latestMajor
-      # so this currently works off whatever the runner image ships - installing
-      # 9.0.x explicitly makes that deterministic instead of incidental.
-      # 10.0.x because the tests need it: global.json has `dotnet test` run
-      # them on Microsoft Testing Platform, which only the 10 SDK's does.
+      # 11.0.x builds everything: the library targets net11.0, and an SDK older
+      # than a project's newest target cannot restore it, so global.json asks
+      # for 11.0.100 or later. It also runs the tests on Microsoft Testing
+      # Platform (global.json), as every SDK from 10 does, and reads the .slnx,
+      # as every SDK from 9.0.2xx does.
+      # 10.0.x for its runtime: the tests run on net10.0 as well as net11.0.
+      # .NET Framework 4.8, the tests' third framework, is part of the runner.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
-            8.0.x
-            9.0.x
             10.0.x
+            11.0.x
 
       # Hash every fixture against tests/corpus/MANIFEST.sha256 BEFORE building.
       # A missing, truncated, edited or newline-mangled .mdb otherwise surfaces
@@ -57,16 +57,43 @@ jobs:
       - name: Restore
         run: dotnet restore JackcessDotNet.slnx
 
-      # The library multi-targets net472 and net8.0; build both so a net472-only
-      # break (missing BCL surface, see Util/FrameworkCompat.cs) fails here and
-      # not in a downstream consumer.
-      - name: Build (net472 + net8.0)
+      # The library multi-targets net10.0, net11.0, net48 and netstandard2.0;
+      # build them all so a break in one (missing BCL surface, see
+      # Util/FrameworkCompat.cs) fails here and not in a downstream consumer.
+      - name: Build (net10.0 + net11.0 + net48 + netstandard2.0)
         run: dotnet build JackcessDotNet.slnx --configuration Release --no-restore
 
       # No --filter. The whole suite runs, corpus tests included: they are the
       # only thing that checks this parser against files real Access wrote.
-      - name: Test
-        run: dotnet test JackcessDotNet.slnx --configuration Release --no-build --report-xunit-trx --report-xunit-trx-filename test-results.trx
+      # One framework to a step: run together they write the same report file
+      # name, and a step of its own says which framework failed.
+      - name: Test (net10.0)
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net10.0 --report-xunit-trx --report-xunit-trx-filename test-results-net10.0.trx
+
+      - name: Test (net11.0)
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net11.0 --report-xunit-trx --report-xunit-trx-filename test-results-net11.0.trx
+
+      # The only test of the library itself on .NET Framework: its net48
+      # assembly has code of its own (Util/FrameworkCompat.cs) and the
+      # framework's own text encodings, hashing, parsing and formatting.
+      - name: Test (net48)
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net48 --report-xunit-trx --report-xunit-trx-filename test-results-net48.trx
+
+      # The fourth target has no runtime of its own, so no test project can
+      # target it. NetStandardAsset has the test project reference the
+      # netstandard2.0 assembly whatever its own framework: on net10.0 it is
+      # loaded as an application on .NET 8 or 9 loads it, and on net48 as one
+      # on .NET Framework 4.7.2 does. A build of its own (bin/Release-netstandard),
+      # after the tests above: it restores the test project again, with the
+      # packages that assembly needs.
+      - name: Build (the tests against the netstandard2.0 assembly)
+        run: dotnet build tests/JackcessDotNet.Tests --configuration Release -p:NetStandardAsset=true
+
+      - name: Test (netstandard2.0 on net10.0)
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net10.0 -p:NetStandardAsset=true --report-xunit-trx --report-xunit-trx-filename test-results-netstandard2.0-net10.0.trx
+
+      - name: Test (netstandard2.0 on net48)
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net48 -p:NetStandardAsset=true --report-xunit-trx --report-xunit-trx-filename test-results-netstandard2.0-net48.trx
 
       - name: Upload test results
         if: always()
