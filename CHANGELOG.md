@@ -163,6 +163,13 @@ changed since 1.2.2.
   database DAO had created, nor drop a relationship it made.
 - **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
   is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
+- **A name Access takes as one another object has is taken.** `CreateTable` made a table of two columns whose names
+  differ only in case, and a row then kept one value for the two (DAO saw one column); it now refuses them with
+  `ArgumentException` before anything is written, as an import does. A table, column, index or relationship is
+  refused a name another of its kind has as Access compares names, measured with DAO: case in any script, the
+  width of the Halfwidth and Fullwidth Forms, hiragana and katakana, an accent written as one character or two,
+  and ß, æ, œ, þ, ĳ and the Latin ligatures as the letters they stand for, are not told apart; accents, the
+  dotless i and spaces are. Names were compared without case only, and differently on .NET and .NET Framework.
 - **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
   (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
   - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with

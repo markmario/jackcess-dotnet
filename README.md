@@ -472,6 +472,14 @@ index slots.
   exclamation mark, a grave accent, a square bracket or a control character in it, or a space at its start. So
   nothing can take the name Access gives a referenced table's index (`.rB`, `.rC`...). A relationship given no
   name is named for its two tables; when their names make no valid name, one has to be given.
+- **A name Access takes as one another object has is taken.** A table, or a column, index or relationship, is
+  refused a name another of its kind has as Access compares names, measured with DAO: not telling apart case, in
+  any script; the width of the Halfwidth and Fullwidth Forms; hiragana and katakana; an accent written as one
+  character or as two; and ß, æ, œ, þ, ĳ or a Latin ligature and the letters they are written for. Names that
+  differ in an accent (`e`, `é`), in the dotted and dotless i's, or in spaces are two names. `CreateTable` is
+  refused two columns of one name so (`ArgumentException`, before anything is written): it made both, and a row
+  then kept one value for the two. The comparison is the same on every target; Access's own differs from it in
+  a few characters measured (it takes `x⁵` and `x5` as one).
 - **A table related to itself** has both of the relationship's indexes: the foreign key's is numbered first and
   the referenced side's after it, and named by that number, as DAO writes them.
 - **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
@@ -646,6 +654,9 @@ An import holds every value of its source exactly, or refuses before anything is
   that holds that many. A Yes/No column takes no null, which Access would read as No, and no number.
 - **An empty byte array is refused**, for a table made and for one that is there: DAO - and so Access's own forms -
   reads a binary value of no bytes as Null.
+- **Two columns whose names Access takes as one are refused** - `A` and `a` of a case-sensitive `DataTable`, a
+  property and a `[Column("a")]` - for a table made, which would have one column of the name, and for one that is
+  there, whose column would keep one of their values.
 - An `IEnumerable<T>` is read whole, every object, before anything is written.
 
 POCO mapping respects `[Key]`, `[Column("X")]`, `[Column(Order = n)]`, `[MaxLength]`, `[Required]`, `[NotMapped]`

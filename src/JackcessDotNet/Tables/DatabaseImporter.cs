@@ -422,6 +422,7 @@ public static class DatabaseImporter
             if (pairs.Count == 0)
                 throw new InvalidOperationException(
                     $"DataTable '{table.TableName}' has no columns that match the existing target table '{existing.Name}'.");
+            EnsureOneSourceEach(pairs.Select(p => (p.Source.ColumnName, p.Target)), $"DataTable '{table.TableName}'", paramName);
 
             var appended = new List<Row>(sourceRows.Count);
             foreach (var (dr, index) in sourceRows)
@@ -465,6 +466,7 @@ public static class DatabaseImporter
         if (columns.Count == 0)
             throw new InvalidOperationException(
                 $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
+        EnsureNamesApart(columns, $"DataTable '{table.TableName}'", paramName);
 
         // The key is read here, for a table that is made: rows added to a table that is there take no key, and the
         // option is not looked at for them.
@@ -518,13 +520,15 @@ public static class DatabaseImporter
                     $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
             var existing = db.GetTable(name);
             var targetByName = existing.Columns.ToDictionary(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
-            var pairs = new List<(object?[] Values, Column Target)>();
-            foreach (var p in properties)
-                if (targetByName.TryGetValue(ColumnNameOf(p), out var target))
-                    pairs.Add((ValuesOf(p), target));
-            if (pairs.Count == 0)
+            var matched = properties.Select(p => (Name: ColumnNameOf(p), Property: p))
+                                    .Where(m => targetByName.ContainsKey(m.Name))
+                                    .Select(m => (m.Name, m.Property, Target: targetByName[m.Name]))
+                                    .ToList();
+            if (matched.Count == 0)
                 throw new InvalidOperationException(
                     $"Type '{typeof(T).Name}' has no properties that match the existing target table '{existing.Name}'.");
+            EnsureOneSourceEach(matched.Select(m => (m.Name, m.Target)), $"Type '{typeof(T).Name}'", paramName);
+            var pairs = matched.Select(m => (Values: ValuesOf(m.Property), m.Target)).ToList();
 
             var appended = new List<Row>(objects.Count);
             for (int r = 0; r < objects.Count; r++)
@@ -584,6 +588,7 @@ public static class DatabaseImporter
         if (columns.Count == 0)
             throw new InvalidOperationException(
                 $"Type '{typeof(T).Name}' has no public properties that map to a Jet type.");
+        EnsureNamesApart(columns, $"Type '{typeof(T).Name}'", paramName);
 
         // Several [Key] properties are a key of several columns: those that give a column order first, in it, and
         // then the others, in the order they are declared.
@@ -609,6 +614,29 @@ public static class DatabaseImporter
     }
 
     private static string ColumnNameOf(PropertyInfo property) => property.GetCustomAttribute<ColumnAttribute>()?.Name ?? property.Name;
+
+    // Two columns whose names Access takes as one - "A" and "a" of a case-sensitive DataTable - would be one column of
+    // the table: refused before anything is written, as CreateTable refuses them.
+    private static void EnsureNamesApart(IReadOnlyList<Column> columns, string source, string paramName)
+    {
+        for (int i = 1; i < columns.Count; i++)
+            for (int j = 0; j < i; j++)
+                if (ObjectNames.Same(columns[j].Name, columns[i].Name))
+                    throw new ArgumentException(
+                        $"{source} has two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names Access takes as one: " +
+                        "a table has one column of a name. Nothing was imported.", paramName);
+    }
+
+    // Two of the source's columns that both go to one column of a table that is there would leave it one of their
+    // values: refused before anything is written.
+    private static void EnsureOneSourceEach(IEnumerable<(string Source, Column Target)> pairs, string source, string paramName)
+    {
+        var twice = pairs.GroupBy(p => p.Target).FirstOrDefault(g => g.Count() > 1);
+        if (twice is not null)
+            throw new ArgumentException(
+                $"{source} has {twice.Count()} columns - {string.Join(", ", twice.Select(p => $"'{p.Source}'"))} - for the column " +
+                $"'{twice.Key.Name}' of the table: it would keep one of their values. Nothing was imported.", paramName);
+    }
 
     // ── Values ───────────────────────────────────────────────────────────────
 

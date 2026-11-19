@@ -299,7 +299,7 @@ internal sealed class SystemCatalog
 
         if (catalog.Any(r => Value(r, ColType) is short type && type == CatalogTypeRelationship
                           && Value(r, ColName) is string existing
-                          && string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
+                          && ObjectNames.Same(existing, name)))
             throw new InvalidOperationException($"There is already a relationship named '{name}' in this database. Nothing was changed.");
 
         // The ids Access gives objects that have no page count up from int.MinValue: the next is one past the
@@ -405,7 +405,7 @@ internal sealed class SystemCatalog
         // A table's name is any object's in the Tables container, and any table's: versions of this
         // library before 2.1.1 registered tables with ParentId 0, outside the container.
         if (catalog.Any(r => Value(r, ColName) is string name
-                          && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase)
+                          && ObjectNames.Same(name, tableName)
                           && (Value(r, ColParentId) is int parent && parent == tablesId
                               || Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable)))
             throw new InvalidOperationException($"An object named '{tableName}' already exists in this database.");

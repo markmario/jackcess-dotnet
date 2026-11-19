@@ -699,6 +699,12 @@ public sealed class Database : IDisposable
             throw new ArgumentException("Table name must not be empty.", nameof(name));
         if (columns is null || columns.Count == 0)
             throw new ArgumentException("At least one column is required.", nameof(columns));
+        for (int i = 1; i < columns.Count; i++)
+            for (int j = 0; j < i; j++)
+                if (ObjectNames.Same(columns[j].Name, columns[i].Name))
+                    throw new ArgumentException(
+                        $"Table '{name}' is given two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names Access takes as one. Nothing was created.",
+                        nameof(columns));
         _file.EnsureWritable();
 
         var format = _file.Format;
@@ -896,8 +902,8 @@ public sealed class Database : IDisposable
                 throw new ArgumentException(
                     $"Index '{index.Name}' is a primary key: a table is created with its primary key by naming the key's columns, " +
                     "not by an index definition.", nameof(secondary));
-            if (planned.Any(p => string.Equals(p.Name, index.Name, StringComparison.OrdinalIgnoreCase)))
-                throw new ArgumentException($"Table '{table}' is given two indexes named '{index.Name}'.", nameof(secondary));
+            if (planned.FirstOrDefault(p => ObjectNames.Same(p.Name, index.Name)) is { } taken)
+                throw new ArgumentException($"Table '{table}' is given two indexes, '{taken.Name}' and '{index.Name}', whose names Access takes as one.", nameof(secondary));
             foreach (string descending in index.DescendingColumns)
                 if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
                     throw new ArgumentException(
