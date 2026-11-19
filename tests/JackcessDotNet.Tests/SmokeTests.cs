@@ -28,6 +28,23 @@ public sealed class SmokeTests : IDisposable
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
+    // A file a database has open - for writing, with others let to read and write it - opens again, with options or
+    // without: the header is read with the sharing the file is opened with.
+    [Fact]
+    public void A_file_a_database_has_open_opens_again_with_options_or_without()
+    {
+        Database.Create(_path).Dispose();
+        using var first = Database.Open(_path);
+        first.CreateTable("People", PeopleColumns(), "Id");
+
+        using (var again = Database.Open(_path))
+            Assert.Equal(new[] { "People" }, again.GetTableNames());
+        using (var fallback = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }))
+            Assert.Equal(new[] { "People" }, fallback.GetTableNames());
+        using (var password = Database.Open(_path, new DatabaseOpenOptions { Password = "not looked at" }))
+            Assert.Equal(new[] { "People" }, password.GetTableNames());
+    }
+
     [Fact]
     public void Create_WritesFile()
     {

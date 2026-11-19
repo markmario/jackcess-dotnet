@@ -382,7 +382,9 @@ public sealed class Database : IDisposable
     {
         Span<byte> head = stackalloc byte[0x15];
         int read;
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        // With the sharing the file is then opened with (PageFile): another database that has it open, for writing,
+        // lets it be read.
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             read = fs.Read(head);
 
         if (read == head.Length && (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB")))
