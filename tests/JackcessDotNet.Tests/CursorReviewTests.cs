@@ -650,9 +650,12 @@ public sealed class CursorReviewTests : IDisposable
         Assert.Equal(8, table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 8)!["L"]);
         Assert.Equal(11, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(2, date, 11)!["L"]);
         Assert.Equal(4, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(1, date, 4)!["L"]);
-        var closest = table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 5)!;       // none: one after it
-        Assert.Equal(date, closest["D"]);
-        Assert.True((int)closest["L"]! >= 5);
+        // None has (date, 5): the first row after it in the index's order, which is by the numbers stored first and
+        // by L within one number. Ascending, (date, 7) stored as d1 comes before (date, 6) stored as d2, and is the
+        // one; descending, d2 comes first, and (date, 6) is.
+        var closest = table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 5)!;
+        Assert.Equal(descending ? 6 : 1, closest["Id"]);
+        Assert.Equal(descending ? 6 : 7, closest["L"]);
     }
 
     [Fact]

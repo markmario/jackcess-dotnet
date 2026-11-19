@@ -445,11 +445,16 @@ public sealed class IndexCursor : Cursor
     /// value an index holds for a column with none.
     /// <para>
     /// A <see cref="DateTime"/> is put against a row's Date/Time by the date the row's number reads as, to the
-    /// millisecond, wherever the column is in the index, and a <see cref="double"/> by the number itself. From 31
-    /// December 1899 on the index orders the numbers as their dates. Before it, as in Access's index and its
-    /// <c>ORDER BY</c>, a day's times run back from its midnight, and 30 December 1899's times are kept as negative
-    /// numbers as well as positive ones (-0.25 reads as six in the morning); so there, when no row has the date,
-    /// the first row after it in the index's order need not be the one with the nearest date.
+    /// millisecond, wherever the column is in the index, and a <see cref="double"/> by the number itself. The index
+    /// orders the rows by the numbers they store, as Access's index and its <c>ORDER BY</c> do, and that is not
+    /// always the order of the dates they read as: so when no row has the values, the first row after them in the
+    /// index's order need not be the one with the nearest values. It is not where a day before 31 December 1899
+    /// is asked for - its times run back from its midnight, and 30 December 1899's are stored as negative numbers
+    /// as well as positive ones (-0.25 reads as six in the morning) - and it is not where a date is followed by
+    /// other columns of the index and rows whose dates read as one are stored as different numbers, as Access
+    /// computes some (a date plus fractions of a day): those rows come in the order of their numbers first, and of
+    /// the columns after the date only within one number. With rows (1 January 2021, 1) stored as
+    /// 44196.999999994 and (1 January 2021, 0) stored as 44197, the row after (1 January 2021, -1) is the first.
     /// </para>
     /// </summary>
     /// <param name="entryValues">The values to look for, in the order of the index's columns.</param>
@@ -833,8 +838,10 @@ public sealed class IndexCursor : Cursor
 /// number as Access's <c>BETWEEN</c> puts a date against one. (Access measured: <c>BETWEEN</c> and an index's
 /// <c>Seek</c> go by the numbers, so a time of 30 December 1899 stored as a negative number - -0.25 reads as six
 /// in the morning - is not between five and seven in the morning to Access; to a range of
-/// <see cref="DateTime"/> values it is.) The rows come in the index's order, which before 31 December 1899 is not
-/// the dates' order: there a day's times run back from its midnight, as in Access's <c>ORDER BY</c>.
+/// <see cref="DateTime"/> values it is.) The rows come in the index's order, the order of the numbers stored, as in
+/// Access's <c>ORDER BY</c>: before 31 December 1899 not the dates' order, since a day's times run back from its
+/// midnight there; and rows whose dates read as one but are stored as different numbers in the order of the
+/// numbers first and of the columns after the date within one number.
 /// </para>
 /// </summary>
 public sealed class IndexRange
