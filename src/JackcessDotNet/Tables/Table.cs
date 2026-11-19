@@ -30,14 +30,24 @@ public sealed class Table
     /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
     private IReadOnlyList<Column> _autoNumberColumns { get { Refresh(); return _readAutoNumberColumns; } }
 
+    /// <param name="file">The file the table is in.</param>
+    /// <param name="allocator">What appends pages to the file.</param>
+    /// <param name="definition">The table's definition, as its definition page holds it.</param>
+    /// <param name="owningDb">The database the table was opened from, which changes to its schema and properties go through.</param>
+    /// <param name="properties">
+    /// The table's properties and its columns', as the catalog has them; null to read them from the catalog when
+    /// they are first asked for.
+    /// </param>
     internal Table(PageFile file, PageAllocator allocator, TableDefinition definition,
-                   Database? owningDb = null)
+                   Database? owningDb = null, PropertyMaps? properties = null)
     {
         _file        = file        ?? throw new ArgumentNullException(nameof(file));
         _allocator   = allocator   ?? throw new ArgumentNullException(nameof(allocator));
         _dataWriter  = new DataPageWriter(file, allocator);
         _owningDb    = owningDb;
         Use(definition ?? throw new ArgumentNullException(nameof(definition)), file.DefinitionVersion(definition.TdefPageNumber));
+
+        if (properties is not null) _propertiesCache = Attach(properties);
     }
 
     private void Use(TableDefinition definition, int version)
@@ -52,6 +62,7 @@ public sealed class Table
             .ToArray();
         _readAtVersion = version;
         _writability   = null;
+        _rules         = null;
         // Each column reads its properties through its table.
         foreach (var column in definition.Columns) column.Owner = this;
     }
@@ -147,8 +158,9 @@ public sealed class Table
 
     /// <summary>
     /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
-    /// (MSysObjects.LvProp) the first time they are asked for. Empty for a table Access keeps none for. A
-    /// column's properties are the column's: <see cref="Column.Properties"/>.
+    /// (MSysObjects.LvProp) when the table is opened. Empty for a table Access keeps none for. A column's
+    /// properties are the column's: <see cref="Column.Properties"/>. <see cref="PropertyMap.Set(string, object)"/>
+    /// and <see cref="PropertyMap.Save"/> change them.
     /// </summary>
     public PropertyMap Properties => PropertyMaps.Default;
 
@@ -159,23 +171,84 @@ public sealed class Table
         {
             if (_propertiesCache is not null) return _propertiesCache;
             var catalog = new SystemCatalog(_file);
-            byte[]? bytes = catalog.GetPropertyBytesForObject(_definition.TdefPageNumber);
-            _propertiesCache = PropertyMapReader.Read(bytes, _file.Format);
-            return _propertiesCache;
+            byte[]? bytes = catalog.GetPropertyBytesForObject(_readDefinition.TdefPageNumber);
+            return _propertiesCache = Attach(PropertyMapReader.Read(bytes, _file.Format));
         }
     }
 
-    // The maps handed out for columns Access keeps no properties for, by column name.
-    private Dictionary<string, PropertyMap>? _noProperties;
+    // The table's maps are saved through its database, to the table's row of the catalog.
+    private PropertyMaps Attach(PropertyMaps maps)
+    {
+        if (_owningDb is { } db)
+        {
+            int id = _readDefinition.TdefPageNumber;
+            maps.Saver = saved => db.SaveProperties(saved, () => db.Catalog.FindObject(id), $"table '{Name}'");
+        }
+        return maps;
+    }
 
     /// <summary>The properties of <paramref name="column"/>: the map the catalog has under its name, or an empty one.</summary>
-    internal PropertyMap PropertiesOf(Column column)
+    internal PropertyMap PropertiesOf(Column column) => PropertyMaps.GetOrAdd(column.Name, PropertyMap.ColumnType);
+
+    // ── What a column's properties refuse a row for ──────────────────────────
+
+    // The columns whose properties can refuse a row, worked out from the properties as they were at _rulesVersion.
+    private List<(Column Column, bool IsRequired, bool RefusesZeroLength)>? _rules;
+    private int _rulesVersion;
+
+    /// <summary>
+    /// The columns a row can be refused for, by Access's Required and Allow Zero Length properties. An
+    /// AutoNumber column is not among them - Access gives every row its number - nor a Yes/No column for
+    /// Required, since it always has a value.
+    /// </summary>
+    private List<(Column Column, bool IsRequired, bool RefusesZeroLength)> Rules
     {
-        if (PropertyMaps.Get(column.Name) is { } map) return map;
-        _noProperties ??= new Dictionary<string, PropertyMap>(StringComparer.OrdinalIgnoreCase);
-        if (!_noProperties.TryGetValue(column.Name, out var none))
-            _noProperties[column.Name] = none = new PropertyMap(column.Name, 0x01);
-        return none;
+        get
+        {
+            var definition = _definition;
+            var maps       = PropertyMaps;
+            if (_rules is not null && _rulesVersion == maps.Version) return _rules;
+
+            var rules = new List<(Column, bool, bool)>();
+            foreach (var column in definition.Columns)
+            {
+                if (column.IsAutoNumber || column.IsCalculated) continue;
+                bool required    = column.IsRequired && column.DataType != DataType.Boolean;
+                bool refusesNone = column.DataType is DataType.Text or DataType.Memo && !column.AllowZeroLength;
+                if (required || refusesNone) rules.Add((column, required, refusesNone));
+            }
+            _rulesVersion = maps.Version;
+            return _rules = rules;
+        }
+    }
+
+    /// <summary>
+    /// Refuses <paramref name="written"/> - a row as it will be written - for what Access refuses it for by a
+    /// column's properties: no value in a required column, or a zero-length string in a Text or Memo column that
+    /// does not allow one. Access checks every column of a row it adds, and of a row it updates only the columns
+    /// the update gives a value: <paramref name="assignedOnly"/> says which. It does not look at a column's
+    /// default value, and neither does this library fill one in.
+    /// </summary>
+    private void EnsureColumnRules(Row written, bool assignedOnly)
+    {
+        foreach (var (column, isRequired, refusesZeroLength) in Rules)
+        {
+            bool assigned = written.TryGetValue(column.Name, out var value);
+            if (assignedOnly && !assigned) continue;
+
+            if (value is null)
+            {
+                if (isRequired)
+                    throw new ConstraintViolationException(
+                        $"{Name}.{column.Name} is a required column (Access's Required property) and the row has no value in it. " +
+                        "Nothing was written.");
+                continue;
+            }
+            if (refusesZeroLength && (value as string ?? Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture))?.Length == 0)
+                throw new ConstraintViolationException(
+                    $"{Name}.{column.Name} does not take a zero-length string (Access's Allow Zero Length property). " +
+                    "Nothing was written.");
+        }
     }
 
     // ── Reading ───────────────────────────────────────────────────────────────
@@ -297,8 +370,10 @@ public sealed class Table
     /// </summary>
     /// <exception cref="ConstraintViolationException">
     /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
-    /// index, or has a null in a column of the primary key or of an index that requires its values. Nothing of
-    /// the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// index, or has a null in a column of the primary key or of an index that requires its values; or it has no
+    /// value in a required column (<see cref="Column.IsRequired"/>), or a zero-length string in a Text or Memo
+    /// column that does not allow one (<see cref="Column.AllowZeroLength"/>). Nothing of the row is written, and
+    /// the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table takes no row (<see cref="InsertRefusal"/>: among the reasons, that it is a table of an Access 97
@@ -322,6 +397,7 @@ public sealed class Table
             // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
             // bool it stands for - read once, for the row's bytes and its index entries alike.
             var written = RowValues.AsWritten(row, _definition.Columns);
+            EnsureColumnRules(written, assignedOnly: false);
             _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
             // Everything an index can refuse the row for, before any of it is written.
@@ -407,7 +483,8 @@ public sealed class Table
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
     /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
-    /// <see cref="ConstraintViolationException"/> for a null a primary key or required index does not take or a
+    /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
+    /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
     /// writing many rows can check them all first, so a refused row stops the batch before any of it is in the
@@ -427,6 +504,7 @@ public sealed class Table
             FillAutoNumbers(asWritten);
         }
         asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
 
@@ -450,7 +528,11 @@ public sealed class Table
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
-    /// in a column of the primary key or of an index that requires its values. The row is left as it was.
+    /// in a column of the primary key or of an index that requires its values; or <paramref name="newValues"/>
+    /// gives no value to a required column (<see cref="Column.IsRequired"/>), or a zero-length string to a Text
+    /// or Memo column that does not allow one (<see cref="Column.AllowZeroLength"/>). Only the columns
+    /// <paramref name="newValues"/> names are checked against those two properties, as Access checks an update.
+    /// The row is left as it was.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
@@ -479,6 +561,10 @@ public sealed class Table
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
+
+        // What the columns' properties refuse, of the columns the update gives a value: Access does not look at
+        // the others, so a row that already breaks a rule in one of them is still updated.
+        if (newValues is not null) EnsureColumnRules(newValues, assignedOnly: true);
 
         // With foreign keys enforced, a table in a relationship is changed through the enforcer: the row, and the
         // rows a cascade reaches, or nothing.
@@ -678,7 +764,11 @@ public sealed class Table
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
     /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
     /// or would run, over more than one page, which is all this library reads of one - so a table is never left
-    /// that it could no longer write rows to. Nothing is changed.
+    /// that it could no longer write rows to; or the column is required, does not allow a zero-length string or is
+    /// a Guid AutoNumber - which Access keeps as properties of the column - and the table's properties cannot be
+    /// written: the database's catalog sorts in an order other than General and General - Legacy, or the
+    /// properties in the file were not all read. A column that needs no property is added there without one.
+    /// Nothing is changed.
     /// </exception>
     public Column AddColumn(ColumnDefinition column)
     {
