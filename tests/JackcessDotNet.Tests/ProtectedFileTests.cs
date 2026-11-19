@@ -140,8 +140,26 @@ public sealed class ProtectedFileTests : IDisposable
     [InlineData("Пароль密码łódź", false)]  // a lower-case ł, which is l
     [InlineData("????????", false)]
     public void An_Access_97_password_outside_its_code_page_opens_the_file_as_Jet_3_opens_it(string password, bool opens)
+        => OpensAsJet3Does("dao-jet3-password-outside-1252.mdb", password, opens);
+
+    // The eleven characters for which .NET's best fit for code page 1252 is a question mark and Windows' is a character
+    // of the code page: U+2007 and U+202F a no-break space, U+2008, U+2009 and U+200A a space, U+2012 and U+2015 a
+    // hyphen-minus, U+201B an apostrophe, U+201F, U+2033 and U+2036 a quotation mark. The file's password is a, the
+    // eleven, and z; what DAO 3.6 opens it with, and refuses, as tools/jet3-password-fixture.ps1 found when it made it.
+    private const string Eleven = "    ‒―‛‟ ″‶";
+
+    [Theory]
+    [InlineData("a" + Eleven + "z", true)]                    // the password
+    [InlineData("a    --'\" \"\"z", true)]           // as the file holds it
+    [InlineData("a???????????z", false)]                      // .NET's best fit for each
+    [InlineData("a    --'\" \"\"z", false)]                   // a space for each no-break space
+    [InlineData("a" + Eleven + "Z", false)]
+    public void An_Access_97_password_is_converted_with_Windows_best_fit_on_every_target(string password, bool opens)
+        => OpensAsJet3Does("dao-jet3-password-best-fit.mdb", password, opens);
+
+    private static void OpensAsJet3Does(string fixture, string password, bool opens)
     {
-        string path = Asset("dao-jet3-password-outside-1252.mdb");
+        string path = Asset(fixture);
         if (opens)
         {
             using var db = Database.Open(path, new DatabaseOpenOptions { Password = password });

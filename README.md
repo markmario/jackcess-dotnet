@@ -242,7 +242,9 @@ compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
   of its text (1252), converted as Windows converts text to it: a character the code page lacks is the one Windows'
   best fit gives for it (L for Ł) or a question mark (Cyrillic, Chinese). Jet 3 checks a password given after the
   same conversion, and so does this library: `Пароль密码` opens such a file with `ПАРОЛЬ密码` too, and with
-  `????????` (`tools/jet3-password-fixture.ps1`).
+  `????????` (`tools/jet3-password-fixture.ps1`). The conversion is Windows', the same on every target: .NET's own
+  best fit for the code page makes a question mark of eleven characters - spaces of other widths, dashes, quotation
+  marks - that Windows gives a character of the code page for.
 - The descriptor Access writes for an Agile-encrypted database has no data-integrity element, so there is no hash
   for a write to leave stale: Access reads what this library wrote as it reads its own.
 

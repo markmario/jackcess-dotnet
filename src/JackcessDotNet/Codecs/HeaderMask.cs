@@ -84,11 +84,33 @@ internal static class HeaderMask
             int length = Array.IndexOf(stored, (byte)0);
             if (length < 0) length = stored.Length;
             if (length == 0) return true;
-            // The code page's encoding converts as Windows does, its best fit included, on every target.
-            return password is not null && format.TextEncoding.GetBytes(password).SequenceEqual(stored.Take(length));
+            return password is not null && AsWindowsConverts(password, format.TextEncoding).SequenceEqual(stored.Take(length));
         }
         string expected = DatabasePassword(header, format);
         return expected.Length == 0 || string.Equals(password, expected, StringComparison.Ordinal);
+    }
+
+    // The characters for which .NET's best fit for code page 1252 is a question mark, and Windows' - the
+    // WideCharToMultiByte Jet 3 converts a password with - is a character of the code page: every difference between
+    // the two, measured over every character on .NET and .NET Framework, and confirmed with DAO 3.6
+    // (tools/jet3-password-fixture.ps1). Surrogates they convert alike.
+    private static readonly Dictionary<char, char> WindowsBestFit = new()
+    {
+        [' '] = ' ', [' '] = ' ',
+        [' '] = ' ', [' '] = ' ', [' '] = ' ',
+        ['‒'] = '-', ['―'] = '-',
+        ['‛'] = '\'',
+        ['‟'] = '"', ['″'] = '"', ['‶'] = '"',
+    };
+
+    // Text in code page 1252 (an Access 97 file's) as Windows converts it, best fit and all, the same on every target:
+    // the code page's encoding, which converts as Windows does but for the characters above.
+    private static byte[] AsWindowsConverts(string text, System.Text.Encoding codePage)
+    {
+        char[] chars = text.ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+            if (WindowsBestFit.TryGetValue(chars[i], out char fit)) chars[i] = fit;
+        return codePage.GetBytes(chars);
     }
 
     // A double's whole number as Java's (int) cast takes it, which Jackcess masks the password with: toward zero,
