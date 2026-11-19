@@ -164,24 +164,31 @@ internal sealed class LvalWriter
     /// </summary>
     internal const int MinListedFreeSpace = 258;
 
+    /// <summary>
+    /// The first look in a session at the column's free-space map: the pages it lists are read, once, for the room
+    /// each has - a page Access or an earlier session left with room, or emptied - and noted. After it, every page's
+    /// room is known, to a value of one chunk and to a chain alike: a chain's pages are the emptied ones it lists.
+    /// </summary>
+    private void LookAtTheMapOnce()
+    {
+        var notes = _file.FreedLvalPages;
+        if (_umap.FreePage <= 0 || !notes.FirstLookFor(_umap.OwnedPage, _umap.OwnedRow)) return;
+        foreach (int listed in UsageMap.GetOwnedPages(_file.ReadPage(_umap.FreePage), _umap.FreeRow, _format, _file))
+        {
+            notes.SetListed(_umap.OwnedPage, _umap.OwnedRow, listed, true);
+            if (notes.TryGetRoom(_umap.OwnedPage, _umap.OwnedRow, listed, out _)) continue;
+            if (RoomOn(listed) is { } has && has >= MinListedFreeSpace)
+                notes.Set(_umap.OwnedPage, _umap.OwnedRow, listed, has);
+            else
+                Forget(listed);   // not this column's, or without the room: it leaves the map
+        }
+    }
+
     /// <summary>A page with room for a row of <paramref name="needed"/> bytes among other one-chunk values.</summary>
     private int PageOfSingleChunks(int needed)
     {
         var notes = _file.FreedLvalPages;
-        // The first look in a session reads the pages the column's free-space map lists, once, for the room each
-        // has: a page Access or an earlier session left with room. After it, every page's room is known.
-        if (_umap.FreePage > 0 && notes.FirstLookFor(_umap.OwnedPage, _umap.OwnedRow))
-        {
-            foreach (int listed in UsageMap.GetOwnedPages(_file.ReadPage(_umap.FreePage), _umap.FreeRow, _format, _file))
-            {
-                notes.SetListed(_umap.OwnedPage, _umap.OwnedRow, listed, true);
-                if (notes.TryGetRoom(_umap.OwnedPage, _umap.OwnedRow, listed, out _)) continue;
-                if (RoomOn(listed) is { } has && has >= MinListedFreeSpace)
-                    notes.Set(_umap.OwnedPage, _umap.OwnedRow, listed, has);
-                else
-                    Forget(listed);   // not this column's, or without the room: it leaves the map
-            }
-        }
+        LookAtTheMapOnce();
 
         // The page with the least room that will do, the lowest of them: found by its room, so no page known to
         // have too little is looked at, however many there are. What is noted is checked against the page itself.
@@ -202,10 +209,14 @@ internal sealed class LvalWriter
         UsageMap.AddPage(_file, _allocator, _umap.OwnedPage, _umap.OwnedRow, page);
         return page;
     }
-    /// <summary>A page for one chunk of a chain and nothing else: one this session saw emptied, or a new one.</summary>
+    /// <summary>
+    /// A page for one chunk of a chain and nothing else: an emptied one - the column's free-space map lists such a page,
+    /// so one emptied in an earlier session is found too (#58) - or a new one.
+    /// </summary>
     private int PageOfItsOwn()
     {
         var notes = _file.FreedLvalPages;
+        LookAtTheMapOnce();
         while (notes.TryFindWithExactly(_umap.OwnedPage, _umap.OwnedRow, _format.DataPageInitialFreeSpace, out int candidate))
         {
             notes.CandidatesVisited++;
