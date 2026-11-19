@@ -283,7 +283,13 @@ public sealed class ImportExactnessTests : IDisposable
         foreach (var early in new[] { DateTime.MinValue, new DateTime(99, 12, 31) })
             RefusedAndUnchanged<ArgumentException>(_path, db => db.ImportTable(TableOf("When", typeof(DateTime), early)));
 
-        var kept = new[] { new DateTime(100, 1, 1), new DateTime(2026, 11, 19, 7, 8, 9, 123), new DateTime(9999, 12, 31, 23, 59, 59, 999) };
+        // The first day at noon as well as at midnight, and a time on a day before 30 December 1899, which a Date/Time
+        // keeps as a negative day with a time that is not.
+        var kept = new[]
+        {
+            new DateTime(100, 1, 1), new DateTime(100, 1, 1, 12, 0, 0), new DateTime(1899, 12, 29, 6, 0, 0),
+            new DateTime(2026, 11, 19, 7, 8, 9, 123), new DateTime(9999, 12, 31, 23, 59, 59, 999),
+        };
         using (var db = Database.Open(_path)) db.ImportTable(TableOf("When", typeof(DateTime), kept.Cast<object?>().ToArray()));
         using var reopen = Database.Open(_path);
         Assert.Equal(kept.Cast<object?>(), ValuesOf(reopen, "T", "When"));
