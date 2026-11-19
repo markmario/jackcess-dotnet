@@ -9,7 +9,7 @@ namespace JackcessDotNet;
 /// write the same changes.
 /// <para>
 /// Each change is all or nothing. What can refuse it - a name taken, a type not written, rows that are duplicates
-/// in a unique index or refer to no parent, a definition with no room left on its page - is found before anything
+/// in a unique index or refer to no parent - is found before anything
 /// is written, and what is written is written inside <see cref="PageFile.BeginUndo"/>, so a change that fails
 /// part-way is taken back. Either way the file is byte for byte what it was.
 /// </para>
@@ -17,8 +17,8 @@ namespace JackcessDotNet;
 /// What differs from Access, deliberately. A new index's pages, and a new long-value column's, are listed in usage
 /// maps on a page of their own (as for a table this library creates), where Access finds room on the table's
 /// usage-map page first. A column added is never filled in for the rows already there, so an AutoNumber column is
-/// added only to a table with no rows - Access numbers the rows it has. And a definition is never let run onto a
-/// second page (<see cref="TdefEditor"/>).
+/// added only to a table with no rows - Access numbers the rows it has. A
+/// definition that no longer fits its pages goes on to another, as Access's does (<see cref="TdefBuffer"/>).
 /// </para>
 /// </summary>
 internal static class SchemaChange
@@ -61,9 +61,8 @@ internal static class SchemaChange
                 throw new NotSupportedException($"Table '{table.Name}' already has an AutoNumber column. Nothing was changed.");
         }
 
-        var editor = new TdefEditor(page, format, table.Name);
+        var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         bool isLong = given.DataType.IsLongValue();
-        editor.EnsureRoomFor(editor.SizeOfColumn(given.Name, isLong));
 
         // The table's own column, a copy of the caller's: numbered after every column the table has ever had, so
         // that no row written before it has its bit in a null mask, and placed after the values those rows hold.
@@ -100,7 +99,7 @@ internal static class SchemaChange
                 maps = new LvalUmapRef(umapPage, 0, umapPage, 1);
             }
             editor.AddColumn(column, columnId, maps);
-            file.WritePage(table.TdefPageNumber, editor.ToPage());
+            TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
             if (version is { } newer) DatabaseHeader.RaiseVersion(file, newer);
             undo.Commit();
         }
@@ -170,19 +169,16 @@ internal static class SchemaChange
         internal List<(byte[] Key, int RowPointer)> Entries { get; set; } = new();
 
         internal int DistinctKeys { get; set; }
-
-        /// <summary>The bytes the index adds to the table's definition.</summary>
-        internal int DefinitionBytes { get; set; }
     }
 
     /// <summary>
     /// Checks an index <paramref name="table"/> is to be given and makes its entries, writing nothing: its name is
-    /// free, the table has room for another index and its definition for this one's bytes (and
-    /// <paramref name="alsoAdded"/> more, which the same change adds), every column's keys are ones this library
-    /// writes, and - unless a tree already there is shared - every row has a key the index takes.
+    /// free, the table has room for another index (and <paramref name="alsoIndexes"/> more, which the same change
+    /// adds), every column's keys are ones this library writes, and - unless a tree already there is shared -
+    /// every row has a key the index takes.
     /// </summary>
     private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
-                                     byte flags, byte indexType, Func<Index, bool> shares, int alsoAdded = 0, int alsoIndexes = 0)
+                                     byte flags, byte indexType, Func<Index, bool> shares, int alsoIndexes = 0)
     {
         if (table.Indexes.Any(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Table '{table.Name}' already has an index named '{name}'. Nothing was changed.");
@@ -203,9 +199,8 @@ internal static class SchemaChange
             && shares(existing));
         planned.SharedData = shared?.IndexDataNumber;
 
-        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
-        planned.DefinitionBytes = editor.SizeOfIndexSlot(name) + (shared is null ? editor.SizeOfIndexData : 0);
-        editor.EnsureRoomFor(planned.DefinitionBytes + alsoAdded);
+        // The definition is one that can be changed: laid out as its header says.
+        TdefEditor.Load(file, table.TdefPageNumber, table.Name);
 
         if (shared is null) BuildEntries(file, planned);
         return planned;
@@ -311,14 +306,14 @@ internal static class SchemaChange
         }
 
         // The definition as it now is: an index added to the same table earlier in this change is in it.
-        var editor = new TdefEditor(file.ReadPage(table.TdefPageNumber), file.Format, table.Name);
+        var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         if (data < 0)
             data = editor.AddIndexData(planned.Columns, planned.Flags, root, umapPage, 0, planned.Entries.Count, planned.DistinctKeys);
 
         int number = NextIndexNumber(editor);
         editor.AddIndexSlot(SlotPosition(editor.SlotNames, planned.Name, db.Catalog.TextSortOrder), planned.Name, number, data,
                             planned.IndexType, foreignKey);
-        file.WritePage(table.TdefPageNumber, editor.ToPage());
+        TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
         return number;
     }
 
@@ -481,7 +476,7 @@ internal static class SchemaChange
                              toColumns.Select(c => new IndexColumn(c, ascending)).ToList(), oneToOne ? unique : plain,
                              TdefEditor.IndexTypeForeignKey,
                              shares: existing => existing.Flags == (oneToOne ? unique : plain),
-                             alsoAdded: sameTable ? primary.DefinitionBytes : 0, alsoIndexes: sameTable ? 1 : 0);
+                             alsoIndexes: sameTable ? 1 : 0);
         }
 
         using (var undo = file.BeginUndo())
@@ -494,10 +489,10 @@ internal static class SchemaChange
                 // Each side's slot names the other's index by its number, so both are settled before either is written.
                 // A table related to itself has both: the foreign key's index takes the next number and the
                 // referenced side's the one after, as DAO numbers them, so it is written first.
-                int secondaryNumber = NextIndexNumber(new TdefEditor(file.ReadPage(child.Definition.TdefPageNumber), file.Format, toName));
+                int secondaryNumber = NextIndexNumber(TdefEditor.Load(file, child.Definition.TdefPageNumber, toName));
                 int primaryNumber   = sameTable
                     ? secondaryNumber + 1
-                    : NextIndexNumber(new TdefEditor(file.ReadPage(parent.Definition.TdefPageNumber), file.Format, fromName));
+                    : NextIndexNumber(TdefEditor.Load(file, parent.Definition.TdefPageNumber, fromName));
                 var fromPrimary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
                     definition.CascadeUpdates, definition.CascadeDeletes, definition.CascadeNullOnDelete);
@@ -579,15 +574,16 @@ internal static class SchemaChange
     // ── Shared ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Refuses to change a table whose definition was not read whole - it runs past its first page - since what
-    /// would be written back is only what was read.
+    /// Refuses to change a table whose definition was not read whole - its columns' names or its indexes run past
+    /// its end, or it names an index column or block it has not - since what would be written back is only what
+    /// was read.
     /// </summary>
     private static void EnsureReadWhole(TableDefinition table)
     {
         if (table.HasUnreadColumns || table.HasUnreadIndexes)
             throw new NotSupportedException(
-                $"Table '{table.Name}' is not changed: its definition runs over more than one page, or names an index column " +
-                "or block it has not, and this library reads and writes a definition of one page only. Nothing was changed.");
+                $"Table '{table.Name}' is not changed: its definition is damaged - its columns or indexes run past its end, " +
+                "or it names an index column or block it has not. Nothing was changed.");
     }
 
     private static Column ColumnOf(TableDefinition table, string name, string what)

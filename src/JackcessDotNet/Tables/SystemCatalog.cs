@@ -687,7 +687,7 @@ internal sealed class SystemCatalog
 
     private TableDefinition BuildTableDef(string name, int tdefPageNumber)
     {
-        byte[] tdefPage = _file.ReadPage(tdefPageNumber);
+        byte[] tdefPage = TdefBuffer.Read(_file, tdefPageNumber);
         var    info     = TdefReader.Read(tdefPage, _format);
 
         return new TableDefinition(name, info.Columns)

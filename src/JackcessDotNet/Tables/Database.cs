@@ -798,7 +798,7 @@ public sealed class Database : IDisposable
 
         // 6. Now serialise — the index blocks, slots and names are included.
         byte[] tdefBytes = tableDef.Serialize(format);
-        _file.WritePage(tdefPage, tdefBytes);
+        TdefBuffer.Write(_file, _allocator, tdefPage, tdefBytes);
 
         // 7. Register the table in MSysObjects.
         _catalog.InsertTableEntry(name, tdefPage);
@@ -981,7 +981,7 @@ public sealed class Database : IDisposable
     internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
     {
         var format   = file.Format;
-        var tdefPage = file.ReadPage(tdefPageNum);
+        var tdefPage = TdefBuffer.Read(file, tdefPageNum);
         var info     = TdefReader.Read(tdefPage, format);
 
         var tableDef = new TableDefinition(name, info.Columns)
@@ -1060,8 +1060,8 @@ public sealed class Database : IDisposable
     /// columns have no unique index (or primary key) on exactly them. Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;
-    /// or a table's definition runs, or would run, over more than one page. Nothing is changed.
+    /// The file is an Access 97 one, or the foreign key is on a column whose index keys this library does not
+    /// write. Nothing is changed.
     /// </exception>
     public Relationship CreateRelationship(RelationshipDefinition definition)
     {

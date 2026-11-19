@@ -102,8 +102,8 @@ public sealed class Table
     /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate"/> throw for it,
     /// which they throw by asking this. The table has an index whose keys this library does not write as Access
     /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
-    /// rows cannot be written by - a calculated column, columns that run past its first page, or two columns in
-    /// one place. Such a table is still read.
+    /// rows cannot be written by - a calculated column, columns whose names run past the definition's end, or two
+    /// columns in one place. Such a table is still read.
     /// <para>
     /// A caller about to write to several tables can ask each first, and so write to none when one of them
     /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
@@ -676,9 +676,7 @@ public sealed class Table
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the column is of a type this library does not write (a complex or calculated
-    /// one), or is an AutoNumber and the table has rows or an AutoNumber already; or the table's definition runs,
-    /// or would run, over more than one page, which is all this library reads of one - so a table is never left
-    /// that it could no longer write rows to. Nothing is changed.
+    /// one), or is an AutoNumber and the table has rows or an AutoNumber already. Nothing is changed.
     /// </exception>
     public Column AddColumn(ColumnDefinition column)
     {
@@ -711,8 +709,7 @@ public sealed class Table
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
     /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and
-    /// General), or a row holds a value no key is made for; or the table's definition runs, or would run, over
-    /// more than one page. Nothing is changed.
+    /// General), or a row holds a value no key is made for. Nothing is changed.
     /// </exception>
     public Index AddIndex(IndexDefinition index)
     {

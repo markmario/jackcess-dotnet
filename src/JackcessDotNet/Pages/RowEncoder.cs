@@ -293,7 +293,7 @@ internal sealed class RowEncoder
     internal string? WhyNotWritable()
     {
         string? why = _unreadColumns
-            ? "its definition runs past its first page, and the columns on the pages after it were not read"
+            ? "its definition ends before its columns' names do, so its columns were not all read"
             : _columns.FirstOrDefault(c => c.IsCalculated) is { } calculated
                 ? $"its column {calculated.Name} is calculated, and this library works no expression out"
                 : _layout.WhyNotWritable;

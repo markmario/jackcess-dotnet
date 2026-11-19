@@ -5,22 +5,22 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// Changes a table's definition where it is: a column, an index's block or an index's slot is put into the bytes of
-/// the definition page among those already there, as Jackcess's <c>TableImpl.mutateAddColumn</c>,
-/// <c>mutateAddIndexData</c> and <c>mutateAddIndex</c> do, so everything Access wrote that this library does not
-/// model - the counts it keeps for each index, a slot's foreign-key reference, a column's bytes of unknown meaning -
-/// stays as it was. Nothing here writes to the file: each method returns the page as it would be.
+/// the definition among those already there, as Jackcess's <c>TableImpl.mutateAddColumn</c>,
+/// <c>mutateAddIndexData</c> and <c>mutateAddIndex</c> do - or taken out from among them, or its name changed - so
+/// everything Access wrote that this library does not model - the counts it keeps for each index, a slot's
+/// foreign-key reference, a column's bytes of unknown meaning - stays as it was. Nothing here writes to the file:
+/// <see cref="ToDefinition"/> gives the definition as it would be, for <see cref="TdefBuffer.Write"/> to put on
+/// its pages.
 /// <para>
-/// A definition is changed only when all of it is on one page, before and after: this library reads no more of one
-/// (<see cref="TdefReader"/>), so a definition it let run onto a second page would be a table it could no longer
-/// write rows to. One that is already longer, or would become so, is refused with
-/// <see cref="NotSupportedException"/> (qcatco/exportmdb.interop#37).
+/// The definition is the whole of it, whatever number of pages it is on (<see cref="TdefBuffer"/>), and it grows
+/// onto another page when what is added no longer fits the pages it has (#37).
 /// </para>
 /// <para>
 /// The layout, as <see cref="TdefReader"/> reads it and Access writes it: the header; a block of counts for each
 /// index; the column definitions; the column names; a block for each index's columns, pages and flags; a slot for
 /// each index's name and number; the index names; the usage maps of the long-value columns; 0xFFFF. The header's
-/// length is of all of it, from the start of the page, and the page's free space (its bytes 2-3) is what is left
-/// less eight - both as Access was seen to keep them, and as Jackcess writes them.
+/// length is of all of it, from the start of the first page - as Access was seen to keep it, and as Jackcess
+/// writes it.
 /// </para>
 /// </summary>
 internal sealed class TdefEditor
@@ -28,8 +28,6 @@ internal sealed class TdefEditor
     private const int MagicTableNumber = 1625;
     private const int MagicIndexNumber = 1923;
     private const int OffsetLength     = 8;
-    private const int OffsetFreeSpace  = 2;
-    private const int OffsetNextPage   = 4;
     private const int LvalEntrySize    = 10;
 
     /// <summary>A slot's index type: an ordinary index, a primary key, or one side of a relationship.</summary>
@@ -42,12 +40,25 @@ internal sealed class TdefEditor
 
     private readonly JetFormat _format;
     private readonly string    _table;
-    private readonly byte[]    _page;
+    // The definition's bytes, with room after them: more room is made when it grows.
+    private byte[]             _page;
 
     // Where each part of the definition starts, and where the last ends.
     private int _length;
     private int _columnCount, _indexCount, _slotCount;
-    private int _columnNames, _columnNamesEnd, _slots, _slotNames, _end;
+    private int _columns, _columnNames, _columnNamesEnd, _blocks, _slots, _slotNames, _slotNamesEnd, _end;
+
+    /// <summary>The names of the columns, in the order the definition lists them.</summary>
+    internal IReadOnlyList<string> ColumnNames { get; private set; } = Array.Empty<string>();
+
+    /// <summary>The number each column has in a row, in the order the definition lists them.</summary>
+    internal IReadOnlyList<int> ColumnNumbers { get; private set; } = Array.Empty<int>();
+
+    /// <summary>The block that holds each slot's tree, in the order the definition lists the slots.</summary>
+    internal IReadOnlyList<int> SlotBlocks { get; private set; } = Array.Empty<int>();
+
+    /// <summary>How many index slots the definition has.</summary>
+    internal int SlotCount => _slotCount;
 
     /// <summary>The names of the index slots, in the order the definition lists them.</summary>
     internal IReadOnlyList<string> SlotNames { get; private set; } = Array.Empty<string>();
@@ -68,24 +79,27 @@ internal sealed class TdefEditor
     internal int MaxVarColumnCount => ByteUtil.GetShort(_page, _format.TdefOffsetNumVarCols);
 
     /// <summary>
-    /// Reads the layout of the definition on <paramref name="page"/>, a copy of which is changed.
+    /// Reads the layout of <paramref name="definition"/> - a whole definition, as
+    /// <see cref="TdefBuffer.Read(PageFile, int)"/> gives it - a copy of which is changed.
     /// </summary>
     /// <exception cref="NotSupportedException">
-    /// The definition runs over more than one page, or is not laid out as its header says: it is not changed.
+    /// The definition is not laid out as its header says: it is not changed.
     /// </exception>
-    internal TdefEditor(byte[] page, JetFormat format, string table)
+    internal TdefEditor(byte[] definition, JetFormat format, string table)
     {
         _format = format;
         _table  = table;
-        _page   = (byte[])page.Clone();
+        _page   = (byte[])definition.Clone();
         if (format.IsReadOnly)
             throw PageFile.ReadOnlyFormat($"the definition of table '{table}' was not changed.");
-        if (page[0] != JetFormat.PageTypeTableDef || ByteUtil.GetInt(page, OffsetNextPage) != 0)
-            throw new NotSupportedException(
-                $"Table '{table}' is not changed: its definition runs over more than one page, and this library reads " +
-                "and writes a definition of one page only. Nothing was changed.");
+        if (definition[0] != JetFormat.PageTypeTableDef)
+            throw Unexpected("its page is not a definition page");
         Parse();
     }
+
+    /// <summary>The definition of the table whose definition starts on <paramref name="tdefPage"/>, read whole.</summary>
+    internal static TdefEditor Load(PageFile file, int tdefPage, string table)
+        => new(TdefBuffer.Read(file, tdefPage), file.Format, table);
 
     private NotSupportedException Unexpected(string what)
         => new($"Table '{_table}' is not changed: its definition is not laid out as this library expects ({what}). Nothing was changed.");
@@ -100,31 +114,47 @@ internal sealed class TdefEditor
             throw Unexpected("its header's counts");
 
         int columns = _format.SizeTdefHeader + _indexCount * _format.SizeIndexDefinition;
+        _columns     = columns;
         _columnNames = columns + _columnCount * _format.SizeColumnHeader;
         if (_columnNames > _length) throw Unexpected("its columns");
 
         var ids = new List<int>(_columnCount);
+        var columnNumbers = new List<int>(_columnCount);
         for (int i = 0; i < _columnCount; i++)
+        {
             ids.Add(ByteUtil.GetShort(_page, columns + i * _format.SizeColumnHeader + _format.OffsetColumnVarTableIndex + 2));
-        ColumnIds = ids;
+            columnNumbers.Add(ByteUtil.GetShort(_page, columns + i * _format.SizeColumnHeader + _format.OffsetColumnNumber));
+        }
+        ColumnIds     = ids;
+        ColumnNumbers = columnNumbers;
 
         int pos = _columnNames;
-        for (int i = 0; i < _columnCount; i++) ReadName(ref pos);
+        var columnNames = new List<string>(_columnCount);
+        for (int i = 0; i < _columnCount; i++) columnNames.Add(ReadName(ref pos));
+        ColumnNames     = columnNames;
         _columnNamesEnd = pos;
 
+        _blocks    = _columnNamesEnd;
         _slots     = _columnNamesEnd + _indexCount * _format.SizeIndexColumnBlock;
         _slotNames = _slots + _slotCount * _format.SizeIndexInfoBlock;
         if (_slotNames > _length) throw Unexpected("its indexes");
 
         var numbers = new List<int>(_slotCount);
+        var blocks  = new List<int>(_slotCount);
         for (int i = 0; i < _slotCount; i++)
-            numbers.Add(ByteUtil.GetInt(_page, _slots + i * _format.SizeIndexInfoBlock + _format.SkipBeforeIndexSlot));
+        {
+            int slot = _slots + i * _format.SizeIndexInfoBlock + _format.SkipBeforeIndexSlot;
+            numbers.Add(ByteUtil.GetInt(_page, slot));
+            blocks.Add(ByteUtil.GetInt(_page, slot + 4));
+        }
         SlotNumbers = numbers;
+        SlotBlocks  = blocks;
 
         pos = _slotNames;
         var names = new List<string>(_slotCount);
         for (int i = 0; i < _slotCount; i++) names.Add(ReadName(ref pos));
-        SlotNames = names;
+        SlotNames     = names;
+        _slotNamesEnd = pos;
 
         // The long-value columns' usage maps, to the 0xFFFF that ends the definition.
         while (true)
@@ -157,37 +187,24 @@ internal sealed class TdefEditor
         return bytes;
     }
 
-    /// <summary>
-    /// Refuses, before anything is changed, a change that would make the definition longer than its page by adding
-    /// <paramref name="added"/> bytes to it.
-    /// </summary>
-    internal void EnsureRoomFor(int added)
-    {
-        if (_length + added > _format.PageSize)
-            throw new NotSupportedException(
-                $"Table '{_table}' is not changed: its definition would take {_length + added} bytes, more than its page " +
-                $"holds ({_format.PageSize}), and this library reads and writes a definition of one page only. Nothing was changed.");
-    }
-
-    /// <summary>The bytes a new column adds to the definition.</summary>
-    internal int SizeOfColumn(string name, bool isLongValue)
-        => _format.SizeColumnHeader + NameBytes(name).Length + (isLongValue ? LvalEntrySize : 0);
-
-    /// <summary>The bytes a new index block adds to the definition.</summary>
-    internal int SizeOfIndexData => _format.SizeIndexDefinition + _format.SizeIndexColumnBlock;
-
-    /// <summary>The bytes a new index slot adds to the definition.</summary>
-    internal int SizeOfIndexSlot(string name) => _format.SizeIndexInfoBlock + NameBytes(name).Length;
-
     // Makes room for data at a place in the definition, moving what follows it along, and puts it there.
     private void Insert(int at, byte[] data)
     {
-        EnsureRoomFor(data.Length);
+        if (_length + data.Length > _page.Length)
+            Array.Resize(ref _page, Math.Max(_length + data.Length, _page.Length + _format.PageSize));
         Array.Copy(_page, at, _page, at + data.Length, _length - at);
         Array.Copy(data, 0, _page, at, data.Length);
         _length += data.Length;
         ByteUtil.PutInt(_page, OffsetLength, _length);
-        ByteUtil.PutShort(_page, OffsetFreeSpace, (short)Math.Max(_format.PageSize - _length - 8, 0));
+    }
+
+    // Takes bytes out of the definition, moving what follows them back, and clears what the end of it leaves behind.
+    private void Remove(int at, int count)
+    {
+        Array.Copy(_page, at + count, _page, at, _length - at - count);
+        Array.Clear(_page, _length - count, count);
+        _length -= count;
+        ByteUtil.PutInt(_page, OffsetLength, _length);
     }
 
     // ── A column ─────────────────────────────────────────────────────────────
@@ -201,7 +218,6 @@ internal sealed class TdefEditor
     {
         bool   isLong = column.DataType.IsLongValue();
         byte[] name   = NameBytes(column.Name);
-        EnsureRoomFor(_format.SizeColumnHeader + name.Length + (isLong ? LvalEntrySize : 0));
 
         int maxVar = MaxVarColumnCount;
         var def = new byte[_format.SizeColumnHeader];
@@ -259,8 +275,6 @@ internal sealed class TdefEditor
     internal int AddIndexData(IReadOnlyList<IndexColumn> columns, byte flags, int rootPage, int umapPage, int umapRow,
                               int entries, int distinctKeys)
     {
-        EnsureRoomFor(SizeOfIndexData);
-
         var counts = new byte[_format.SizeIndexDefinition];
         ByteUtil.PutInt(counts, 0, entries);
         ByteUtil.PutInt(counts, 4, distinctKeys);
@@ -299,7 +313,6 @@ internal sealed class TdefEditor
                                ForeignKeyReference? foreignKey)
     {
         byte[] nameBytes = NameBytes(name);
-        EnsureRoomFor(_format.SizeIndexInfoBlock + nameBytes.Length);
         if (position < 0 || position > _slotCount) throw new ArgumentOutOfRangeException(nameof(position));
 
         var slot = new byte[_format.SizeIndexInfoBlock];
@@ -330,6 +343,114 @@ internal sealed class TdefEditor
         Parse();
     }
 
-    /// <summary>The definition page as changed.</summary>
-    internal byte[] ToPage() => (byte[])_page.Clone();
+    // ── Taking out, and renaming ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Takes the column at <paramref name="position"/> among the definition's columns out of it: its definition,
+    /// its name and, for a long-value column, the entry that names its usage maps - as Access was seen to drop a
+    /// column. The other columns keep their numbers and their places in a row, and the counts of the columns and
+    /// the variable-length places a row has ever had stay as they were: the rows are not rewritten, and go on
+    /// being read by them.
+    /// </summary>
+    internal void RemoveColumn(int position)
+    {
+        if (position < 0 || position >= _columnCount) throw new ArgumentOutOfRangeException(nameof(position));
+        int number = ColumnNumbers[position];
+
+        // From the end back, so the places worked out before stay good: the long-value entry, the name, the definition.
+        for (int pos = _slotNamesEnd; pos + 2 <= _length && ByteUtil.GetUShort(_page, pos) != 0xFFFF; pos += LvalEntrySize)
+            if (ByteUtil.GetUShort(_page, pos) == (ushort)number)
+            {
+                Remove(pos, LvalEntrySize);
+                break;
+            }
+
+        int nameAt = _columnNames;
+        for (int i = 0; i < position; i++) ReadName(ref nameAt);
+        int nameEnd = nameAt;
+        ReadName(ref nameEnd);
+        Remove(nameAt, nameEnd - nameAt);
+
+        Remove(_columns + position * _format.SizeColumnHeader, _format.SizeColumnHeader);
+        ByteUtil.PutShort(_page, _format.TdefOffsetNumCols, (short)(_columnCount - 1));
+        Parse();
+    }
+
+    /// <summary>
+    /// Takes the slot at <paramref name="position"/> among the definition's slots out of it, and its name. The
+    /// other slots keep their numbers, which is what a relationship's slot in another table names one by.
+    /// </summary>
+    internal void RemoveIndexSlot(int position)
+    {
+        if (position < 0 || position >= _slotCount) throw new ArgumentOutOfRangeException(nameof(position));
+
+        int nameAt = _slotNames;
+        for (int i = 0; i < position; i++) ReadName(ref nameAt);
+        int nameEnd = nameAt;
+        ReadName(ref nameEnd);
+        Remove(nameAt, nameEnd - nameAt);
+
+        Remove(_slots + position * _format.SizeIndexInfoBlock, _format.SizeIndexInfoBlock);
+        ByteUtil.PutInt(_page, _format.TdefOffsetNumIndexSlots, _slotCount - 1);
+        Parse();
+    }
+
+    /// <summary>
+    /// Takes the block numbered <paramref name="number"/> out of the definition - its columns, pages and flags, and
+    /// the counts Access keeps of it - and has every slot of a block after it name its block by the number it now
+    /// has, one less: as Access was seen to drop an index. No slot may still name the block.
+    /// </summary>
+    internal void RemoveIndexData(int number)
+    {
+        if (number < 0 || number >= _indexCount) throw new ArgumentOutOfRangeException(nameof(number));
+        if (SlotBlocks.Contains(number))
+            throw new InvalidOperationException($"Table '{_table}' still has an index on the block that was to be taken out of its definition.");
+
+        for (int i = 0; i < _slotCount; i++)
+        {
+            int at = _slots + i * _format.SizeIndexInfoBlock + _format.SkipBeforeIndexSlot + 4;
+            int block = ByteUtil.GetInt(_page, at);
+            if (block > number) ByteUtil.PutInt(_page, at, block - 1);
+        }
+        Remove(_blocks + number * _format.SizeIndexColumnBlock, _format.SizeIndexColumnBlock);
+        Remove(_format.SizeTdefHeader + number * _format.SizeIndexDefinition, _format.SizeIndexDefinition);
+        ByteUtil.PutInt(_page, _format.TdefOffsetNumIndexes, _indexCount - 1);
+        Parse();
+    }
+
+    /// <summary>Gives the column at <paramref name="position"/> among the definition's columns another name.</summary>
+    internal void RenameColumn(int position, string name)
+    {
+        if (position < 0 || position >= _columnCount) throw new ArgumentOutOfRangeException(nameof(position));
+        ReplaceName(_columnNames, position, name);
+    }
+
+    /// <summary>Gives the slot at <paramref name="position"/> among the definition's slots another name, where it is.</summary>
+    internal void RenameIndexSlot(int position, string name)
+    {
+        if (position < 0 || position >= _slotCount) throw new ArgumentOutOfRangeException(nameof(position));
+        ReplaceName(_slotNames, position, name);
+    }
+
+    private void ReplaceName(int namesAt, int position, string name)
+    {
+        int nameAt = namesAt;
+        for (int i = 0; i < position; i++) ReadName(ref nameAt);
+        int nameEnd = nameAt;
+        ReadName(ref nameEnd);
+        Remove(nameAt, nameEnd - nameAt);
+        Insert(nameAt, NameBytes(name));
+        Parse();
+    }
+
+    /// <summary>The slot at <paramref name="position"/>, as its bytes are: to be put back at another place.</summary>
+    internal byte[] SlotBytes(int position)
+    {
+        var slot = new byte[_format.SizeIndexInfoBlock];
+        Array.Copy(_page, _slots + position * _format.SizeIndexInfoBlock, slot, 0, slot.Length);
+        return slot;
+    }
+
+    /// <summary>The definition as changed: its bytes, whole, with its length in bytes 8-11.</summary>
+    internal byte[] ToDefinition() => (byte[])_page.Clone();
 }
