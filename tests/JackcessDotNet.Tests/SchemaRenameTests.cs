@@ -272,6 +272,8 @@ public sealed class SchemaRenameTests : IDisposable
         AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable("Child", "a[b"));
         AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable("Child", new string('n', 65)));
         AssertRefusedAndUnchanged<NotSupportedException>(db => db.RenameTable("MSysRelationships", "Mine"));
+        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("MSysObjects").RenameColumn("Flags", "Flagged"));
+        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("MSysObjects").RenameIndex("ParentIdName", "Other"));
 
         using var open = Database.Open(_path);
         open.RenameTable("Child", "CHILD");

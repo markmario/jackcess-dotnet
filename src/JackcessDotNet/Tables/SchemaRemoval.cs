@@ -40,6 +40,7 @@ internal static class SchemaRemoval
     internal static void DropIndex(Database db, PageFile file, TableDefinition table, string name)
     {
         file.EnsureWritable();
+        EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
         var index = table.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -97,6 +98,7 @@ internal static class SchemaRemoval
     internal static void DropColumn(Database db, PageFile file, TableDefinition table, string name)
     {
         file.EnsureWritable();
+        EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
         var column = table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -311,8 +313,7 @@ internal static class SchemaRemoval
             throw new ArgumentException($"Table '{name}' was not found in this database. Nothing was changed.", nameof(name));
         var definition = table.Definition;
         int tdefPage   = definition.TdefPageNumber;
-        if (db.GetSystemTableNames().Contains(table.Name, StringComparer.OrdinalIgnoreCase))
-            throw new NotSupportedException($"Table '{table.Name}' is one of the database's own: a system table is not dropped. Nothing was changed.");
+        EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(definition);
         if (definition.Columns.FirstOrDefault(c => c.DataType == DataType.Complex) is { } complex)
             throw new NotSupportedException(
@@ -400,6 +401,19 @@ internal static class SchemaRemoval
     // ── Shared ───────────────────────────────────────────────────────────────
 
     private static bool IsTable(Row values) => values["Type"] is short type && type == JetFormat.CatalogTypeTable;
+
+    /// <summary>
+    /// Refuses a change of this kind to one of the database's own tables: Access keeps what it needs in them,
+    /// and nothing here has been tried against one that is without a column or an index of its, or under another
+    /// name.
+    /// </summary>
+    internal static void EnsureNotSystemTable(Database db, string table)
+    {
+        if (db.GetSystemTableNames().Contains(table, StringComparer.OrdinalIgnoreCase))
+            throw new NotSupportedException(
+                $"Table '{table}' is one of the database's own: nothing is dropped from a system table or renamed in it, " +
+                "and it is neither dropped nor renamed. Nothing was changed.");
+    }
 
     /// <summary>Where <paramref name="name"/> is among <paramref name="names"/>, whatever the case of its letters.</summary>
     internal static int PositionOf(IReadOnlyList<string> names, string name)

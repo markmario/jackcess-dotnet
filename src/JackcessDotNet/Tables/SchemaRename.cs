@@ -27,6 +27,7 @@ internal static class SchemaRename
     internal static void RenameColumn(Database db, PageFile file, TableDefinition table, string name, string newName)
     {
         file.EnsureWritable();
+        SchemaRemoval.EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
         var column = table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -81,6 +82,7 @@ internal static class SchemaRename
     internal static void RenameIndex(Database db, PageFile file, TableDefinition table, string name, string newName)
     {
         file.EnsureWritable();
+        SchemaRemoval.EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
         var index = table.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -118,8 +120,7 @@ internal static class SchemaRename
             throw new ArgumentException($"Table '{name}' was not found in this database. Nothing was changed.", nameof(name));
         string oldName = table.Name;
         int tdefPage   = table.Definition.TdefPageNumber;
-        if (db.GetSystemTableNames().Contains(oldName, StringComparer.OrdinalIgnoreCase))
-            throw new NotSupportedException($"Table '{oldName}' is one of the database's own: a system table is not renamed. Nothing was changed.");
+        SchemaRemoval.EnsureNotSystemTable(db, oldName);
         EnsureNewName(newName, "a table", nameof(newName));
         if (oldName == newName) return tdefPage;
 

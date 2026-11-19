@@ -465,6 +465,8 @@ public sealed class SchemaRemovalTests : IDisposable
         Create(related: true).Dispose();
         AssertRefusedAndUnchanged<ArgumentException>(db => db.DropTable("Nothing"));
         AssertRefusedAndUnchanged<NotSupportedException>(db => db.DropTable("MSysObjects"));
+        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("MSysObjects").DropColumn("Flags"));
+        AssertRefusedAndUnchanged<NotSupportedException>(db => db.GetTable("MSysObjects").DropIndex("ParentIdName"));
         AssertRefusedAndUnchanged<InvalidOperationException>(db => db.DropTable("Parent"));
 
         // Once nothing refers to it, it goes.

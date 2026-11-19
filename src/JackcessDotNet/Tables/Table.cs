@@ -759,8 +759,8 @@ public sealed class Table
     /// changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The file is an Access 97 one; the column is the table's only one, or a complex one (attachments or several
-    /// values). Nothing is changed.
+    /// The file is an Access 97 one; the table is a system table; the column is the table's only one, or a complex
+    /// one (attachments or several values). Nothing is changed.
     /// </exception>
     public void DropColumn(string name)
     {
@@ -785,7 +785,7 @@ public sealed class Table
     /// key a relationship with referential integrity refers to the table's rows by, as Access refuses it: drop
     /// the relationship first (<see cref="Database.DropRelationship"/>). Nothing is changed.
     /// </exception>
-    /// <exception cref="NotSupportedException">The file is an Access 97 one. Nothing is changed.</exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one, or the table is a system table. Nothing is changed.</exception>
     public void DropIndex(string name)
     {
         if (name is null) throw new ArgumentNullException(nameof(name));
@@ -814,8 +814,8 @@ public sealed class Table
     /// grave accent, a square bracket or a control character in it, or a space at its start. Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The file is an Access 97 one, or the column is a complex one (attachments or several values). Nothing is
-    /// changed.
+    /// The file is an Access 97 one; the table is a system table; or the column is a complex one (attachments or
+    /// several values). Nothing is changed.
     /// </exception>
     public void RenameColumn(string name, string newName)
     {
@@ -845,7 +845,7 @@ public sealed class Table
     /// The index is one a relationship keeps (<see cref="Index.IsForeignKey"/>): its name is the relationship's,
     /// or one Access made for it. Nothing is changed.
     /// </exception>
-    /// <exception cref="NotSupportedException">The file is an Access 97 one. Nothing is changed.</exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one, or the table is a system table. Nothing is changed.</exception>
     public void RenameIndex(string name, string newName)
     {
         if (name is null) throw new ArgumentNullException(nameof(name));
