@@ -1,4 +1,6 @@
 #nullable enable
+JackcessDotNet.BatchInsertException
+JackcessDotNet.BatchInsertException.RowIndex.get -> int
 JackcessDotNet.Column
 JackcessDotNet.Column.AllowZeroLength.get -> bool
 JackcessDotNet.Column.DataType.get -> JackcessDotNet.DataType
@@ -289,6 +291,7 @@ JackcessDotNet.Table.Delete(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.FindRowByPrimaryKey(params object?[]! primaryKey) -> JackcessDotNet.Row?
 JackcessDotNet.Table.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
 JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void
+JackcessDotNet.Table.InsertRange(System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>! rows) -> void
 JackcessDotNet.Table.InsertRefusal.get -> string?
 JackcessDotNet.Table.LastAutoNumber.get -> int
 JackcessDotNet.Table.Name.get -> string!

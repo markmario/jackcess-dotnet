@@ -491,6 +491,65 @@ public sealed class Table
     }
 
     /// <summary>
+    /// Inserts <paramref name="rows"/>, in their order, all of them or none: Jackcess's <c>addRows</c>. Each row
+    /// is inserted as <see cref="Insert"/> inserts one, and holds its AutoNumber values afterwards. When a row
+    /// is refused, or cannot be written, the rows inserted before it are taken out again - the file is as it
+    /// was before the call, and the rows are given back as they came - and a <see cref="BatchInsertException"/>
+    /// says which row it was and why.
+    /// <para>
+    /// A copy of each page the batch changes is held until the batch is in, so that it can be taken back: the
+    /// pages a batch adds to the file cost nothing, the index pages it changes are what is held.
+    /// </para>
+    /// </summary>
+    /// <param name="rows">The rows to insert. They are gone through once.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
+    /// <exception cref="ArgumentException">One of <paramref name="rows"/> is null. Nothing is written.</exception>
+    /// <exception cref="BatchInsertException">
+    /// A row was not inserted: <see cref="BatchInsertException.RowIndex"/> is its place among
+    /// <paramref name="rows"/> and <see cref="Exception.InnerException"/> what <see cref="Insert"/> threw for it.
+    /// Nothing of the batch is in the file.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The table takes no row (<see cref="InsertRefusal"/>). Nothing is written.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The call is made from inside another change that is being kept for undoing. Nothing is written.
+    /// </exception>
+    public void InsertRange(IEnumerable<Row> rows)
+    {
+        if (rows is null) throw new ArgumentNullException(nameof(rows));
+        EnsureTakesRows();
+
+        var batch = rows.ToList();
+        if (batch.Any(row => row is null))
+            throw new ArgumentException("A row to insert is null.", nameof(rows));
+        if (batch.Count == 0) return;
+
+        // What each row holds for the AutoNumber columns as it comes: a batch taken back gives its rows back so.
+        var given = batch.Select(AutoNumberValuesIn).ToList();
+        int at = 0;
+        using var undo = _file.BeginUndo();
+        try
+        {
+            for (; at < batch.Count; at++)
+                Insert(batch[at]);
+            undo.Commit();
+        }
+        catch (Exception e) when (e is not (ObjectDisposedException or OutOfMemoryException))
+        {
+            undo.Dispose();
+            for (int i = 0; i <= at && i < batch.Count; i++)
+            {
+                if (given[i] is not { } values) continue;
+                foreach (var (name, had, value) in values)
+                {
+                    if (had) batch[i][name] = value;
+                    else     batch[i].Remove(name);
+                }
+            }
+            throw new BatchInsertException(at, batch.Count, e);
+        }
+    }
+
+    /// <summary>
     /// Updates <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or
     /// <see cref="FindRowByPrimaryKey"/> - and changed since: the row in the file is given the values
     /// <paramref name="row"/> now has. Jackcess's <c>updateRow</c>. The row is found by where it was read

@@ -144,6 +144,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["delete of a long row"]    = db => db.GetTable("LongRows").DeleteRow("Id", 200),
         ["update of a row that was read"] = db => { var keys = db.GetTable("Keys"); var row = keys.Rows.First(); row["K10"] = 1; keys.Update(row); },
         ["delete of a row that was read"] = db => { var keys = db.GetTable("Keys"); keys.Delete(keys.Rows.First()); },
+        ["insert of a batch"]       = db => db.GetTable("Keys").InsertRange(new[] { KeysRow(5000), KeysRow(5001) }),
         ["insert, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").Insert(KeysRow(5000)); },
         ["update, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").UpdateByPrimaryKey(7, new Row { ["K10"] = 1 }); },
         ["delete, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").DeleteRow("Id", 7); },
