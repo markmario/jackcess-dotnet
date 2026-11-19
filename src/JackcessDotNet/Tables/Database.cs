@@ -130,7 +130,9 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// Where no index on the columns can be searched - a table made without one on its foreign key, an index
-    /// whose keys this library does not write, a parent key that is null - the table is read from end to end,
+    /// whose keys this library does not write, a parent key that is null, a key this library may not make as Access
+    /// does (a Date/Time Extended one, which ACE can store in a second form keyed otherwise, #51) - the table is
+    /// read from end to end,
     /// once in the change, and all its rows are held until the change is written: the row's place and the columns
     /// its indexes and relationships name, some 200 bytes a row with numeric keys (about 60 MB and a second for a
     /// table of 300,000 rows). A change that would rewrite a row of a table whose rows this library does not
@@ -175,7 +177,9 @@ public sealed class Database : IDisposable
     /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
     /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows
     /// is not searched for a relationship - the table is read instead - until this library has rewritten or
-    /// deleted them. Set it before the first change; an index is looked at once.
+    /// deleted them. A row whose key this library may not make as Access does - a Date/Time Extended value, which
+    /// ACE can store in a second form keyed otherwise (#51) - is one the index lacks unless its entry is under the
+    /// key this library makes. Set it before the first change; an index is looked at once.
     /// </para>
     /// <para>
     /// <b>What it costs:</b> one reading of the table, and of the indexes' leaf pages, for the first such change

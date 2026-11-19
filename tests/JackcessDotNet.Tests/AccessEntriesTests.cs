@@ -98,6 +98,54 @@ public sealed class AccessEntriesTests : IDisposable
             }
     }
 
+    // ── Keys ACE made of a value's second form ──────────────────────────────
+
+    /// <summary>Every entry of <paramref name="table"/>'s indexes that points at no row of it, as "index key".</summary>
+    private static List<string> EntriesOfNoRow(Database db, string table)
+    {
+        var rows = JetPages.Rows(db.File, IndexChecks.TdefOf(db, table)).Select(r => (r.Page, r.Row)).ToHashSet();
+        return db.GetTable(table).Indexes.SelectMany(ix => JetPages.LeafEntries(db.File, ix.RootPageNumber)
+                .Where(e => !rows.Contains((e.RowPage, e.Row))).Select(e => $"{ix.Name} {e.Hex}")).ToList();
+    }
+
+    // Assets/ace-second-form-foreign-key.accdb (tools/ace-second-form-foreign-key.ps1): p2's key and child 2's
+    // foreign key are Date/Time Extended values ACE stored in its second form, under keys this library does not make
+    // (#51). Deleting p2 is refused, as ACE refuses it: the child is found by reading the table, not by searching
+    // the index for a key it is not under. Verified, the child counted as held, the index was searched, p2 was
+    // deleted from under child 2, and its entries were left pointing at no row.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_parent_whose_child_ACE_keyed_in_the_second_form_is_not_deleted_from_under_it(bool verify)
+    {
+        using var db = Database.Open(Copy("ace-second-form-foreign-key.accdb"));
+        db.EnforceForeignKeys = true;
+        db.VerifyIndexes = verify;
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => db.GetTable("P").DeleteRow("Nm", "p2"));
+        IndexChecks.AssertUnchanged(before, db);
+    }
+
+    // The child deleted, then the parent: each row's entries go with it, the ones ACE made of the second form found
+    // by the row they point at. Found by this library's key, they were left behind, pointing at no row: ACE then
+    // listed a row that was not there and took a child of it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Rows_ACE_keyed_in_the_second_form_take_their_entries_with_them(bool verify)
+    {
+        using var db = Database.Open(Copy("ace-second-form-foreign-key.accdb"));
+        db.EnforceForeignKeys = true;
+        db.VerifyIndexes = verify;
+        db.GetTable("C").DeleteRow("Id", 2);
+        db.GetTable("P").DeleteRow("Nm", "p2");
+
+        Assert.Empty(EntriesOfNoRow(db, "C"));
+        Assert.Empty(EntriesOfNoRow(db, "P"));
+        Assert.Equal(new[] { "p1" }, db.GetTable("P").Rows.Select(r => (string)r["Nm"]!));
+        Assert.Equal(new[] { 1 }, db.GetTable("C").Rows.Select(r => (int)r["Id"]!));
+    }
+
     // ── Entries an earlier version left ─────────────────────────────────────
 
     /// <summary>

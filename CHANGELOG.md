@@ -60,6 +60,13 @@ changed since 1.2.2.
   Long), is such an entry the row's wrong one: a row with its key is taken, the entry goes, and the row is entered
   under its own key. A removal that takes out a leaf's last entry reads the next leaf's first, one page more, for
   another entry under the key. An index with no such entry costs nothing more to write to.
+- **A Date/Time Extended key is never looked for through an index**, and a row with one takes its entries with it
+  however ACE keyed them. ACE stores such a value in a second form after an SQL `UPDATE` and keys it by those
+  bytes (#51): a search by this library's key missed the row, so that, enforcing foreign keys, a parent was deleted
+  from under a child ACE had keyed so - ACE refuses that delete - and a removal by that key left the row's entry
+  pointing at no row, which ACE then listed as a row and took a child of. The table is read for such a key, as for
+  one no index can be searched for, with or without `Database.VerifyIndexes`, and a row's entries are found by the
+  row they point at, every leaf of the index read. This fixes a defect on `main`.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the

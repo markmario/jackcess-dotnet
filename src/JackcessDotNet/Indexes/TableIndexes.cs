@@ -279,8 +279,9 @@ internal sealed class TableIndexes
     /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
     /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
     /// this library does not make, one that holds no entry for a key that is all null, a value this library
-    /// makes no key for (<see cref="IndexKeys.CanEncode(Column, object?)"/>), or one that does not hold every
-    /// row (<see cref="HoldsEveryRow"/>). Each pointer is an
+    /// makes no key for (<see cref="IndexKeys.CanEncode(Column, object?)"/>), a key it may not make as Access
+    /// does (<see cref="IndexKeys.MatchesAccess"/>), or one that does not hold every row
+    /// (<see cref="HoldsEveryRow"/>). Each pointer is an
     /// entry, not yet a row: the row it points at is the caller's to read and compare, as an index's text key
     /// finds 'ABC' for 'abc' and an entry may outlive its row in a file an older version of this library wrote.
     /// </summary>
@@ -301,6 +302,9 @@ internal sealed class TableIndexes
             // to search by: the caller reads the table for it.
             for (int i = 0; i < values.Count; i++)
                 if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i])) return null;
+            // Nor has a key this library may not make as Access does: a Date/Time Extended value ACE stored in its
+            // second form is under another key than this library's (#51), and a search for it would miss the row.
+            if (!IndexKeys.MatchesAccess(tree.Columns, values)) return null;
 
             // A key that is cut is looked for under every form an entry of it can have - cut, or whole or cut
             // otherwise as earlier versions wrote it (StoredUnder) - so a row whose entry is one of those is not missed.
@@ -315,10 +319,11 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// The row pointers <paramref name="entry"/>'s index holds under its key - the rows a unique index compares it
-    /// with - or null when the index does not hold every row (<see cref="HoldsEveryRow"/>).
+    /// with - or null when the index does not hold every row (<see cref="HoldsEveryRow"/>), or the key is one this
+    /// library may not make as Access does (<see cref="IndexKeys.MatchesAccess"/>): the caller then reads the table.
     /// </summary>
     internal IEnumerable<int>? RowPointersFor(Entry entry)
-        => HoldsEveryRow(entry.Tree)
+        => HoldsEveryRow(entry.Tree) && IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)
             ? StoredUnder(new IndexWriter(_file, _allocator), entry).Select(stored => stored.RowPointer)
             : null;
 
@@ -377,10 +382,13 @@ internal sealed class TableIndexes
         // Room for every row at once, by the definition's count of them (kept within reason, should it be wrong).
         int rows    = Math.Min(Math.Max(ByteUtil.GetInt(_file.ReadPage(_table.TdefPageNumber), format.TdefOffsetNumRows), 0), 1 << 24);
         var unfound = trees.Select(_ => new Dictionary<int, byte[]>(rows)).ToList();
-        // The rows a tree is not asked about: their columns all null in an index that ignores nulls, a value no
-        // key is made for, or a key this library does not make as Access does (IndexKeys.MatchesAccess), which
-        // cannot say whose an entry is. An entry that points at one is left as it is.
+        // The rows a tree is not asked about: their columns all null in an index that ignores nulls, or a value no
+        // key is made for. An entry that points at one is left as it is.
         var unasked = trees.Select(_ => new HashSet<int>()).ToList();
+        // The rows whose key this library may not make as Access does (IndexKeys.MatchesAccess): an entry that points
+        // at one is believed, whatever its key, but the row is held only when its entry is under this library's
+        // key, which a search makes - so that an index with such a row under another key is not searched (#51).
+        var believed = trees.Select(_ => new HashSet<int>()).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
         {
@@ -401,9 +409,10 @@ internal sealed class TableIndexes
                     bool keyed = !(nulls == values.Length && tree.IgnoreNulls);
                     for (int i = 0; keyed && i < values.Length; i++)
                         keyed = IndexKeys.CanEncode(tree.Columns[i].Column, values[i]);
-                    keyed = keyed && IndexKeys.MatchesAccess(tree.Columns, values);
-                    if (keyed) unfound[t][RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
-                    else unasked[t].Add(RowPointer.Pack(pageNumber, r));
+                    int pointer = RowPointer.Pack(pageNumber, r);
+                    if (!keyed) { unasked[t].Add(pointer); continue; }
+                    unfound[t][pointer] = IndexKeys.Encode(tree.Columns, values);
+                    if (!IndexKeys.MatchesAccess(tree.Columns, values)) believed[t].Add(pointer);
                 }
             }
         }
@@ -420,7 +429,7 @@ internal sealed class TableIndexes
             {
                 if (unfound[t].TryGetValue(pointer, out byte[]? expected) ? KeysMatch(key, expected) : unasked[t].Contains(pointer))
                     held.Add(pointer);
-                else
+                else if (!believed[t].Contains(pointer))
                     noRow.Add((key, pointer));
             }
             foreach (int pointer in held) unfound[t].Remove(pointer);
@@ -486,6 +495,17 @@ internal sealed class TableIndexes
         {
             // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
             if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld)) notHeld.Forget(rowPointer);
+
+            // A row whose key this library may not make as Access does - a Date/Time Extended value ACE stored in
+            // its second form (#51) - can be under a key this library does not make: its entries are found by the
+            // row they point at, every leaf of the index read, so that none is left pointing where the row was.
+            if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
+            {
+                var root = entry.Tree.Target.RootPage;
+                foreach (byte[] key in writer.EntriesWithPrefix(root, Array.Empty<byte>()).Where(e => e.RowPointer == rowPointer).Select(e => e.Key).ToList())
+                    writer.Remove(entry.Tree.Target, key, rowPointer);
+                continue;
+            }
 
             // The entry goes under the key it is stored under: for a key that was cut, the cut key or the whole
             // one (StoredUnder), whichever holds this row. A row with no entry at all - one an earlier version of
