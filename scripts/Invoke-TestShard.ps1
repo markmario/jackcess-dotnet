@@ -23,10 +23,19 @@ $results = Join-Path $PSScriptRoot '..\TestResults'
 $namespace = 'JackcessDotNet.Tests.'
 $Properties = @($Properties | Where-Object { $_ })
 
-$listed = @(& dotnet test --project $project --configuration Release --no-build --framework $Framework @Properties --list-tests 2>&1 |
-    ForEach-Object { ([string]$_).Trim() } | Where-Object { $_.StartsWith($namespace) })
-if ($LASTEXITCODE -ne 0 -or $listed.Count -eq 0) {
+$listing = @(& dotnet test --project $project --configuration Release --no-build --framework $Framework @Properties --list-tests 2>&1 |
+    ForEach-Object { ([string]$_).Trim() })
+if ($LASTEXITCODE -ne 0) {
     Write-Host "::error::The tests of $Framework could not be listed."
+    exit 1
+}
+$listed = @($listing | Where-Object { $_.StartsWith($namespace) })
+# The platform says how many tests it found ("Discovered 2443 tests."). A test named otherwise than by its class and
+# method - a DisplayName of its own - is not among those taken above, so its class would be split into no shard and run
+# by none, with nothing else to notice: a listing that does not add up is refused.
+$discovered = @($listing | Where-Object { $_ -match '^Discovered (\d+) tests\.$' } | ForEach-Object { [int]($_ -replace '\D', '') })
+if ($discovered.Count -ne 1 -or $discovered[0] -ne $listed.Count -or $listed.Count -eq 0) {
+    Write-Host "::error::The test platform found $($discovered -join ', ') tests on $Framework, and $($listed.Count) are named $namespace<class>.<method>, which is how this script finds a test's class."
     exit 1
 }
 # A listed test is its display name: the class, the method and, for a theory's case, its arguments in brackets.
