@@ -78,6 +78,12 @@ changed since 1.2.2.
   finds the row of 1.2346, as it does with ACE's `=` and DAO's `Seek`, where it found none. Text is matched as
   text, as it was: `"1.0"`, `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose
   key reads as the same number.
+- **A `double` or `float` written to a Decimal column, or looked for in one, is the decimal Access makes of it, on
+  every runtime** (#49): rounded to 15 significant digits, or 7 for a `float`, as OLE Automation rounds it - an `=`
+  with the double 0.1, or the single 0.1, finds Access's Decimal 0.1. `Convert.ToDecimal` rounds so on .NET
+  Framework and .NET up to 10, and on .NET 11 converts exactly: there a double was written to a Decimal column of
+  more places than 15 as its binary expansion (0.1 as 0.10000000000000000555), and a lookup by a double found no
+  Decimal it should. This fixes a defect of the `net11.0` target on `main`.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index

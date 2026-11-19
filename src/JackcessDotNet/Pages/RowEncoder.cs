@@ -333,7 +333,8 @@ internal sealed class RowEncoder
                 Util.ByteUtil.PutBytes(buffer, offset, guidBytes);
                 return;
             case DataType.Decimal:
-                Util.ByteUtil.PutBytes(buffer, offset, NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name));
+                // A double or a float as Access takes one to a Decimal, on every runtime (Util.AutomationDecimal).
+                Util.ByteUtil.PutBytes(buffer, offset, NumericCodec.Encode(Util.AutomationDecimal.From(value, provider: null), col.Precision, col.Scale, col.Name));
                 return;
             case DataType.Int64:
                 Util.ByteUtil.PutLong(buffer, offset, Convert.ToInt64(value));
@@ -380,7 +381,7 @@ internal sealed class RowEncoder
 
             // A Decimal with more digits than its column holds.
             if (col.DataType == DataType.Decimal)
-                NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name);
+                NumericCodec.Encode(Util.AutomationDecimal.From(value, provider: null), col.Precision, col.Scale, col.Name);
             // Binary longer than its column, whichever area the definition keeps it in: Access refuses one byte over
             // its length, through ACE and DAO, in an .mdb and an .accdb, kept among the variable-length values
             // (VARBINARY, DAO's dbBinary) or the fixed-length ones (BINARY, dbFixedField) (#45).

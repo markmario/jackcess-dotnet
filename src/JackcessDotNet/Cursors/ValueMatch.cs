@@ -158,7 +158,9 @@ internal static class ValueMatch
         {
             double d  => BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture)),
             float f   => BitConverter.GetBytes(f).AsSpan().SequenceEqual(BitConverter.GetBytes(Convert.ToSingle(asked, CultureInfo.InvariantCulture))),
-            decimal m => m == Convert.ToDecimal(asked, CultureInfo.InvariantCulture),
+            // A Decimal: a double or a float asked is taken to a decimal as Access takes it, to the digits its type
+            // holds, on every runtime (Util.AutomationDecimal).
+            decimal m => m == Util.AutomationDecimal.From(asked, CultureInfo.InvariantCulture),
             // A whole number: a double or a float is it only when it is that whole number exactly. Taken to a decimal
             // it is cut to 15 significant digits, which made 5.000000000000001 an Integer's 5, and a double one past
             // a Large Number's that number (#49).
