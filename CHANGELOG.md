@@ -198,7 +198,9 @@ changed since 1.2.2.
     as damaged with `NotSupportedException` whatever password is given; with a password it was
     `InvalidCredentialException`. So is an .accdb whose header describes its encryption in a way that does not
     read, opened with its password: it threw `FormatException`, `InvalidDataException` or
-    `CryptographicException`, as the damage fell.
+    `CryptographicException`, as the damage fell. Its Agile description's sizes - salt, block, key, hash - and its
+    spin count, at most 10,000,000, are checked as the file is opened: a block size of -1 threw
+    `OverflowException` at the first page read, and a spin count of 2^31 - 1 was spun, for hours.
   - **An .accdb in ECMA Standard Encryption is read and not written**: `IsReadOnly`, and a write is refused with
     `NotSupportedException` before anything is written, as in an Access 97 file. No Access is known to give an
     .accdb this encryption (Access 2007 uses RC4 CryptoAPI, and later versions Agile Encryption), and no file of

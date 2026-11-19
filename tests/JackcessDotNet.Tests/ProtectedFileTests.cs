@@ -211,6 +211,51 @@ public sealed class ProtectedFileTests : IDisposable
         finally { File.Delete(path); }
     }
 
+    // An .accdb whose description of its encryption holds a value MS-OFFCRYPTO does not allow, or that AES and the hash
+    // it names do not take, is refused as damaged as it is opened - not at the first page read - and a spin count past
+    // 10,000,000 is not spun: 2^31 - 1 of them would take hours. The value is written in place of the one Access wrote,
+    // and the description's length made to fit.
+    [Theory]
+    [InlineData("keyData", "blockSize", "-1")]
+    [InlineData("keyData", "blockSize", "32")]
+    [InlineData("keyData", "keyBits", "100")]
+    [InlineData("keyData", "hashSize", "63")]
+    [InlineData("keyData", "saltSize", "15")]
+    [InlineData("p:encryptedKey", "spinCount", "10000001")]
+    [InlineData("p:encryptedKey", "spinCount", "2147483647")]
+    [InlineData("p:encryptedKey", "spinCount", "2147483648")]
+    [InlineData("p:encryptedKey", "spinCount", "-1")]
+    [InlineData("p:encryptedKey", "blockSize", "-1")]
+    [InlineData("p:encryptedKey", "keyBits", "0")]
+    [InlineData("p:encryptedKey", "hashSize", "0")]
+    [InlineData("p:encryptedKey", "saltSize", "65537")]
+    public async Task An_accdb_whose_encryption_description_holds_a_value_past_its_bounds_is_refused_as_damaged_on_opening(
+        string element, string attribute, string value)
+    {
+        byte[] file = File.ReadAllBytes(Asset("dao-accdb2010-password.accdb"));
+        const int lengthAt = 0x299, xmlAt = 0x29B + 8;   // the description's length; its XML, after the version and the reserved word
+        int length = BitConverter.ToInt16(file, lengthAt);
+        string xml = System.Text.Encoding.UTF8.GetString(file, xmlAt, length - 8);
+        int at = xml.IndexOf(" " + attribute + "=\"", xml.IndexOf("<" + element + " ", StringComparison.Ordinal), StringComparison.Ordinal) + attribute.Length + 3;
+        byte[] damaged = System.Text.Encoding.UTF8.GetBytes(xml.Substring(0, at) + value + xml.Substring(xml.IndexOf('"', at)));
+        Array.Clear(file, xmlAt, length - 8);
+        damaged.CopyTo(file, xmlAt);
+        BitConverter.GetBytes((short)(damaged.Length + 8)).CopyTo(file, lengthAt);
+
+        string path = Path.Combine(Path.GetTempPath(), $"damaged_{Guid.NewGuid():N}.accdb");
+        File.WriteAllBytes(path, file);
+        try
+        {
+            var cancel = TestContext.Current.CancellationToken;
+            var opening = Task.Run(() => Record.Exception(() => Database.Open(path, new DatabaseOpenOptions { Password = Password }).Dispose()), cancel);
+            Assert.True(await Task.WhenAny(opening, Task.Delay(TimeSpan.FromMinutes(1), cancel)) == opening, "the file was still being opened after a minute");
+            var refused = Assert.IsType<NotSupportedException>(await opening);
+            Assert.Contains("damaged", refused.Message);
+            Assert.Contains(attribute, refused.Message);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [MemberData(nameof(EncodedOnly))]
     public void An_encoded_file_without_a_password_opens_with_any_password_or_none(string fixture)

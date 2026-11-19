@@ -209,6 +209,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             descriptor.KeyData.CipherAlgorithm,
             descriptor.KeyData.CipherChaining,
             "key data");
+        descriptor.Validate();
 
         if (!AgileEngine.VerifyPassword(descriptor, pwdBytes))
             throw new InvalidCredentialException(
@@ -242,6 +243,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             public required int    SaltSize        { get; init; }
             public required int    BlockSize       { get; init; }
             public required int    KeyBits         { get; init; }
+            public required int    HashSize        { get; init; }
             public required string CipherAlgorithm { get; init; }   // "AES"
             public required string CipherChaining  { get; init; }   // "ChainingModeCBC"
             public required string HashAlgorithm   { get; init; }   // "SHA512", etc.
@@ -253,6 +255,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             public required int    SaltSize                   { get; init; }
             public required int    BlockSize                  { get; init; }
             public required int    KeyBits                    { get; init; }
+            public required int    HashSize                   { get; init; }
             public required int    SpinCount                  { get; init; }
             public required string CipherAlgorithm            { get; init; }
             public required string CipherChaining             { get; init; }
@@ -296,6 +299,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                     SaltSize        = AttrInt   (keyDataEl, "saltSize"),
                     BlockSize       = AttrInt   (keyDataEl, "blockSize"),
                     KeyBits         = AttrInt   (keyDataEl, "keyBits"),
+                    HashSize        = AttrInt   (keyDataEl, "hashSize"),
                     CipherAlgorithm = AttrString(keyDataEl, "cipherAlgorithm"),
                     CipherChaining  = AttrString(keyDataEl, "cipherChaining"),
                     HashAlgorithm   = AttrString(keyDataEl, "hashAlgorithm"),
@@ -306,6 +310,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                     SaltSize                   = AttrInt   (passwordEncryptor, "saltSize"),
                     BlockSize                  = AttrInt   (passwordEncryptor, "blockSize"),
                     KeyBits                    = AttrInt   (passwordEncryptor, "keyBits"),
+                    HashSize                   = AttrInt   (passwordEncryptor, "hashSize"),
                     SpinCount                  = AttrInt   (passwordEncryptor, "spinCount"),
                     CipherAlgorithm            = AttrString(passwordEncryptor, "cipherAlgorithm"),
                     CipherChaining             = AttrString(passwordEncryptor, "cipherChaining"),
@@ -318,7 +323,65 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             };
         }
 
-        private static int    AttrInt   (XElement el, string name) => int.Parse(AttrString(el, name));
+        // MS-OFFCRYPTO 2.3.4.10's bound on spinCount; AES's block, in bytes.
+        private const int MaxSpinCount = 10_000_000;
+        private const int AesBlock = 16;
+
+        /// <summary>
+        /// Refuses, with <see cref="InvalidDataException"/>, a descriptor with a value MS-OFFCRYPTO (2.3.4.10) does not
+        /// allow, or the cipher and hash it names do not take, of those the password and the pages are worked out
+        /// with: each element's salt (1 to 65,536 bytes, as many as its saltSize says), block (16 bytes, AES's), key
+        /// (128, 192 or 256 bits) and hash (the length its algorithm gives); the spin count (0 to 10,000,000); and the
+        /// encrypted values (whole blocks; the key value the data key's bytes or more, an AES key's length). Checked
+        /// before anything is worked out from them: a damaged descriptor is refused as the file is opened, not at a
+        /// page, and a spin count past the bound is not spun.
+        /// </summary>
+        internal void Validate()
+        {
+            Check("keyData", KeyData.SaltSize, KeyData.SaltValue, KeyData.BlockSize, KeyData.KeyBits, KeyData.HashSize, KeyData.HashAlgorithm);
+            Check("encryptedKey", PasswordKey.SaltSize, PasswordKey.SaltValue, PasswordKey.BlockSize, PasswordKey.KeyBits,
+                  PasswordKey.HashSize, PasswordKey.HashAlgorithm);
+            if (PasswordKey.SpinCount is < 0 or > MaxSpinCount)
+                throw Damaged("encryptedKey", "spinCount", PasswordKey.SpinCount, "0 to 10,000,000");
+            foreach (var (name, value) in new[]
+                     {
+                         ("encryptedVerifierHashInput", PasswordKey.EncryptedVerifierHashInput),
+                         ("encryptedVerifierHashValue", PasswordKey.EncryptedVerifierHashValue),
+                         ("encryptedKeyValue", PasswordKey.EncryptedKeyValue),
+                     })
+                if (value.Length == 0 || value.Length % AesBlock != 0)
+                    throw Damaged("encryptedKey", name, $"{value.Length} bytes", $"whole blocks of {AesBlock} bytes");
+            int keyValue = PasswordKey.EncryptedKeyValue.Length;
+            if (keyValue < KeyData.KeyBits / 8 || keyValue is not (16 or 24 or 32))
+                throw Damaged("encryptedKey", "encryptedKeyValue", $"{keyValue} bytes",
+                              $"an AES key of at least the {KeyData.KeyBits / 8} bytes keyData's keyBits says");
+        }
+
+        private static void Check(string element, int saltSize, byte[] saltValue, int blockSize, int keyBits, int hashSize, string hashAlgorithm)
+        {
+            if (saltSize is < 1 or > 65_536)
+                throw Damaged(element, "saltSize", saltSize, "1 to 65,536");
+            if (saltValue.Length != saltSize)
+                throw Damaged(element, "saltValue", $"{saltValue.Length} bytes", $"the {saltSize} its saltSize says");
+            if (blockSize != AesBlock)
+                throw Damaged(element, "blockSize", blockSize, $"{AesBlock}, AES's");
+            if (keyBits is not (128 or 192 or 256))
+                throw Damaged(element, "keyBits", keyBits, "128, 192 or 256, AES's");
+            int length = HashLength(hashAlgorithm);
+            if (hashSize != length)
+                throw Damaged(element, "hashSize", hashSize, $"{length}, {hashAlgorithm}'s");
+        }
+
+        private static InvalidDataException Damaged(string element, string attribute, object value, string allowed)
+            => new($"<{element}> has {attribute} {value}, where it is {allowed}.");
+
+        private static int AttrInt(XElement el, string name)
+        {
+            string text = AttrString(el, name);
+            return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value)
+                ? value
+                : throw new InvalidDataException($"<{el.Name.LocalName}> has {name} '{text}', which is not a whole number an int holds.");
+        }
         private static byte[] AttrBase64(XElement el, string name) => Convert.FromBase64String(AttrString(el, name));
         private static string AttrString(XElement el, string name)
             => el.Attribute(name)?.Value
@@ -358,8 +421,12 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             var pk = d.PasswordKey;
             int keyByteLen = pk.KeyBits / 8;
             byte[] key = CryptDeriveKey(password, KeyValueBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            return AesCbcDecrypt(key, pk.SaltValue, pk.EncryptedKeyValue);
+            return AesCbcDecrypt(key, PasswordIv(pk), pk.EncryptedKeyValue);
         }
+
+        // The password key encryptor's IV: its salt, cut or padded with 0x36 to the block (MS-OFFCRYPTO 2.3.4.12),
+        // which for Access's salt of 16 bytes is the salt.
+        private static byte[] PasswordIv(AgileDescriptor.PasswordKeyEncryptor pk) => FixToLength(pk.SaltValue, pk.BlockSize, 0x36);
 
         public static bool VerifyPassword(AgileDescriptor d, byte[] password)
         {
@@ -368,10 +435,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             int blockSize  = pk.BlockSize;
 
             byte[] verifierKey = CryptDeriveKey(password, VerifierInputBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            byte[] verifier    = AesCbcDecrypt(verifierKey, pk.SaltValue, pk.EncryptedVerifierHashInput);
+            byte[] verifier    = AesCbcDecrypt(verifierKey, PasswordIv(pk), pk.EncryptedVerifierHashInput);
 
             byte[] valueKey    = CryptDeriveKey(password, VerifierValueBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            byte[] storedHash  = AesCbcDecrypt(valueKey, pk.SaltValue, pk.EncryptedVerifierHashValue);
+            byte[] storedHash  = AesCbcDecrypt(valueKey, PasswordIv(pk), pk.EncryptedVerifierHashValue);
 
             byte[] testHash = HashBytes(pk.HashAlgorithm, verifier, Array.Empty<byte>());
             if ((testHash.Length % blockSize) != 0)
@@ -915,6 +982,20 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         }
         return HashOneShot(algorithm, combined);
     }
+
+    // The bytes the hash algorithm HashOneShot names gives.
+    private static int HashLength(string algorithm) =>
+        algorithm.ToUpperInvariant().Replace("-", "").Replace("_", "") switch
+        {
+            "SHA1"   => 20,
+            "SHA256" => 32,
+            "SHA384" => 48,
+            "SHA512" => 64,
+            "MD5"    => 16,
+            _ => throw new NotSupportedException(
+                   $"Hash algorithm '{algorithm}' is not supported by the Office Crypt codec port. " +
+                   "Supported: SHA1, SHA256, SHA384, SHA512, MD5."),
+        };
 
     private static byte[] HashOneShot(string algorithm, byte[] data) =>
         algorithm.ToUpperInvariant().Replace("-", "").Replace("_", "") switch
