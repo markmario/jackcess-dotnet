@@ -478,12 +478,32 @@ db.ImportTable(customers, new ImportOptions { PrimaryKey = new[] { "Id" } });
 db.ImportTable(moreRows, new ImportOptions { AppendIfExists = true });
 ```
 
-POCO mapping respects `[Key]`, `[Column("X")]`, `[MaxLength]`, `[NotMapped]`,
-and `[DatabaseGenerated(Identity)]`. Long strings (>255 chars) auto-promote
-to Memo; large byte arrays (>255 bytes) to OLE. Unmappable types can fall
-back to `Memo` via `ImportOptions.FallbackUnmappableToString = true`. A `long`
-is a Large Number, which only an `.accdb` has: in an `.mdb` the table is refused
-before it is made.
+An import holds every value of its source exactly, or refuses before anything is written (#44):
+
+- **Every value is converted to what its column holds before anything is written**, and a value no column holds
+  exactly is refused then: `ArgumentException`, naming the column and the row (`ColumnValueTooLongException` for
+  text longer than a column that is there).
+- **What is written is written whole or not at all**, in one undo scope: a row the database refuses part-way - a
+  duplicate in a key, a null in a required column - takes back the table, the rows before it and, with
+  `ImportTables`, every table before it. A refused import leaves the file byte for byte as it was.
+- **A column a table is made with holds every value of its source** (the cheat sheet below): its type follows the
+  CLR type, and a length, precision or scale the values need follows the values.
+- **Nullability and keys are carried over.** A `DataColumn` with `AllowDBNull = false`, and a property with
+  `[Required]` or of a value type that is not nullable, makes a required column - Access's Required property, which
+  Access and this library hold rows to; an AutoNumber and a Yes/No are not given it. A `DataTable`'s primary key of
+  several columns is the table's key, in its order; several `[Key]` properties make a key of several columns, in the
+  order of their `[Column(Order = n)]` where they give one, and then as they are declared.
+- **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
+  holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` and a
+  `decimal` to each other's columns when the value converts back to the one given); text to a numeric, Yes/No,
+  Date/Time or GUID column when it reads as one in the invariant culture; any of these to Text or Memo as its
+  invariant text (a `double` in its round-trip form, a date in ISO 8601) when that fits; bytes to a Binary column
+  that holds that many. A Yes/No column takes no null, which Access would read as No, and no number.
+- An `IEnumerable<T>` is read whole, every object, before anything is written.
+
+POCO mapping respects `[Key]`, `[Column("X")]`, `[Column(Order = n)]`, `[MaxLength]`, `[Required]`, `[NotMapped]`
+and `[DatabaseGenerated(Identity)]`. Unmappable types can fall back to `Memo` via
+`ImportOptions.FallbackUnmappableToString = true`.
 
 ## Exporting back
 
@@ -498,27 +518,32 @@ materialising the whole table.
 
 ## Type round-trip cheat sheet
 
-How the importer maps a CLR type to a column, and what comes back:
+How the importer maps a CLR type to a column of a table it makes, and what comes back. Each column holds every
+value of its type, or of the values the source has (#44):
 
 | CLR type | `DataType` | Notes |
 | --- | --- | --- |
-| `bool` | `Boolean` | |
-| `byte` / `sbyte` | `Byte` | |
-| `short` / `ushort` | `Int16` | both come back as `short` |
-| `int` / `uint` | `Int32` | both come back as `int` |
+| `bool` | `Boolean` (Yes/No) | a Yes/No holds no null: a null is refused |
+| `byte` | `Byte` | |
+| `sbyte` / `short` | `Int16` (Integer) | both come back as `short`: Access's Byte is 0 to 255 |
+| `ushort` / `int` | `Int32` (Long Integer) | both come back as `int`: Access's Integer is signed |
+| `uint` | `Int64` (Large Number) in an `.accdb`, `Decimal(10, 0)` in an `.mdb` | comes back as `long`, or `decimal` |
 | `long` | `Int64` | Large Number: an `.accdb` only; in an `.mdb` the table is refused before it is made |
-| `ulong` | `Int32` | a value past 32 bits stops the import at its row (`OverflowException`) |
-| `float` / `double` | `Single` / `Double` | |
-| `decimal` | `Currency` | 4 decimal places; create a `Decimal` column yourself for more |
-| `DateTime` | `DateTime` | `Kind` is dropped |
+| `ulong` | `Decimal(20, 0)` | past a Large Number's range; comes back as `decimal` |
+| `float` / `double` | `Single` / `Double` | every bit, NaN and the infinities included |
+| `decimal` | `Decimal(p, s)` | `s` the most places after the point a value has, `p` the digits the values need and 18 at least; refused when they need more than 28 |
+| `DateTime` | `DateTime` | to the millisecond, the precision a Date/Time is read and written at; `Kind` is dropped; a date before 1 January 100 (`DateTime.MinValue` among them) is refused |
 | `DateTimeOffset` | `DateTime` | stored as UTC |
 | `Guid` | `Guid` | |
-| `string` / `char` | `Text` | the source's maximum length, 255 when it has none |
-| `string` over 255 | `Memo` | promoted on its maximum length |
-| `byte[]` | `Binary` | the source's maximum length, 50 when it has none |
-| `byte[]` over 255 | `OleObject` | promoted on its maximum length |
+| `string` / `char` | `Text` | the source's maximum length, or 255 when it has none, when every value fits it |
+| `string` that does not fit | `Memo` | |
+| `byte[]` | `Binary` | the source's maximum length, when it has one of 255 or less and every value fits it |
+| `byte[]` otherwise | `OleObject` | |
 | `Nullable<T>` | as `T` | |
 | `enum` | its underlying type | comes back as the enum on read |
+
+A `decimal` key, a `uint` key in an `.mdb` and a `ulong` key are refused before the table is made, with
+`NotSupportedException`: they are Decimal columns, whose index keys this library does not write.
 
 ## Status
 
@@ -610,7 +635,8 @@ Limits to know about:
   which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
   such a column.
 - An import (`DatabaseImporter`) makes a `long` column or property a Large Number, so a table with one is
-  imported into an `.accdb` and refused in an `.mdb`, before the table is made.
+  imported into an `.accdb` and refused in an `.mdb`, before the table is made; a `uint` is a Large Number in an
+  `.accdb` and a `Decimal(10, 0)` in an `.mdb`.
 
 ## Text index keys: sort orders and limits
 

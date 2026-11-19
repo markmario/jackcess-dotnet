@@ -360,7 +360,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         Assert.Equal(long.MinValue, exported.Rows[0]["N"]);
         Assert.Equal(DateTime.MaxValue, exported.Rows[0]["D"]);
 
-        Assert.Equal(5L, TypeMapper.CoerceForJet(5, DataType.Int64));
+        Assert.Equal(5L, TypeMapper.ToColumnValue(5, new ColumnDefinition("N", DataType.Int64).ToColumn("n")));
         Assert.Throws<ArgumentException>(() => db.CreateTable("Numbered", new[] { new ColumnDefinition("N", DataType.Int64) { IsAutoNumber = true } }));
     }
 }

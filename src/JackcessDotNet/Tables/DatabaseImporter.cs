@@ -10,22 +10,41 @@ namespace JackcessDotNet;
 /// <see cref="Database"/>: a table is created with columns worked out from the source, and the source's rows are
 /// inserted into it.
 /// <para>
-/// A column's type follows the CLR type of the source's column or property. <see cref="bool"/> is
-/// <see cref="DataType.Boolean"/>; <see cref="byte"/> and <see cref="sbyte"/> are <see cref="DataType.Byte"/>;
-/// <see cref="short"/> and <see cref="ushort"/> are <see cref="DataType.Int16"/>; <see cref="int"/>,
-/// <see cref="uint"/> and <see cref="ulong"/> are <see cref="DataType.Int32"/>; <see cref="long"/> is
-/// <see cref="DataType.Int64"/> (Large Number), which only an .accdb has - in an .mdb a table with a
-/// <see cref="long"/> column or property is refused, with <see cref="NotSupportedException"/>, before it is made;
-/// <see cref="float"/> is <see cref="DataType.Single"/>; <see cref="double"/> is <see cref="DataType.Double"/>;
-/// <see cref="decimal"/> is <see cref="DataType.Currency"/>; <see cref="DateTime"/> and
-/// <see cref="DateTimeOffset"/> are <see cref="DataType.DateTime"/>, a <see cref="DateTimeOffset"/> stored as its
-/// UTC date and time; <see cref="Guid"/> is <see cref="DataType.Guid"/>. A <see cref="string"/> or a
-/// <see cref="char"/> is <see cref="DataType.Text"/> of the source's maximum length, 255 characters when it has
-/// none, and <see cref="DataType.Memo"/> when that length is more than 255. A <c>byte[]</c> is
-/// <see cref="DataType.Binary"/> of the source's maximum length, 50 bytes when it has none, and
-/// <see cref="DataType.OleObject"/> when that length is more than 255. A nullable type is its underlying type,
-/// and an enum its underlying integer type. A value that does not fit its column's type - a <see cref="ulong"/>
-/// beyond a 32-bit integer - stops the import at its row, with <see cref="OverflowException"/>.
+/// An import is whole or not at all. Every value is converted to what its column holds before anything is written,
+/// and a value no column holds exactly is refused then; what is written is written inside one undo scope, so a row
+/// the database refuses part-way - a duplicate in a key, a null in a required column - takes back the table and
+/// every row before it. A refused import leaves the file byte for byte as it was.
+/// </para>
+/// <para>
+/// A column a table is made with holds every value of its source exactly. Its type follows the CLR type of the
+/// source's column or property, and a length, precision or scale the values need follows the values:
+/// <see cref="bool"/> is <see cref="DataType.Boolean"/> (Yes/No), which holds no null, so a null is refused;
+/// <see cref="byte"/> is <see cref="DataType.Byte"/>; <see cref="sbyte"/> and <see cref="short"/> are
+/// <see cref="DataType.Int16"/> (Integer), Access's Byte being 0 to 255; <see cref="ushort"/> and <see cref="int"/>
+/// are <see cref="DataType.Int32"/> (Long Integer); <see cref="uint"/> is <see cref="DataType.Int64"/> (Large Number)
+/// in an .accdb and a <see cref="DataType.Decimal"/> of 10 digits in an .mdb, which has no Large Number;
+/// <see cref="long"/> is <see cref="DataType.Int64"/>, and in an .mdb a table with one is refused, with
+/// <see cref="NotSupportedException"/>; <see cref="ulong"/> is a <see cref="DataType.Decimal"/> of 20 digits, past a
+/// Large Number's range; <see cref="float"/> is <see cref="DataType.Single"/>; <see cref="double"/> is
+/// <see cref="DataType.Double"/>; <see cref="decimal"/> is a <see cref="DataType.Decimal"/> whose scale is the most
+/// places after the point a value has and whose precision is the digits the values need, 18 at least (Currency
+/// keeps four places, and would round the rest); <see cref="DateTime"/> and <see cref="DateTimeOffset"/> are
+/// <see cref="DataType.DateTime"/>, a <see cref="DateTimeOffset"/> stored as its UTC date and time; <see cref="Guid"/>
+/// is <see cref="DataType.Guid"/>. A <see cref="string"/> or a <see cref="char"/> is <see cref="DataType.Text"/> of
+/// the source's maximum length, or of 255 characters when it has none, when every value fits that, and
+/// <see cref="DataType.Memo"/> otherwise. A <c>byte[]</c> is <see cref="DataType.Binary"/> of the source's maximum
+/// length when it has one of 255 bytes or fewer and every value fits it, and <see cref="DataType.OleObject"/>
+/// otherwise. A nullable type is its underlying type, and an enum its underlying integer type.
+/// </para>
+/// <para>
+/// A column takes no null - Access's Required property - when the source says so: a <see cref="DataColumn"/> whose
+/// <see cref="DataColumn.AllowDBNull"/> is false, and a property with <see cref="RequiredAttribute"/> or of a value
+/// type that is not nullable. An AutoNumber and a Yes/No column have a value in every row and are given no such
+/// property.
+/// </para>
+/// <para>
+/// A date is held to the millisecond, which is what a Date/Time value is written and read at; a date before
+/// 1 January 100, the first a Date/Time column holds - <see cref="DateTime.MinValue"/> among them - is refused.
 /// </para>
 /// <para>
 /// A column or property of any other type is left out, unless
@@ -34,8 +53,7 @@ namespace JackcessDotNet;
 /// </para>
 /// <para>
 /// A table that is already there is refused, unless <see cref="ImportOptions.AppendIfExists"/> has the rows
-/// added to it. Rows are inserted one at a time, each checked as <see cref="Table.Insert"/> checks it: when a
-/// row is refused, the table and the rows inserted before it stay.
+/// added to it.
 /// </para>
 /// </summary>
 public static class DatabaseImporter
@@ -50,6 +68,7 @@ public static class DatabaseImporter
     /// <param name="table">The table to import: its columns and its rows.</param>
     /// <returns>The table created.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="table"/> is null.</exception>
+    /// <exception cref="ArgumentException">A value of the source is one no column holds exactly. Nothing is imported.</exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already, or no column of <paramref name="table"/> has a type a
     /// column of a database can have.
@@ -63,24 +82,27 @@ public static class DatabaseImporter
 
     /// <summary>
     /// Imports a <see cref="DataTable"/>: creates a table with a column for each of its columns and inserts its
-    /// rows, or adds its rows to a table that is already there.
+    /// rows, or adds its rows to a table that is already there - all of them, or none.
     /// <para>
     /// The table is named <see cref="ImportOptions.TableName"/>, or else <see cref="DataTable.TableName"/>, or
-    /// else <c>Table1</c>. A column takes its name, its type and - for text and binary - its
-    /// <see cref="DataColumn.MaxLength"/> from the source's column; an <see cref="int"/> column with
+    /// else <c>Table1</c>. A column takes its name and its type from the source's column, as
+    /// <see cref="DatabaseImporter"/> describes, the length of text and bytes from its
+    /// <see cref="DataColumn.MaxLength"/> and its values, and is required when its
+    /// <see cref="DataColumn.AllowDBNull"/> is false; an <see cref="int"/> column with
     /// <see cref="DataColumn.AutoIncrement"/> is an AutoNumber. The primary key is
-    /// <see cref="ImportOptions.PrimaryKey"/>, or else the source's <see cref="DataTable.PrimaryKey"/> when that is
-    /// one column; a source key of several columns is not carried over. The table's rows keep the values the
-    /// source has for an AutoNumber column, and the table numbers later rows on from the highest. Rows the
-    /// source has marked deleted are not imported.
+    /// <see cref="ImportOptions.PrimaryKey"/>, or else the source's <see cref="DataTable.PrimaryKey"/>, of one column
+    /// or several, in its order. The table's rows keep the values the source has for an AutoNumber column, and the
+    /// table numbers later rows on from the highest. Rows the source has marked deleted are not imported.
     /// </para>
     /// <para>
     /// When the database has a table of that name already - compared without regard to case - and
     /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
-    /// changed: a source column is matched to the table's column of the same name, whatever its case, its values
-    /// converted to that column's type; a source column the table does not have is left out, and a column of the
-    /// table the source does not have is null in the added rows. <see cref="ImportOptions.PrimaryKey"/> is not
-    /// used. <see cref="ImportOptions.KeepIdentity"/> says whether the rows keep the source's AutoNumber values.
+    /// changed: a source column is matched to the table's column of the same name, whatever its case, and each of
+    /// its values is converted to that column's type when the column holds it exactly
+    /// (<see cref="ImportOptions.AppendIfExists"/> says which conversions those are); a source column the table does
+    /// not have is left out, and a column of the table the source does not have is null in the added rows.
+    /// <see cref="ImportOptions.PrimaryKey"/> is not used. <see cref="ImportOptions.KeepIdentity"/> says whether
+    /// the rows keep the source's AutoNumber values.
     /// </para>
     /// </summary>
     /// <param name="database">The database to import into.</param>
@@ -91,21 +113,28 @@ public static class DatabaseImporter
     /// <paramref name="database"/>, <paramref name="table"/> or <paramref name="options"/> is null.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="ImportOptions.PrimaryKey"/> names a column the new table does not have, or holds an empty name.
+    /// A value of the source is one its column does not hold exactly - out of its range, with more digits or places
+    /// than it keeps, a null in a Yes/No column, a date before 1 January 100 - or a <see cref="decimal"/> column's
+    /// values need more than the 28 digits a Decimal holds; or <see cref="ImportOptions.PrimaryKey"/> names a column
+    /// the new table does not have, or holds an empty name. Nothing is imported.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// Adding to a table, a text value is longer than its column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
     /// no column of <paramref name="table"/> has a type a column of a database can have; or, adding to a table,
-    /// no column of <paramref name="table"/> has the name of one of its columns.
+    /// no column of <paramref name="table"/> has the name of one of its columns. Nothing is imported.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
-    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
+    /// of its primary key, of an index that requires its values or that is required, or a foreign key with no row
+    /// to refer to. Nothing is imported.
     /// </exception>
-    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
     /// <exception cref="NotSupportedException">
-    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
-    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// The database is an Access 97 file, which is only read; it is an .mdb and the source has a
+    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number); or the primary key is on a
+    /// column whose index keys this library does not write (a Decimal, a Memo, an OLE Object). Nothing is imported.
     /// </exception>
     public static Table ImportTable(this Database database, DataTable table, ImportOptions options)
     {
@@ -117,74 +146,8 @@ public static class DatabaseImporter
 
     private static Table ImportDataTable(Database db, DataTable table, ImportOptions options)
     {
-        string name = ResolveTableName(options.TableName, table.TableName, "Table1");
-
-        // Pre-existing target: append rows into the existing schema instead of creating.
-        if (TableExists(db, name))
-        {
-            if (!options.AppendIfExists)
-                throw new InvalidOperationException(
-                    $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
-            var existing = db.GetTable(name);
-            AppendDataTableRows(existing, table, options);
-            return existing;
-        }
-
-        // Build column list. Unmappable columns are either dropped or, when
-        // FallbackUnmappableToString is set, stored as Memo via ToString().
-        var columns       = new List<Column>(table.Columns.Count);
-        var columnSources = new List<DataColumn>(table.Columns.Count);
-        var stringFallback = new List<bool>(table.Columns.Count);
-        foreach (DataColumn dc in table.Columns)
-        {
-            int? maxLen = dc.MaxLength > 0 ? dc.MaxLength : (int?)null;
-            bool isAuto = dc.AutoIncrement && dc.DataType == typeof(int);
-            var col = TypeMapper.ColumnFromClrType(dc.ColumnName, dc.DataType, maxLen, isAuto);
-            bool fellBack = false;
-            if (col is null)
-            {
-                options.OnUnmappableColumn?.Invoke(dc.ColumnName, dc.DataType);
-                if (!options.FallbackUnmappableToString) continue;
-                col = new ColumnDefinition(dc.ColumnName, DataType.Memo).ToColumn(nameof(table));
-                fellBack = true;
-            }
-            columns.Add(col);
-            columnSources.Add(dc);
-            stringFallback.Add(fellBack);
-        }
-
-        if (columns.Count == 0)
-            throw new InvalidOperationException(
-                $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
-
-        // The key is read here, for a table that is made: rows added to a table that is there take no key,
-        // and the option is not looked at for them.
-        var pk = PrimaryKeyOf(options) ?? InferPrimaryKey(table);
-        var t = db.CreateTableOf(name, columns, pk);
-
-        // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the
-        // new table takes them as given, and its counter ends at the highest: rows added later, here or in
-        // Access, are numbered on from it.
-        IEnumerable<Row> Rows()
-        {
-            foreach (DataRow dr in table.Rows)
-            {
-                if (dr.RowState == DataRowState.Deleted) continue;
-                var row = new Row();
-                for (int i = 0; i < columnSources.Count; i++)
-                {
-                    var dc = columnSources[i];
-                    object? raw = dr[dc];
-                    if (raw == DBNull.Value) raw = null;
-                    if (stringFallback[i] && raw is not null) raw = raw.ToString();
-                    row[columns[i].Name] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
-                }
-                yield return row;
-            }
-        }
-        InsertRows(t, Rows(), keepIdentity: true);
-
-        return t;
+        db.File.EnsureWritable();
+        return Write(db, new[] { PlanDataTable(db, table, options, nameof(table)) })[0];
     }
 
     /// <summary>
@@ -195,9 +158,10 @@ public static class DatabaseImporter
     /// <param name="dataSet">The tables to import.</param>
     /// <returns>The tables created, in the order the <see cref="DataSet"/> has them.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="dataSet"/> is null.</exception>
+    /// <exception cref="ArgumentException">A value of one of the tables is one no column holds exactly. Nothing is imported.</exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table with the name of one to import already, or no column of one has a type a column
-    /// of a database can have. The tables before it stay.
+    /// of a database can have. Nothing is imported.
     /// </exception>
     public static IReadOnlyList<Table> ImportTables(this Database database, DataSet dataSet)
     {
@@ -212,7 +176,8 @@ public static class DatabaseImporter
     /// named for its <see cref="DataTable"/> and has that table's primary key. The <see cref="DataSet"/>'s
     /// relations are not imported.
     /// <para>
-    /// A table that is refused stops the import, and the tables imported before it stay.
+    /// The tables are imported together, all of them or none: every table's values are converted before anything
+    /// is written, and a table refused, or a row refused, takes back the tables before it.
     /// </para>
     /// </summary>
     /// <param name="database">The database to import into.</param>
@@ -229,16 +194,21 @@ public static class DatabaseImporter
     /// <paramref name="database"/>, <paramref name="dataSet"/> or <paramref name="options"/> is null.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="ImportOptions.TableName"/> or <see cref="ImportOptions.PrimaryKey"/> is set. Nothing is imported.
+    /// <see cref="ImportOptions.TableName"/> or <see cref="ImportOptions.PrimaryKey"/> is set; or a value of a
+    /// table is one its column does not hold exactly. Nothing is imported.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// Adding to a table, a text value is longer than its column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// A table is refused as <see cref="ImportTable(Database, DataTable, ImportOptions)"/> refuses one.
+    /// A table is refused as <see cref="ImportTable(Database, DataTable, ImportOptions)"/> refuses one. Nothing is
+    /// imported.
     /// </exception>
-    /// <exception cref="ConstraintViolationException">A row breaks a rule of its table.</exception>
-    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
+    /// <exception cref="ConstraintViolationException">A row breaks a rule of its table. Nothing is imported.</exception>
     /// <exception cref="NotSupportedException">
-    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
-    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// The database is an Access 97 file, which is only read; it is an .mdb and a table has a <see cref="long"/>
+    /// column, which only an .accdb holds; or a primary key is on a column whose index keys this library does not
+    /// write. Nothing is imported.
     /// </exception>
     public static IReadOnlyList<Table> ImportTables(this Database database, DataSet dataSet, ImportOptions options)
     {
@@ -258,10 +228,13 @@ public static class DatabaseImporter
 
     private static IReadOnlyList<Table> ImportDataSet(Database db, DataSet dataSet, ImportOptions options)
     {
-        var result = new List<Table>(dataSet.Tables.Count);
+        // A file that is only read refuses an import before its values are looked at; a DataSet of no tables
+        // changes nothing, and is no change to refuse.
+        if (dataSet.Tables.Count > 0) db.File.EnsureWritable();
+        var plans = new List<TablePlan>(dataSet.Tables.Count);
         foreach (DataTable dt in dataSet.Tables)
-            result.Add(ImportDataTable(db, dt, options));
-        return result;
+            plans.Add(PlanDataTable(db, dt, options, nameof(dataSet)));
+        return Write(db, plans);
     }
 
     /// <summary>
@@ -273,6 +246,7 @@ public static class DatabaseImporter
     /// <param name="items">The objects to import, each a row. A null among them is passed over.</param>
     /// <returns>The table created.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="items"/> is null.</exception>
+    /// <exception cref="ArgumentException">A value of the objects is one no column holds exactly. Nothing is imported.</exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already, or no property of <typeparamref name="T"/> has a type a
     /// column of a database can have.
@@ -287,33 +261,37 @@ public static class DatabaseImporter
     /// <summary>
     /// Imports a sequence of objects: creates a table with a column for each public property of
     /// <typeparamref name="T"/> and inserts a row for each object, or adds the rows to a table that is already
-    /// there.
+    /// there - all of them, or none.
     /// <para>
     /// The table is named <see cref="ImportOptions.TableName"/>, or else the name a <see cref="TableAttribute"/>
     /// on <typeparamref name="T"/> gives (its schema is not used), or else <typeparamref name="T"/>'s own name.
-    /// Every public instance property that can be read is a column, in the order reflection lists them, but an
-    /// indexer and a property with <see cref="NotMappedAttribute"/>. A column is named for its property, or as
-    /// its <see cref="ColumnAttribute"/> names it; <see cref="MaxLengthAttribute"/> is its length, for text and
-    /// binary; and an <see cref="int"/> property with <see cref="DatabaseGeneratedAttribute"/> of
+    /// Every public instance property that can be read is a column, in the order reflection lists them, which is
+    /// the order they are declared in, but an indexer and a property with <see cref="NotMappedAttribute"/>. A
+    /// column is named for its property, or as its <see cref="ColumnAttribute"/> names it, and takes its type as
+    /// <see cref="DatabaseImporter"/> describes; <see cref="MaxLengthAttribute"/> is its length, for text and bytes;
+    /// it is required when its property has <see cref="RequiredAttribute"/> or is of a value type that is not
+    /// nullable; and an <see cref="int"/> property with <see cref="DatabaseGeneratedAttribute"/> of
     /// <see cref="DatabaseGeneratedOption.Identity"/> is an AutoNumber. The primary key is
-    /// <see cref="ImportOptions.PrimaryKey"/>, or else the first property with <see cref="KeyAttribute"/>.
-    /// An AutoNumber property that has a value keeps it; one that is 0 is numbered by the table, past every
-    /// value the objects bring.
+    /// <see cref="ImportOptions.PrimaryKey"/>, or else the properties with <see cref="KeyAttribute"/>: a key of
+    /// several columns when there are several, in the order of their <see cref="ColumnAttribute.Order"/> where they
+    /// give one, and then in the order they are declared. An AutoNumber property that has a value keeps it; one
+    /// that is 0 is numbered by the table, past every value the objects bring.
     /// </para>
     /// <para>
     /// When the database has a table of that name already - compared without regard to case - and
     /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
-    /// changed: a property is matched to the table's column of the same name, whatever its case, its values
-    /// converted to that column's type; a property the table has no column for is left out, and a column no
-    /// property matches is null in the added rows. <see cref="ImportOptions.PrimaryKey"/> is not used.
-    /// <see cref="ImportOptions.KeepIdentity"/> says whether the rows keep the objects' AutoNumber values.
+    /// changed: a property is matched to the table's column of the same name, whatever its case, and each of its
+    /// values is converted to that column's type when the column holds it exactly; a property the table has no
+    /// column for is left out, and a column no property matches is null in the added rows.
+    /// <see cref="ImportOptions.PrimaryKey"/> is not used. <see cref="ImportOptions.KeepIdentity"/> says whether
+    /// the rows keep the objects' AutoNumber values.
     /// </para>
     /// </summary>
     /// <typeparam name="T">The type whose public properties are the table's columns.</typeparam>
     /// <param name="database">The database to import into.</param>
     /// <param name="items">
-    /// The objects to import, each a row. A null among them is passed over. They are read once, as the rows are
-    /// inserted.
+    /// The objects to import, each a row. A null among them is passed over. They are read once, every value of
+    /// every object, before anything is written.
     /// </param>
     /// <param name="options">How to import them.</param>
     /// <returns>The table created, or the table the rows were added to.</returns>
@@ -321,21 +299,28 @@ public static class DatabaseImporter
     /// <paramref name="database"/>, <paramref name="items"/> or <paramref name="options"/> is null.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="ImportOptions.PrimaryKey"/> names a column the new table does not have, or holds an empty name.
+    /// A value of the objects is one its column does not hold exactly - out of its range, with more digits or
+    /// places than it keeps, a null in a Yes/No column, a date before 1 January 100 - or a <see cref="decimal"/>
+    /// property's values need more than the 28 digits a Decimal holds; or <see cref="ImportOptions.PrimaryKey"/>
+    /// names a column the new table does not have, or holds an empty name. Nothing is imported.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// Adding to a table, a text value is longer than its column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
     /// no property of <typeparamref name="T"/> has a type a column of a database can have; or, adding to a
-    /// table, no property of <typeparamref name="T"/> has the name of one of its columns.
+    /// table, no property of <typeparamref name="T"/> has the name of one of its columns. Nothing is imported.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
-    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
+    /// of its primary key, of an index that requires its values or that is required, or a foreign key with no row
+    /// to refer to. Nothing is imported.
     /// </exception>
-    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
     /// <exception cref="NotSupportedException">
-    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
-    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// The database is an Access 97 file, which is only read; it is an .mdb and the objects have a
+    /// <see cref="long"/> property, which only an .accdb holds (a Large Number); or the primary key is on a column
+    /// whose index keys this library does not write (a Decimal, a Memo, an OLE Object). Nothing is imported.
     /// </exception>
     public static Table ImportTable<T>(this Database database, IEnumerable<T> items, ImportOptions options)
     {
@@ -347,54 +332,331 @@ public static class DatabaseImporter
 
     private static Table ImportCollection<T>(Database db, IEnumerable<T> items, ImportOptions options)
     {
-        // Table name precedence: ImportOptions.TableName > [Table("X")] on T > typeof(T).Name.
-        // [Table].Schema is ignored — Access has no schemas.
-        string? attrName = typeof(T).GetCustomAttribute<TableAttribute>()?.Name;
-        string name = ResolveTableName(options.TableName, attrName ?? typeof(T).Name, typeof(T).Name);
+        db.File.EnsureWritable();
+        return Write(db, new[] { PlanCollection(db, items, options) })[0];
+    }
 
-        // Pre-existing target: append rows; bind T's properties to the existing
-        // schema by name (case-insensitive). Source properties that don't have
-        // a matching target column are silently skipped.
+    // ── What an import is to write ───────────────────────────────────────────
+
+    /// <summary>
+    /// One table of an import, worked out and checked with nothing written: the table to make (its columns and key)
+    /// or the table that is there, and the rows to insert, every value already as its column holds it.
+    /// </summary>
+    private sealed class TablePlan
+    {
+        internal TablePlan(string name, Table? existing, IReadOnlyList<Column>? columns, IReadOnlyList<string>? primaryKey,
+                           List<Row> rows, bool keepIdentity)
+        {
+            Name         = name;
+            Existing     = existing;
+            Columns      = columns;
+            PrimaryKey   = primaryKey;
+            Rows         = rows;
+            KeepIdentity = keepIdentity;
+        }
+
+        internal string Name { get; }
+        internal Table? Existing { get; }
+        internal IReadOnlyList<Column>? Columns { get; }
+        internal IReadOnlyList<string>? PrimaryKey { get; }
+        internal List<Row> Rows { get; }
+        internal bool KeepIdentity { get; }
+    }
+
+    /// <summary>
+    /// Writes the tables an import has worked out: each table made, or found, and its rows inserted, inside one undo
+    /// scope. When anything fails - a row the database refuses, a disk that fills - what was written is taken back,
+    /// and a table made is forgotten: the file is as it was.
+    /// </summary>
+    private static IReadOnlyList<Table> Write(Database db, IReadOnlyList<TablePlan> plans)
+    {
+        var tables = new List<Table>(plans.Count);
+        if (plans.Count == 0) return tables;
+
+        var made = new List<Table>();
+        using var undo = db.File.BeginUndo();
+        try
+        {
+            foreach (var plan in plans)
+            {
+                var table = plan.Existing ?? db.CreateTableOf(plan.Name, plan.Columns!, plan.PrimaryKey);
+                if (plan.Existing is null) made.Add(table);
+                InsertRows(table, plan.Rows, plan.KeepIdentity);
+                tables.Add(table);
+            }
+            undo.Commit();
+        }
+        catch
+        {
+            undo.Dispose();
+            foreach (var table in made) db.ForgetTakenBack(table);
+            throw;
+        }
+        return tables;
+    }
+
+    // ── A DataTable ──────────────────────────────────────────────────────────
+
+    private static TablePlan PlanDataTable(Database db, DataTable table, ImportOptions options, string paramName)
+    {
+        string name = ResolveTableName(options.TableName, table.TableName, "Table1");
+        var sourceRows = table.Rows.Cast<DataRow>()
+            .Select((row, index) => (Row: row, Index: index))
+            .Where(r => r.Row.RowState != DataRowState.Deleted)
+            .ToList();
+        object? Cell(DataRow row, DataColumn column) => row[column] is DBNull ? null : row[column];
+        string Where(int index) => $"'{table.TableName}' row {index} (DataTable.Rows[{index}])";
+
+        // Pre-existing target: append rows into the existing schema instead of creating.
         if (TableExists(db, name))
         {
             if (!options.AppendIfExists)
                 throw new InvalidOperationException(
                     $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
             var existing = db.GetTable(name);
-            AppendCollectionRows(existing, items, options);
-            return existing;
+            var targetByName = existing.Columns.ToDictionary(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
+            var pairs = new List<(DataColumn Source, Column Target)>();
+            foreach (DataColumn dc in table.Columns)
+                if (targetByName.TryGetValue(dc.ColumnName, out var target))
+                    pairs.Add((dc, target));
+            if (pairs.Count == 0)
+                throw new InvalidOperationException(
+                    $"DataTable '{table.TableName}' has no columns that match the existing target table '{existing.Name}'.");
+
+            var appended = new List<Row>(sourceRows.Count);
+            foreach (var (dr, index) in sourceRows)
+            {
+                var row = new Row();
+                foreach (var (source, target) in pairs)
+                {
+                    // The table numbers every row when the import does not keep the source's numbers.
+                    if (target.IsAutoNumber && !options.KeepIdentity) continue;
+                    row[target.Name] = Converted(AsText(Cell(dr, source), target, options), target, Where(index), paramName);
+                }
+                appended.Add(row);
+            }
+            return new TablePlan(existing.Name, existing, columns: null, primaryKey: null, appended, options.KeepIdentity);
         }
 
-        var (columns, props, columnNames, stringFallback, pkFromAttr) =
-            BuildSchemaFromType(typeof(T), options);
+        // The columns, each worked out from its source column and the values it holds. Unmappable columns are
+        // either dropped or, when FallbackUnmappableToString is set, stored as Memo via ToString().
+        var format  = db.File.Format;
+        var columns = new List<Column>(table.Columns.Count);
+        var sources = new List<(DataColumn Source, bool AsText)>(table.Columns.Count);
+        foreach (DataColumn dc in table.Columns)
+        {
+            var values = sourceRows.Select(r => Cell(r.Row, dc)).ToList();
+            bool isAuto = dc.AutoIncrement && dc.DataType == typeof(int);
+            var col = Mapped(() => TypeMapper.ColumnFor(dc.ColumnName, dc.DataType, dc.MaxLength > 0 ? dc.MaxLength : null, isAuto,
+                                                       required: !dc.AllowDBNull, values, format),
+                             $"'{table.TableName}'.{dc.ColumnName}", paramName);
+            bool asText = false;
+            if (col is null)
+            {
+                options.OnUnmappableColumn?.Invoke(dc.ColumnName, dc.DataType);
+                if (!options.FallbackUnmappableToString) continue;
+                col = new ColumnDefinition(dc.ColumnName, DataType.Memo) { IsRequired = !dc.AllowDBNull }.ToColumn(paramName);
+                asText = true;
+            }
+            columns.Add(col);
+            sources.Add((dc, asText));
+        }
+
+        if (columns.Count == 0)
+            throw new InvalidOperationException(
+                $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
+
+        // The key is read here, for a table that is made: rows added to a table that is there take no key, and the
+        // option is not looked at for them.
+        var pk = PrimaryKeyOf(options) ?? (table.PrimaryKey.Length > 0 ? table.PrimaryKey.Select(c => c.ColumnName).ToList() : null);
+
+        // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the new
+        // table takes them as given, and its counter ends at the highest: rows added later, here or in Access, are
+        // numbered on from it.
+        var rows = new List<Row>(sourceRows.Count);
+        foreach (var (dr, index) in sourceRows)
+        {
+            var row = new Row();
+            for (int i = 0; i < columns.Count; i++)
+            {
+                object? raw = Cell(dr, sources[i].Source);
+                if (sources[i].AsText && raw is not null) raw = raw.ToString();
+                row[columns[i].Name] = Converted(raw, columns[i], Where(index), paramName);
+            }
+            rows.Add(row);
+        }
+        return new TablePlan(name, existing: null, columns, pk, rows, keepIdentity: true);
+    }
+
+    // ── Objects ──────────────────────────────────────────────────────────────
+
+    private static TablePlan PlanCollection<T>(Database db, IEnumerable<T> items, ImportOptions options)
+    {
+        const string paramName = nameof(items);
+
+        // Table name precedence: ImportOptions.TableName > [Table("X")] on T > typeof(T).Name.
+        // [Table].Schema is ignored — Access has no schemas.
+        string? attrName = typeof(T).GetCustomAttribute<TableAttribute>()?.Name;
+        string name = ResolveTableName(options.TableName, attrName ?? typeof(T).Name, typeof(T).Name);
+        string Where(int index) => $"the {typeof(T).Name} at index {index}";
+
+        var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanRead && p.GetIndexParameters().Length == 0 && p.GetCustomAttribute<NotMappedAttribute>() is null)
+            .ToList();
+
+        // Every object is read once, before anything is written, and of each the properties the import uses: each
+        // such property's values are read once, for its column and its rows.
+        var objects = items.Select((item, index) => (Item: item, Index: index)).Where(x => x.Item is not null).ToList();
+        object?[] ValuesOf(PropertyInfo property) => objects.Select(o => property.GetValue(o.Item)).ToArray();
+
+        // Pre-existing target: append rows; bind T's properties to the existing schema by name (case-insensitive).
+        // Source properties that don't have a matching target column are silently skipped.
+        if (TableExists(db, name))
+        {
+            if (!options.AppendIfExists)
+                throw new InvalidOperationException(
+                    $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
+            var existing = db.GetTable(name);
+            var targetByName = existing.Columns.ToDictionary(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
+            var pairs = new List<(object?[] Values, Column Target)>();
+            foreach (var p in properties)
+                if (targetByName.TryGetValue(ColumnNameOf(p), out var target))
+                    pairs.Add((ValuesOf(p), target));
+            if (pairs.Count == 0)
+                throw new InvalidOperationException(
+                    $"Type '{typeof(T).Name}' has no properties that match the existing target table '{existing.Name}'.");
+
+            var appended = new List<Row>(objects.Count);
+            for (int r = 0; r < objects.Count; r++)
+            {
+                var row = new Row();
+                foreach (var (values, target) in pairs)
+                {
+                    object? raw = values[r];
+                    // An identity property still at 0 is an object the database has yet to number; and the table
+                    // numbers every row when the import does not keep the source's numbers.
+                    if (target.IsAutoNumber && (IsUnnumbered(raw) || !options.KeepIdentity)) continue;
+                    row[target.Name] = Converted(AsText(raw, target, options), target, Where(objects[r].Index), paramName);
+                }
+                appended.Add(row);
+            }
+            return new TablePlan(existing.Name, existing, columns: null, primaryKey: null, appended, options.KeepIdentity);
+        }
+
+        var format  = db.File.Format;
+        var columns = new List<Column>();
+        var cells   = new List<(object?[] Values, bool AsText)>();
+        var keys    = new List<(string Name, int Order, int Position)>();
+        foreach (var p in properties)
+        {
+            string colName = ColumnNameOf(p);
+            int? maxLen = p.GetCustomAttribute<MaxLengthAttribute>()?.Length;
+            bool isAuto = p.GetCustomAttribute<DatabaseGeneratedAttribute>() is { DatabaseGeneratedOption: DatabaseGeneratedOption.Identity }
+                          && p.PropertyType == typeof(int);
+            // A property takes no null when it says so, or when its type has none.
+            bool required = p.GetCustomAttribute<RequiredAttribute>() is not null
+                            || (p.PropertyType.IsValueType && Nullable.GetUnderlyingType(p.PropertyType) is null);
+
+            Column? col;
+            object?[] values;
+            bool asText = false;
+            if (TypeMapper.IsMappable(p.PropertyType))
+            {
+                values = ValuesOf(p);
+                col = Mapped(() => TypeMapper.ColumnFor(colName, p.PropertyType, maxLen, isAuto, required, values, format),
+                             $"'{typeof(T).Name}'.{p.Name}", paramName)!;
+            }
+            else
+            {
+                options.OnUnmappableColumn?.Invoke(colName, p.PropertyType);
+                if (!options.FallbackUnmappableToString) continue;
+                values = ValuesOf(p);
+                col = new ColumnDefinition(colName, DataType.Memo) { IsRequired = required }.ToColumn(paramName);
+                asText = true;
+            }
+            columns.Add(col);
+            cells.Add((values, asText));
+
+            if (p.GetCustomAttribute<KeyAttribute>() is not null)
+                keys.Add((colName, p.GetCustomAttribute<ColumnAttribute>()?.Order ?? -1, keys.Count));
+        }
+
         if (columns.Count == 0)
             throw new InvalidOperationException(
                 $"Type '{typeof(T).Name}' has no public properties that map to a Jet type.");
 
-        var pk = PrimaryKeyOf(options) ?? (pkFromAttr is null ? null : new[] { pkFromAttr });
-
-        var t = db.CreateTableOf(name, columns, pk);
+        // Several [Key] properties are a key of several columns: those that give a column order first, in it, and
+        // then the others, in the order they are declared.
+        var pk = PrimaryKeyOf(options)
+                 ?? (keys.Count == 0 ? null : keys.OrderBy(k => k.Order >= 0 ? k.Order : int.MaxValue).ThenBy(k => k.Position).Select(k => k.Name).ToList());
 
         // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
         // number - is numbered by the table.
-        IEnumerable<Row> Rows()
+        var rows = new List<Row>(objects.Count);
+        for (int r = 0; r < objects.Count; r++)
         {
-            foreach (var item in items)
+            var row = new Row();
+            for (int i = 0; i < columns.Count; i++)
             {
-                if (item is null) continue;
-                var row = new Row();
-                for (int i = 0; i < props.Count; i++)
-                {
-                    object? raw = props[i].GetValue(item);
-                    if (columns[i].IsAutoNumber && IsUnnumbered(raw)) continue;
-                    if (stringFallback[i] && raw is not null) raw = raw.ToString();
-                    row[columnNames[i]] = TypeMapper.CoerceForJet(raw, columns[i].DataType);
-                }
-                yield return row;
+                object? raw = cells[i].Values[r];
+                if (columns[i].IsAutoNumber && IsUnnumbered(raw)) continue;
+                if (cells[i].AsText && raw is not null) raw = raw.ToString();
+                row[columns[i].Name] = Converted(raw, columns[i], Where(objects[r].Index), paramName);
             }
+            rows.Add(row);
         }
-        InsertRows(t, Rows(), keepIdentity: true);
-        return t;
+        return new TablePlan(name, existing: null, columns, pk, rows, keepIdentity: true);
+    }
+
+    private static string ColumnNameOf(PropertyInfo property) => property.GetCustomAttribute<ColumnAttribute>()?.Name ?? property.Name;
+
+    // ── Values ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A value bound for <paramref name="target"/>, a column of a table that is there, as text when it is of a type
+    /// no column is made for and <see cref="ImportOptions.FallbackUnmappableToString"/> has such values stored as
+    /// text in a Text or Memo column.
+    /// </summary>
+    private static object? AsText(object? raw, Column target, ImportOptions options)
+        => raw is not null && options.FallbackUnmappableToString
+           && target.DataType is DataType.Text or DataType.Memo
+           && !TypeMapper.IsMappable(raw.GetType())
+            ? raw.ToString()
+            : raw;
+
+    /// <summary>
+    /// <paramref name="raw"/> as <paramref name="column"/> holds it, or the refusal, saying which row and column
+    /// held a value the column does not hold exactly.
+    /// </summary>
+    /// <exception cref="ColumnValueTooLongException">Text longer than its column.</exception>
+    /// <exception cref="ArgumentException">Any other value the column does not hold exactly.</exception>
+    private static object? Converted(object? raw, Column column, string where, string paramName)
+    {
+        try
+        {
+            return TypeMapper.ToColumnValue(raw, column);
+        }
+        catch (TypeMapper.NotHeldException notHeld)
+        {
+            string message = $"The value of {column.Name} in {where} is not imported: {notHeld.Message}. Nothing was imported.";
+            if (notHeld.TextLength is { } length)
+                throw new ColumnValueTooLongException(column.Name, column.MaxLength, length, message);
+            throw new ArgumentException(message, paramName);
+        }
+    }
+
+    /// <summary>The column <paramref name="map"/> works out, or the refusal of a column no type holds every value of.</summary>
+    /// <exception cref="ArgumentException">The column's values need more than any column of its type holds.</exception>
+    private static Column? Mapped(Func<Column?> map, string what, string paramName)
+    {
+        try
+        {
+            return map();
+        }
+        catch (TypeMapper.NotHeldException notHeld)
+        {
+            throw new ArgumentException($"{what} is not imported: {notHeld.Message}. Nothing was imported.", paramName);
+        }
     }
 
     /// <summary>
@@ -426,55 +688,6 @@ public static class DatabaseImporter
     }
 
     /// <summary>
-    /// Append every non-deleted row from <paramref name="source"/> into
-    /// <paramref name="target"/>. Source columns are matched to target columns
-    /// by name (case-insensitive); source columns with no matching target column
-    /// are silently dropped. Values are coerced to each target column's
-    /// declared <see cref="DataType"/> via <see cref="TypeMapper.CoerceForJet"/>.
-    /// The target numbers the rows itself, unless <see cref="ImportOptions.KeepIdentity"/> keeps the source's.
-    /// </summary>
-    private static void AppendDataTableRows(Table target, DataTable source, ImportOptions options)
-    {
-        var targetByName = target.Columns.ToDictionary(
-            c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
-
-        var pairs = new List<(DataColumn Src, Column Tgt)>();
-        foreach (DataColumn dc in source.Columns)
-            if (targetByName.TryGetValue(dc.ColumnName, out var tgt))
-                pairs.Add((dc, tgt));
-
-        if (pairs.Count == 0)
-            throw new InvalidOperationException(
-                $"DataTable '{source.TableName}' has no columns that match the existing target table '{target.Name}'.");
-
-        IEnumerable<Row> Rows()
-        {
-            foreach (DataRow dr in source.Rows)
-            {
-                if (dr.RowState == DataRowState.Deleted) continue;
-                var row = new Row();
-                foreach (var (src, tgt) in pairs)
-                {
-                    object? raw = dr[src];
-                    if (raw == DBNull.Value) raw = null;
-
-                    // FallbackUnmappableToString carries over to append: if the
-                    // source value's CLR type doesn't map to a Jet type at all and
-                    // the target column is text-shaped, use ToString().
-                    if (raw is not null && options.FallbackUnmappableToString
-                        && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
-                        && TypeMapper.MapClrType(raw.GetType()) is null)
-                        raw = raw.ToString();
-
-                    row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
-                }
-                yield return row;
-            }
-        }
-        InsertRows(target, Rows(), options.KeepIdentity);
-    }
-
-    /// <summary>
     /// Inserts the rows of one import. For as long as it takes, the table itself says whether a row may bring its
     /// own AutoNumber - <paramref name="keepIdentity"/>, whichever way it is, and whatever
     /// <see cref="Database.AllowAutoNumberInsert"/> says: an append that asked for its rows to be numbered afresh
@@ -485,7 +698,7 @@ public static class DatabaseImporter
     /// order: see <see cref="ReserveSuppliedIdentities"/>.
     /// </para>
     /// </summary>
-    private static void InsertRows(Table target, IEnumerable<Row> rows, bool keepIdentity)
+    private static void InsertRows(Table target, IReadOnlyList<Row> rows, bool keepIdentity)
     {
         bool? before = target.AllowAutoNumberInsert;
         target.AllowAutoNumberInsert = keepIdentity;
@@ -495,12 +708,7 @@ public static class DatabaseImporter
                 ? target.Columns.FirstOrDefault(c => c.IsAutoNumber && c.DataType == DataType.Int32)
                 : null;
             if (identity is not null)
-            {
-                // Read whole, where rows without an identity to keep are written as they come.
-                var batch = rows.ToList();
-                ReserveSuppliedIdentities(target, identity, batch);
-                rows = batch;
-            }
+                ReserveSuppliedIdentities(target, identity, rows);
 
             foreach (var row in rows)
                 target.Insert(row);
@@ -545,66 +753,13 @@ public static class DatabaseImporter
                 if (!seen.Add(number))
                     throw new ConstraintViolationException(
                         $"Two rows to import would be duplicates in {target.Name}'s primary key, which is unique: " +
-                        $"both hold {number} for {identity.Name}. The table is left as it was.");
+                        $"both hold {number} for {identity.Name}. Nothing was imported.");
         }
 
         foreach (var row in batch)
             target.Validate(row);
 
         target.RaiseLastAutoNumber(supplied.Max());
-    }
-
-    /// <summary>
-    /// POCO sibling of <see cref="AppendDataTableRows"/>. Matches public
-    /// readable properties of <c>T</c> to <paramref name="target"/>'s columns
-    /// by name (honouring <c>[Column]</c> + <c>[NotMapped]</c>). Properties
-    /// without a matching target column are silently skipped.
-    /// </summary>
-    private static void AppendCollectionRows<T>(Table target, IEnumerable<T> items, ImportOptions options)
-    {
-        var targetByName = target.Columns.ToDictionary(
-            c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
-
-        var pairs = new List<(PropertyInfo Prop, Column Tgt)>();
-        foreach (var p in typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (!p.CanRead) continue;
-            if (p.GetIndexParameters().Length > 0) continue;
-            if (p.GetCustomAttribute<NotMappedAttribute>() is not null) continue;
-
-            string colName = p.GetCustomAttribute<ColumnAttribute>()?.Name ?? p.Name;
-            if (targetByName.TryGetValue(colName, out var tgt))
-                pairs.Add((p, tgt));
-        }
-
-        if (pairs.Count == 0)
-            throw new InvalidOperationException(
-                $"Type '{typeof(T).Name}' has no properties that match the existing target table '{target.Name}'.");
-
-        IEnumerable<Row> Rows()
-        {
-            foreach (var item in items)
-            {
-                if (item is null) continue;
-                var row = new Row();
-                foreach (var (prop, tgt) in pairs)
-                {
-                    object? raw = prop.GetValue(item);
-
-                    // An identity property still at 0 is an object the database has yet to number.
-                    if (tgt.IsAutoNumber && IsUnnumbered(raw)) continue;
-
-                    if (raw is not null && options.FallbackUnmappableToString
-                        && (tgt.DataType == DataType.Text || tgt.DataType == DataType.Memo)
-                        && TypeMapper.MapClrType(raw.GetType()) is null)
-                        raw = raw.ToString();
-
-                    row[tgt.Name] = TypeMapper.CoerceForJet(raw, tgt.DataType);
-                }
-                yield return row;
-            }
-        }
-        InsertRows(target, Rows(), options.KeepIdentity);
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -617,58 +772,6 @@ public static class DatabaseImporter
         if (!string.IsNullOrWhiteSpace(explicitName)) return explicitName!;
         if (!string.IsNullOrWhiteSpace(fromSource))   return fromSource!;
         return fallback;
-    }
-
-    private static IReadOnlyList<string>? InferPrimaryKey(DataTable table)
-    {
-        // Only a key of one column is carried over.
-        if (table.PrimaryKey.Length == 1) return new[] { table.PrimaryKey[0].ColumnName };
-        return null;
-    }
-
-    private static (List<Column> columns,
-                    List<PropertyInfo> props,
-                    List<string> columnNames,
-                    List<bool> stringFallback,
-                    string? primaryKey)
-        BuildSchemaFromType(Type type, ImportOptions options)
-    {
-        var columns        = new List<Column>();
-        var props          = new List<PropertyInfo>();
-        var columnNames    = new List<string>();
-        var stringFallback = new List<bool>();
-        string? pk         = null;
-
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (!p.CanRead) continue;
-            if (p.GetIndexParameters().Length > 0) continue;
-            if (p.GetCustomAttribute<NotMappedAttribute>() is not null) continue;
-
-            string colName = p.GetCustomAttribute<ColumnAttribute>()?.Name ?? p.Name;
-            int? maxLen = p.GetCustomAttribute<MaxLengthAttribute>()?.Length;
-            bool isAuto = p.GetCustomAttribute<DatabaseGeneratedAttribute>() is { DatabaseGeneratedOption: DatabaseGeneratedOption.Identity }
-                          && p.PropertyType == typeof(int);
-
-            var col = TypeMapper.ColumnFromClrType(colName, p.PropertyType, maxLen, isAuto);
-            bool fellBack = false;
-            if (col is null)
-            {
-                options.OnUnmappableColumn?.Invoke(colName, p.PropertyType);
-                if (!options.FallbackUnmappableToString) continue;
-                col = new ColumnDefinition(colName, DataType.Memo).ToColumn("items");
-                fellBack = true;
-            }
-            columns.Add(col);
-            props.Add(p);
-            columnNames.Add(colName);
-            stringFallback.Add(fellBack);
-
-            if (pk is null && p.GetCustomAttribute<KeyAttribute>() is not null)
-                pk = colName;
-        }
-
-        return (columns, props, columnNames, stringFallback, pk);
     }
 }
 
@@ -696,7 +799,7 @@ public sealed class ImportOptions
 
     /// <summary>
     /// The names of the columns of the primary key of a table the import creates, in key order. When null, the
-    /// source says: a <see cref="DataTable"/>'s primary key of one column, or the first property with
+    /// source says: a <see cref="DataTable"/>'s primary key, of one column or several, or the properties with
     /// <see cref="KeyAttribute"/>. When it has no names, the table has no primary key, whatever the source has.
     /// It is not used when rows are added to a table that is already there, and
     /// <see cref="DatabaseImporter.ImportTables(Database, DataSet, ImportOptions)"/> refuses options that set it.
@@ -725,6 +828,15 @@ public sealed class ImportOptions
     /// the table's by name, whatever their case. A column the table does not have is left out, and a column the
     /// source does not have is null in the added rows. When <c>false</c>, the default, importing under a name a
     /// table already has throws <see cref="InvalidOperationException"/>.
+    /// <para>
+    /// A value is converted to its column's type when the column holds it exactly, and the import is refused
+    /// otherwise: a number goes to a numeric column whose range, places and digits hold it (a <see cref="double"/>
+    /// and a <see cref="decimal"/> to each other's columns when the value converts back to the one given); text
+    /// goes to a numeric, Yes/No, Date/Time or GUID column when it reads as a value of it in the invariant culture;
+    /// any of these goes to a Text or Memo column as its invariant text when that fits; text of a length goes to a
+    /// Text column that holds that many characters, bytes to a Binary one that holds that many bytes. A Yes/No
+    /// column takes no null and no number.
+    /// </para>
     /// </summary>
     public bool AppendIfExists { get; set; }
 

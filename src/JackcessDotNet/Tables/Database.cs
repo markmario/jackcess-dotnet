@@ -34,7 +34,7 @@ public sealed class Database : IDisposable
     private readonly PageFile      _file;
     private readonly PageAllocator _allocator;
 
-    /// <summary>The open file, for tests that look at its pages.</summary>
+    /// <summary>The open file: for an import, which writes inside an undo scope of its own, and for tests that look at its pages.</summary>
     internal PageFile File => _file;
     private readonly SystemCatalog _catalog;
     private ForeignKeyEnforcer? _foreignKeys;
@@ -664,6 +664,19 @@ public sealed class Database : IDisposable
     /// </summary>
     internal Table CreateTableOf(string name, IReadOnlyList<Column> columns, IReadOnlyList<string>? primaryKey)
         => CreateTableCore(name, columns, primaryKey is { Count: > 0 } ? primaryKey : null, Array.Empty<IndexDefinition>());
+
+    /// <summary>
+    /// Forgets <paramref name="table"/>, which this session made and an undo scope then took back with everything
+    /// else it wrote: the file no longer has it, and the object is marked dropped, so that anything still holding it
+    /// is refused rather than reading pages that are gone.
+    /// </summary>
+    internal void ForgetTakenBack(Table table)
+    {
+        int page = table.Definition.TdefPageNumber;
+        if (_tables.TryGetValue(page, out var held) && ReferenceEquals(held, table))
+            _tables.Remove(page);
+        table.MarkDropped();
+    }
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
                                   IReadOnlyList<string>? pkColumns,

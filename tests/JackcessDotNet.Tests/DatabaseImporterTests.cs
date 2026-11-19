@@ -21,6 +21,8 @@ public sealed class DatabaseImporterTests : IDisposable
 
     // ── TypeMapper unit-level checks ─────────────────────────────────────────
 
+    // The column a CLR type makes before its values are looked at (#44): a decimal is a Decimal, which keeps the
+    // places Currency would round; a byte[] of no known length an OLE Object, which takes any length.
     [Theory]
     [InlineData(typeof(bool),           DataType.Boolean)]
     [InlineData(typeof(byte),           DataType.Byte)]
@@ -29,56 +31,56 @@ public sealed class DatabaseImporterTests : IDisposable
     [InlineData(typeof(long),           DataType.Int64)]
     [InlineData(typeof(float),          DataType.Single)]
     [InlineData(typeof(double),         DataType.Double)]
-    [InlineData(typeof(decimal),        DataType.Currency)]
+    [InlineData(typeof(decimal),        DataType.Decimal)]
     [InlineData(typeof(DateTime),       DataType.DateTime)]
     [InlineData(typeof(DateTimeOffset), DataType.DateTime)]
     [InlineData(typeof(Guid),           DataType.Guid)]
     [InlineData(typeof(string),         DataType.Text)]
-    [InlineData(typeof(byte[]),         DataType.Binary)]
+    [InlineData(typeof(byte[]),         DataType.OleObject)]
     public void TypeMapper_MapsPrimitivesAndNullables(Type clr, DataType expected)
     {
-        Assert.Equal(expected, TypeMapper.MapClrType(clr));
+        Assert.Equal(expected, TypeMapper.MapClrType(clr, JetFormat.Jet4));
         // Nullable<T> wrapper should resolve to the same Jet type.
         if (clr.IsValueType)
         {
             var nullable = typeof(Nullable<>).MakeGenericType(clr);
-            Assert.Equal(expected, TypeMapper.MapClrType(nullable));
+            Assert.Equal(expected, TypeMapper.MapClrType(nullable, JetFormat.Jet4));
         }
     }
 
     [Fact]
     public void TypeMapper_Enum_UnwrapsToUnderlyingType()
     {
-        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum)));
-        Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum)));
+        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum), JetFormat.Jet4));
+        Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum), JetFormat.Jet4));
     }
 
     [Fact]
     public void TypeMapper_UnmappableType_ReturnsNull()
     {
-        Assert.Null(TypeMapper.MapClrType(typeof(System.IO.Stream)));
+        Assert.Null(TypeMapper.MapClrType(typeof(System.IO.Stream), JetFormat.Jet4));
+        Assert.False(TypeMapper.IsMappable(typeof(System.IO.Stream)));
     }
+
+    private static Column? ColumnOf(Type type, int? maxLength, params object?[] values)
+        => TypeMapper.ColumnFor("C", type, maxLength, autoNumber: false, required: false, values, JetFormat.Jet4);
 
     [Fact]
     public void TypeMapper_PromotesLongText_ToMemo()
     {
-        var col = TypeMapper.ColumnFromClrType("Body", typeof(string), maxLength: 1000);
-        Assert.NotNull(col);
-        Assert.Equal(DataType.Memo, col!.DataType);
+        Assert.Equal(DataType.Memo, ColumnOf(typeof(string), 1000, "short")!.DataType);
     }
 
     [Fact]
     public void TypeMapper_PromotesLongBinary_ToOle()
     {
-        var col = TypeMapper.ColumnFromClrType("Blob", typeof(byte[]), maxLength: 4096);
-        Assert.NotNull(col);
-        Assert.Equal(DataType.OleObject, col!.DataType);
+        Assert.Equal(DataType.OleObject, ColumnOf(typeof(byte[]), 4096, new byte[] { 1 })!.DataType);
     }
 
     [Fact]
     public void TypeMapper_TextColumn_RespectsMaxLength()
     {
-        var col = TypeMapper.ColumnFromClrType("Name", typeof(string), maxLength: 30);
+        var col = ColumnOf(typeof(string), 30, "thirty characters or fewer");
         Assert.NotNull(col);
         Assert.Equal(DataType.Text, col!.DataType);
         Assert.Equal(60, col.LengthInBytes);   // 30 chars × 2 bytes UTF-16
@@ -522,49 +524,54 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Equal(DataType.Memo, t.Columns.Single(c => c.Name == "Url").DataType);
     }
 
-    // ── CoerceForJet (direct unit tests, not through Insert) ─────────────────
+    // ── ToColumnValue (direct unit tests, not through Insert) ────────────────
+
+    private static Column Of(DataType type) => new ColumnDefinition("C", type).ToColumn("column");
 
     [Fact]
     public void Coerce_NullAndDBNull_BecomeNull()
     {
-        Assert.Null(TypeMapper.CoerceForJet(null,         DataType.Int32));
-        Assert.Null(TypeMapper.CoerceForJet(DBNull.Value, DataType.Text));
+        Assert.Null(TypeMapper.ToColumnValue(null,         Of(DataType.Int32)));
+        Assert.Null(TypeMapper.ToColumnValue(DBNull.Value, Of(DataType.Text)));
     }
 
     [Fact]
     public void Coerce_Widens_IntToLong_AndNarrows_LongToInt()
     {
-        Assert.Equal((short)42, TypeMapper.CoerceForJet(42,       DataType.Int16));
-        Assert.Equal(42,        TypeMapper.CoerceForJet(42L,      DataType.Int32));
-        Assert.Equal(42m,       TypeMapper.CoerceForJet(42,       DataType.Currency));
+        Assert.Equal((short)42, TypeMapper.ToColumnValue(42,  Of(DataType.Int16)));
+        Assert.Equal(42,        TypeMapper.ToColumnValue(42L, Of(DataType.Int32)));
+        Assert.Equal(42m,       TypeMapper.ToColumnValue(42,  Of(DataType.Currency)));
     }
 
     [Fact]
     public void Coerce_DateTimeOffset_BecomesUtcDateTime()
     {
         var dto = new DateTimeOffset(2024, 7, 4, 12, 0, 0, TimeSpan.FromHours(5));
-        var asDt = (DateTime)TypeMapper.CoerceForJet(dto, DataType.DateTime)!;
+        var asDt = (DateTime)TypeMapper.ToColumnValue(dto, Of(DataType.DateTime))!;
         Assert.Equal(dto.UtcDateTime, asDt);
     }
 
     [Fact]
     public void Coerce_BinaryNonBytes_Throws()
     {
-        Assert.Throws<ArgumentException>(
-            () => TypeMapper.CoerceForJet("not bytes", DataType.Binary));
+        Assert.Throws<TypeMapper.NotHeldException>(() => TypeMapper.ToColumnValue("not bytes", Of(DataType.Binary)));
     }
 
     // ── TypeMapper: wider primitive coverage ─────────────────────────────────
 
+    // Each to a column that holds every value of its type (#44): an sbyte is negative where a Byte is not, a
+    // ushort past what an Integer holds, a uint past a Long Integer - a Large Number in an .accdb, a Decimal of 10
+    // digits in an .mdb, which has none - and a ulong past a Large Number.
     [Theory]
-    [InlineData(typeof(sbyte),    DataType.Byte)]   // signed 8-bit folded into unsigned Byte
-    [InlineData(typeof(ushort),   DataType.Int16)]
-    [InlineData(typeof(uint),     DataType.Int32)]
-    [InlineData(typeof(ulong),    DataType.Int32)]
-    [InlineData(typeof(char),     DataType.Text)]
-    public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType expected)
+    [InlineData(typeof(sbyte),    DataType.Int16,   DataType.Int16)]
+    [InlineData(typeof(ushort),   DataType.Int32,   DataType.Int32)]
+    [InlineData(typeof(uint),     DataType.Decimal, DataType.Int64)]
+    [InlineData(typeof(ulong),    DataType.Decimal, DataType.Decimal)]
+    [InlineData(typeof(char),     DataType.Text,    DataType.Text)]
+    public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType inAnMdb, DataType inAnAccdb)
     {
-        Assert.Equal(expected, TypeMapper.MapClrType(clr));
+        Assert.Equal(inAnMdb,   TypeMapper.MapClrType(clr, JetFormat.Jet4));
+        Assert.Equal(inAnAccdb, TypeMapper.MapClrType(clr, JetFormat.Jet14));
     }
 
     // A long is a Large Number, which an .accdb has: its values come back whole. (It was a Long Integer, and a
@@ -641,20 +648,21 @@ public sealed class DatabaseImporterTests : IDisposable
     }
 
     [Fact]
-    public void ImportTable_FromDataTable_MultiColumnPK_IsIgnored()
+    public void ImportTable_FromDataTable_MultiColumnPK_IsCarriedOver()
     {
+        // A key of several columns is the table's key, in the DataTable's order (#44). It was dropped.
         var dt = new DataTable("T");
         dt.Columns.Add("A", typeof(int));
         dt.Columns.Add("B", typeof(int));
-        dt.PrimaryKey = new[] { dt.Columns["A"]!, dt.Columns["B"]! };
+        dt.PrimaryKey = new[] { dt.Columns["B"]!, dt.Columns["A"]! };
         dt.Rows.Add(1, 2);
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(dt);
 
         using var reopen = Database.Open(_path);
-        // No single-column PK could be inferred from a composite key, so none is created.
-        Assert.DoesNotContain(reopen.GetTable("T").Indexes, i => i.IsPrimaryKey);
+        var pk = reopen.GetTable("T").Indexes.Single(i => i.IsPrimaryKey);
+        Assert.Equal(new[] { "B", "A" }, pk.Columns.Select(c => c.Column.Name));
     }
 
     [Fact]
@@ -681,7 +689,12 @@ public sealed class DatabaseImporterTests : IDisposable
     [Fact]
     public void ImportTable_FromCollection_PrimaryKeyOfSeveralColumns_IsTheTablesKey()
     {
-        var rows = new[] { new CustomerPoco { Id = 1, Name = "a" }, new CustomerPoco { Id = 1, Name = "b" } };
+        // A DateTime left at its default, 1 January 0001, is a date no Date/Time column holds (#44): each has one.
+        var rows = new[]
+        {
+            new CustomerPoco { Id = 1, Name = "a", Joined = new DateTime(2024, 1, 1) },
+            new CustomerPoco { Id = 1, Name = "b", Joined = new DateTime(2024, 1, 2) },
+        };
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.ImportTable(rows, new ImportOptions { PrimaryKey = new[] { "Id", "Name" } });

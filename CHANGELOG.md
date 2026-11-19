@@ -64,6 +64,30 @@ changed since 1.2.2.
 - **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
   value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
   has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **An import holds every value of its source exactly, or refuses before anything is written** (#44).
+  - **Whole or not at all.** Every value is converted to what its column holds before anything is written, and
+    a value no column holds exactly is refused then, with `ArgumentException` naming the column and the row. What
+    is written is written inside one undo scope, so a row the database refuses part-way - a duplicate in a key, a
+    null in a required column - takes back the table, the rows before it and, for `ImportTables`, every table
+    before it: a refused import leaves the file byte for byte as it was. The table and the rows before a refused
+    row stayed. `ImportTable<T>` reads every object before it writes; it read them as it inserted.
+  - **Columns that hold every value.** `sbyte` is an Integer (it was a Byte, and a negative value stopped the
+    import), `ushort` a Long Integer (an Integer), `uint` a Large Number in an `.accdb` and a `Decimal(10, 0)` in
+    an `.mdb`, `ulong` a `Decimal(20, 0)` (both were Long Integers, and a value past 31 bits stopped the import).
+    `decimal` is a Decimal whose scale is the most places a value has and whose precision the digits the values
+    need, 18 at least - refused past 28 - where Currency rounded past four places. A `string` with no length is
+    Text(255) when every value fits and a Memo otherwise, and one with a length longer than a value is a Memo (a
+    longer value stopped the import). A `byte[]` is Binary only where a length is given and every value fits it,
+    and an OLE Object otherwise: it was Binary(50), which took a longer value.
+  - **A null for a Yes/No column, and a date before 1 January 100, are refused.** They were stored as No, and
+    `DateTime.MinValue` as 30 December 1899.
+  - **Required, and keys of several columns.** A `DataColumn` with `AllowDBNull = false`, and a property with
+    `[Required]` or of a value type that is not nullable, makes a required column. A `DataTable`'s primary key of
+    several columns is the table's key, as are several `[Key]` properties, in the order of their
+    `[Column(Order = n)]` and then as declared; only a key of one column, or the first `[Key]`, was carried over.
+  - **Adding to a table converts a value exactly or refuses it** (`AppendIfExists`): a value went through
+    `Convert`, which rounded a `double` into an integer column, a `decimal` into Currency, and text in the current
+    culture.
 - **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
   `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
   which is not the key Access makes for it.
