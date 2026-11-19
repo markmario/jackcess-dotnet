@@ -62,6 +62,7 @@ public sealed class Table
             .ToArray();
         _readAtVersion = version;
         _writability   = null;
+        _rules         = null;
         // Each column reads its properties through its table.
         foreach (var column in definition.Columns) column.Owner = this;
     }
@@ -188,6 +189,67 @@ public sealed class Table
     /// <summary>The properties of <paramref name="column"/>: the map the catalog has under its name, or an empty one.</summary>
     internal PropertyMap PropertiesOf(Column column) => PropertyMaps.GetOrAdd(column.Name, PropertyMap.ColumnType);
 
+    // ── What a column's properties refuse a row for ──────────────────────────
+
+    // The columns whose properties can refuse a row, worked out from the properties as they were at _rulesVersion.
+    private List<(Column Column, bool IsRequired, bool RefusesZeroLength)>? _rules;
+    private int _rulesVersion;
+
+    /// <summary>
+    /// The columns a row can be refused for, by Access's Required and Allow Zero Length properties. An
+    /// AutoNumber column is not among them - Access gives every row its number - nor a Yes/No column for
+    /// Required, since it always has a value.
+    /// </summary>
+    private List<(Column Column, bool IsRequired, bool RefusesZeroLength)> Rules
+    {
+        get
+        {
+            var definition = _definition;
+            var maps       = PropertyMaps;
+            if (_rules is not null && _rulesVersion == maps.Version) return _rules;
+
+            var rules = new List<(Column, bool, bool)>();
+            foreach (var column in definition.Columns)
+            {
+                if (column.IsAutoNumber || column.IsCalculated) continue;
+                bool required    = column.IsRequired && column.DataType != DataType.Boolean;
+                bool refusesNone = column.DataType is DataType.Text or DataType.Memo && !column.AllowZeroLength;
+                if (required || refusesNone) rules.Add((column, required, refusesNone));
+            }
+            _rulesVersion = maps.Version;
+            return _rules = rules;
+        }
+    }
+
+    /// <summary>
+    /// Refuses <paramref name="written"/> - a row as it will be written - for what Access refuses it for by a
+    /// column's properties: no value in a required column, or a zero-length string in a Text or Memo column that
+    /// does not allow one. Access checks every column of a row it adds, and of a row it updates only the columns
+    /// the update gives a value: <paramref name="assignedOnly"/> says which. It does not look at a column's
+    /// default value, and neither does this library fill one in.
+    /// </summary>
+    private void EnsureColumnRules(Row written, bool assignedOnly)
+    {
+        foreach (var (column, isRequired, refusesZeroLength) in Rules)
+        {
+            bool assigned = written.TryGetValue(column.Name, out var value);
+            if (assignedOnly && !assigned) continue;
+
+            if (value is null)
+            {
+                if (isRequired)
+                    throw new ConstraintViolationException(
+                        $"{Name}.{column.Name} is a required column (Access's Required property) and the row has no value in it. " +
+                        "Nothing was written.");
+                continue;
+            }
+            if (refusesZeroLength && (value as string ?? Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture))?.Length == 0)
+                throw new ConstraintViolationException(
+                    $"{Name}.{column.Name} does not take a zero-length string (Access's Allow Zero Length property). " +
+                    "Nothing was written.");
+        }
+    }
+
     // ── Reading ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -307,8 +369,10 @@ public sealed class Table
     /// </summary>
     /// <exception cref="ConstraintViolationException">
     /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
-    /// index, or has a null in a column of the primary key or of an index that requires its values. Nothing of
-    /// the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// index, or has a null in a column of the primary key or of an index that requires its values; or it has no
+    /// value in a required column (<see cref="Column.IsRequired"/>), or a zero-length string in a Text or Memo
+    /// column that does not allow one (<see cref="Column.AllowZeroLength"/>). Nothing of the row is written, and
+    /// the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table takes no row (<see cref="InsertRefusal"/>: among the reasons, that it is a table of an Access 97
@@ -332,6 +396,7 @@ public sealed class Table
             // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
             // bool it stands for - read once, for the row's bytes and its index entries alike.
             var written = RowValues.AsWritten(row, _definition.Columns);
+            EnsureColumnRules(written, assignedOnly: false);
             _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
             // Everything an index can refuse the row for, before any of it is written.
@@ -417,7 +482,8 @@ public sealed class Table
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
     /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
-    /// <see cref="ConstraintViolationException"/> for a null a primary key or required index does not take or a
+    /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
+    /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
     /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
     /// writing many rows can check them all first, so a refused row stops the batch before any of it is in the
@@ -437,6 +503,7 @@ public sealed class Table
             FillAutoNumbers(asWritten);
         }
         asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
 
@@ -460,7 +527,11 @@ public sealed class Table
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
-    /// in a column of the primary key or of an index that requires its values. The row is left as it was.
+    /// in a column of the primary key or of an index that requires its values; or <paramref name="newValues"/>
+    /// gives no value to a required column (<see cref="Column.IsRequired"/>), or a zero-length string to a Text
+    /// or Memo column that does not allow one (<see cref="Column.AllowZeroLength"/>). Only the columns
+    /// <paramref name="newValues"/> names are checked against those two properties, as Access checks an update.
+    /// The row is left as it was.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
@@ -489,6 +560,10 @@ public sealed class Table
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
+
+        // What the columns' properties refuse, of the columns the update gives a value: Access does not look at
+        // the others, so a row that already breaks a rule in one of them is still updated.
+        if (newValues is not null) EnsureColumnRules(newValues, assignedOnly: true);
 
         // With foreign keys enforced, a table in a relationship is changed through the enforcer: the row, and the
         // rows a cascade reaches, or nothing.

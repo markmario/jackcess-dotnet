@@ -102,6 +102,8 @@ internal static class SchemaChange
             editor.AddColumn(column, columnId, maps);
             file.WritePage(table.TdefPageNumber, editor.ToPage());
             if (version is { } newer) DatabaseHeader.RaiseVersion(file, newer);
+            // The column's properties, where Access keeps what the definition asked of it (#41).
+            db.AddColumnProperties(table, column);
             undo.Commit();
         }
         Changed(db, file, table.TdefPageNumber);

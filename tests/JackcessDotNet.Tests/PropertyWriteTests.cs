@@ -244,6 +244,30 @@ public sealed class PropertyWriteTests : IDisposable
     }
 
     [Fact]
+    public void A_table_of_many_columns_keeps_properties_longer_than_a_page()
+    {
+        // A table made with these columns has properties too long for its row of the catalog, on one page of
+        // their own; a description for each column then takes them over several pages.
+        var columns = Enumerable.Range(0, 100).Select(i => new ColumnDefinition($"C{i:D3}", DataType.Text) { MaxLength = 5, IsRequired = i % 2 == 0 }).ToList();
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("Wide", columns);
+            Assert.InRange(PropertyValues(db).Single(v => v.Key.StartsWith("Wide#")).Value.Length, 2000, 4000);
+            foreach (var column in table.Columns)
+                column.Properties.Set("Description", $"The description of {column.Name}, long enough to matter: {new string('d', 60)}");
+            table.Columns[7].Properties.Set("Description", "Changed once it was made");
+            table.Properties.Save();
+            Assert.True(PropertyValues(db).Single(v => v.Key.StartsWith("Wide#")).Value.Length > 2 * 4096);
+        }
+        using var read = Database.Open(_path);
+        var wide = read.GetTable("Wide");
+        Assert.Equal(columns.Select(c => c.IsRequired), wide.Columns.Select(c => c.IsRequired));
+        Assert.All(wide.Columns, c => Assert.True(c.AllowZeroLength));
+        Assert.Equal("Changed once it was made", wide.Columns[7].Properties["Description"]);
+        Assert.Equal(0, wide.RowCount);
+    }
+
+    [Fact]
     public void The_tables_of_the_database_are_as_they_were_after_properties_are_saved()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
@@ -366,6 +390,25 @@ public sealed class PropertyWriteTests : IDisposable
             Assert.Throws<NotSupportedException>(() => table.Properties.Save());
         }
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused save changed the file");
+    }
+
+    [Fact]
+    public void Properties_that_were_not_read_whole_are_not_written_over()
+    {
+        // A value with bytes after its last block: what was read is not all there is.
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("T", new[] { new ColumnDefinition("Name", DataType.Text) });
+            byte[] whole = PropertyValues(db).Single(v => v.Key.StartsWith("T#")).Value;
+            var damaged = PropertyMapReader.Read(whole.Concat(new byte[] { 1, 2, 3 }).ToArray(), db.File.Format);
+            Assert.NotNull(damaged.UnreadReason);
+            Assert.Equal(false, damaged.Get("Name")!["Required"]);   // what could be read is still read
+            Assert.Throws<NotSupportedException>(() => PropertyMapWriter.Write(damaged));
+
+            var unknown = PropertyMapReader.Read(new byte[] { (byte)'X', (byte)'Y', (byte)'Z', 0, 1, 2 }, db.File.Format);
+            Assert.True(unknown.IsEmpty);
+            Assert.Throws<NotSupportedException>(() => PropertyMapWriter.Write(unknown));
+        }
     }
 
     [Fact]

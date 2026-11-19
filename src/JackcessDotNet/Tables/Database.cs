@@ -727,6 +727,11 @@ public sealed class Database : IDisposable
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
+        // What the definitions ask of the columns beyond their types - Required, Allow Zero Length - which
+        // Access keeps as properties, in the table's row of the catalog.
+        var propertyMaps   = ColumnProperties.For(columns);
+        byte[]? properties = PropertyMapWriter.Write(propertyMaps, out var propertyNames);
+
         // A table with a Large Number or a Date/Time Extended column makes the file one of Access 2016's format
         // or Access 2019's, as it does when Access adds the table: older versions of Access then refuse the file
         // rather than misread it. An .mdb has no such column, and the table is refused here, with no page added.
@@ -801,12 +806,13 @@ public sealed class Database : IDisposable
         _file.WritePage(tdefPage, tdefBytes);
 
         // 7. Register the table in MSysObjects.
-        _catalog.InsertTableEntry(name, tdefPage);
+        _catalog.InsertTableEntry(name, tdefPage, properties);
 
         // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
         if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
 
-        var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: new PropertyMaps());
+        propertyMaps.Written(propertyNames);
+        var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
         _tables[tdefPage] = table;
         return table;
     }
@@ -1104,6 +1110,43 @@ public sealed class Database : IDisposable
             undo.Commit();
         }
         if (!withinUndo) maps.Written(names);
+    }
+
+    /// <summary>
+    /// Writes the properties a column this library adds is given (<see cref="ColumnProperties"/>), with the
+    /// table's others. Called inside the undo scope of the change that adds the column, which takes it back
+    /// with the column if it fails.
+    /// </summary>
+    internal void AddColumnProperties(TableDefinition table, Column column)
+    {
+        int id = table.TdefPageNumber;
+        PropertyMaps maps;
+        if (_tables.TryGetValue(id, out var open))
+            maps = open.PropertyMaps;
+        else
+            maps = PropertyMapReader.Read(_catalog.FindObject(id)?.Properties, _file.Format);
+
+        // A block Access left for a column of this name that is gone is not this column's.
+        var earlier = maps.Get(column.Name)?.ToList();
+        if (earlier is not null)
+            foreach (var property in earlier)
+                maps.Get(column.Name)!.Remove(property.Name);
+        try
+        {
+            ColumnProperties.Add(maps, column);
+            SaveProperties(maps, () => _catalog.FindObject(id), $"table '{table.Name}'", withinUndo: true);
+        }
+        catch
+        {
+            // The column is not added: the maps go back to what the file has.
+            if (maps.Get(column.Name) is { } map)
+            {
+                foreach (var property in map.ToList()) map.Remove(property.Name);
+                if (earlier is not null)
+                    foreach (var property in earlier) map.Add(property);
+            }
+            throw;
+        }
     }
 
     // ── Changing the schema ──────────────────────────────────────────────────

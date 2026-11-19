@@ -79,7 +79,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
-  byte as it was. See [Properties](#properties).
+  byte as it was; and **a column's Required and Allow Zero Length are read, written and held to**, as Access
+  holds rows to them. See [Properties](#properties-required-and-allow-zero-length).
 - **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
   for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
   DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
@@ -343,8 +344,6 @@ Keys are matched as Access matches them - as its indexes hold them:
 
 What enforcement does not check:
 
-- **A column's Required property**, for a caller's own update: `UpdateByPrimaryKey` may null a column Access would
-  require a value for, exactly as with enforcement off. (A cascade-to-null into such a column is refused.)
 - **A key written again unchanged**: Access's `UPDATE` refuses to assign a key other rows refer to when the
   relationship does not cascade updates, even the value it already has; here an unchanged key is not a change.
 - **Relationships without referential integrity**: they only tell Access's query designer how tables join.
@@ -416,7 +415,7 @@ index slots.
   first.
 - Nothing is dropped or renamed: no column, index or relationship.
 
-## Properties
+## Properties, Required and Allow Zero Length
 
 Access keeps a table's properties, its columns' and the database's own as named, typed values in the catalog.
 They are read, changed and written, as Jackcess's `PropertyMap` is (#27):
@@ -448,6 +447,24 @@ string? title = (string?)db.SummaryProperties["Title"];
   two are kept with documents that Access's own interface adds to a database. A database made by DAO alone,
   or by this library as an `.accdb`, has neither, and saving to one is refused: the library does not add the
   document. Its new `.mdb` has both.
+
+**Required and Allow Zero Length are properties too** (#41): nothing of them is in a table's definition.
+`Column.IsRequired` and `Column.AllowZeroLength` read them, `CreateTable` and `AddColumn` write them from the
+`ColumnDefinition` - as DAO writes them for a field it makes - and rows are held to them as Access holds them,
+with `ConstraintViolationException`:
+
+- a row with no value in a required column is refused. A Yes/No always has a value, and an AutoNumber its number;
+- a zero-length string is refused in a Text or Memo column whose `AllowZeroLength` property is there and false.
+  A column with no such property takes one: that is what Access does with a column made by SQL's `CREATE TABLE`,
+  though DAO reports the property as false. Spaces are not a zero-length string;
+- an insert is checked in every column, an update only in the columns it gives a value: a row that already
+  breaks a rule in another column is still updated, as Access updates it;
+- a table made by an earlier version of this library has no properties, so nothing new is refused in it.
+
+`ColumnDefinition.AllowZeroLength` is `true` unless set, as for a field made in Access's table designer; a field
+made with DAO does not allow a zero-length string unless asked. A column's default value is not filled in: a
+required column with a `DefaultValue` and no value in the row is refused here, where Access would use the
+default.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
@@ -498,6 +515,7 @@ materialising the whole table.
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
 | Properties written: a table's, a column's, the database's own, Summary and Custom | ✅ Summary and Custom only where the database has their documents |
+| A column's Required and Allow Zero Length: read, written, enforced | ✅ |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
 | Password-protected `.accdb` (Agile Encryption, Office 2010+) | ✅ Read + write¹ |
 | Password-protected `.accdb` (ECMA Standard Encryption, Office 2007) | ✅ Read + write |
