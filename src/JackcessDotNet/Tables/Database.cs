@@ -253,11 +253,15 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Creates a new blank Access 2000-2003 database (an .mdb, <see cref="FileFormat.Access2000"/>) at
     /// <paramref name="path"/> and returns it open and ready for use. That is the format Jackcess creates when
-    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another. A file already at
-    /// <paramref name="path"/> is replaced.
+    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another, and says what a failure to write
+    /// the new file leaves. A file already at <paramref name="path"/> is replaced.
     /// </summary>
     /// <param name="path">The path of the file to create.</param>
     /// <returns>The new database, open. The caller disposes it.</returns>
+    /// <exception cref="IOException">
+    /// The file could not be made at <paramref name="path"/>, or writing it failed; see
+    /// <see cref="Create(string, FileFormat)"/> for what is left at the path.
+    /// </exception>
     public static Database Create(string path) => Create(path, FileFormat.Access2000);
 
     /// <summary>
@@ -274,8 +278,10 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// When writing the new file fails part-way - a full disk - it is closed and deleted, and the failure is thrown:
-    /// nothing that is part of a database is left at <paramref name="path"/>. A file that was there before is not
-    /// put back; it was replaced when the new one was begun.
+    /// nothing that is part of a database is left at <paramref name="path"/>. When it cannot be deleted either -
+    /// another process holds it - an <see cref="IOException"/> says that the incomplete file is still there, with
+    /// the failure as its <see cref="Exception.InnerException"/>: delete it before using the path again. A file that
+    /// was there before is not put back; it was replaced when the new one was begun.
     /// </para>
     /// </summary>
     /// <param name="path">The path of the file to create.</param>
@@ -285,6 +291,11 @@ public sealed class Database : IDisposable
     /// <paramref name="format"/> is <see cref="FileFormat.Access97"/>: Access 97 files are read, and neither created
     /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
     /// it was.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// The file could not be made at <paramref name="path"/> - nothing is changed there - or writing it failed. A
+    /// file whose writing failed has been deleted; when it could not be, the exception says the incomplete file is
+    /// still at <paramref name="path"/>, and the failure is its <see cref="Exception.InnerException"/>.
     /// </exception>
     public static Database Create(string path, FileFormat format)
     {
@@ -296,7 +307,8 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Writes a new, empty database into <paramref name="file"/>, a file just made at its path, and returns it open.
     /// When writing it fails, the file is closed and deleted - nothing that is part of a database is left at the
-    /// path, and no handle is left open on it - and the failure is thrown (#60).
+    /// path, and no handle is left open on it - and the failure is thrown (#60). When the file cannot be deleted, an
+    /// <see cref="IOException"/> says the incomplete file is still at the path, the failure inside it.
     /// </summary>
     internal static Database CreateIn(PageFile file)
     {
@@ -305,11 +317,17 @@ public sealed class Database : IDisposable
             DatabaseHeader.Create(file.Format).WriteTo(file);
             return new Database(file);
         }
-        catch
+        catch (Exception failure)
         {
             file.Dispose();
             try { System.IO.File.Delete(file.Path); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"The new database '{file.Path}' could not be written, and the incomplete file it left there could not be " +
+                    $"removed ({e.Message}): delete it before using the path again.",
+                    failure);
+            }
             throw;
         }
     }

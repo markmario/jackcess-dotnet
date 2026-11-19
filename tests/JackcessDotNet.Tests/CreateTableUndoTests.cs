@@ -259,4 +259,23 @@ public sealed class CreateTableUndoTests : IDisposable
         Assert.Equal(format, made.FileFormat);
         Assert.Equal(1, Assert.Single(made.GetTable("T").Rows)["Id"]);
     }
+
+    [Fact]
+    public void A_database_whose_writing_fails_and_whose_file_cannot_be_removed_says_the_file_is_left()
+    {
+        _file = _path + ".mdb";
+        var file = new PageFile(_file, JetFormat.For(FileFormat.Access2000), FileMode.Create) { WritesBeforeFailure = 3 };
+        // Another handle on the file, opened without FileShare.Delete: the incomplete file cannot be removed.
+        using (var other = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            var left = Assert.Throws<IOException>(() => Database.CreateIn(file));
+            Assert.Contains($"'{_file}' could not be written, and the incomplete file it left there could not be removed", left.Message);
+            var failure = Assert.IsType<IOException>(left.InnerException);
+            Assert.Contains("a test asked for the write to fail", failure.Message);
+            Assert.Equal(3 * 4096, other.Length);   // what was written before the failure
+        }
+        // The file is the caller's to delete, and nothing of this library holds it.
+        Assert.True(File.Exists(_file));
+        File.Delete(_file);
+    }
 }

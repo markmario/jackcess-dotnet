@@ -61,7 +61,8 @@ changed since 1.2.2.
   `GetTableNames` listed and that Access, in an `.mdb`, refused to read ("no read permission"). What it writes is
   now taken back if writing fails: the file is byte for byte as it was, and the table is not there.
   **`Database.Create` leaves no file when writing the new one fails**: it is closed and deleted. It was left at the
-  path, part of a database, and held open.
+  path, part of a database, and held open. When it cannot be deleted - another process holds it - an `IOException`
+  says the incomplete file is still at the path, with the failure as its `InnerException`.
 - **A Binary value longer than its column is refused** (#45), before anything of its row is written, with
   `ColumnValueTooLongException`, as a Text value is: for a column kept among the variable-length values (what this
   library and DAO's `dbBinary` make, SQL's `VARBINARY`), which took the value whole, and for one kept among the
