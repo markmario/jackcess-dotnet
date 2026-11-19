@@ -625,8 +625,8 @@ have been deleted - and a row Access moved to another page is read where its poi
   Added to in the default placement, such a file gets no value on a page that may hold the end of a chain.
 - **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
   looks at no page that cannot take the value, however many the column has. A page is listed in the column's
-  free-space map while it has 264 bytes or more free, which is where ACE was seen to list one (it listed none
-  with 258 or fewer), and only once a value is on it. The first long value written to a column in a session
+  free-space map while it has 258 bytes or more free, which is where ACE lists one (it lists none with 257 or
+  fewer), and only once a value is on it. The first long value written to a column in a session
   reads the pages its map lists, once.
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two

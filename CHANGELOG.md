@@ -34,6 +34,11 @@ changed since 1.2.2.
   `Database.VerifyIndexes`, every entry an index was seen to hold that is no row's goes when the table is next
   changed. An index with no such entry costs nothing more to write to.
 
+- **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
+  Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
+  sizes between could not be made with text. A value goes onto a page Access left with 258 to 263 bytes where
+  Access would put it, and such a page is no longer taken out of the map.
+
 ### Breaking changes to the public API
 
 Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds

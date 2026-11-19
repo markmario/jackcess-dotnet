@@ -96,9 +96,9 @@ public sealed class LongValueRoomTests : IDisposable
     [Fact]
     public void The_free_space_map_lists_the_pages_Access_would_and_what_is_noted_is_what_it_lists()
     {
-        // ACE, writing notes of these lengths, lists a page in the column's free-space map when it is left with
-        // 264 bytes or more, and not with 258 or fewer; a page that holds a chunk of a chain it never lists. A new
-        // page used to go into the map before anything was written to it, and stay with 64 bytes.
+        // ACE lists a page in the column's free-space map when it is left with 258 bytes or more, and not with
+        // 257 or fewer; a page that holds a chunk of a chain it never lists. A new page used to go into the map
+        // before anything was written to it, and stay with 64 bytes.
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = Notes(db);
         for (int i = 1; i <= 600; i++)
