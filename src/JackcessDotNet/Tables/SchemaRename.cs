@@ -60,19 +60,15 @@ internal static class SchemaRename
             if (changes.Count > 0) SchemaRemoval.EnsureRowsCanBeChanged(found);
         }
 
-        // The column's properties, where the catalog has some for it.
-        var catalog = db.GetTable(CatalogTable);
-        var entry = SchemaRemoval.RowsOf(file, catalog, "Id", "Type", "LvProp")
-            .FirstOrDefault(r => r.Values["Id"] is int id && id == table.TdefPageNumber && r.Values["Type"] is short type && type == JetFormat.CatalogTypeTable);
-        byte[]? properties = entry.Values is null ? null : PropertyBlob.WithColumnRenamed(entry.Values["LvProp"] as byte[], column.Name, newName);
-        if (properties is not null) SchemaRemoval.EnsureRowsCanBeChanged(catalog);
+        // The column's properties, where the catalog has some for it: asked before anything is written.
+        bool hasProperties = db.ColumnHasPropertiesToChange(table, column.Name, "renamed");
 
         using (var undo = file.BeginUndo())
         {
             editor.RenameColumn(position, newName);
             TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
             foreach (var (pointer, change) in changes) relationships!.RewriteRowAt(pointer, change);
-            if (properties is not null) catalog.RewriteRowAt(entry.RowPointer, new Row { ["LvProp"] = properties });
+            if (hasProperties) db.ChangeColumnProperties(table, column.Name, newName);
             undo.Commit();
         }
         SchemaChange.Changed(db, file, table.TdefPageNumber);

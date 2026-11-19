@@ -73,6 +73,7 @@ static JackcessDotNet.Database.Create(string! path, JackcessDotNet.FileFormat fo
 JackcessDotNet.Database.CreateRelationship(JackcessDotNet.RelationshipDefinition! definition) -> JackcessDotNet.Relationship!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, System.Collections.Generic.IEnumerable<string!>? primaryKey, System.Collections.Generic.IEnumerable<JackcessDotNet.IndexDefinition!>! indexes) -> JackcessDotNet.Table!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, params string![]! primaryKey) -> JackcessDotNet.Table!
+JackcessDotNet.Database.DatabaseProperties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
@@ -90,7 +91,9 @@ JackcessDotNet.Database.Path.get -> string!
 JackcessDotNet.Database.ShareLongValuePages.get -> bool
 JackcessDotNet.Database.ShareLongValuePages.set -> void
 JackcessDotNet.Database.RenameTable(string! name, string! newName) -> void
+JackcessDotNet.Database.SummaryProperties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.TryGetTable(string! name, out JackcessDotNet.Table? table) -> bool
+JackcessDotNet.Database.UserDefinedProperties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.VerifyIndexes.get -> bool
 JackcessDotNet.Database.VerifyIndexes.set -> void
 JackcessDotNet.DatabaseExporter
@@ -189,7 +192,13 @@ JackcessDotNet.PropertyMap.Property.IsDdl.get -> bool
 JackcessDotNet.PropertyMap.Property.Name.get -> string!
 override JackcessDotNet.PropertyMap.Property.ToString() -> string!
 JackcessDotNet.PropertyMap.Property.Value.get -> object?
+JackcessDotNet.PropertyMap.Remove(string! name) -> bool
+JackcessDotNet.PropertyMap.Save() -> void
+JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value) -> void
+JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value, bool isDdl) -> void
+JackcessDotNet.PropertyMap.Set(string! name, object! value) -> void
 override JackcessDotNet.PropertyMap.ToString() -> string!
+JackcessDotNet.PropertyMap.TryGetProperty(string! name, out JackcessDotNet.PropertyMap.Property? property) -> bool
 JackcessDotNet.PropertyMap.TryGetValue(string! name, out object? value) -> bool
 JackcessDotNet.PropertyMap.this[string! propertyName].get -> object?
 JackcessDotNet.Relationship

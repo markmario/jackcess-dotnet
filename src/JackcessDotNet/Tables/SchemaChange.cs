@@ -98,6 +98,9 @@ internal static class SchemaChange
             throw new NotSupportedException($"A column is not added to '{table.Name}': {why}. Nothing was changed.");
 
         int columnId = editor.ColumnIds.DefaultIfEmpty(-1).Max() + 1;
+        // Whether the column's properties can be written, asked before anything is: a column that needs one
+        // where they cannot be is refused here (#41).
+        bool withProperties = db.ColumnPropertiesCanBeWritten(table, column);
         using (var undo = file.BeginUndo())
         {
             LvalUmapRef? maps = null;
@@ -109,6 +112,8 @@ internal static class SchemaChange
             editor.AddColumn(column, columnId, maps);
             TdefBuffer.Write(file, db.Allocator, table.TdefPageNumber, editor.ToDefinition());
             if (version is { } newer) DatabaseHeader.RaiseVersion(file, newer);
+            // The column's properties, where Access keeps what the definition asked of it (#41, #33).
+            if (withProperties) db.AddColumnProperties(table, column);
             undo.Commit();
         }
         Changed(db, file, table.TdefPageNumber);

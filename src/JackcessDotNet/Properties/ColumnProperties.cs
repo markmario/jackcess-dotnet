@@ -1,0 +1,58 @@
+namespace JackcessDotNet;
+
+/// <summary>
+/// The properties a column is given when this library makes it, which is where Access keeps what a
+/// <see cref="ColumnDefinition"/> asks of a column beyond its type: nothing of it is in the table's definition.
+/// They are the ones DAO gives a field it makes (#41, #33):
+/// <list type="bullet">
+/// <item>every column but an AutoNumber has <c>Required</c>, and a Text or Memo column <c>AllowZeroLength</c>
+/// before it - Yes/No values, marked as DDL properties;</item>
+/// <item>a Replication ID AutoNumber has <c>DefaultValue</c>, the Memo <c>GenGUID()</c>: Access fills the column
+/// of a row it adds from that, not from the column's flag in the table's definition;</item>
+/// <item>a Long Integer AutoNumber has none.</item>
+/// </list>
+/// </summary>
+internal static class ColumnProperties
+{
+    /// <summary>The expression Access generates a Replication ID with.</summary>
+    internal const string GenerateGuid = "GenGUID()";
+
+    /// <summary>Gives <paramref name="maps"/> the properties of <paramref name="column"/>, a column being made.</summary>
+    internal static void Add(PropertyMaps maps, Column column)
+    {
+        if (column.IsAutoNumber)
+        {
+            if (column.DataType == DataType.Guid)
+                maps.GetOrAdd(column.Name, PropertyMap.ColumnType).Set("DefaultValue", GenerateGuid);
+            return;
+        }
+
+        var map = maps.GetOrAdd(column.Name, PropertyMap.ColumnType);
+        if (column.DataType is DataType.Text or DataType.Memo)
+            map.Set("AllowZeroLength", column.AllowZeroLength);
+        map.Set("Required", column.IsRequired);
+    }
+
+    /// <summary>
+    /// What of <paramref name="column"/>'s definition only a property can say, or null when a column with no
+    /// property at all is what was asked for: Access takes a column without the properties as not required, and
+    /// as one that takes a zero-length string.
+    /// </summary>
+    internal static string? Needs(Column column)
+    {
+        if (column.IsAutoNumber)
+            return column.DataType == DataType.Guid ? "the default value GenGUID() of a Replication ID AutoNumber" : null;
+        if (column.IsRequired) return "IsRequired";
+        if (column.DataType is DataType.Text or DataType.Memo && !column.AllowZeroLength) return "AllowZeroLength = false";
+        return null;
+    }
+
+    /// <summary>The properties of a table being made with <paramref name="columns"/>.</summary>
+    internal static PropertyMaps For(IEnumerable<Column> columns)
+    {
+        var maps = new PropertyMaps();
+        foreach (var column in columns)
+            Add(maps, column);
+        return maps;
+    }
+}

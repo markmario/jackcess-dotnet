@@ -128,12 +128,8 @@ internal static class SchemaRemoval
 
         bool hasLongValues = table.LvalColumnUmapPages.TryGetValue(column.Name, out var longValueMaps);
 
-        // The column's properties, where the catalog has some for it.
-        var catalog = db.GetTable(CatalogTable);
-        var entry = RowsOf(file, catalog, "Id", "Type", "LvProp")
-            .FirstOrDefault(r => r.Values["Id"] is int id && id == table.TdefPageNumber && IsTable(r.Values));
-        byte[]? properties = entry.Values is null ? null : PropertyBlob.WithoutColumn(entry.Values["LvProp"] as byte[], column.Name);
-        if (properties is not null) EnsureRowsCanBeChanged(catalog);
+        // The column's properties, where the catalog has some for it: asked before anything is written.
+        bool hasProperties = db.ColumnHasPropertiesToChange(table, column.Name, "dropped");
 
         using (var undo = file.BeginUndo())
         {
@@ -150,8 +146,7 @@ internal static class SchemaRemoval
                     GlobalUsageMap.MarkFree(file, longValueMaps.FreePage);
                 file.FreedLvalPages.Clear();
             }
-            if (properties is not null)
-                catalog.RewriteRowAt(entry.RowPointer, new Row { ["LvProp"] = properties });
+            if (hasProperties) db.ChangeColumnProperties(table, column.Name, newName: null);
             undo.Commit();
         }
         Dropped(db, file, table.TdefPageNumber);
