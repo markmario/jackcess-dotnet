@@ -119,6 +119,52 @@ public sealed class LookupMatchTests : IDisposable
         }
     }
 
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void A_double_looked_for_in_a_Currency_is_its_exact_value_to_four_places_half_to_even_as_Access_takes_it(FileFormat format)
+    {
+        // Measured (ACE's = through an index and without, DAO's Seek, all alike): a double or a float by its exact
+        // binary value, rounded to ten-thousandths, half to even. Taken through a decimal it was cut to 15 significant
+        // digits first (on .NET Framework and .NET up to 10), so 0.00015 - just under the half it is written as - was
+        // the half, and was rounded away from zero to the row above.
+        using var db = Create(format);
+        var table = db.CreateTable("K", new[]
+        {
+            new ColumnDefinition("C", DataType.Currency), new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
+        }, "C");
+        decimal[] held = { 0.0001m, 0.0002m, 1.2345m, 1.2346m, 0.0312m, 0.0313m, -0.0312m, -0.0313m, 0.0937m, 0.0938m };
+        foreach (decimal c in held) table.Insert(new Row { ["C"] = c, ["Name"] = c.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+
+        var asked = new (object Value, decimal? Finds)[]
+        {
+            (0.00015, 0.0001m), (1.234549999999999, 1.2345m), (0.000150000000000000001, 0.0002m),   // either side of a half
+            (0.03125, 0.0312m), (-0.03125, -0.0312m), (0.09375, 0.0938m),                           // exact halves, to even
+            (0.03125f, 0.0312m), (-0.03125f, -0.0312m),
+            (0.00025, null),                                                                         // just over the half: 0.0003
+            (double.NaN, null), (1e30, null), (double.NegativeInfinity, null),                       // no Currency
+        };
+        foreach (var (value, finds) in asked)
+        {
+            string what = $"C = {value} ({value.GetType().Name})";
+            Assert.True(finds == (decimal?)table.FindRowByPrimaryKey(value)?["C"], $"{what} by the primary key: {table.FindRowByPrimaryKey(value)?["C"]}");
+            Assert.True(finds == (decimal?)table.CreateCursor().FindRow("C", value)?["C"], $"{what} by a scan: {table.CreateCursor().FindRow("C", value)?["C"]}");
+            Assert.Equal(finds is null ? Array.Empty<decimal>() : new[] { finds.Value },
+                table.CreateIndexCursor().FindRowsByEntry(value).Select(r => (decimal)r["C"]!));
+        }
+
+        // An update and a delete by those lookups change the rows Access's would.
+        var row = table.FindRowByPrimaryKey(0.00015)!;
+        row["Name"] = "changed";
+        table.Update(row);
+        table.Delete(table.FindRowByPrimaryKey(1.234549999999999)!);
+        var cursor = table.CreateCursor();
+        cursor.FindRow("C", 0.03125);
+        cursor.DeleteCurrentRow();
+        Assert.Equal("changed", table.FindRowByPrimaryKey(0.0001m)!["Name"]);
+        Assert.Equal("0.0002", table.FindRowByPrimaryKey(0.0002m)!["Name"]);
+        Assert.Equal(held.Except(new[] { 1.2345m, 0.0312m }).OrderBy(c => c), table.Rows.Select(r => (decimal)r["C"]!).OrderBy(c => c));
+    }
+
     [Fact]
     public void Numbers_are_matched_as_the_same_number_by_a_scan_and_through_an_index()
     {

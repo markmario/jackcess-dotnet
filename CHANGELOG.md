@@ -74,8 +74,12 @@ changed since 1.2.2.
   finds a row only when it is that whole number exactly: compared through a `decimal`, which keeps 15 significant
   digits, 5.000000000000001 found an Integer's 5, and the double 1234567890123460096 found a Large Number's
   1234567890123460000 by a scan and nothing through the index, where 2^60 as a double did not find 2^60. A
-  Currency is the number looked for taken to its four places, as a row stores it and an index keys it: 1.23456
-  finds the row of 1.2346, as it does with ACE's `=` and DAO's `Seek`, where it found none. Text is matched as
+  Currency is the number looked for taken to its four places, as ACE's `=` (through an index and without) and
+  DAO's `Seek` take it: a `double` or `float` by its exact value, half to even - 0.03125 finds 0.0312, and the
+  double 0.00015, which is just under that half, finds 0.0001, where taken through a `decimal` they found 0.0313
+  and, on .NET Framework and .NET up to 10, 0.0002 - and any other number as a row stores it: 1.23456
+  finds the row of 1.2346, where it found none. A range and `FindClosestRowByEntry` still key a `double` as a row
+  is written with it, which rounds some of these the other way (#65). Text is matched as
   text, as it was: `"1.0"`, `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose
   key reads as the same number.
 - **A `double` or `float` written to a Decimal column, or looked for in one, is the decimal Access makes of it, on

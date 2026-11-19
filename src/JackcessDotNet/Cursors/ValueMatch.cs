@@ -18,10 +18,12 @@ namespace JackcessDotNet;
 /// (measured with ACE, #49): a Byte, Integer, Long or Large Number column's 5 for a caller's 5L, 5m or 5.0, and
 /// for no number that is not that whole number (5.5, 70000 in an Integer, a double one past a Large Number's); a
 /// Decimal exactly, as decimals compare, a caller's double taken to a decimal as Access takes one (to 15
-/// significant digits). A Currency, a Double or a Single is the caller's number taken to the column's type as a row
-/// would store it: a Currency to its four places (1.23456 is the row of 1.2346, to Access's <c>=</c>, its
-/// <c>Seek</c> and this library's keys alike), a Double or a Single by its bits: +0.0 and -0.0 are two keys to
-/// Access and to an index, and so are a Double and the next Double after it. Text is no number.</item>
+/// significant digits). A Currency is the caller's number taken to its four places as Access takes it: a double or
+/// a float by its exact value, half to even, as ACE's <c>=</c> - through an index and without - and DAO's
+/// <c>Seek</c> take one (0.03125 is the row of 0.0312, and 0.00015, a double just under that half, the row of
+/// 0.0001); any other number as a row would store it (1.23456 is the row of 1.2346). A Double or a Single is the
+/// caller's number as a row would store it, by its bits: +0.0 and -0.0 are two keys to Access and to an index, and
+/// so are a Double and the next Double after it. Text is no number.</item>
 /// <item>A Date/Time is the double the row stores, days since 30 December 1899. A number looked for is that
 /// double, matched by its bits (#35). A <see cref="DateTime"/> looked for is first taken to what it reads as once
 /// a row stores it (<see cref="AsStored"/>: to the millisecond), and matches every stored value that reads as
@@ -57,11 +59,16 @@ internal static class ValueMatch
                     return stored is Guid guid
                         && guid == (asked is Guid wanted ? wanted : Guid.Parse(Convert.ToString(asked, CultureInfo.InvariantCulture)!));
                 case DataType.Currency:
-                    // The caller's number as the column stores it, in ten-thousandths (#49): as the row encoder writes
-                    // it and an index keys it, so the value written finds its row, as Access's = finds it.
-                    return IsNumber(asked!)
-                        && IndexKeys.MoneyUnits(Convert.ToDecimal(stored, CultureInfo.InvariantCulture))
-                           == IndexKeys.MoneyUnits(Convert.ToDecimal(asked, CultureInfo.InvariantCulture));
+                {
+                    // The caller's number in ten-thousandths, as Access takes it (#49): a double or a float by its exact
+                    // value, half to even, as ACE's index and scan and DAO's Seek take one (Util.CurrencyRounding); any
+                    // other number as the row encoder writes it and an index keys it.
+                    long holds = IndexKeys.MoneyUnits(Convert.ToDecimal(stored, CultureInfo.InvariantCulture));
+                    if (asked is double or float)
+                        return Util.CurrencyRounding.TryUnits(Convert.ToDouble(asked, CultureInfo.InvariantCulture), out long units)
+                            && units == holds;
+                    return IsNumber(asked!) && holds == IndexKeys.MoneyUnits(Convert.ToDecimal(asked, CultureInfo.InvariantCulture));
+                }
             }
             return SameValue(stored, asked!);
         }
