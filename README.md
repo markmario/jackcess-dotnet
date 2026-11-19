@@ -371,9 +371,14 @@ answered with the row that no longer has it, and that row is not found under the
   for it, so a relationship's child or parent is found however Access keyed it. When a row with such a key is
   deleted or rewritten, its entry is looked for under this library's key, as any row's is, and only when the row has
   no entry there are its entries found by the row they point at - every leaf of the index read - so that none is
-  left pointing where the row was. So are a row's whose Date/Time Extended value is in another form than the one
-  this library writes, which an earlier version of this library keyed by the date it read
-  ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)).
+  left pointing where the row was.
+- **A row whose Date/Time Extended value is in another form than the one this library writes** may have its entry
+  where a version of this library before [#51](https://github.com/markmario/jackcess-dotnet/issues/51) put it, when
+  such a version added the index or rewrote the row: under the key of the date it read, in the first form, or of no
+  value - for Access's second form, before db6f93b. When the row is deleted or its date rewritten and it has no
+  entry under the key of its bytes, the entry is looked for under each of those keys, one way down the tree each,
+  and taken out when it points at the row. With `VerifyIndexes`, such an entry is the row's wrong one, and is moved
+  to the key of the row's bytes.
 
 An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
 insert reads are the ones it read before. An index that is not unique is not looked at this way without
@@ -383,6 +388,10 @@ library either way: each row found is read and compared.
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
 earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
 beside it is the same for unique indexes and a primary key, made by `tools/legacy-unique-indexes.ps1`.
+`ace-extended-date-forms.accdb` holds Date/Time Extended values in every form Access reads a date from, with
+indexes ACE made over them (`tools/ace-extended-date-forms.ps1`); `engine-913240c-extended-date-keys.accdb` and
+`engine-c89bfe4-extended-date-keys.accdb` are copies of it that this library changed at those commits
+(`tools/earlier-extended-date-keys.ps1`).
 
 Keys are matched as Access matches them - as its indexes hold them:
 

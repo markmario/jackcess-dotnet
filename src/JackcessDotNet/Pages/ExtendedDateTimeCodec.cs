@@ -27,6 +27,9 @@ internal static class ExtendedDateTimeCodec
     private const int Digits        = 19;
     private const int TimeAt        = Digits + 1;
     private const int TrailerAt     = TimeAt + Digits;
+
+    /// <summary>Where the third number begins, the count of the fraction's digits: 7 in Access's first form, 0 in its second.</summary>
+    internal const int CountAt = TrailerAt + 1;
     private const long DaysInRange  = 3652059;   // DateTime.MaxValue's day, and one more
 
     /// <summary>

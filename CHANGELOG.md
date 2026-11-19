@@ -82,7 +82,11 @@ changed since 1.2.2.
   and `FindRowsByEntry` - is looked for under the key of each form, so a row ACE stored in its second form is
   found, as a cursor over the table finds it (it was not); in a range's entry and given to
   `FindClosestRowByEntry` it is the first form's key, as Access's `BETWEEN` through an index has it. A `Joiner`
-  joins a row read from a table on the bytes it stores.
+  joins a row read from a table on the bytes it stores. A row in the second form is deleted, or its date
+  rewritten, for what a Date/Time row costs, its entry found under the key of its bytes: at 5,000 rows 6 pages
+  where 86 were read, every leaf of the index. An entry a version of this library since 2930d3f made for a row in
+  another form - when it added the index or rewrote the row - is under the key of its date in the first form, or of
+  no value, and is looked for there, one way down the tree each, when the row has none under the key of its bytes.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the

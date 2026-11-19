@@ -517,15 +517,15 @@ internal sealed class TableIndexes
 
             if (!found)
             {
-                // A row whose key this library may not make as Access does - one cut in an index of columns the cut
-                // was not measured in - can be under a key this library does not make; and a row with a Date/Time
-                // Extended value in another form than the one this library writes, under the key an earlier version
-                // of this library made of the date it read (#51). When its entry is not under its own key, its
-                // entries are found by the row they point at, every leaf of the index read, so that none is left
-                // pointing where the row was. Any other row with no entry - one an earlier version of this library
-                // wrote without keeping the index - has nothing to take out, and that is no error: the row is gone
-                // and the index holds nothing of it, which is what a delete is for.
-                if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values) || HasExtendedDateInAnotherForm(entry))
+                // A row with a Date/Time Extended value in another form than the one this library writes can be
+                // under the key an earlier version of this library made of the date it read (#51): its entry is looked
+                // for there. A row whose key this library may not make as Access does - one cut in an index of
+                // columns the cut was not measured in - can be under a key this library does not make: when its entry
+                // is not under its own key, its entries are found by the row they point at, every leaf of the index
+                // read, so that none is left pointing where the row was. Any other row with no entry - one an earlier
+                // version of this library wrote without keeping the index - has nothing to take out, and that is no
+                // error: the row is gone and the index holds nothing of it, which is what a delete is for.
+                if (!RemoveAsEarlierVersionsKeyedIt(writer, entry, rowPointer) && !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
                     RemoveByPointer(writer, entry.Tree, rowPointer);
                 continue;
             }
@@ -535,12 +535,46 @@ internal sealed class TableIndexes
     }
 
     /// <summary>
-    /// Whether <paramref name="entry"/>'s values hold a Date/Time Extended value in another form than the one this
-    /// library writes for the date it says, or bytes that say none: a value whose key an earlier version of this
-    /// library, which keyed the date it read, made otherwise than of its bytes (#51).
+    /// Takes out of <paramref name="entry"/>'s tree the entry a version of this library before #51 made for the row at
+    /// <paramref name="rowPointer"/>, when the row has a Date/Time Extended value in another form than the first and
+    /// its entry is not under the key of its bytes. Those versions keyed the date they read, in the first form: from
+    /// 2930d3f they read Access's second form as no value, and from db6f93b as its date
+    /// (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>). An index or a primary key they added over such a
+    /// row, and a row they rewrote, is under that key (tools/earlier-extended-date-keys.ps1). Each key is looked under
+    /// once, one way down the tree, and only this row's entry is taken out: the key of a date in the first form is
+    /// also the key of a row that has the date in that form. Returns whether an entry was taken out.
     /// </summary>
-    private static bool HasExtendedDateInAnotherForm(Entry entry)
-        => entry.Values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm);
+    private static bool RemoveAsEarlierVersionsKeyedIt(IndexWriter writer, Entry entry, int rowPointer)
+    {
+        if (!entry.Values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm)) return false;
+
+        var looked = new List<byte[]> { entry.Key };
+        foreach (bool secondFormAsDate in new[] { true, false })
+        {
+            var values = entry.Values
+                .Select(value => value is StoredExtendedDate stored && !stored.IsFirstForm ? stored.DateAsEarlierVersionsRead(secondFormAsDate) : value)
+                .ToArray();
+            if (entry.Tree.IgnoreNulls && values.All(value => value is null)) continue;
+
+            var earlier = EntryOf(entry.Tree, values, values.Any(value => value is null));
+            if (looked.Any(key => key.AsSpan().SequenceEqual(earlier.Key))) continue;
+            looked.Add(earlier.Key);
+
+            if (!earlier.IsCut)
+            {
+                writer.Remove(entry.Tree.Target, earlier.Key, rowPointer, out bool removed);
+                if (removed) return true;
+                continue;
+            }
+            // A cut key may be stored whole or cut the earlier way too (StoredUnder): the form that points at this row.
+            if (StoredUnder(writer, earlier).Where(s => s.RowPointer == rowPointer).Select(s => s.Key).FirstOrDefault() is { } stored)
+            {
+                writer.Remove(entry.Tree.Target, stored, rowPointer);
+                return true;
+            }
+        }
+        return false;
+    }
 
     /// <summary>
     /// Takes every entry of <paramref name="tree"/> that points at <paramref name="rowPointer"/> out of it,

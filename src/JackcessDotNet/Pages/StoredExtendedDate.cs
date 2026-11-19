@@ -44,6 +44,15 @@ internal sealed class StoredExtendedDate : IEquatable<StoredExtendedDate>
     /// </summary>
     internal bool IsFirstForm => Date is { } date && _bytes.AsSpan().SequenceEqual(ExtendedDateTimeCodec.Encode(date));
 
+    /// <summary>
+    /// The date the bytes say as versions of this library that keyed the date they read read it, the key of which,
+    /// in the first form, is the key such a version made for the row (#51): from 2930d3f a count of digits other
+    /// than 7 - Access's second form among them - was read as no value, and from db6f93b, with
+    /// <paramref name="secondFormAsDate"/>, a count of 0 as Access's second form. Null for no value.
+    /// </summary>
+    internal DateTime? DateAsEarlierVersionsRead(bool secondFormAsDate)
+        => secondFormAsDate || _bytes[ExtendedDateTimeCodec.CountAt] == (byte)'7' ? Date : null;
+
     /// <inheritdoc/>
     public bool Equals(StoredExtendedDate? other) => other is not null && _bytes.AsSpan().SequenceEqual(other._bytes);
 

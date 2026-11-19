@@ -396,4 +396,163 @@ public sealed class ExtendedDateFormsTests : IDisposable
             t.DeleteRowAt(pointers[id]);
         Assert.Equal(5, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: 6));
     }
+
+    // ── Entries an earlier version made ─────────────────────────────────────
+
+    /// <summary>
+    /// The entries of <paramref name="table"/>'s indexes that point at a row of it under another key than the row's
+    /// own, and those that point at no row of it, each as "index key -> page/row".
+    /// </summary>
+    private static (List<string> Wrong, List<string> OfNoRow) Audit(Database db, string table)
+    {
+        var rows = JetPages.Rows(db.File, IndexChecks.TdefOf(db, table), forKeys: true).ToDictionary(r => (r.Page, r.Row), r => r.Values);
+        var (wrong, ofNoRow) = (new List<string>(), new List<string>());
+        foreach (var index in db.GetTable(table).Indexes.GroupBy(ix => ix.IndexDataNumber).Select(g => g.First()))
+            foreach (var entry in JetPages.LeafEntries(db.File, index.RootPageNumber))
+            {
+                string shown = $"{index.Name} {entry.Hex} -> {entry.RowPage}/{entry.Row}";
+                if (!rows.TryGetValue((entry.RowPage, entry.Row), out var values)) ofNoRow.Add(shown);
+                else if (!IndexKeys.Encode(index.Columns, index.Columns.Select(c => values.TryGetValue(c.Column.Name, out var v) ? v : null).ToArray())
+                             .AsSpan().SequenceEqual(entry.Key)) wrong.Add(shown);
+            }
+        return (wrong, ofNoRow);
+    }
+
+    // Files this library wrote before #51 (tools/earlier-extended-date-keys.ps1): at 913240c, which read Access's
+    // second form as no value, and at c89bfe4, which read it as its date; each keyed the date it read, in the first
+    // form. W's index ByK, which such a version added, holds rows 2 to 4 under those keys, and T's indexes on K rows 2
+    // and 3, which such a version rewrote. Rows deleted, and a row given another date, take those entries with them,
+    // found under the keys those versions made: no row is left with an entry under another key than its own, and no
+    // entry pointing at no row is left but those 913240c left when it moved rows 2 and 3 (indexes that are not
+    // unique, which nothing here looks at). With nothing looked for under those keys, every one was left behind.
+    [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb", false)]
+    [InlineData("engine-913240c-extended-date-keys.accdb", true)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", false)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", true)]
+    public void Rows_an_earlier_version_keyed_by_the_date_it_read_take_those_entries_with_them(string asset, bool verify)
+    {
+        using var db = Database.Open(Copy(asset));
+        db.VerifyIndexes = verify;
+        var (w, t) = (db.GetTable("W"), db.GetTable("T"));
+        Assert.Equal(3, Audit(db, "W").Wrong.Count);
+        Assert.Equal(8, Audit(db, "T").Wrong.Count);   // rows 2 and 3, in each of the four indexes on K
+        var ofNoRowBefore = Audit(db, "T").OfNoRow;
+
+        var (wRows, tRows) = (Pointers(w), Pointers(t));
+        foreach (int id in new[] { 2, 3, 4 }) w.DeleteRowAt(wRows[id]);
+        t.RewriteRowAt(tRows[2], new Row { ["K"] = D0.AddDays(2) });
+        t.DeleteRowAt(tRows[3]);
+
+        Assert.Equal(1, IndexChecks.AssertEveryIndexHoldsTheRows(db, "W", expectedRows: 1));
+        var (wrong, ofNoRow) = Audit(db, "T");
+        Assert.Empty(wrong);
+        Assert.Subset(ofNoRowBefore.ToHashSet(), ofNoRow.ToHashSet());
+    }
+
+    // ── What it costs ───────────────────────────────────────────────────────
+
+    /// <summary>A date in Access's second form, built here as ACE's SQL UPDATE writes it (measured).</summary>
+    private static byte[] InSeconds(DateTime date)
+        => Encoding.ASCII.GetBytes($"{date.Ticks / TimeSpan.TicksPerDay:D19}:{date.Ticks % TimeSpan.TicksPerDay / TimeSpan.TicksPerSecond:D19}:0\0");
+
+    /// <summary>The key ACE makes of 42 stored bytes, ascending (measured): built here, not by the library.</summary>
+    private static byte[] KeyOfBytes(byte[] stored)
+    {
+        var key = new List<byte> { 0x7F };
+        for (int block = 0; block < 5; block++)
+        {
+            key.AddRange(stored.Skip(block * 8).Take(8));
+            key.Add(9);
+        }
+        key.AddRange(stored.Skip(40));
+        key.AddRange(new byte[] { 0, 0, 0, 0, 0, 0, 2 });
+        return key.ToArray();
+    }
+
+    // Rows ACE stored in the second form, under the keys of their bytes, are deleted, have their date rewritten, and
+    // are rewritten in a column no index has for what a Date/Time row costs: one way down the tree, a page more at
+    // most for the longer key. At c89bfe4, which keyed the date it read, every leaf of the index was read to delete
+    // one or rewrite its date. A row whose entry an earlier version left under the key of its date read costs one
+    // way down the tree more, where every leaf was read too.
+    [Fact]
+    public void A_row_in_the_second_form_is_deleted_and_rewritten_for_what_a_Date_Time_row_costs()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"extended_forms_{Guid.NewGuid():N}.accdb");
+        _paths.Add(path);
+        using var db = Database.Create(path, FileFormat.Access2016);
+        ColumnDefinition[] Columns(DataType type) => new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", type),
+            new ColumnDefinition("Nt", DataType.Text) { MaxLength = 20 },
+        };
+        var extended = db.CreateTable("TE", Columns(DataType.DateTimeExtended), new[] { "Id" }, new[] { new IndexDefinition("ByD", "D") });
+        var plain = db.CreateTable("TD", Columns(DataType.DateTime), new[] { "Id" }, new[] { new IndexDefinition("ByD", "D") });
+        const int Rows = 5_000;
+        DateTime DateOf(int id) => new DateTime(2020, 1, 1).AddSeconds(id * 37);
+        for (int id = 0; id < Rows; id++)
+        {
+            extended.Insert(new Row { ["Id"] = id, ["D"] = DateOf(id), ["Nt"] = "n" });
+            plain.Insert(new Row { ["Id"] = id, ["D"] = DateOf(id), ["Nt"] = "n" });
+        }
+        var byD = extended.Indexes.Single(ix => ix.Name == "ByD");
+        int leaves = JetPages.TreePages(db.File, byD.RootPageNumber).Count(p => p.IsLeaf);
+        Assert.True(leaves > 50, $"the index on D has {leaves} leaves, too few to show them all read");
+
+        // Rows put in the second form as ACE's UPDATE leaves them, under the key of their bytes; and rows whose bytes
+        // are in it and whose entry is under the key of their date, as an earlier version of this library left one.
+        var (e, d) = (Pointers(extended), Pointers(plain));
+        var writer = new IndexWriter(db.File, new PageAllocator(db.File));
+        var target = IndexWriter.Target.For(extended.Definition.TdefPageNumber, byD);
+        void ToSecondForm(int id, bool keyedByItsBytes)
+        {
+            byte[] first = ExtendedDateTimeCodec.Encode(DateOf(id)), second = InSeconds(DateOf(id));
+            byte[] page = db.File.ReadPage(RowPointer.Page(e[id]));
+            int at = Enumerable.Range(0, page.Length - first.Length).Single(i => page.AsSpan(i, first.Length).SequenceEqual(first));
+            second.CopyTo(page, at);
+            db.File.WritePage(RowPointer.Page(e[id]), page);
+            if (!keyedByItsBytes) return;
+            writer.Remove(target, IndexKeys.EncodeColumn(DataType.DateTimeExtended, ascending: true, DateOf(id)), e[id]);
+            writer.Insert(target, KeyOfBytes(second), e[id]);
+        }
+        var ace = Enumerable.Range(Rows / 2, 20).ToList();
+        var earlier = Enumerable.Range(Rows / 4, 20).ToList();
+        foreach (int id in ace) ToSecondForm(id, keyedByItsBytes: true);
+        foreach (int id in earlier) ToSecondForm(id, keyedByItsBytes: false);
+
+        long Reads(Action change)
+        {
+            long before = db.File.ReadCount;
+            change();
+            return db.File.ReadCount - before;
+        }
+        foreach (int id in ace)
+        {
+            long extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["Nt"] = "m" }));
+            long plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["Nt"] = "m" }));
+            Assert.True(extendedReads <= plainReads + 1, $"rewriting row {id} read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        foreach (int id in ace.Take(10))
+        {
+            var later = DateOf(id).AddSeconds(1);
+            long extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["D"] = later }));
+            long plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["D"] = later }));
+            Assert.True(extendedReads <= plainReads + 1, $"rewriting row {id}'s date read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        foreach (int id in ace.Skip(10))
+        {
+            long extendedReads = Reads(() => extended.DeleteRowAt(e[id]));
+            long plainReads = Reads(() => plain.DeleteRowAt(d[id]));
+            Assert.True(extendedReads <= plainReads + 1, $"deleting row {id} read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        int wayDown = IndexChecks.Height(db, byD.RootPageNumber) + 1;
+        foreach (int id in earlier)
+        {
+            long extendedReads = Reads(() => extended.DeleteRowAt(e[id]));
+            long plainReads = Reads(() => plain.DeleteRowAt(d[id]));
+            Assert.True(extendedReads <= plainReads + 1 + wayDown,
+                $"deleting row {id}, under the key of its date read, read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "TE", expectedRows: Rows - 30));
+    }
 }
