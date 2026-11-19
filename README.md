@@ -799,11 +799,12 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
   Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
 - **Rows go where Access puts them, and finding room costs no more as a table grows.** A row goes to the
-  lowest page the table's free-space map lists with room for it, as in Access - in a table nothing was deleted
-  from, its last page, so rows stay in insertion order - and room a delete or an update frees is used again as
-  Access uses it (#58). A listed page tried without room for the row leaves the map, so a run of inserts tries at
-  most as many pages as it has inserts and the map lists pages, at any size of table; one insert can try every
-  listed page, when none has room for it, as Access's can (below). A page holds at most 255 rows.
+  lowest page the table's free-space map lists with room for it, as in Access - in a table only inserted into, as
+  an export is, its last page, so rows stay in insertion order - and room a delete or an update frees is used
+  again as Access uses it (#58): after a delete, or an update that moves a row's values to another page and back,
+  a row can go to an earlier page. A listed page tried without room for the row leaves the map, so a run of
+  inserts tries at most as many pages as it has inserts and the map lists pages, at any size of table; one insert
+  can try every listed page, when none has room for it, as Access's can (below). A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
 - **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),

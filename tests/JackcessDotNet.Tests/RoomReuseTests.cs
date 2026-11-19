@@ -269,6 +269,30 @@ public sealed class RoomReuseTests : IDisposable
         Assert.Equal(new[] { Where(table, 11).PageNumber }, Listed(db, table));
     }
 
+    /// <summary>
+    /// A table only inserted into, as an export is, takes each row on its last page or a new one, so its rows are read
+    /// in the order they were inserted, whatever their sizes. Once a row has come home from another page, that page is
+    /// listed with the room its values left, and a row inserted after it is read before rows inserted before it.
+    /// </summary>
+    [Fact]
+    public void A_table_only_inserted_into_reads_in_insertion_order_and_one_a_row_came_home_in_need_not()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        var sizes = new[] { 200, 10, 255, 1, 120, 60 };
+        for (int id = 1; id <= 60; id++)
+            Put(table, id, sizes[id % sizes.Length], id % 7 == 0 ? 255 : 0, id % 11 == 0 ? 255 : 0, id % 13 == 0 ? 255 : 0);
+        Assert.Equal(Enumerable.Range(1, 60), table.Rows.Select(row => (int)row["Id"]!));
+
+        var other = Wide(db, "U");
+        for (int id = 1; id <= 20; id++) Put(other, id, 200);
+        Set(other, 3, ("B", 255), ("C", 255));                // to the third page
+        for (int id = 21; id <= 40; id++) Put(other, id, 200);
+        Set(other, 3, ("B", 0), ("C", 0));                    // home: the third page is listed, with room
+        Put(other, 41, 200);
+        Assert.Equal(Enumerable.Range(1, 24).Append(41).Concat(Enumerable.Range(25, 16)), other.Rows.Select(row => (int)row["Id"]!));
+    }
+
     [Fact]
     public void A_new_page_is_listed_only_when_it_has_room_for_another_row_of_its_size()
     {
