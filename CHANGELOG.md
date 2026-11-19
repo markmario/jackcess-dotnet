@@ -35,6 +35,16 @@ changed since 1.2.2.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
   `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` and the build checks it. A broken rule of the database
   has its own exception, and `TryGetTable` was added.
+- **A column's Required and Allow Zero Length are Access's** (#41). They are properties of the column, not
+  part of the table's definition: `Column.IsRequired` and `Column.AllowZeroLength` read them (they said `false`
+  of every table that was opened), and `CreateTable` and `AddColumn` write them, as DAO writes them for a field
+  it makes. **Rows are held to them, as Access holds them**: `Insert` refuses, with
+  `ConstraintViolationException`, a row with no value in a required column or a zero-length string in a Text or
+  Memo column that does not allow one, and an update refuses the same of the columns it is given a
+  value for. A table made by an earlier version has no such properties and takes the rows it took.
+  `Column.AllowZeroLength` is `false` for a column that is not Text or Memo.
+- **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
+  added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
 
 ### Breaking changes to the public API
 
@@ -147,6 +157,11 @@ changes with them.
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
+- **Properties are written** (#27). `PropertyMap.Set`, `Remove` and `Save` change the properties of a table
+  (`Table.Properties`) and of a column (`Column.Properties`), and `TryGetProperty` gives a property's type and
+  whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
+  are the database's own, read and written the same way. A property Access wrote and the caller did not change
+  goes back byte for byte.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.

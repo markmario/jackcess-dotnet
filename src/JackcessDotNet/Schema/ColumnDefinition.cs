@@ -46,8 +46,9 @@ public sealed class ColumnDefinition
 
     /// <summary>
     /// Whether the column is to have a value in every row (Access's Required property). Default <c>false</c>.
-    /// The <see cref="Column"/> of the table that is made says so; this library does not yet write the property
-    /// to the file or refuse a row for it, so the table opened again reads it as <c>false</c>.
+    /// It is written to the file as the column's Required property, where Access keeps it, so Access refuses a
+    /// row without a value there, and so does this library (<see cref="Column.IsRequired"/>). An AutoNumber
+    /// column is given no such property: every row has its number.
     /// </summary>
     public bool IsRequired { get; set; }
 
@@ -55,12 +56,17 @@ public sealed class ColumnDefinition
     /// Whether the column is an AutoNumber, filled in by <see cref="Table.Insert"/>: a
     /// <see cref="DataType.Int32"/> column counts up from the table's counter, a <see cref="DataType.Guid"/>
     /// column (Access's Replication ID) is given a new GUID. No other type is numbered. Default <c>false</c>.
+    /// A <see cref="DataType.Guid"/> AutoNumber is also given the <c>DefaultValue</c> property
+    /// <c>GenGUID()</c>, as Access gives one: it is what Access fills the column from in a row it adds.
     /// </summary>
     public bool IsAutoNumber { get; set; }
 
     /// <summary>
     /// Whether a Text or Memo column takes a string of no characters (Access's Allow Zero Length property).
-    /// Default <c>true</c>. Like <see cref="IsRequired"/>, it is not yet written to the file or enforced.
+    /// Default <c>true</c>, as for a field made in Access's table designer (a field made with DAO does not
+    /// allow one unless asked). It is written to the file as the column's AllowZeroLength property, where Access
+    /// keeps it, so Access refuses a zero-length string in a column that does not allow one, and so does this
+    /// library (<see cref="Column.AllowZeroLength"/>). It says nothing of a column of another type.
     /// </summary>
     public bool AllowZeroLength { get; set; } = true;
 

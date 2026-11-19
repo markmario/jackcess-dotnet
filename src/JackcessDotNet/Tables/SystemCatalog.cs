@@ -97,7 +97,13 @@ internal sealed class SystemCatalog
     /// permissions in MSysACEs (see the class summary). Refuses what
     /// <see cref="EnsureCanRegister"/> refuses, before writing anything.
     /// </summary>
-    public void InsertTableEntry(string tableName, int tdefPageNumber)
+    /// <param name="tableName">The table's name.</param>
+    /// <param name="tdefPageNumber">The table's definition page, which is its id in the catalog.</param>
+    /// <param name="properties">
+    /// The table's properties and its columns', as <see cref="PropertyMapWriter"/> encodes them: the row's
+    /// LvProp. Null for a table with none.
+    /// </param>
+    public void InsertTableEntry(string tableName, int tdefPageNumber, byte[]? properties = null)
     {
         var (catalogDef, tablesId, owner, acesDef) = Prepare(tableName);
 
@@ -113,6 +119,7 @@ internal sealed class SystemCatalog
             [ColFlags]      = 0
         };
         if (owner is not null) row[ColOwner] = owner;
+        if (properties is not null) row[ColLvProp] = properties;
 
         int rowPtr = _writer.InsertRow(catalogDef, row);
         _writer.IncrementTdefRowCount(JetFormat.PageSystemCatalog);
@@ -153,6 +160,78 @@ internal sealed class SystemCatalog
             _writer.IncrementTdefRowCount(acesDef.TdefPageNumber);
             AddIndexEntries(acesDef, ace, rowPtr);
         }
+    }
+
+    // ── Properties ───────────────────────────────────────────────────────────
+
+    /// <summary>A row of the catalog, as what keeps properties in it needs it: where it is, and its LvProp.</summary>
+    internal readonly record struct ObjectRow(int RowPointer, byte[]? Properties);
+
+    /// <summary>The catalog's row for the object whose id is <paramref name="objectId"/> - a table's is its definition page - or null.</summary>
+    internal ObjectRow? FindObject(int objectId)
+        => FindRow((id, _, _, _) => id == objectId) is { } row ? new ObjectRow(row.RowPointer, row.ReadProperties()) : null;
+
+    /// <summary>
+    /// The catalog's row for the document <paramref name="name"/> of the Databases container, where Access keeps
+    /// a database's properties: "MSysDb" its own, "SummaryInfo" and "UserDefined" those of its two property
+    /// sheets. Null when the database has no such document.
+    /// </summary>
+    internal ObjectRow? FindDatabaseObject(string name)
+    {
+        if (FindRow((_, objectName, parent, type) => type == CatalogTypeContainer && parent == DatabaseParentId && objectName == "Databases")
+            is not { } databases) return null;
+        return FindRow((_, objectName, parent, _) => parent == databases.Id && string.Equals(objectName, name, StringComparison.OrdinalIgnoreCase))
+            is { } row ? new ObjectRow(row.RowPointer, row.ReadProperties()) : null;
+    }
+
+    /// <summary>
+    /// As <see cref="FindTable(string, out string?)"/>, with what reads the table's properties - the LvProp of
+    /// its row - in <paramref name="readProperties"/>: from the row as this pass read it, so reading them reads
+    /// no page again, and only the pages of a value too long for its row. The scan stops at the table.
+    /// </summary>
+    internal int FindTable(string tableName, out string? listedName, out Func<byte[]?>? readProperties)
+    {
+        var row = FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable
+                                                 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase));
+        listedName     = row?.Name;
+        readProperties = row?.ReadProperties;
+        return row?.Id ?? -1;
+    }
+
+    // A row of the catalog as a scan found it; ReadProperties reads its LvProp from the bytes the scan read.
+    private readonly record struct CatalogRow(int Id, string? Name, int RowPointer, Func<byte[]?> ReadProperties);
+
+    // The first row of the catalog whose id, name, parent's id and type match.
+    private CatalogRow? FindRow(Func<int, string?, int?, short?, bool> match)
+    {
+        var catalogDef = BuildCatalogTableDef();
+        var columns    = catalogDef.Columns;
+        Column? colId     = columns.FirstOrDefault(c => c.Name.Equals(ColId,       StringComparison.OrdinalIgnoreCase));
+        Column? colName   = columns.FirstOrDefault(c => c.Name.Equals(ColName,     StringComparison.OrdinalIgnoreCase));
+        Column? colParent = columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase));
+        Column? colType   = columns.FirstOrDefault(c => c.Name.Equals(ColType,     StringComparison.OrdinalIgnoreCase));
+        Column? colLvProp = columns.FirstOrDefault(c => c.Name.Equals(ColLvProp,   StringComparison.OrdinalIgnoreCase));
+        if (colId is null || colName is null || colParent is null || colType is null) return null;
+
+        var decoder = new RowDecoder(_format, columns);   // no LvalReader: the LvProp value is read raw
+
+        byte[] umapPage = _file.ReadPage(catalogDef.UmapPageNumber);
+        foreach (int pageNum in UsageMap.GetOwnedPages(umapPage, catalogDef.OwnedPagesRow, _format, _file))
+        {
+            byte[] dp       = _file.ReadPage(pageNum);
+            int    rowCount = ByteUtil.GetShort(dp, _format.OffsetDataNumRows);
+            for (int r = 0; r < rowCount; r++)
+            {
+                byte[]? rowBytes = ReadRowBytes(dp, r, _format);
+                if (rowBytes is null) continue;
+                if (decoder.Decode(rowBytes, colId) is not int id) continue;
+                string? name = decoder.Decode(rowBytes, colName) as string;
+                if (!match(id, name, decoder.Decode(rowBytes, colParent) as int?, decoder.Decode(rowBytes, colType) as short?)) continue;
+                return new CatalogRow(id, name, RowPointer.Pack(pageNum, r),
+                    () => colLvProp is null ? null : ReadVariableColumnRawBytes(rowBytes, colLvProp, columns, new LvalReader(_file)));
+            }
+        }
+        return null;
     }
 
     // ── Relationships ────────────────────────────────────────────────────────
@@ -372,40 +451,7 @@ internal sealed class SystemCatalog
     /// has a null/empty LvProp value (most tables have none). The result is the
     /// raw blob; <see cref="PropertyMapReader"/> turns it into a <see cref="PropertyMaps"/>.
     /// </summary>
-    public byte[]? GetPropertyBytesForObject(int objectTdefPage)
-    {
-        var catalogDef = BuildCatalogTableDef();
-        var columns    = catalogDef.Columns;
-        Column? colId    = columns.FirstOrDefault(c => c.Name.Equals(ColId,    StringComparison.OrdinalIgnoreCase));
-        Column? colLvProp= columns.FirstOrDefault(c => c.Name.Equals(ColLvProp,StringComparison.OrdinalIgnoreCase));
-        if (colId is null || colLvProp is null) return null;
-
-        var decoder    = new RowDecoder(_format, columns);   // no LvalReader → we read raw LvRef ourselves
-        var lvalReader = new LvalReader(_file);
-
-        byte[] umapPage  = _file.ReadPage(catalogDef.UmapPageNumber);
-        var    ownedList = UsageMap.GetOwnedPages(umapPage, catalogDef.OwnedPagesRow, _format, _file);
-
-        foreach (int pageNum in ownedList)
-        {
-            byte[] dp       = _file.ReadPage(pageNum);
-            int    rowCount = ByteUtil.GetShort(dp, _format.OffsetDataNumRows);
-
-            for (int r = 0; r < rowCount; r++)
-            {
-                byte[]? rowBytes = ReadRowBytes(dp, r, _format);
-                if (rowBytes is null) continue;
-
-                object? idVal = decoder.Decode(rowBytes, colId);
-                if (idVal is not int id || id != objectTdefPage) continue;
-
-                // Find the LvProp column's variable-length payload manually so we
-                // can pull the raw bytes (property bytes are arbitrary, not text).
-                return ReadVariableColumnRawBytes(rowBytes, colLvProp, columns, lvalReader);
-            }
-        }
-        return null;
-    }
+    public byte[]? GetPropertyBytesForObject(int objectTdefPage) => FindObject(objectTdefPage)?.Properties;
 
     /// <summary>
     /// Locates <paramref name="targetCol"/>'s slice within <paramref name="rowBytes"/>'
@@ -690,7 +736,7 @@ internal sealed class SystemCatalog
         byte[] tdefPage = _file.ReadPage(tdefPageNumber);
         var    info     = TdefReader.Read(tdefPage, _format);
 
-        return new TableDefinition(name, info.Columns)
+        var def = new TableDefinition(name, info.Columns)
         {
             TdefPageNumber = tdefPageNumber,
             UmapPageNumber = info.OwnedPagesUmapPage,
@@ -701,6 +747,10 @@ internal sealed class SystemCatalog
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns,
         };
+        // Where a long value of each column goes: a new table's properties (LvProp) can be longer than a row keeps.
+        foreach (var kvp in info.LvalColumnUmapPages)
+            def.LvalColumnUmapPages[kvp.Key] = kvp.Value;
+        return def;
     }
 
     /// <summary>

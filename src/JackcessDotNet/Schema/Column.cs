@@ -36,10 +36,11 @@ public sealed class Column
     public int Ordinal { get; internal set; }
 
     /// <summary>
-    /// The properties Access keeps for the column - its Description, Caption, Format and the like - read from
-    /// the table's properties the first time they are asked for. Empty for a column Access keeps none for.
+    /// The properties Access keeps for the column - its Description, Caption, Format and the like - read with
+    /// its table's. Empty for a column Access keeps none for. <see cref="PropertyMap.Set(string, object)"/>
+    /// changes them, and <see cref="PropertyMap.Save"/> writes them with the table's others.
     /// </summary>
-    public PropertyMap Properties => Owner?.PropertiesOf(this) ?? (_noProperties ??= new PropertyMap(Name, 0x01));
+    public PropertyMap Properties => Owner?.PropertiesOf(this) ?? (_noProperties ??= new PropertyMap(Name, PropertyMap.ColumnType));
 
     private PropertyMap? _noProperties;
 
@@ -47,22 +48,35 @@ public sealed class Column
     internal Table? Owner { get; set; }
 
     /// <summary>
-    /// Whether the column was asked to be required when its table was made in this session
-    /// (<see cref="ColumnDefinition.IsRequired"/>). It is not read from a file: a table that is opened says
-    /// <c>false</c>, whatever Access's Required property of the column is (<see cref="Properties"/> has that).
+    /// Whether every row must have a value in the column: Access's Required property of the field, which is
+    /// where Access keeps it (<see cref="Properties"/>, "Required"). <c>false</c> for a column that has no such
+    /// property, as Access takes it. A row with no value in a required column is refused
+    /// (<see cref="Table.Insert"/>, <see cref="Table.Update"/>). A Yes/No column always has a value,
+    /// so nothing is refused for it. It is the property as the file has it: one changed with
+    /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
-    public bool IsRequired { get; }
+    public bool IsRequired
+        => Owner is { } table ? table.PropertyMaps.SavedRequired(Name) : _isRequired;
+
+    // What the column was defined with, until a table has it: then the table's properties say.
+    private bool _isRequired;
+    private bool _allowZeroLength;
 
     /// <summary>Whether this is an AutoNumber (identity) column.</summary>
     public bool IsAutoNumber { get; }
 
     /// <summary>
-    /// Whether the column was asked to allow zero-length strings when its table was made in this session
-    /// (<see cref="ColumnDefinition.AllowZeroLength"/>; Text and Memo only). It is not read from a file: a table
-    /// that is opened says <c>false</c>, whatever Access's Allow Zero Length property of the column is
-    /// (<see cref="Properties"/> has that).
+    /// Whether a Text or Memo column takes a string of no characters: Access's Allow Zero Length property of
+    /// the field, which is where Access keeps it (<see cref="Properties"/>, "AllowZeroLength"). <c>true</c> for a
+    /// Text or Memo column that has no such property: Access takes a zero-length string in one, though DAO then
+    /// reports the property as <c>false</c>. Always <c>false</c> for a column of another type, which holds no
+    /// string. A zero-length string in a column that does not allow one is refused (<see cref="Table.Insert"/>,
+    /// <see cref="Table.Update"/>). It is the property as the file has it: one changed with
+    /// <see cref="PropertyMap.Set(string, object)"/> counts once it is saved.
     /// </summary>
-    public bool AllowZeroLength { get; }
+    public bool AllowZeroLength
+        => DataType is DataType.Text or DataType.Memo
+           && (Owner is { } table ? table.PropertyMaps.SavedAllowZeroLength(Name) ?? true : _allowZeroLength);
 
     /// <summary>For a Decimal column, the most digits a value has (1-28).</summary>
     public byte Precision { get; }
@@ -134,6 +148,11 @@ public sealed class Column
     internal Column CopyFor(SortOrder textOrder)
     {
         var copy = (Column)MemberwiseClone();
+        // The copy is in no table yet: it carries what this column's table says of it.
+        copy._isRequired      = IsRequired;
+        copy._allowZeroLength = AllowZeroLength;
+        copy.Owner            = null;
+        copy._noProperties    = null;
         if (DataType is DataType.Text or DataType.Memo) copy.SortOrder = textOrder;
         return copy;
     }
@@ -151,9 +170,9 @@ public sealed class Column
         Name = name;
         DataType = dataType;
         LengthInBytes = length;
-        IsRequired = isRequired;
+        _isRequired = isRequired;
         IsAutoNumber = isAutoNumber;
-        AllowZeroLength = allowZeroLength;
+        _allowZeroLength = allowZeroLength;
         Precision = precision;
         Scale = scale;
         IsVariableLength = dataType.IsVariableLength();

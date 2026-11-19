@@ -386,6 +386,47 @@ public sealed class StableRowTests : IDisposable
         Assert.Equal(3, table.CreateIndexCursor().FindRowByEntry((short)3)!["Id"]);
     }
 
+    // ── The columns' own rules ───────────────────────────────────────────────
+
+    [Fact]
+    public void An_update_of_a_row_a_cursor_s_update_and_a_batch_keep_a_column_s_Required_and_AllowZeroLength()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("Other", DataType.Text) { MaxLength = 20 },
+        }, "Id");
+        table.Insert(new Row { ["Id"] = 1, ["Name"] = "one", ["Other"] = "o" });
+        table.Columns.First(c => c.Name == "Name").Properties.Set("Required", true);
+        table.Columns.First(c => c.Name == "Name").Properties.Set("AllowZeroLength", false);
+        table.Properties.Save();
+        var before = IndexChecks.AllPages(db);
+
+        var row = table.FindRowByPrimaryKey(1)!;
+        row["Name"] = null;
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+        row["Name"] = "";
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+
+        var cursor = table.CreateCursor();
+        Assert.True(cursor.MoveNext());
+        Assert.Throws<ConstraintViolationException>(() => cursor.UpdateCurrentRow(new Row { ["Name"] = null }));
+        Assert.Throws<ConstraintViolationException>(() => cursor.UpdateCurrentRow(new Row { ["Other"] = "p", ["Name"] = "" }));
+
+        var batch = Assert.Throws<BatchInsertException>(() => table.InsertRange(new[] { new Row { ["Id"] = 2, ["Name"] = "two" }, new Row { ["Id"] = 3 } }));
+        Assert.Equal(1, batch.RowIndex);
+        Assert.IsType<ConstraintViolationException>(batch.InnerException);
+        IndexChecks.AssertUnchanged(before, db);
+
+        // Another column of the row is updated, and the column itself to a value it takes.
+        cursor.UpdateCurrentRow(new Row { ["Other"] = "p" });
+        row = table.FindRowByPrimaryKey(1)!;
+        row["Name"] = "uno";
+        table.Update(row);
+        Assert.Equal("uno|p", table.Rows.Select(r => r["Name"] + "|" + r["Other"]).Single());
+    }
+
     // ── What is read ─────────────────────────────────────────────────────────
 
     [Fact]

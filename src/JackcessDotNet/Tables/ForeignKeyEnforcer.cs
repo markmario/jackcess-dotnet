@@ -225,6 +225,12 @@ internal sealed class ForeignKeyEnforcer
                 if (rows.Stored(value.Key, value.Value) is null && rows.IsRequired(value.Key))
                     throw Violation(cascade,
                         $"the cascade would make '{rows.Table.Name}.{value.Key}' null, which the column does not allow");
+                // Nor give a zero-length string to a column that does not take one: Access refuses the whole
+                // change ("It would cause field ... to become a zero-length string, which is not allowed"). A
+                // required column that allows one takes it (#41).
+                if (rows.Stored(value.Key, value.Value) is string { Length: 0 } && rows.RefusesZeroLength(value.Key))
+                    throw Violation(cascade,
+                        $"the cascade would make '{rows.Table.Name}.{value.Key}' a zero-length string, which the column does not allow");
             }
 
         object?[] before = (object?[])row.Values.Clone();
@@ -722,7 +728,14 @@ internal sealed class ForeignKeyEnforcer
         internal bool IsRequired(string column)
         {
             var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
-            return asked.IsRequired || Table.PropertyMaps.Get(asked.Name)?["Required"] is true;
+            return asked.IsRequired;
+        }
+
+        /// <summary>Whether the column is Text or Memo and its Allow Zero Length property says no.</summary>
+        internal bool RefusesZeroLength(string column)
+        {
+            var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
+            return asked.DataType is DataType.Text or DataType.Memo && !asked.AllowZeroLength;
         }
 
         // ── Reading rows ─────────────────────────────────────────────────────
