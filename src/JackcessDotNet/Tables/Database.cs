@@ -193,7 +193,7 @@ public sealed class Database : IDisposable
     /// and answers one for the second's key with that row. With or without this option, a unique index's entry
     /// is believed only when the row it points at has its key, so a value no row has is taken; and when an entry
     /// is added or taken out under a key that has such entries, they are taken out, and a row found under a key
-    /// it does not have is entered under its own where no other row is (#36). With the option, every entry an
+    /// it does not have is entered under its own (#36). With the option, every entry an
     /// index was seen to hold that is no row's is taken out when the table's indexes are next changed, whatever
     /// the key. A row with no entry at all is not given one: compacting the file in Access rebuilds its indexes.
     /// </para>

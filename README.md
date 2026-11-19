@@ -331,9 +331,13 @@ answered with the row that no longer has it, and that row is not found under the
   taken, where Access with the same file refuses it;
 - when an entry is added or taken out under a key a unique index compares, and the tree holds another under that
   key, the ones that are no row's are taken out, and a row found under a key it does not have is entered under
-  its own - unless another row is already there, which a unique index cannot hold beside it. Access then finds
-  the rows through the index. An index that is as its rows are has no such entry, and nothing is read to look
-  for one: the pages an insert reads are the ones it read before.
+  its own, so no row is left without an entry for having had a wrong one. What is under that key already is
+  looked at the same way, an entry that is itself a wrong one being moved in its turn; beside a row that does
+  have the key the row is entered all the same - the two are duplicates whatever the index says. An entry goes
+  and its row's own comes, or neither: a failure part-way is undone. A long key an earlier version wrote whole
+  is looked for in that form too. Access then finds the rows through the index. An index that is as its rows
+  are has no such entry, and nothing is read to look for one: the pages an insert reads are the ones it read
+  before.
 
 An index that is not unique is not looked at this way without `VerifyIndexes` - its entries under one key are
 its rows' - and an entry whose row has gone does no harm to this library either way: each row found is read and

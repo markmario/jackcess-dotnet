@@ -60,6 +60,9 @@ internal sealed class IndexWriter
     /// </summary>
     internal void RememberPagesRead() => _remembered ??= new Dictionary<int, byte[]>();
 
+    /// <summary>Forgets every page kept: the file may hold other bytes for them, as after a change that was undone.</summary>
+    internal void ForgetPagesRead() => _remembered?.Clear();
+
     private byte[] ReadRaw(int pageNumber)
     {
         if (_remembered is null) return _file.ReadPage(pageNumber);

@@ -94,11 +94,12 @@ public sealed class EntriesOfNoRowTests : IDisposable
     }
 
     /// <summary>
-    /// The row that is 7 cannot be entered under 7 when another row is: a unique index holds one row under a key.
-    /// Its entry under 2 goes all the same, so the new row is the one found under 2.
+    /// Another row is 7 already, added while the key held nothing under 7. The row that was found under 2 is
+    /// entered under 7 beside it all the same: the two are duplicates whatever the key says, and a row is not left
+    /// without an entry for having had a wrong one. The new row is the one found under 2.
     /// </summary>
     [Fact]
-    public void a_row_found_under_a_key_it_does_not_have_is_not_entered_beside_another_row_with_its_own()
+    public void a_row_found_under_a_key_it_does_not_have_is_entered_under_its_own_beside_a_row_that_has_it()
     {
         using (var db = Database.Open(_path))
         {
@@ -109,8 +110,166 @@ public sealed class EntriesOfNoRowTests : IDisposable
 
         using var read = Database.Open(_path);
         Assert.Equal(new[] { "2" }, InTheIndex(read, "Renamed", "PrimaryKey", 2));
-        Assert.Equal(new[] { "7" }, InTheIndex(read, "Renamed", "PrimaryKey", 7));   // one entry, the second 7's
         Assert.Equal(new[] { "r1", "r2", "second 7", "new 2" }, read.GetTable("Renamed").Rows.Select(row => (string)row["Name"]!));
+        IndexChecks.AssertEveryIndexHoldsTheRows(read, "Renamed", expectedRows: 4);
+    }
+
+    /// <summary>
+    /// Entries in a chain: 1 points at the row that is 2, and 2 at the row that is 3, which has no entry under 3.
+    /// A row added as 1 moves the first to 2, and what is under 2 is not a row that is 2 either: it moves to 3 in
+    /// its turn. Taken for a row with the key because it points at a row, it left the row that is 2 with no entry.
+    /// </summary>
+    [Fact]
+    public void entries_that_each_point_at_the_row_of_the_next_key_are_each_moved_to_their_row_s_own()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"entries_of_no_row_chain_{Guid.NewGuid():N}.mdb");
+        try
+        {
+            using (var db = Database.Create(path, FileFormat.Access2000))
+            {
+                var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 } }, new[] { "Id" });
+                foreach (int id in new[] { 2, 3, 4 })
+                    table.Insert(new Row { ["Id"] = id, ["Name"] = "row " + id });
+
+                var tree   = table.Indexes.Single();
+                var target = IndexWriter.Target.For(table.Definition.TdefPageNumber, tree);
+                byte[] Key(int id) => IndexKeys.Encode(tree.Columns, new object?[] { id });
+                int two = PointerOf(db, "T", 2), three = PointerOf(db, "T", 3), four = PointerOf(db, "T", 4);
+                var writer = WriterOf(db);
+                writer.Remove(target, Key(2), two);
+                writer.Remove(target, Key(3), three);
+                writer.Remove(target, Key(4), four);
+                writer.Insert(target, Key(1), two);
+                writer.Insert(target, Key(2), three);
+                writer.Insert(target, Key(3), four);
+            }
+
+            using (var db = Database.Open(path))
+                db.GetTable("T").Insert(new Row { ["Id"] = 1, ["Name"] = "row 1" });
+
+            using var read = Database.Open(path);
+            IndexChecks.AssertEveryIndexHoldsTheRows(read, "T", expectedRows: 4);
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>
+    /// An entry goes and its row's own comes, or neither: the file is made to fail at each page write of the
+    /// insert in turn, and after every failure the row that is 7 has one entry in the key, under 2 as it was or
+    /// under 7 - never none.
+    /// </summary>
+    [Fact]
+    public void a_row_keeps_an_entry_whichever_page_write_fails_while_its_entry_is_moved()
+    {
+        byte[] original = File.ReadAllBytes(_path);
+        for (int writes = 0; ; writes++)
+        {
+            File.WriteAllBytes(_path, original);
+            bool done;
+            using (var db = Database.Open(_path))
+            {
+                db.File.WritesBeforeFailure = writes;
+                try { db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "new 2" }); done = true; }
+                catch (IOException) { done = false; }
+                db.File.WritesBeforeFailure = null;
+            }
+
+            using (var read = Database.Open(_path))
+            {
+                var underTwo   = InTheIndex(read, "Renamed", "PrimaryKey", 2);
+                var underSeven = InTheIndex(read, "Renamed", "PrimaryKey", 7);
+                Assert.True(underTwo.Count(id => id == "7") + underSeven.Count == 1,
+                    $"write {writes + 1} failed: under 2 [{string.Join(", ", underTwo)}], under 7 [{string.Join(", ", underSeven)}]");
+                if (done)
+                {
+                    Assert.Equal(new[] { "2" }, underTwo);
+                    Assert.Equal(new[] { "7" }, underSeven);
+                }
+            }
+            if (done)
+            {
+                Assert.True(writes >= 4, $"the insert took {writes} page writes");
+                break;
+            }
+        }
+    }
+
+    // ── A key an earlier version wrote whole ─────────────────────────────────
+
+    private static readonly string Long255 = new('é', 255);
+
+    /// <summary>What the primary key of Coded holds for each of its rows, and what it holds that is no row's.</summary>
+    private static (int Rows, int Entries, int OfNoRow) CodedKey(Database db)
+    {
+        var index   = db.GetTable("Coded").Indexes.Single();
+        var entries = JetPages.LeafEntries(db.File, index.RootPageNumber);
+        var rows    = JetPages.Rows(db.File, IndexChecks.TdefOf(db, "Coded"), forKeys: true).Select(r => (r.Page, r.Row)).ToHashSet();
+        return (rows.Count, entries.Count, entries.Count(e => !rows.Contains((e.RowPage, e.Row))));
+    }
+
+    private string LongKeyFile(string asset)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"entries_of_no_row_long_{Guid.NewGuid():N}.mdb");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", asset), path);
+        return path;
+    }
+
+    /// <summary>
+    /// Assets/engine-696ca52-long-keys-row-deleted.mdb is the file an earlier version wrote long keys whole in
+    /// (<see cref="LegacyLongKeyTests"/>), with the row whose code is 255 of é taken out of its table and not out
+    /// of the key: what a delete that looked for the cut key left. The entry is under the whole key, 513 bytes,
+    /// which is not beside the cut key a new row with that code is entered under - other keys can lie between -
+    /// so it is looked for in every form the key can have, and goes.
+    /// </summary>
+    [Fact]
+    public void an_entry_under_a_whole_key_that_points_at_no_row_goes_when_a_row_is_added_under_the_cut_key()
+    {
+        string path = LongKeyFile("engine-696ca52-long-keys-row-deleted.mdb");
+        try
+        {
+            using (var db = Database.Open(path))
+            {
+                Assert.Equal((24, 25, 1), CodedKey(db));
+                db.GetTable("Coded").Insert(new Row { ["Code"] = Long255, ["N"] = 99 });
+                Assert.Equal((25, 25, 0), CodedKey(db));
+                Assert.Equal(99, db.GetTable("Coded").FindRowByPrimaryKey(Long255)?["N"]);
+                Assert.Throws<ConstraintViolationException>(() => db.GetTable("Coded").Insert(new Row { ["Code"] = Long255, ["N"] = 100 }));
+            }
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>The same for an entry under a whole key that points at a row with another code: it goes, and that row keeps the entry it has.</summary>
+    [Fact]
+    public void an_entry_under_a_whole_key_that_points_at_a_row_with_another_key_goes_too()
+    {
+        string path = LongKeyFile("engine-696ca52-long-keys-row-deleted.mdb");
+        try
+        {
+            using (var db = Database.Open(path))
+            {
+                var coded  = db.GetTable("Coded");
+                var index  = coded.Indexes.Single();
+                var target = IndexWriter.Target.For(coded.Definition.TdefPageNumber, index);
+                byte[] whole = IndexKeys.EncodeWhole(index.Columns, new object?[] { Long255 });
+                Assert.True(whole.Length > IndexKeys.MaxKeyLength);
+                int gone = WriterOf(db).EntriesWithPrefix(index.RootPageNumber, Array.Empty<byte>()).Single(e => e.Key.AsSpan().SequenceEqual(whole)).RowPointer;
+                var cursor = coded.CreateCursor();
+                int other = 0;
+                while (cursor.MoveNext())
+                    if ((string)cursor.Current!["Code"]! == "short 07") other = cursor.CurrentRowPointer;
+
+                WriterOf(db).Remove(target, whole, gone);
+                WriterOf(db).Insert(target, whole, other);
+                Assert.Equal((24, 25, 0), CodedKey(db));   // every entry points at a row: one of them at the wrong one
+
+                coded.Insert(new Row { ["Code"] = Long255, ["N"] = 99 });
+                Assert.Equal((25, 25, 0), CodedKey(db));
+                Assert.Equal(99, coded.FindRowByPrimaryKey(Long255)?["N"]);
+                Assert.Equal(7, coded.FindRowByPrimaryKey("short 07")?["N"]);
+            }
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

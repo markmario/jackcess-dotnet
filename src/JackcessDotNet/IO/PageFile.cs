@@ -257,6 +257,9 @@ internal sealed class PageFile : IDisposable
 
     private UndoScope? _undo;
 
+    /// <summary>Whether a change is being kept for undoing (<see cref="BeginUndo"/>): one that begins inside it is part of it.</summary>
+    internal bool IsUndoing => _undo is not null;
+
     /// <summary>
     /// Starts keeping every page as it was before it is next written, so that a change of many rows that fails
     /// part-way can be taken back: dispose the scope without <see cref="UndoScope.Commit"/> and the file is as it
