@@ -4,8 +4,9 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A column's Required and Allow Zero Length are properties, read, written and held to (#41). Access keeps
-/// neither in the table's definition. What it refuses was asked of ACE, and these hold the library to the same:
+/// A column's Required and Allow Zero Length are properties, read, written and held to (#41), and a Replication
+/// ID AutoNumber has the default value Access generates one from (#33). Access keeps none of it in the table's
+/// definition. What it refuses was asked of ACE, and these hold the library to the same:
 /// a null in a required column, and a zero-length string in a Text or Memo column whose AllowZeroLength property
 /// is there and false - in every column of a row it adds, and of a row it updates only in the columns the update
 /// gives a value. A column with no AllowZeroLength property takes a zero-length string.
@@ -237,5 +238,31 @@ public sealed class ColumnRuleTests : IDisposable
                 Assert.Equal(c.DataType is DataType.Text or DataType.Memo, c.AllowZeroLength);
             });
         }
+    }
+
+    // ── A Replication ID AutoNumber ──────────────────────────────────────────
+
+    [Fact]
+    public void A_Replication_ID_AutoNumber_has_the_default_value_Access_generates_one_from()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            db.CreateTable("Made", new[] { new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true }, new ColumnDefinition("Txt", DataType.Text) });
+            var added = db.CreateTable("Added", new[] { new ColumnDefinition("Txt", DataType.Text) });
+            added.AddColumn(new ColumnDefinition("Key", DataType.Guid) { IsAutoNumber = true });
+            db.CreateTable("Plain", new[] { new ColumnDefinition("Key", DataType.Guid), new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true } });
+        }
+
+        using var read = Database.Open(_path);
+        foreach (string name in new[] { "Made", "Added" })
+        {
+            var key = Column(read.GetTable(name), "Key");
+            Assert.True(key.IsAutoNumber);
+            var property = Assert.Single(key.Properties);
+            Assert.Equal(("DefaultValue", DataType.Memo, (object)"GenGUID()", true), (property.Name, property.DataType, property.Value, property.IsDdl));
+        }
+        // A Replication ID that is not an AutoNumber, and a Long AutoNumber, have no default value.
+        Assert.Equal(new[] { "Required" }, Column(read.GetTable("Plain"), "Key").Properties.Select(p => p.Name));
+        Assert.Empty(Column(read.GetTable("Plain"), "Id").Properties);
     }
 }

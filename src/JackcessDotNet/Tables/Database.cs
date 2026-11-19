@@ -727,8 +727,8 @@ public sealed class Database : IDisposable
         }.Serialize(format);
         _catalog.EnsureCanRegister(name);
 
-        // What the definitions ask of the columns beyond their types - Required, Allow Zero Length - which
-        // Access keeps as properties, in the table's row of the catalog.
+        // What the definitions ask of the columns beyond their types - Required, Allow Zero Length, a Replication
+        // ID AutoNumber's GenGUID() - which Access keeps as properties, in the table's row of the catalog.
         var propertyMaps   = ColumnProperties.For(columns);
         byte[]? properties = PropertyMapWriter.Write(propertyMaps, out var propertyNames);
 

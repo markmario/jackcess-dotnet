@@ -79,8 +79,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
-  byte as it was; and **a column's Required and Allow Zero Length are read, written and held to**, as Access
-  holds rows to them. See [Properties](#properties-required-and-allow-zero-length).
+  byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
+  rows to them; and **Access generates the GUID** of a Replication ID AutoNumber the engine made. See
+  [Properties](#properties-required-and-allow-zero-length).
 - **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
   for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
   DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
@@ -465,6 +466,10 @@ with `ConstraintViolationException`:
 made with DAO does not allow a zero-length string unless asked. A column's default value is not filled in: a
 required column with a `DefaultValue` and no value in the row is refused here, where Access would use the
 default.
+
+**A Replication ID AutoNumber** is given the `DefaultValue` property `GenGUID()` (#33): Access fills the column
+of a row it adds from that, not from the column's flag. A Replication ID column Access made with that default
+and without the flag (DAO and SQL make them so) is not an AutoNumber to this library, which fills in no default.
 
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 

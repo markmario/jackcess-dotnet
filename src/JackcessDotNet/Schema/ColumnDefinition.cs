@@ -56,6 +56,8 @@ public sealed class ColumnDefinition
     /// Whether the column is an AutoNumber, filled in by <see cref="Table.Insert"/>: a
     /// <see cref="DataType.Int32"/> column counts up from the table's counter, a <see cref="DataType.Guid"/>
     /// column (Access's Replication ID) is given a new GUID. No other type is numbered. Default <c>false</c>.
+    /// A <see cref="DataType.Guid"/> AutoNumber is also given the <c>DefaultValue</c> property
+    /// <c>GenGUID()</c>, as Access gives one: it is what Access fills the column from in a row it adds.
     /// </summary>
     public bool IsAutoNumber { get; set; }
 

@@ -31,6 +31,8 @@ changed since 1.2.2.
   Memo column that does not allow one, and `UpdateByPrimaryKey` refuses the same of the columns it is given a
   value for. A table made by an earlier version has no such properties and takes the rows it took.
   `Column.AllowZeroLength` is `false` for a column that is not Text or Memo.
+- **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
+  added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
 
 ### Breaking changes to the public API
 
