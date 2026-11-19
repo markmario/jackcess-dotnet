@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using JackcessDotNet.Util;
 using Xunit;
 
@@ -696,6 +697,49 @@ public sealed class RoomReuseTests : IDisposable
         Assert.Equal(new RowId(sixth, 9), Where(table, 91));
         Assert.Equal(Enumerable.Range(1, 90).Where(id => id != 50), given);
         Assert.Equal(90, table.Rows.Count());                  // the next enumeration gives it
+    }
+
+    /// <summary>
+    /// Scans that nothing holds any longer are forgotten by the next insert into their table, so that what an insert
+    /// costs goes with the scans still going on and not with every scan once begun; the one still going on is still
+    /// told of the row.
+    /// </summary>
+    [Fact]
+    public void Scans_nothing_holds_any_longer_are_forgotten_by_the_next_insert()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        for (int id = 1; id <= 30; id++) Put(table, id, 200);
+        int tdef = table.Definition.TdefPageNumber;
+        var going = table.CreateCursor();
+        Assert.True(going.MoveNext());
+
+        BeginAndDropScans(db, table, 1_000);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.True(db.File.TableScans.Held(tdef) > 1_000);   // not forgotten yet: nothing has asked
+
+        Put(table, 31, 200);
+        Assert.Equal(1, db.File.TableScans.Held(tdef));
+
+        var given = new List<int> { (int)going.Current!["Id"]! };
+        while (going.MoveNext()) given.Add((int)going.Current!["Id"]!);
+        Assert.Equal(Enumerable.Range(1, 30), given);
+    }
+
+    /// <summary><paramref name="count"/> cursors over <paramref name="table"/>, each moved to its first row, then let go.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void BeginAndDropScans(Database db, Table table, int count)
+    {
+        var cursors = new List<Cursor>(count);
+        for (int i = 0; i < count; i++)
+        {
+            var cursor = table.CreateCursor();
+            Assert.True(cursor.MoveNext());
+            cursors.Add(cursor);
+        }
+        Assert.True(db.File.TableScans.Held(table.Definition.TdefPageNumber) > count);
     }
 
     // ── A row updated back and forth ─────────────────────────────────────────
