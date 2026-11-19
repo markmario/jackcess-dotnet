@@ -27,7 +27,9 @@ public class Cursor : IEnumerable<Row>
     private readonly TableDefinition _definition;
     private readonly Table           _table;
     private readonly RowDecoder      _decoder;
-    private List<int>                _ownedPages;
+    // The table's pages, listed when the cursor first needs them: a cursor over an index never does.
+    private List<int>?               _pages;
+    private List<int>                _ownedPages => _pages ??= OwnedPages();
 
     internal PageFile        File       => _file;
     internal TableDefinition Definition => _definition;
@@ -37,10 +39,6 @@ public class Cursor : IEnumerable<Row>
     private int  _pageIndex;
     private int  _rowIndex;
     private Row? _currentRow;
-
-    // The rows this cursor's updates have written: an updated row is written again further on in the table,
-    // where the cursor would otherwise come to it a second time.
-    private HashSet<int>? _rewritten;
 
     // The page last read, kept while nothing has been written to the file.
     private byte[]? _page;
@@ -52,7 +50,6 @@ public class Cursor : IEnumerable<Row>
         _table      = table;
         _file       = file;
         _definition = definition;
-        _ownedPages = OwnedPages();
 
         var lvalReader = _definition.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null;
         _decoder = new RowDecoder(_file.Format, _definition.Columns, lvalReader);
@@ -75,7 +72,6 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     public void MoveBeforeFirst()
     {
-        _rewritten  = null;
         _currentRow = null;
         ToStart();
     }
@@ -86,7 +82,6 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     public void MoveAfterLast()
     {
-        _rewritten  = null;
         _currentRow = null;
         ToEnd();
     }
@@ -126,33 +121,49 @@ public class Cursor : IEnumerable<Row>
 
     private Row? Move(bool forward)
     {
-        // Going back, the cursor is no longer on the way it was on when it rewrote rows further on: where each
-        // now is, is the only place it is.
-        if (!forward) _rewritten = null;
-        while (Step(forward) is { } pointer)
+        // A move that cannot read the row it comes to leaves the cursor as it was.
+        object place = Place();
+        try
         {
-            if (_rewritten is not null && _rewritten.Contains(pointer)) continue;
-            if (ReadRow(pointer) is { } row) return _currentRow = row;
+            while (Step(forward) is { } pointer)
+            {
+                if (Passes(pointer, forward)) continue;
+                if (ReadRow(pointer) is { } row) return _currentRow = row;
+            }
+            return _currentRow = null;
         }
-        return _currentRow = null;
+        catch
+        {
+            Restore(place);
+            throw;
+        }
     }
+
+    /// <summary>
+    /// Whether the cursor goes past the row at <paramref name="pointer"/> without giving it: a row it has given
+    /// already, which an update has since moved ahead of it in its order. No row moves in a table's own order.
+    /// </summary>
+    private protected virtual bool Passes(int pointer, bool forward) => false;
+
+    /// <summary>Has the cursor forget what it knew of rows moved around its place: it is being put somewhere else.</summary>
+    private protected virtual void Jumped() { }
 
     // ── What a kind of cursor says of its order ──────────────────────────────
 
     /// <summary>Puts the cursor before its first row; the table's pages are listed again.</summary>
     private protected virtual void ToStart()
     {
-        _ownedPages = OwnedPages();
-        _pageIndex  = -1;
-        _rowIndex   = -1;
+        _pages     = null;
+        _pageIndex = -1;
+        _rowIndex  = -1;
     }
 
     /// <summary>Puts the cursor after its last row; the table's pages are listed again.</summary>
     private protected virtual void ToEnd()
     {
-        _ownedPages = OwnedPages();
-        _pageIndex  = _ownedPages.Count;
-        _rowIndex   = 0;
+        _pages     = null;
+        _pageIndex = _ownedPages.Count;
+        _rowIndex  = 0;
     }
 
     private protected virtual bool AtStart => _pageIndex < 0;
@@ -289,8 +300,8 @@ public class Cursor : IEnumerable<Row>
     /// <returns>The value, or null for a column with no value.</returns>
     /// <exception cref="ArgumentException">The table has no column of that name.</exception>
     /// <exception cref="InvalidOperationException">
-    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
-    /// through something other than this cursor since the cursor read it.
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted through
+    /// something other than this cursor since the cursor read it.
     /// </exception>
     public object? GetCurrentRowValue(string columnName)
     {
@@ -298,6 +309,30 @@ public class Cursor : IEnumerable<Row>
         var row    = OnRow();
         var read   = _table.ReadRowAsReadAt(row.Pointer, new[] { column }) ?? throw Table.NoRowAt(_table.Name, row.Pointer);
         return read[column.Name];
+    }
+
+    /// <summary>
+    /// The number the row the cursor is on stores in a Date/Time column: days since 30 December 1899, the time
+    /// of day its fraction. It is the value Access holds and keys the row by, to the last digit, where the
+    /// <see cref="DateTime"/> a row is read with is rounded to the millisecond; given to a lookup -
+    /// <see cref="FindRow(string, object?)"/>, <see cref="IndexCursor.FindRowByEntry"/>, a range - it finds the
+    /// row that stores exactly that number.
+    /// </summary>
+    /// <param name="columnName">The column's name, whatever the case of its letters.</param>
+    /// <returns>The number stored, or null for a column with no value.</returns>
+    /// <exception cref="ArgumentException">The table has no column of that name, or it is not a Date/Time column.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted since the cursor
+    /// read it.
+    /// </exception>
+    public double? GetCurrentRowDateNumber(string columnName)
+    {
+        var column = ColumnNamed(columnName, nameof(columnName));
+        if (column.DataType != DataType.DateTime)
+            throw new ArgumentException($"'{column.Name}' is a {column.DataType} column, not a Date/Time one.", nameof(columnName));
+        var row  = OnRow();
+        var read = _table.ReadRowAt(row.Pointer, new[] { column }) ?? throw Table.NoRowAt(_table.Name, row.Pointer);
+        return read.TryGetValue(column.Name, out var stored) ? (double?)stored : null;
     }
 
     private protected Column ColumnNamed(string columnName, string parameterName)
@@ -353,17 +388,17 @@ public class Cursor : IEnumerable<Row>
     /// <c>updateCurrentRowFromMap</c>. A column <paramref name="values"/> does not name keeps its value.
     /// <see cref="Current"/> is the row as it is afterwards.
     /// <para>
-    /// The cursor stays where it is: the next move goes on to the row after the one updated. The updated row is
-    /// written again further on in the table, and this cursor does not come to it a second time while it goes
-    /// on forwards. Once it has moved back, been put before the first row or after the last, or been restored
-    /// to a savepoint, it finds the row where it now is.
+    /// The cursor stays where it is: the next move goes on to the row after the one updated. A row keeps its
+    /// place in the table when it is updated. In an index's order it moves when the update changes its key in
+    /// that index, and a cursor over the index does not come a second time to a row it has given already,
+    /// whichever way it is going and whoever updated the row.
     /// </para>
     /// </summary>
     /// <param name="values">The values to give the row, by column name.</param>
     /// <exception cref="ArgumentNullException"><paramref name="values"/> is null.</exception>
     /// <exception cref="InvalidOperationException">
-    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
-    /// through something other than this cursor since the cursor read it. Nothing is written.
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted through
+    /// something other than this cursor since the cursor read it. Nothing is written.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would break a rule of the table or of a relationship (<see cref="Table.Update"/>). The
@@ -375,9 +410,8 @@ public class Cursor : IEnumerable<Row>
         if (values is null) throw new ArgumentNullException(nameof(values));
         var row     = OnRow();
         int pointer = row.Pointer;
-        int written = _table.UpdateAt(pointer, values);
-        if (written != pointer) (_rewritten ??= new HashSet<int>()).Add(written);
-        _currentRow = ReadRow(written);
+        _table.UpdateAt(pointer, values);
+        _currentRow = ReadRow(pointer);
     }
 
     /// <summary>
@@ -387,8 +421,8 @@ public class Cursor : IEnumerable<Row>
     /// next move goes on to the row after the one deleted.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
-    /// through something other than this cursor since the cursor read it. Nothing is deleted.
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted through
+    /// something other than this cursor since the cursor read it. Nothing is deleted.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// Rows of another table refer to the row through a relationship that is enforced and does not cascade.
@@ -410,12 +444,16 @@ public class Cursor : IEnumerable<Row>
     /// <paramref name="value"/>, and returns it; when there is none, returns null and leaves the cursor where it
     /// was. Jackcess's <c>findFirstRow</c>.
     /// <para>
-    /// A value is matched as the row stores it. Text is matched exactly, a number with a number of another type
-    /// that is equal to it, and a Double or a Single by its bits. A Date/Time is the number the row stores, days
-    /// since 30 December 1899: a <see cref="DateTime"/> finds the row that stores the number it converts to
-    /// (<see cref="DateTime.ToOADate"/>), and a <see cref="double"/> the row that stores that number, so two
-    /// dates less than a millisecond apart are told apart. A null is never a match: a row with no value in a
-    /// column is not found by looking for null.
+    /// Text is matched as its column's sort order has it, which is what Access's <c>=</c> goes by: without
+    /// regard to case or to spaces at its end, an accent making another letter; and character for character
+    /// where this library makes no index key for the text. A number is matched with a number of another type
+    /// that is equal to it, a Double or a Single by its bits, and text is never read as a number. A Date/Time is
+    /// the number the row stores, days since 30 December 1899: a <see cref="DateTime"/> finds every row whose
+    /// number reads as that <see cref="DateTime"/>, so the date read from a row finds the row again, and a
+    /// <see cref="double"/> the row that stores exactly that number (<see cref="GetCurrentRowDateNumber"/> gives
+    /// a row's), so two dates less than a millisecond apart are told apart. A null is never a match: a row with
+    /// no value in a column is not found by looking for null. A cursor over a table and one over an index find
+    /// the same rows.
     /// </para>
     /// </summary>
     /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
@@ -488,7 +526,6 @@ public class Cursor : IEnumerable<Row>
 
         object place      = Place();
         var    current    = _currentRow;
-        var    rewritten  = _rewritten;
         var    columns    = ColumnsToRead;
         bool   asStored   = ValuesAsStored;
         Row?   row        = null;
@@ -501,7 +538,6 @@ public class Cursor : IEnumerable<Row>
             int? found;
             try
             {
-                if (fromStart) _rewritten = null;
                 found = Seek(pattern, fromStart);
             }
             finally
@@ -519,7 +555,6 @@ public class Cursor : IEnumerable<Row>
             // A row that could not be read stops the search: the cursor is as it was before it.
             Restore(place);
             _currentRow = current;
-            _rewritten  = rewritten;
             throw;
         }
 
@@ -527,7 +562,6 @@ public class Cursor : IEnumerable<Row>
 
         Restore(place);
         _currentRow = current;
-        _rewritten  = rewritten;
         return null;
     }
 
@@ -554,8 +588,8 @@ public class Cursor : IEnumerable<Row>
     /// <summary>Moves on (or back) to the next row there is and returns it, as <see cref="MoveNext"/> does, for a kind of cursor to look through its rows with.</summary>
     private protected Row? MoveToRow(bool forward) => Move(forward);
 
-    /// <summary>Has the cursor pass no row for having rewritten it: it is being put somewhere else altogether.</summary>
-    private protected void ForgetRewrittenRows() => _rewritten = null;
+    /// <summary>The row the cursor is on, for a kind of cursor to put back when a move of its own fails.</summary>
+    private protected Row? CurrentRow { get => _currentRow; set => _currentRow = value; }
 
     // ── Savepoints ────────────────────────────────────────────────────────────
 
@@ -568,7 +602,7 @@ public class Cursor : IEnumerable<Row>
     /// <summary>
     /// Puts the cursor back where it was when <paramref name="savepoint"/> was taken: Jackcess's
     /// <c>restoreSavepoint</c>. <see cref="Current"/> is the row at that place as the file has it now - null when
-    /// the cursor was on no row, or when the row has since been deleted or updated, which writes it elsewhere;
+    /// the cursor was on no row, or when the row has since been deleted;
     /// the next move goes on from that place either way.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="savepoint"/> is null.</exception>
@@ -579,7 +613,7 @@ public class Cursor : IEnumerable<Row>
         if (!ReferenceEquals(savepoint.Cursor, this))
             throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
         Restore(savepoint.Place);
-        _rewritten  = null;
+        Jumped();
         _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
     }
 

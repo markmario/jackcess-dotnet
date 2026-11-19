@@ -201,7 +201,8 @@ public sealed class SecondReviewTests : IDisposable
         {
             var hit = table.CreateIndexCursor("DataIndex").FindRowByEntry(row[column]!);
             Assert.NotNull(hit);
-            Assert.Equal(row[column], hit![column]);
+            // The first row whose text is equal as the index's sort order has it, which Access's = is.
+            Assert.True(ValueMatch.Matches(table.Columns.First(c => c.Name == column), hit![column], row[column]), $"'{hit[column]}' for '{row[column]}'");
             found++;
         }
         Assert.True(found >= 20, $"{found} rows looked up");

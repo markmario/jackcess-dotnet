@@ -8,10 +8,9 @@ namespace JackcessDotNet;
 /// (<see cref="Row.Id"/>), and it is what <see cref="Table.Update"/> and <see cref="Table.Delete"/> find the row
 /// by, whatever key the table has or lacks.
 /// <para>
-/// An id names a place, not a row for ever: a row that is updated is written again elsewhere and has another id
-/// from then on (the <see cref="Row"/> given to the update is told it), and compacting a database in Access
-/// gives every row a new one. Ids are ordered by page and then by row, which is the order
-/// <see cref="Table.Rows"/> reads rows in.
+/// A row has the same id for as long as it is in its table: an update leaves it where it is, as in Access.
+/// Compacting a database in Access gives every row a new one. Ids are ordered by page and then by row, which is
+/// the order <see cref="Table.Rows"/> reads rows in.
 /// </para>
 /// </summary>
 public readonly struct RowId : IEquatable<RowId>, IComparable<RowId>

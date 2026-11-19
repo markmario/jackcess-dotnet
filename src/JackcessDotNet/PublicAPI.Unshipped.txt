@@ -51,6 +51,7 @@ JackcessDotNet.Cursor.FindNextRow(System.Collections.Generic.IReadOnlyDictionary
 JackcessDotNet.Cursor.FindNextRow(string! columnName, object? value) -> JackcessDotNet.Row?
 JackcessDotNet.Cursor.FindRow(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! pattern) -> JackcessDotNet.Row?
 JackcessDotNet.Cursor.FindRow(string! columnName, object? value) -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.GetCurrentRowDateNumber(string! columnName) -> double?
 JackcessDotNet.Cursor.GetCurrentRowValue(string! columnName) -> object?
 JackcessDotNet.Cursor.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.Row!>!
 JackcessDotNet.Cursor.GetSavepoint() -> JackcessDotNet.CursorSavepoint!

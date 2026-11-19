@@ -4,20 +4,26 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// How a value a caller looks for is matched to the value a row has - the one comparison every lookup that
-/// confirms a row uses, whether the row was found through an index or by reading the table.
-/// <para>
-/// A value is matched as the row stores it. A floating-point value is matched by its bits, the caller's taken to
-/// the column's type as a row would store it: +0.0 and -0.0 are two keys to Access and to an index, and so are
-/// a Double and the next Double after it. A Date/Time is the double the row stores (days since 30 December
-/// 1899), matched by its bits too: a <see cref="DateTime"/> looked for is the double it converts to
-/// (<see cref="DateTime.ToOADate"/>), and a number looked for is that double itself, so two dates less than a
-/// millisecond apart - which read as the same <see cref="DateTime"/> - are two values (#35). Anything else is
-/// equal, or equal as numbers (a Long column's 5 for a caller's 5L; a Currency or a Decimal exactly, as decimals
-/// compare). Text is matched exactly, and binary values byte for byte.
-/// </para>
-/// <para>
-/// A null is never a match: a row with no value in a column is not found by looking for null.
-/// </para>
+/// confirms a row uses, whether the row was found through an index or by reading the table, so that both find
+/// the same rows.
+/// <list type="bullet">
+/// <item>Text is equal as its column's sort order has it, which is what Access's <c>=</c> and a unique index go
+/// by (measured in General - Legacy and General: 'abc' is 'ABC', 'a' is 'a ' with a space after it, 'ss' is
+/// 'ß'; 'e' is not 'é', and '7' is not '007'): two values are equal when their index keys are. Where no key is
+/// made - a sort order this library does not write, a character Access keys by its neighbours - text is equal
+/// when it is the same text, character for character. A text column is looked in for text and nothing else: a
+/// number looked for is the text that writes it, and text is never read as a number.</item>
+/// <item>A number is equal to a number of another type that is the same number (a Long column's 5 for a
+/// caller's 5L; a Currency or a Decimal exactly, as decimals compare); a Double or a Single by its bits, the
+/// caller's taken to the column's type as a row would store it: +0.0 and -0.0 are two keys to Access and to an
+/// index, and so are a Double and the next Double after it. Text is no number.</item>
+/// <item>A Date/Time is the double the row stores, days since 30 December 1899. A number looked for is that
+/// double, matched by its bits (#35). A <see cref="DateTime"/> looked for matches every stored value that
+/// reads as that <see cref="DateTime"/> (<see cref="ReadsAs"/>): a row is read with its date rounded to the
+/// millisecond, and the date a caller has read from a row finds that row again, which the double of a
+/// <see cref="DateTime"/> does not for a third of the dates Access computes.</item>
+/// <item>A null is never a match: a row with no value in a column is not found by looking for null.</item>
+/// </list>
 /// </summary>
 internal static class ValueMatch
 {
@@ -31,18 +37,65 @@ internal static class ValueMatch
         if (stored is null || RowValues.IsNull(asked)) return false;
         try
         {
-            if (column.DataType == DataType.DateTime)
+            switch (column.DataType)
             {
-                double has = stored is DateTime read ? read.ToOADate() : Convert.ToDouble(stored, CultureInfo.InvariantCulture);
-                if (asked is not DateTime && !IsNumber(asked!)) return false;
-                double wanted = asked is DateTime date ? date.ToOADate() : Convert.ToDouble(asked, CultureInfo.InvariantCulture);
-                return BitConverter.DoubleToInt64Bits(has) == BitConverter.DoubleToInt64Bits(wanted);
+                case DataType.DateTime:
+                    double has = stored is DateTime read ? read.ToOADate() : Convert.ToDouble(stored, CultureInfo.InvariantCulture);
+                    if (asked is DateTime date) return ReadsAs(has) == date;
+                    return IsNumber(asked!)
+                        && BitConverter.DoubleToInt64Bits(has) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture));
+                case DataType.Text:
+                case DataType.Memo:
+                    return SameText(column, Convert.ToString(stored, CultureInfo.InvariantCulture)!, Convert.ToString(asked, CultureInfo.InvariantCulture)!);
+                case DataType.Guid:
+                    return stored is Guid guid
+                        && guid == (asked is Guid wanted ? wanted : Guid.Parse(Convert.ToString(asked, CultureInfo.InvariantCulture)!));
             }
             return SameValue(stored, asked!);
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    /// <summary>Whether two values of a text column are equal as the column's sort order has it; as the same text where no key is made.</summary>
+    private static bool SameText(Column column, string stored, string asked)
+    {
+        if (TextIndexCodes.For(column.SortOrder) is { } codes && codes.CanEncode(stored) && codes.CanEncode(asked))
+            return codes.Encode(stored, ascending: true).AsSpan().SequenceEqual(codes.Encode(asked, ascending: true));
+        return string.Equals(stored, asked, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The <see cref="DateTime"/> a stored Date/Time reads as (<see cref="RowDecoder.Decode(byte[], Column)"/>):
+    /// rounded to the millisecond, and null for a number no date is.
+    /// </summary>
+    public static DateTime? ReadsAs(double stored) => RowDecoder.ReadDate(stored);
+
+    /// <summary>
+    /// The least and the greatest double that read as <paramref name="date"/>: the stored values a lookup for it
+    /// finds. Both are the date's own double when nothing reads as it (a date finer than a millisecond). For a
+    /// time on 30 December 1899 the negative of each number reads as it too; those are not within these.
+    /// </summary>
+    public static (double Least, double Greatest) StoredRange(DateTime date)
+    {
+        double exact = date.ToOADate();
+        if (ReadsAs(exact) != date) return (exact, exact);
+        const double twoMilliseconds = 2.0 / 86_400_000;
+        return (Edge(exact, exact - twoMilliseconds, date), Edge(exact, exact + twoMilliseconds, date));
+    }
+
+    // The double furthest from 'inside' towards 'outside' that still reads as the date.
+    private static double Edge(double inside, double outside, DateTime date)
+    {
+        if (ReadsAs(outside) == date) return outside;
+        while (true)
+        {
+            double middle = inside + (outside - inside) / 2;
+            if (middle == inside || middle == outside) return inside;
+            if (ReadsAs(middle) == date) inside = middle;
+            else outside = middle;
         }
     }
 
@@ -68,15 +121,20 @@ internal static class ValueMatch
     {
         switch (stored)
         {
-            case double d:
-                return BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture));
-            case float f:
-                return BitConverter.GetBytes(f).AsSpan().SequenceEqual(BitConverter.GetBytes(Convert.ToSingle(asked, CultureInfo.InvariantCulture)));
             case byte[] bytes:
                 return asked is byte[] wanted && bytes.AsSpan().SequenceEqual(wanted);
+            case bool flag:
+                return asked is bool wantedFlag && flag == wantedFlag;
         }
-        if (Equals(stored, asked)) return true;
-        return Convert.ToDecimal(stored, CultureInfo.InvariantCulture) == Convert.ToDecimal(asked, CultureInfo.InvariantCulture);
+        if (stored is DateTime || asked is DateTime) return Equals(stored, asked);
+        if (!IsNumber(stored) || !IsNumber(asked)) return false;
+        return stored switch
+        {
+            double d => BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture)),
+            float f  => BitConverter.GetBytes(f).AsSpan().SequenceEqual(BitConverter.GetBytes(Convert.ToSingle(asked, CultureInfo.InvariantCulture))),
+            _        => Equals(stored, asked)
+                        || Convert.ToDecimal(stored, CultureInfo.InvariantCulture) == Convert.ToDecimal(asked, CultureInfo.InvariantCulture),
+        };
     }
 
     private static bool IsNumber(object value)

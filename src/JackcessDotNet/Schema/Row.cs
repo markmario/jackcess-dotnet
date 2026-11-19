@@ -37,10 +37,42 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     private Table? _source;
     private int    _pointer;
 
+    // The row as it was read, kept from the moment it is first changed: what an update compares it with, to
+    // write the values that changed and no others.
+    private KeyValuePair<string, object?>[]? _asRead;
+
+    private void BeforeChange()
+    {
+        if (_source is not null && _asRead is null) _asRead = _entries.ToArray();
+    }
+
+    /// <summary>
+    /// The entries whose values are not what the row was read with: every one of a column it was not read with,
+    /// and none for a row that has not been changed. A byte array is compared by what it holds when it was
+    /// replaced; one changed in place is the array that was read, and is not seen to have changed.
+    /// </summary>
+    internal Row ChangesSinceRead()
+    {
+        var changes = new Row();
+        if (_asRead is null) return changes;
+        foreach (var entry in _entries)
+        {
+            bool found = false;
+            foreach (var was in _asRead)
+            {
+                if (!string.Equals(was.Key, entry.Key, StringComparison.OrdinalIgnoreCase)) continue;
+                found = ValueMatch.IsAsRead(was.Value, entry.Value);
+                break;
+            }
+            if (!found) changes[entry.Key] = entry.Value;
+        }
+        return changes;
+    }
+
     /// <summary>
     /// Where the row is in the table it was read from, or null for a row that was not read from a table: one a
-    /// caller made, a copy of another row, or a row that has been deleted. <see cref="Table.Update"/> gives the
-    /// row its new id when it has rewritten it. Jackcess's <c>Row.getId</c>.
+    /// caller made, a copy of another row, or a row that has been deleted. An update does not change it.
+    /// Jackcess's <c>Row.getId</c>.
     /// </summary>
     public RowId? Id => _source is null ? null : RowId.FromPointer(_pointer);
 
@@ -55,6 +87,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     {
         _source  = source;
         _pointer = pointer;
+        _asRead  = null;
     }
 
     /// <summary>Notes that the row is in no table any longer: it was deleted.</summary>
@@ -103,6 +136,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         set
         {
             if (columnName is null) throw new ArgumentNullException(nameof(columnName));
+            BeforeChange();
             if (_places.TryGetValue(columnName, out int at))
             {
                 // The entry keeps the name it was added under.
@@ -172,6 +206,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
         if (_places.ContainsKey(columnName))
             throw new ArgumentException($"The row already has a value for column '{columnName}'.", nameof(columnName));
+        BeforeChange();
         _places.Add(columnName, _entries.Count);
         _entries.Add(new KeyValuePair<string, object?>(columnName, value));
     }
@@ -205,6 +240,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
         if (!_places.TryGetValue(columnName, out int at)) return false;
 
+        BeforeChange();
         _entries.RemoveAt(at);
         _places.Remove(columnName);
         for (int i = at; i < _entries.Count; i++)
@@ -215,6 +251,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// <summary>Takes every column out of the row.</summary>
     public void Clear()
     {
+        BeforeChange();
         _entries.Clear();
         _places.Clear();
     }

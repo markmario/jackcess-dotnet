@@ -162,7 +162,7 @@ internal sealed class DataPageWriter
         return newPage;
     }
 
-    private int WriteRowOnPage(int pageNumber, byte[] rowData, int tdefPageNumber, JetFormat format)
+    private int WriteRowOnPage(int pageNumber, byte[] rowData, int tdefPageNumber, JetFormat format, ushort slotFlags = 0)
     {
         byte[] page      = _file.ReadPage(pageNumber);
         int    rowCount  = ByteUtil.GetShort(page, format.OffsetDataNumRows);
@@ -187,7 +187,7 @@ internal sealed class DataPageWriter
 
         // Write the slot entry for this row
         int slotOffset  = format.OffsetDataRowTable + rowCount * JetFormat.SizeRowEntry;
-        ByteUtil.PutShort(page, slotOffset, (short)rowStart);
+        ByteUtil.PutUShort(page, slotOffset, (ushort)(rowStart | slotFlags));
 
         // Update header
         ByteUtil.PutShort(page, format.OffsetDataNumRows,   (short)(rowCount  + 1));
@@ -229,33 +229,15 @@ internal sealed class DataPageWriter
 
     /// <summary>
     /// The one way a row is rewritten, however it was found: <paramref name="newValues"/> laid over the row on
-    /// <paramref name="page"/>, the old row deleted and the merged one added, so the row moves. Returns the new
-    /// row's pointer.
+    /// <paramref name="page"/>, and the new row put where the old one was, as Access puts it
+    /// (<see cref="Put"/>). The row keeps its slot, so the pointer returned is the one it had.
     /// </summary>
     private int Rewrite(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex,
                         byte[] rowBytes, Row newValues, Action<Row, Row, int>? beforeChange, bool keepStoredDates)
     {
-        // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
-        // index keys were made of it (a date as the double stored), for its entries to be found.
-        var old    = new Row();
-        var merged = new Row();
-        foreach (var col in table.Columns)
-        {
-            object? existing = decoder.Decode(rowBytes, col);
-            if (existing is not null)
-                merged[col.Name] = existing;
-            object? keyed = col.DataType == DataType.DateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
-            if (keyed is not null)
-                old[col.Name] = keyed;
-            if (keepStoredDates && keyed is double)
-                merged[col.Name] = keyed;
-        }
-        foreach (var kvp in newValues)
-            merged[kvp.Key] = kvp.Value;
-
         // A merged row the new one could not be written as - text longer than its column, a duplicate in
         // a unique index - must not cost the row it replaces, so it is checked before anything is freed
-        // or deleted.
+        // or written.
         var encoder = new RowEncoder(_file.Format, table, LvalWritersFor(table)) { DatesAsStored = keepStoredDates };
 
         // A long value the update does not change stays where it is: the new row carries the old row's reference
@@ -278,24 +260,161 @@ internal sealed class DataPageWriter
                 kept[col] = stored;
         }
 
+        // The row as it was, twice: as a caller reads it, for the row that replaces it, and as its
+        // index keys were made of it (a date as the double stored), for its entries to be found. A long value
+        // that is kept and is in no index is not read at all: nothing asks what it holds.
+        var old    = new Row();
+        var merged = new Row();
+        foreach (var col in table.Columns)
+        {
+            if (col.DataType.IsLongValue() && kept.ContainsKey(col)
+                && !table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.Ordinal == col.Ordinal)))
+                continue;
+            object? existing = decoder.Decode(rowBytes, col);
+            if (existing is not null)
+                merged[col.Name] = existing;
+            object? keyed = col.DataType == DataType.DateTime ? decoder.DecodeForKey(rowBytes, col) : existing;
+            if (keyed is not null)
+                old[col.Name] = keyed;
+            if (keepStoredDates && keyed is double)
+                merged[col.Name] = keyed;
+        }
+        foreach (var kvp in newValues)
+            merged[kvp.Key] = kvp.Value;
+
         // The new row whole, but for the long values still to go to their pages: a value its column cannot hold,
         // or one not of its type, or a row too large for the format is refused here, with nothing changed. Refused
         // only as the new row was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
         var prepared = encoder.Prepare(merged, kept, keptFixed);
-        beforeChange?.Invoke(old, merged, RowPointer.Pack(pageNumber, rowIndex));
+        int pointer  = RowPointer.Pack(pageNumber, rowIndex);
+        beforeChange?.Invoke(old, merged, pointer);
 
         FreeRowLvalChains(table, rowBytes, decoder, kept);
+        Put(table, pageNumber, rowIndex, encoder.Complete(prepared));
+        return pointer;
+    }
 
-        // Mark the original slot as deleted, and with it wherever Access had moved the row's values to.
+    /// <summary>
+    /// Puts <paramref name="rowData"/> in place of the row whose slot is <paramref name="rowIndex"/> on page
+    /// <paramref name="pageNumber"/>, as Access was measured to (DAO, ACE 16): the row keeps its slot, so its
+    /// address - what every index entry and every <see cref="RowId"/> holds - does not change.
+    /// <list type="bullet">
+    /// <item>A row that fits its page - shorter, or longer by no more than the page has free - is written where
+    /// it was and the page's other rows are moved up or down around it: no gap is left and no padding written.</item>
+    /// <item>A row too long for its page goes to another, at a slot marked as values kept out of a scan
+    /// (0x8000), and its own slot is left four bytes that say where - [row:1][page:3] - marked 0x4000.</item>
+    /// <item>A row whose values are already elsewhere comes home when it fits its own page again; otherwise it
+    /// is rewritten where its values are when it fits that page, and failing that moves to another. The place
+    /// it leaves is emptied and marked deleted (0xC000, no bytes), as Access leaves it.</item>
+    /// </list>
+    /// </summary>
+    private void Put(TableDefinition table, int pageNumber, int rowIndex, byte[] rowData)
+    {
+        var format = _file.Format;
+        byte[] home = _file.ReadPage(pageNumber);
         var moved = new List<(int Page, int Row)>();
-        DataRows.Read(_file, page, rowIndex, moved);
-        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
-        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
-        _file.WritePage(pageNumber, page);
-        DataRows.MarkDeleted(_file, moved);
+        if (DataRows.Read(_file, home, rowIndex, moved) is null)
+            throw new InvalidOperationException($"No row is at page {pageNumber}, row {rowIndex}.");
 
-        // Insert the merged row; the caller moves the row's index entries from the old pointer to the new.
-        return Place(table, encoder, prepared);
+        if (TryReplace(home, rowIndex, rowData, 0))
+        {
+            _file.WritePage(pageNumber, home);
+            Empty(moved);
+            return;
+        }
+        if (moved.Count > 0)
+        {
+            var (finalPage, finalRow) = moved[moved.Count - 1];
+            byte[] final = _file.ReadPage(finalPage);
+            if (TryReplace(final, finalRow, rowData, JetFormat.DeletedRowFlag))
+            {
+                _file.WritePage(finalPage, final);
+                return;
+            }
+        }
+
+        // To another page. The four bytes its slot is left must fit first: a row shorter than they are, on a
+        // page with no room at all, cannot be given them.
+        byte[] probe = (byte[])home.Clone();
+        if (!TryReplace(probe, rowIndex, new byte[4], JetFormat.OverflowRowFlag))
+            throw new NotSupportedException(
+                $"The row at page {pageNumber}, row {rowIndex} is not updated: it no longer fits its page, which has no room for a pointer to another. Nothing was changed.");
+
+        Empty(moved);
+        int target    = FindOrAllocateDataPage(table, rowData.Length, format);
+        int targetRow = WriteRowOnPage(target, rowData, table.TdefPageNumber, format, JetFormat.DeletedRowFlag);
+
+        home = _file.ReadPage(pageNumber);
+        var where = new byte[4];
+        where[0] = (byte)targetRow;
+        where[1] = (byte)target;
+        where[2] = (byte)(target >> 8);
+        where[3] = (byte)(target >> 16);
+        TryReplace(home, rowIndex, where, JetFormat.OverflowRowFlag);
+        _file.WritePage(pageNumber, home);
+    }
+
+    /// <summary>Empties the slots a row's values were moved to and marks them deleted, as Access leaves them.</summary>
+    private void Empty(List<(int Page, int Row)> moved)
+    {
+        foreach (var (pageNumber, row) in moved)
+        {
+            byte[] page = _file.ReadPage(pageNumber);
+            TryReplace(page, row, Array.Empty<byte>(), JetFormat.DeletedRowFlags);
+            _file.WritePage(pageNumber, page);
+        }
+    }
+
+    /// <summary>
+    /// Lays the rows of <paramref name="page"/> out again with <paramref name="data"/> at slot
+    /// <paramref name="rowIndex"/>, marked <paramref name="slotFlags"/>: every row in its slot's order from the
+    /// end of the page, none apart from the next, each other slot's marks as they were. False, with the page
+    /// untouched, when the page has not the room.
+    /// </summary>
+    private bool TryReplace(byte[] page, int rowIndex, byte[] data, ushort slotFlags)
+    {
+        var format = _file.Format;
+        int rows   = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+        int free   = ByteUtil.GetShort(page, JetFormat.OffsetDataFreeSpace);
+        int table  = format.OffsetDataRowTable;
+
+        var starts = new int[rows];
+        var marks  = new ushort[rows];
+        int end    = format.PageSize;
+        for (int i = 0; i < rows; i++)
+        {
+            ushort slot = ByteUtil.GetUShort(page, table + i * JetFormat.SizeRowEntry);
+            starts[i] = slot & JetFormat.RowOffsetMask;
+            marks[i]  = (ushort)(slot & ~JetFormat.RowOffsetMask);
+            if (starts[i] > end || starts[i] < table + rows * JetFormat.SizeRowEntry)
+                throw new InvalidDataException("The file is damaged: the rows of a data page are not one after another.");
+            end = starts[i];
+        }
+
+        int before = (rowIndex == 0 ? format.PageSize : starts[rowIndex - 1]) - starts[rowIndex];
+        if (data.Length - before > free) return false;
+
+        byte[] was = (byte[])page.Clone();
+        int at = format.PageSize;
+        for (int i = 0; i < rows; i++)
+        {
+            int from   = starts[i];
+            int length = (i == 0 ? format.PageSize : starts[i - 1]) - from;
+            if (i == rowIndex)
+            {
+                at -= data.Length;
+                Array.Copy(data, 0, page, at, data.Length);
+            }
+            else
+            {
+                at -= length;
+                Array.Copy(was, from, page, at, length);
+            }
+            ByteUtil.PutUShort(page, table + i * JetFormat.SizeRowEntry, (ushort)(at | (i == rowIndex ? slotFlags : marks[i])));
+        }
+        Array.Clear(page, table + rows * JetFormat.SizeRowEntry, at - (table + rows * JetFormat.SizeRowEntry));
+        ByteUtil.PutShort(page, JetFormat.OffsetDataFreeSpace, (short)(free - (data.Length - before)));
+        return true;
     }
 
     // A long value's reference whose value is in the row (THIS_PAGE) and longer than Access keeps one there.

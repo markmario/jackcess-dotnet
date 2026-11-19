@@ -177,7 +177,8 @@ public sealed class EngineReviewTests : IDisposable
                 {
                     var hit = table.CreateIndexCursor(index.Name).FindRow(column, row[column]!);
                     Assert.NotNull(hit);
-                    Assert.Equal(row[column], hit![column]);
+                    // The first row whose text is equal as the index's sort order has it, which Access's = is.
+                    Assert.True(ValueMatch.Matches(index.Columns[0].Column, hit![column], row[column]), $"'{hit[column]}' for '{row[column]}'");
                     found++;
 
                     Assert.True(index.Columns[0].Column.SortOrder.IsGeneral);

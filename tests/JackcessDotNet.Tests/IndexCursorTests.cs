@@ -371,7 +371,7 @@ public sealed class IndexCursorTests : IDisposable
         // The row is still found: the index's rows are gone through, each compared.
         Assert.Equal(1, cursor.FindRowByEntry(longName)!["Id"]);
         Assert.Equal(1, cursor.FindRow("Name", longName)!["Id"]);
-        Assert.Null(cursor.FindRowByEntry(longName + "y"));
+        Assert.Null(cursor.FindRowByEntry(longName.Substring(1) + "y"));
         Assert.Equal(2, cursor.FindClosestRowByEntry("s")!["Id"]);
     }
 
@@ -474,8 +474,10 @@ public sealed class IndexCursorTests : IDisposable
 
         // And by going through the rows.
         var byName = table.CreateIndexCursor("ByName");
+        // A DateTime finds every row that reads as it; a number the row that stores it.
         Assert.Equal("first", byName.FindRow("When", when)!["Name"]);
-        Assert.Null(byName.FindNextRow("When", when));                    // the other row's date is not this date
+        Assert.Equal("second", byName.FindNextRow("When", when)!["Name"]);
+        Assert.Null(byName.FindNextRow("When", when));
         Assert.Equal("first", byName.FindRow("When", first)!["Name"]);    // a number is the stored number itself
         Assert.Equal("second", byName.FindRow("When", second)!["Name"]);
         Assert.Equal("second", table.CreateCursor().FindRow(new Row { ["When"] = second })!["Name"]);

@@ -50,10 +50,15 @@ changes with them.
 - **`Table.UpdateByPrimaryKey(key, values)` and `Table.DeleteRow(column, value)` are removed:
   `Table.Update(row)` and `Table.Delete(row)`** take a row that was read from the table - by `Rows`, a cursor
   or `FindRowByPrimaryKey` - and find it by where it was read (`Row.Id`), so a table with a key of several
-  columns, or with none, is updated and deleted like any other (#34). `Update` writes only the values that are
-  no longer what the row holds, and gives the `Row` its new id: the row is written again elsewhere. A row that
-  was not read from the table is refused with `ArgumentException`, and one that is no longer where it was read
-  with `InvalidOperationException`.
+  columns, or with none, is updated and deleted like any other (#34). `Update` writes only the values changed
+  in the `Row` since it was read. A row that was not read from the table is refused with `ArgumentException`,
+  and one that has been deleted since with `InvalidOperationException`.
+- **A row keeps its place when it is updated** (#29), as Access keeps it: rewritten in its slot when it still
+  fits its page, and otherwise moved to another page with its slot left pointing there (an overflow row), to
+  come home when it fits again. An update used to delete the row and add it again at the end of the table, so
+  its address and its place in the table's order changed. A row's id is now the same for as long as the row is
+  there, rows can be updated while they are gone through, and an update is taken back whole if writing it
+  fails.
 - **An index cursor is a cursor over its index** (#43, #29). `CreateIndexCursor()` throws
   `InvalidOperationException` for a table with no primary key (it made a cursor that read the table), and
   `IndexCursor.Index` is never null. Its rows come in the index's order (they came in the table's). Every
@@ -64,10 +69,16 @@ changes with them.
   A lookup that finds a row leaves the cursor on it, and one that finds none leaves the cursor where it was;
   a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
   a cast, `(string)null`, now that there is an overload taking an `IndexRange`.
-- **A Date/Time is matched by the number a row stores** (#35), as a Double is: a `DateTime` looked for finds
-  the row that stores exactly `DateTime.ToOADate()`, and a `double` the row that stores that number. A lookup
-  matched a date as it read, to the millisecond, so two dates within one could not be told apart; a date
-  Access stored finer than a millisecond is now found by its number, not by the `DateTime` it reads as.
+- **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
+  that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` finds every row
+  that reads as it, through an index as by reading the table - a lookup through an index used to look for
+  `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. A range's bound given as
+  a `DateTime` takes in, or leaves out, every number that reads as it.
+- **Text is found as its column's sort order has it**, which is Access's `=`: without regard to case or to
+  spaces at the end, by a cursor over a table and a cursor over an index alike. It was matched character for
+  character once found, and by a table cursor a number-like text matched any text that was the same number
+  (`"007"` found `"7"`). Text is not read as a number, nor a number as text, except that a number looked for
+  in a text column is the text that writes it.
 - **A table or column that is not there is an `ArgumentException`** in `CreateRelationship`, `AddIndex` and
   `CreateTable` (an index's column), and so is a primary key of more than ten columns; they threw
   `InvalidOperationException`. A name that is taken stays an `InvalidOperationException` where it was one:

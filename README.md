@@ -245,27 +245,42 @@ var ordersOf = new Joiner(customers, new[] { "CustomerID" }, orders, new[] { "Cu
 foreach (Row row in ordersOf.FindRows(alfki!)) { }
 ```
 
-- **An update writes the row again elsewhere in the table**, so the row has another `Row.Id` afterwards: the
-  `Row` given to `Update` is told it, and another `Row` read from the same place is no longer the row's
-  (`Update` and `Delete` refuse it with `InvalidOperationException`). Access and Jackcess rewrite a row in its
-  place when it fits there; this library does not yet. A cursor does not come a second time to a row it
-  updated itself while it goes on forwards; once it has moved back, or been put somewhere else, it finds the
-  row where it now is.
-- **Only what changed is written.** A value still as the row was read with is left as the file has it: a long
-  value is not written again, and a Date/Time keeps every digit Access stored.
+- **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
+  index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
+  other rows moved up or down around it; one that no longer fits goes to another page, and its slot is left
+  four bytes that say where (Access's overflow row); it comes home when it fits again. Measured from Access
+  (DAO, ACE 16) and written the same.
+- **Rows can be updated while they are gone through** - with `Table.Rows`, a cursor, an index cursor's rows of
+  an entry, or a `Joiner` - and each is come to once. In a table's own order no row moves. In an index's order
+  a row moves when the update changes its key in that index: a cursor over the index is told, by whoever made
+  the update, and does not give a second time a row it has given already, whichever way it is going.
+- **Only what changed is written.** `Update(row)` writes the values that were changed in the `Row` since it was
+  read; the rest are left as the file has them, unread: a long value is neither read nor written again, and a
+  Date/Time keeps every digit Access stored. (A byte array changed in place is not seen to have changed: give
+  the row a new one.) An update changes the row, its long values and its index entries together or not at all.
 - **An index cursor keeps to its index.** Its rows are the index's entries, in their order, and every lookup
   goes through that index or refuses the values: an entry has at most as many values as the index has columns.
   With fewer it stands for every row with those values in its leading columns.
-- **Values are matched as stored.** Text exactly; a Double or Single by its bits; a Date/Time by the number the
-  row stores, so a `DateTime` finds the row that stores exactly `DateTime.ToOADate()` and a `double` the row
-  that stores that number - two dates less than a millisecond apart, which read as the same `DateTime`, are two
-  values. A null is never a match.
+- **A cursor over a table and a cursor over an index find the same rows**, by one rule:
+  - *Text* is equal as its column's sort order has it, which is what Access's `=` and a unique index go by
+    (measured in General - Legacy and General): `'abc'` is `'ABC'`, `'a'` is `'a '`, `'ss'` is `'ß'`; `'e'` is
+    not `'é'`, and `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a
+    character keyed by its neighbours) it is equal when it is the same text. Text is never read as a number.
+  - *Numbers* are equal across number types; a Double or Single by its bits.
+  - *A Date/Time* is the number the row stores. A `DateTime` finds every row whose number **reads as** that
+    `DateTime` - so the date read from a row finds the row again, which `DateTime.ToOADate()` does not for
+    about a third of the dates Access computes (`DateAdd`, a date plus fractions of a day). Through an index
+    that is the small range of numbers that read as it; a range's bound given as a `DateTime` takes in, or
+    leaves out, all of them. A `double` finds the row that stores exactly that number, and
+    `cursor.GetCurrentRowDateNumber(column)` gives it, so two dates within a millisecond are told apart. A
+    `Joiner` joins a row that was read on its stored number, as Access's join does.
+  - A null is never a match.
 - **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
   other than General - Legacy and General, a character Access keys by its neighbours, or a key longer than an
   entry holds (below). `FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
-- **Not there:** updating a row in its place (above); case-insensitive or other column matchers (Jackcess's
-  `ColumnMatcher`); and a null is not found by looking for null, where Jackcess finds one.
+- **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); and a null is not found by
+  looking for null, where Jackcess finds one.
 
 ## Opening password-protected files
 
@@ -527,7 +542,7 @@ materialising the whole table.
 | Large Number (`DataType.Int64`) and Date/Time Extended (`DataType.DateTimeExtended`) columns | ✅ Read, written, created and indexed; `.accdb` only |
 | Create or write Jet 3 (Access 97) files           | ❌ Read-only, as in Jackcess |
 | Row CRUD + primary-key B-tree index               | ✅      |
-| Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ The row is written again elsewhere: not yet in its place, as Access and Jackcess update one |
+| Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change |
 | Batch insert, all rows or none (`Table.InsertRange`) | ✅ |
 | Cursors: both ways, find first and next, update or delete the current row, one column, some columns, savepoints | ✅ No column matchers |
 | Index cursors: the index's order, ranges between two entries, closest row, rows of an entry; `Joiner` | ✅ For every type an index is kept for |

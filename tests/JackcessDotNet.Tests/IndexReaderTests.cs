@@ -134,7 +134,9 @@ public sealed class IndexReaderTests
                     probesThisIndex++;
                     totalProbes++;
                     if (found is null) continue;   // not asserting — text path has known gaps
-                    Assert.Equal(expected[keyCol]!.ToString(), found[keyCol]!.ToString());
+                    // The row found is the first whose text is equal as the index's sort order has it.
+                    Assert.True(ValueMatch.Matches(ix.Columns[0].Column, found[keyCol], expected[keyCol]),
+                        $"'{found[keyCol]}' was found for '{expected[keyCol]}'");
                 }
                 _output.WriteLine(
                     $"{version}/{filename}/{tableName}/{ix.Name} ({keyCol}): {hits}/{probesThisIndex} text lookups hit");

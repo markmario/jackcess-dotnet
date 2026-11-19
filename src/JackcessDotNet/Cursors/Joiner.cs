@@ -13,7 +13,8 @@ namespace JackcessDotNet;
 /// </code>
 /// Each lookup goes through the index (<see cref="IndexCursor.FindRowsByEntry"/>), so it costs a few pages
 /// however many rows the table has, and values are matched as an index cursor matches them: a null joins no
-/// row. A joiner holds nothing open and reads the tables as they are when it is asked.
+/// row. A Date/Time of a row that was read from the table is joined on the number the row stores, as Access
+/// joins it. A joiner holds nothing open and reads the tables as they are when it is asked.
 /// </summary>
 public sealed class Joiner
 {
@@ -133,6 +134,17 @@ public sealed class Joiner
             if (!TryGet(fromRow, _fromColumns[i], out values[i]))
                 throw new ArgumentException(
                     $"The row has no value for '{_fromColumns[i]}', a column the join is on.", nameof(fromRow));
+
+        // A date is joined on the number its row stores, as Access joins it, and not on the DateTime it was read
+        // as, which is that number rounded: a row that was read from the table is asked for the number.
+        if (fromRow is Row read && ReferenceEquals(read.Source, FromTable))
+        {
+            var dates = FromTable.Columns.Where(c => c.DataType == DataType.DateTime && _fromColumns.Contains(c.Name)).ToList();
+            if (dates.Count > 0 && FromTable.ReadRowAt(read.Pointer, dates) is { } stored)
+                for (int i = 0; i < values.Length; i++)
+                    if (values[i] is DateTime && stored.TryGetValue(_fromColumns[i], out var number) && number is double)
+                        values[i] = number;
+        }
         return values;
     }
 

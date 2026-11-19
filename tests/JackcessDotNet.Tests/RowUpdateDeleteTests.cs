@@ -103,8 +103,7 @@ public sealed class RowUpdateDeleteTests : IDisposable
             row["Notes"] = new string('n', 5000);
             table.Update(row);
 
-            Assert.NotNull(row.Id);
-            Assert.NotEqual(was, row.Id!.Value);   // the row is written again elsewhere, and says where
+            Assert.Equal(was, row.Id);              // a row keeps its place, though it no longer fits its page
             Assert.Equal(200, table.RowCount);
 
             table.Delete(table.Rows.Single(r => (int)r["B"]! == 58));
@@ -235,14 +234,17 @@ public sealed class RowUpdateDeleteTests : IDisposable
         again["Name"] = "x";
         Assert.Throws<InvalidOperationException>(() => table.Update(again));
 
-        // Updated through one Row: another read from the same place is no longer the row's.
+        // Updated through one Row, the row is where it was: another Row read from there is still the row's, and
+        // writes what was changed in it and nothing else.
         var first  = table.FindRowByPrimaryKey(3)!;
         var second = table.FindRowByPrimaryKey(3)!;
         first["Name"] = "changed";
         table.Update(first);
-        second["Name"] = "changed again";
-        Assert.Throws<InvalidOperationException>(() => table.Update(second));
+        second["Notes"] = "noted";
+        table.Update(second);
+        Assert.Equal(first.Id, second.Id);
         Assert.Equal("changed", table.FindRowByPrimaryKey(3)!["Name"]);
+        Assert.Equal("noted", table.FindRowByPrimaryKey(3)!["Notes"]);
         Assert.Equal(4, table.RowCount);
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 4);
     }

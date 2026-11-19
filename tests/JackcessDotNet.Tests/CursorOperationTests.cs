@@ -57,7 +57,7 @@ public sealed class CursorOperationTests : IDisposable
                 var was = cursor.Current.Id;
                 cursor.UpdateCurrentRow(new Row { ["N"] = n + 1, ["Notes"] = new string('x', 300) });
                 Assert.Equal(n + 1, cursor.Current!["N"]);            // the row as it is afterwards
-                Assert.NotEqual(was, cursor.Current.Id);
+                Assert.Equal(was, cursor.Current.Id);                  // where it was
                 updated++;
             }
             Assert.Equal(Rows, updated);
@@ -306,8 +306,9 @@ public sealed class CursorOperationTests : IDisposable
         Assert.True(cursor.IsBeforeFirst);
         Assert.Null(cursor.Current);
 
-        // Text is matched exactly, and a null never matches.
-        Assert.Null(cursor.FindRow("Name", "NAME 010"));
+        // Text is matched as its sort order has it - without regard to case - and a null never matches.
+        Assert.Equal(10, cursor.FindRow("Name", "NAME 010")!["Id"]);
+        Assert.Null(cursor.FindRow("Name", "name 10"));
         Assert.Null(cursor.FindRow("Notes", null));
         Assert.Null(cursor.FindRow(new Row { ["Grp"] = 3, ["Notes"] = null }));
 

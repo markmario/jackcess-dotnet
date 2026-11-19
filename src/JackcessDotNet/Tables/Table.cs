@@ -556,10 +556,11 @@ public sealed class Table
     /// <paramref name="row"/> now has. Jackcess's <c>updateRow</c>. The row is found by where it was read
     /// (<see cref="Row.Id"/>), whatever key the table has: one of several columns, or none.
     /// <para>
-    /// Only what changed is written. A value that is still what the row was read with is left as the file has
-    /// it, and so is a column <paramref name="row"/> has no entry for: a long value is neither read nor written
-    /// again, and a Date/Time keeps every digit Access stored, which a <see cref="DateTime"/> does not always
-    /// hold. An AutoNumber column keeps the value the row has: another in <paramref name="row"/> is ignored,
+    /// Only what changed is written: the values given to <paramref name="row"/> since it was read that are not
+    /// what it was read with. Every other column is left as the file has it, unread: a long value is neither
+    /// read nor written again, and a Date/Time keeps every digit Access stored, which a <see cref="DateTime"/>
+    /// does not always hold. (A byte array changed in place is the array that was read, and is not seen to have
+    /// changed: give the row a new one.) An AutoNumber column keeps the value the row has: another in <paramref name="row"/> is ignored,
     /// unless <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's
     /// counter moves the counter up to it.
     /// </para>
@@ -567,9 +568,11 @@ public sealed class Table
     /// The row's entry in each of the table's indexes follows it, under its new values - a changed primary key
     /// among them - as Access keeps an index, and with <see cref="Database.EnforceForeignKeys"/> the
     /// relationships the table is in are kept: the rows a cascade reaches are changed with it, or nothing is.
-    /// The row is written again at another place in the table, and <paramref name="row"/> has its new
-    /// <see cref="Row.Id"/> afterwards; another <see cref="Row"/> read from the same place is no longer the
-    /// row's.
+    /// The row stays where it is, as Access leaves it - rewritten in its slot when it fits its page, and
+    /// otherwise moved to another page with its slot left pointing there - so its <see cref="Row.Id"/> is the
+    /// same afterwards, and rows can be updated while a cursor or <see cref="Rows"/> goes through them. The
+    /// row, its long values and its index entries change together: what is written is taken back if writing
+    /// fails.
     /// </para>
     /// </summary>
     /// <param name="row">The row, as read from this table, with the values to give it.</param>
@@ -579,8 +582,7 @@ public sealed class Table
     /// table's. Nothing is written.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The row is no longer where it was read: it has been deleted, or updated through another
-    /// <see cref="Row"/>, since. Nothing is written.
+    /// The row is no longer where it was read: it has been deleted since. Nothing is written.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, has a null in
@@ -595,7 +597,9 @@ public sealed class Table
     public void Update(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
-        row.ReadFrom(this, UpdateAt(PointerOf(row, nameof(row)), row));
+        int pointer = PointerOf(row, nameof(row));
+        UpdateAt(pointer, row.ChangesSinceRead(), areChanges: true);
+        row.ReadFrom(this, pointer);
     }
 
     /// <summary>
@@ -616,8 +620,7 @@ public sealed class Table
     /// table's. Nothing is deleted.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The row is no longer where it was read: it has been deleted, or updated through another
-    /// <see cref="Row"/>, since. Nothing is deleted.
+    /// The row is no longer where it was read: it has been deleted since. Nothing is deleted.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// Rows of another table refer to the row through a relationship that is enforced and does not cascade.
@@ -646,16 +649,44 @@ public sealed class Table
         return row.Pointer;
     }
 
+    // The cursors over this table's indexes, each for as long as something holds it: one is told when an update
+    // moves a row's entry in its index (IndexCursor.EntryMoved), so that it does not come to the row twice.
+    private readonly List<WeakReference<IndexCursor>> _indexCursors = new();
+    private int _lookAgainAt = 32;
+
+    internal void Watch(IndexCursor cursor)
+    {
+        if (_indexCursors.Count >= _lookAgainAt)
+        {
+            _indexCursors.RemoveAll(held => !held.TryGetTarget(out _));
+            _lookAgainAt = Math.Max(32, _indexCursors.Count * 2);
+        }
+        _indexCursors.Add(new WeakReference<IndexCursor>(cursor));
+    }
+
+    private void TellCursors(int tree, int rowPointer, byte[] oldKey, byte[] newKey)
+    {
+        foreach (var held in _indexCursors)
+            if (held.TryGetTarget(out var cursor))
+                cursor.EntryMoved(tree, rowPointer, oldKey, newKey);
+    }
+
     /// <summary>What says that the row a caller named by its place is not there.</summary>
     internal static InvalidOperationException NoRowAt(string tableName, int rowPtr)
         => new($"No row of table '{tableName}' is at page {RowPointer.Page(rowPtr)}, row {RowPointer.Row(rowPtr)} any longer: " +
-               "it has been deleted, or updated and so written elsewhere, since it was read. Nothing was changed.");
+               "it has been deleted since it was read. Nothing was changed.");
 
     /// <summary>
     /// Gives the row at <paramref name="rowPtr"/> the values of <paramref name="values"/> that are not the row's
     /// own already, as <see cref="Update"/> describes, and returns where the row is afterwards.
     /// </summary>
-    internal int UpdateAt(int rowPtr, Row values)
+    /// <param name="rowPtr">Where the row is.</param>
+    /// <param name="values">The values to give it, by column name.</param>
+    /// <param name="areChanges">
+    /// Whether <paramref name="values"/> are known to be changes - a <see cref="Row"/>'s since it was read - and so
+    /// are not compared with what the row holds.
+    /// </param>
+    internal int UpdateAt(int rowPtr, Row values, bool areChanges = false)
     {
         _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
@@ -663,9 +694,12 @@ public sealed class Table
         // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
         var newValues = RowValues.AsWritten(values, _definition.Columns);
 
-        // What the row holds for the columns named, as a caller reads them: a value given back as it was read is
-        // not a change, and is left as the file has it.
-        var named = _definition.Columns.Where(c => newValues.ContainsKey(c.Name)).ToList();
+        // What the row holds for the columns named, as a caller reads them: a value given as the row has it is
+        // not a change, and is left as the file has it. A long value is not read to see: one that is given is
+        // written.
+        var named = areChanges
+            ? new List<Column>()
+            : _definition.Columns.Where(c => newValues.ContainsKey(c.Name) && !c.DataType.IsLongValue()).ToList();
         var held  = _dataWriter.ReadRowAsReadAt(_definition, rowPtr, named) ?? throw NoRowAt(Name, rowPtr);
         newValues = new Row(newValues.Where(v => !held.TryGetValue(v.Key, out var has) || !ValueMatch.IsAsRead(has, v.Value)));
 
@@ -696,13 +730,16 @@ public sealed class Table
             return newRowPtr;
         }
 
-        // The counter is raised once the row is on its page and before its index entries, as an insert's is: a
-        // row in the file is always one the counter has passed, whatever becomes of the entries.
-        var entries = new EntryMove(_indexes, refuseDuplicates: true);
+        // The row, the pages its long values go to and its index entries change together or not at all: what
+        // is written is taken back if writing fails. The counter is raised once the row is on its page and
+        // before its index entries, as an insert's is.
+        using var undo = _file.BeginUndo();
+        var entries = new EntryMove(this, refuseDuplicates: true);
         newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
         entries.Follow(rowPtr, newRowPtr);
+        undo.Commit();
         return newRowPtr;
     }
 
@@ -736,20 +773,22 @@ public sealed class Table
     /// </summary>
     private sealed class EntryMove
     {
+        private readonly Table _table;
         private readonly TableIndexes _indexes;
         private readonly bool _refuseDuplicates;
         private IReadOnlyList<TableIndexes.Entry> _old = Array.Empty<TableIndexes.Entry>();
         private IReadOnlyList<TableIndexes.Entry> _new = Array.Empty<TableIndexes.Entry>();
 
-        /// <param name="indexes">The table's indexes, whose entries move.</param>
+        /// <param name="table">The table whose index entries move.</param>
         /// <param name="refuseDuplicates">
         /// Whether a duplicate in a unique index is looked for in the file. The foreign-key enforcer has looked
         /// already, among the rows as its whole change leaves them: the file, part-way through that change, can
         /// hold for a moment a key that a row about to be rewritten is giving up.
         /// </param>
-        internal EntryMove(TableIndexes indexes, bool refuseDuplicates)
+        internal EntryMove(Table table, bool refuseDuplicates)
         {
-            _indexes = indexes;
+            _table = table;
+            _indexes = table._indexes;
             _refuseDuplicates = refuseDuplicates;
         }
 
@@ -762,8 +801,27 @@ public sealed class Table
 
         internal void Follow(int oldPointer, int newPointer)
         {
-            _indexes.Remove(_old, oldPointer);
-            _indexes.Add(_new, newPointer);
+            // The row is where it was, so an entry whose key the update did not change is the entry already
+            // there: only the others are taken out and put in. (An index that is being checked row by row, and a
+            // key that is cut, are written again all the same: the entry there may not be the one a row has now.)
+            var old = _old;
+            var now = _new;
+            if (oldPointer == newPointer && !_table._file.VerifyIndexes)
+            {
+                bool Same(TableIndexes.Entry a, TableIndexes.Entry b)
+                    => ReferenceEquals(a.Tree, b.Tree) && !a.IsCut && !b.IsCut && a.Key.AsSpan().SequenceEqual(b.Key);
+                old = _old.Where(o => !_new.Any(n => Same(o, n))).ToList();
+                now = _new.Where(n => !_old.Any(o => Same(o, n))).ToList();
+            }
+            _indexes.Remove(old, oldPointer);
+            _indexes.Add(now, newPointer);
+
+            // A cursor over an index is told of an entry that has moved in it.
+            if (oldPointer == newPointer)
+                foreach (var was in _old)
+                    foreach (var entry in _new)
+                        if (ReferenceEquals(was.Tree, entry.Tree) && !was.Key.AsSpan().SequenceEqual(entry.Key))
+                            _table.TellCursors(entry.Tree.Number, newPointer, was.Key, entry.Key);
         }
     }
 
@@ -777,7 +835,7 @@ public sealed class Table
     internal int RewriteRowAt(int rowPtr, Row changes)
     {
         _file.EnsureWritable();
-        var entries = new EntryMove(_indexes, refuseDuplicates: false);
+        var entries = new EntryMove(this, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
         return newRowPtr;

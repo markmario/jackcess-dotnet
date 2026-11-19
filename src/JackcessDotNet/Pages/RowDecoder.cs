@@ -321,9 +321,11 @@ internal sealed class RowDecoder
     /// rather than throw, matching Jackcess Java which returns the row but logs.
     /// Valid OADate range is roughly [-657434.0, 2958465.99] (years 100..9999).
     /// </summary>
-    private static DateTime? DecodeShortDateTime(byte[] row, int offset)
+    private static DateTime? DecodeShortDateTime(byte[] row, int offset) => ReadDate(ByteUtil.GetDouble(row, offset));
+
+    /// <summary>The <see cref="DateTime"/> a stored Date/Time number is read as; null for one no date is.</summary>
+    internal static DateTime? ReadDate(double oa)
     {
-        double oa = ByteUtil.GetDouble(row, offset);
         if (double.IsNaN(oa) || double.IsInfinity(oa)) return null;
         if (oa < -657434.0 || oa > 2958465.99999999) return null;
         try   { return DateTime.FromOADate(oa); }
