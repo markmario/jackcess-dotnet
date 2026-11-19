@@ -238,6 +238,154 @@ public sealed class CursorReviewTests : IDisposable
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 29);
     }
 
+    // ── Rows written before a column was dropped ─────────────────────────────
+
+    [Fact]
+    public void Rows_written_before_a_column_was_dropped_are_updated_where_they_are_past_their_page_and_back_and_deleted()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 }, new ColumnDefinition("Notes", DataType.Memo),
+            new ColumnDefinition("D", DataType.Text) { MaxLength = 255 }, new ColumnDefinition("N", DataType.Int32),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByA", "A") });
+        for (int i = 1; i <= 30; i++)
+            table.Insert(new Row { ["Id"] = i, ["A"] = Wide(i, 100), ["B"] = Wide(i + 1, 100), ["Notes"] = new string((char)('a' + i % 26), 2000), ["N"] = i });
+        // Each row keeps the bytes it had for the two columns; the Memo's pages are given back.
+        table.DropColumn("B");
+        table.DropColumn("Notes");
+
+        var expected = Enumerable.Range(1, 30).ToDictionary(i => i, i => (A: Wide(i, 100), D: (string?)null, N: i));
+        void Set(int id, string a, string? d)
+        {
+            var row = table.FindRowByPrimaryKey(id)!;
+            var was = row.Id;
+            row["A"] = a;
+            row["D"] = d;
+            table.Update(row);
+            Assert.Equal(was, table.FindRowByPrimaryKey(id)!.Id);
+            expected[id] = (a, d, expected[id].N);
+        }
+        ushort SlotOf(int id)
+        {
+            var at = table.FindRowByPrimaryKey(id)!.Id!.Value;
+            return ByteUtil.GetUShort(db.File.ReadPage(at.PageNumber), db.File.Format.OffsetDataRowTable + at.RowNumber * JetFormat.SizeRowEntry);
+        }
+
+        // A rewritten row has no bytes for the dropped columns, so each update below gives its page room: the
+        // row that goes past its page's room goes first.
+        Set(3, Wide(3, 255), Wide(4, 255));                 // past its page's room
+        Assert.Equal(JetFormat.OverflowRowFlag, SlotOf(3) & 0xC000);
+        Set(3, "home", null);                               // and back
+        Assert.Equal(0, SlotOf(3) & 0xC000);
+        Set(2, "x", null);                                  // smaller, where it is
+        Set(5, Wide(5, 140), null);                         // larger
+        Set(9, Wide(9, 255), Wide(10, 255));
+        table.Delete(table.FindRowByPrimaryKey(7)!);
+        expected.Remove(7);
+        table.Insert(new Row { ["Id"] = 31, ["A"] = "after", ["N"] = 31 });
+        expected[31] = ("after", null, 31);
+
+        Assert.Equal(new[] { "Id", "A", "D", "N" }, table.Columns.Select(c => c.Name));
+        var rows = table.Rows.ToDictionary(r => (int)r["Id"]!);
+        Assert.Equal(expected.Keys.OrderBy(k => k), rows.Keys.OrderBy(k => k));
+        foreach (var pair in expected)
+        {
+            Assert.Equal(pair.Value.A, rows[pair.Key]["A"]);
+            Assert.Equal(pair.Value.D, rows[pair.Key]["D"]);
+            Assert.Equal(pair.Value.N, rows[pair.Key]["N"]);
+            Assert.Equal(4, rows[pair.Key].Count);
+        }
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 30);
+    }
+
+    // ── Tables whose definition was not read whole ───────────────────────────
+
+    private static int IndexOf(byte[] haystack, byte[] needle)
+    {
+        for (int i = 0; i + needle.Length <= haystack.Length; i++)
+            if (haystack.AsSpan(i, needle.Length).SequenceEqual(needle)) return i;
+        return -1;
+    }
+
+    [Fact]
+    public void A_row_of_a_table_whose_columns_were_not_all_read_is_neither_updated_nor_deleted()
+    {
+        // The definition's last column name runs past its page, as only a damaged one's does. The table has no
+        // index: nothing but its columns says its rows are not to be changed.
+        using (var db = Database.Create(_path))
+        {
+            var table = db.CreateTable("Cut", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo),
+                new ColumnDefinition("LastColumnOfCut", DataType.Int32),
+            });
+            table.Insert(new Row { ["Id"] = 1, ["Notes"] = new string('n', 3000), ["LastColumnOfCut"] = 7 });
+            table.Insert(new Row { ["Id"] = 2, ["Notes"] = "short", ["LastColumnOfCut"] = 8 });
+            int tdef = table.Definition.TdefPageNumber;
+            byte[] page = db.File.ReadPage(tdef);
+            int at = IndexOf(page, System.Text.Encoding.Unicode.GetBytes("LastColumnOfCut"));
+            Assert.True(at > 2, "the column's name was not found in its definition");
+            page[at - 2] = 0xFF;
+            page[at - 1] = 0x7F;
+            db.File.WritePage(tdef, page);
+        }
+
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("Cut");
+            Assert.True(table.Definition.HasUnreadColumns);
+            Assert.False(table.Definition.HasUnreadIndexes);
+            Assert.Equal(new object?[] { 1, 2 }, table.Rows.Select(r => r["Id"]));
+
+            var row = table.Rows.First();
+            row["Id"] = 10;
+            Assert.Throws<NotSupportedException>(() => table.Update(row));
+            Assert.Throws<NotSupportedException>(() => table.Delete(table.Rows.First()));
+            var cursor = table.CreateCursor();
+            Assert.True(cursor.MoveNext());
+            Assert.Throws<NotSupportedException>(() => cursor.UpdateCurrentRow(new Row { ["Id"] = 10 }));
+            Assert.Throws<NotSupportedException>(() => cursor.DeleteCurrentRow());
+            Assert.Throws<NotSupportedException>(() => table.Insert(new Row { ["Id"] = 3 }));
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+    }
+
+    [Fact]
+    public void A_row_of_a_table_whose_definition_goes_on_to_a_page_not_its_own_is_neither_updated_nor_deleted()
+    {
+        string name = MultiPageDefinitionTests.LongName(0);
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var columns = new List<ColumnDefinition> { new("Id", DataType.Int32) };
+            columns.AddRange(Enumerable.Range(0, 120).Select(n => new ColumnDefinition(MultiPageDefinitionTests.LongName(n), DataType.Int32)));
+            var table = db.CreateTable("Long names", columns, "Id");
+            for (int i = 1; i <= 3; i++) table.Insert(new Row { ["Id"] = i, [name] = 10 * i });
+            var pages = MultiPageDefinitionTests.PagesOf(db, "Long names");
+            byte[] page = db.File.ReadPage(pages[1]);
+            ByteUtil.PutInt(page, 4, db.File.PageCount + 100);       // its next page is one the file has not
+            db.File.WritePage(pages[1], page);
+        }
+
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("Long names");
+            Assert.True(table.Definition.HasUnreadColumns);
+            var row = table.Rows.First();
+            row[name] = 99;
+            Assert.Throws<NotSupportedException>(() => table.Update(row));
+            Assert.Throws<NotSupportedException>(() => table.Delete(table.Rows.First()));
+            var cursor = table.CreateCursor();
+            Assert.True(cursor.MoveNext());
+            Assert.Throws<NotSupportedException>(() => cursor.UpdateCurrentRow(new Row { [name] = 5 }));
+            Assert.Throws<NotSupportedException>(() => cursor.DeleteCurrentRow());
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+    }
+
     [Fact]
     public void An_insert_that_fails_while_it_is_written_is_taken_back()
     {

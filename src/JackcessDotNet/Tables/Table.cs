@@ -802,8 +802,7 @@ public sealed class Table
     /// <param name="values">The values the update assigns, by column name.</param>
     internal int UpdateAt(int rowPtr, Row values)
     {
-        _file.EnsureWritable();
-        _indexes.EnsureCanBeKept();
+        EnsureRowsCanChange();
 
         // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
         var newValues = RowValues.AsWritten(values, _definition.Columns);
@@ -865,13 +864,29 @@ public sealed class Table
     }
 
     /// <summary>
+    /// Refuses, before anything is read or written, to change a row of a table whose rows this library does not
+    /// change: a file it only reads; indexes it cannot keep, or did not read whole; or a definition whose columns
+    /// it did not read whole - one that is damaged, or goes on to a page that is not its own - where a row would be
+    /// rewritten by some of its columns and the long values of the others left behind. An insert is refused for
+    /// each of these too (<see cref="InsertRefusal"/>).
+    /// </summary>
+    /// <exception cref="NotSupportedException">The table's rows are not changed. Nothing is.</exception>
+    internal void EnsureRowsCanChange()
+    {
+        _file.EnsureWritable();
+        _indexes.EnsureCanBeKept();
+        if (_definition.HasUnreadColumns)
+            throw new NotSupportedException(
+                $"No row of table '{Name}' is changed: its definition was not read whole, so its columns were not all read. Nothing was changed.");
+    }
+
+    /// <summary>
     /// Deletes the row at <paramref name="rowPtr"/> as <see cref="Delete"/> describes: through the foreign-key
     /// enforcer for a table in a relationship that is enforced.
     /// </summary>
     internal void DeleteAt(int rowPtr)
     {
-        _file.EnsureWritable();
-        _indexes.EnsureCanBeKept();
+        EnsureRowsCanChange();
         if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
         {
             foreignKeys.Delete(this, rowPtr);

@@ -635,7 +635,9 @@ internal sealed class ForeignKeyEnforcer
 
             foreach (var (table, rows) in changed)
             {
-                table.IndexEntries.EnsureCanBeKept();
+                // A table whose rows are not changed - its indexes or its columns not all read - refuses a cascade
+                // that reaches it, deleting or rewriting, before anything is written.
+                table.EnsureRowsCanChange();
                 if (rows.All(r => r.Deleted)) continue;
                 // A definition rows cannot be written by refuses the change here, before anything is written.
                 var encoder = new RowEncoder(table.File.Format, table.Definition);
