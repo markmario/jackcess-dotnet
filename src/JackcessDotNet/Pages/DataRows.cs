@@ -35,7 +35,8 @@ internal static class DataRows
     /// <summary>
     /// As <see cref="Read(PageFile, byte[], int)"/>, noting in <paramref name="moved"/> every slot an overflow
     /// pointer led to - the last holds the row's values. They carry the mark of values kept out of a scan (0x8000):
-    /// when the row is deleted or rewritten they are marked deleted with it (<see cref="MarkDeleted"/>).
+    /// when the row is deleted, or its values are written elsewhere, they are emptied and marked deleted
+    /// (<see cref="DataPageWriter"/>).
     /// </summary>
     public static byte[]? Read(PageFile file, byte[] page, int rowIndex, List<(int Page, int Row)>? moved)
     {
@@ -74,24 +75,6 @@ internal static class DataRows
             moved?.Add((toPage, toRow));
             rowIndex = toRow;
             slot = (ushort)(Slot(page, rowIndex, format) & ~JetFormat.DeletedRowFlag);
-        }
-    }
-
-    /// <summary>
-    /// Marks deleted the slots a deleted or rewritten row's values had been moved to (<paramref name="moved"/>, from
-    /// <see cref="Read(PageFile, byte[], int, List{ValueTuple{int, int}})"/>). Left with 0x8000 alone they would still hold the row's
-    /// long-value references, with nothing pointing at them: the references of a row that is gone, or, after an
-    /// update that kept them, the same ones the row now has. Access was not seen to act on such a slot (it reads,
-    /// edits and compacts the table either way); it is marked deleted so that there is nothing for it to act on.
-    /// </summary>
-    public static void MarkDeleted(PageFile file, IEnumerable<(int Page, int Row)> moved)
-    {
-        foreach (var (pageNumber, row) in moved)
-        {
-            byte[] page = file.ReadPage(pageNumber);
-            int at = file.Format.OffsetDataRowTable + row * JetFormat.SizeRowEntry;
-            ByteUtil.PutUShort(page, at, (ushort)(ByteUtil.GetUShort(page, at) | JetFormat.DeletedRowFlags));
-            file.WritePage(pageNumber, page);
         }
     }
 

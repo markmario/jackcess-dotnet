@@ -137,29 +137,58 @@ internal sealed class DataPageWriter
     /// </summary>
     internal const int MaxRowsPerPage = 255;
 
+    /// <summary>
+    /// The page a row of <paramref name="rowDataSize"/> bytes goes to - a new row, or the values of a row an update
+    /// makes too long for its page - as Access was measured to choose one (DAO 16, .mdb and .accdb, #58): the lowest
+    /// page the table's free-space map lists. A listed page without room for the row and its slot, or holding as many
+    /// rows as a page can, leaves the map, and the next is tried; a page leaves the map so and no other way, not
+    /// because a row filled it. With none, a new page, which the map lists only when it has room, the row on it, for
+    /// another row of its size. The map is kept in memory for the session (<see cref="ListedDataPages"/>), so finding
+    /// the page reads the pages tried and nothing else, however large the table: in a table nothing has been deleted
+    /// from, the last page, so rows stay in the order they were inserted.
+    /// </summary>
     private int FindOrAllocateDataPage(TableDefinition tableDef, int rowDataSize, JetFormat format)
     {
         int needed = rowDataSize + JetFormat.SizeRowEntry;   // data bytes + one slot
+        var room   = _file.ListedDataPages;
 
-        // The table's last page, when it is one of its data pages with room - as Access and Java Jackcess add rows.
-        // Looking through every owned page for room read the whole table on every insert, so each insert was
-        // slower than the last, and it put rows ahead of rows inserted before them.
-        int last = UsageMap.GetLastPage(_file, tableDef.UmapPageNumber, tableDef.OwnedPagesRow);
-        if (last >= 0)
+        if (room.Of(tableDef) is { } listed)
         {
-            byte[] dp = _file.ReadPage(last);
-            if (dp[0] == JetFormat.PageTypeData
-                && ByteUtil.GetInt(dp, JetFormat.OffsetDataTdefPage) == tableDef.TdefPageNumber
-                && ByteUtil.GetShort(dp, JetFormat.OffsetDataFreeSpace) >= needed
-                && ByteUtil.GetShort(dp, format.OffsetDataNumRows) < MaxRowsPerPage)
-                return last;
+            while (listed.Count > 0)
+            {
+                int candidate = listed.Min;
+                if (HasRoom(tableDef, candidate, needed, format)) return candidate;
+                room.Delist(tableDef, candidate);
+            }
+        }
+        else
+        {
+            // A table whose definition names no free-space map this library keeps: its last page, when it has room.
+            int last = UsageMap.GetLastPage(_file, tableDef.UmapPageNumber, tableDef.OwnedPagesRow);
+            if (last >= 0 && HasRoom(tableDef, last, needed, format)) return last;
         }
 
-        // Allocate a fresh data page and register it in the usage-map.
         int newPage = _allocator.AllocateDataPage(tableDef.TdefPageNumber);
         UsageMap.AddPage(_file, _allocator, tableDef.UmapPageNumber, tableDef.OwnedPagesRow, newPage);
-
+        room.Owned(tableDef, newPage);
+        if (format.DataPageInitialFreeSpace - needed >= needed)
+            room.List(tableDef, newPage, _allocator);
         return newPage;
+    }
+
+    /// <summary>
+    /// Whether page <paramref name="pageNumber"/> takes a row of <paramref name="needed"/> bytes, its slot included: one
+    /// of the table's data pages, in its owned-pages map, with that room and fewer rows than a page can hold.
+    /// </summary>
+    private bool HasRoom(TableDefinition table, int pageNumber, int needed, JetFormat format)
+    {
+        if (pageNumber <= 0 || pageNumber >= _file.PageCount) return false;
+        byte[] page = _file.ReadPage(pageNumber);
+        return page[0] == JetFormat.PageTypeData
+            && ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) == table.TdefPageNumber
+            && ByteUtil.GetShort(page, JetFormat.OffsetDataFreeSpace) >= needed
+            && ByteUtil.GetShort(page, format.OffsetDataNumRows) < MaxRowsPerPage
+            && _file.ListedDataPages.IsOwned(table, pageNumber);
     }
 
     private int WriteRowOnPage(int pageNumber, byte[] rowData, int tdefPageNumber, JetFormat format, ushort slotFlags = 0)
@@ -305,8 +334,9 @@ internal sealed class DataPageWriter
     /// (0x8000), and its own slot is left four bytes that say where - [row:1][page:3] - marked 0x4000.</item>
     /// <item>A row whose values are already elsewhere comes home when it fits its own page again; otherwise it
     /// is rewritten where its values are when it fits that page, and failing that moves to another. The place
-    /// it leaves is emptied and marked deleted (0xC000, no bytes), as Access leaves it.</item>
+    /// it leaves is emptied and marked deleted (0xC000, no bytes), as Access leaves it (<see cref="Leave"/>).</item>
     /// </list>
+    /// Another page is found as a new row's is (<see cref="FindOrAllocateDataPage"/>).
     /// </summary>
     private void Put(TableDefinition table, int pageNumber, int rowIndex, byte[] rowData)
     {
@@ -319,7 +349,7 @@ internal sealed class DataPageWriter
         if (TryReplace(home, rowIndex, rowData, 0))
         {
             _file.WritePage(pageNumber, home);
-            Empty(moved);
+            Leave(table, moved, cameHome: true);
             return;
         }
         if (moved.Count > 0)
@@ -340,7 +370,8 @@ internal sealed class DataPageWriter
             throw new NotSupportedException(
                 $"The row at page {pageNumber}, row {rowIndex} is not updated: it no longer fits its page, which has no room for a pointer to another. Nothing was changed.");
 
-        Empty(moved);
+        // The values' new place is found before their old one is left, as Access moves them on: a page this update
+        // leaves with no row on it is not where its row goes.
         int target    = FindOrAllocateDataPage(table, rowData.Length, format);
         int targetRow = WriteRowOnPage(target, rowData, table.TdefPageNumber, format, JetFormat.DeletedRowFlag);
 
@@ -352,17 +383,54 @@ internal sealed class DataPageWriter
         where[3] = (byte)(target >> 16);
         TryReplace(home, rowIndex, where, JetFormat.OverflowRowFlag);
         _file.WritePage(pageNumber, home);
+        Leave(table, moved, cameHome: false);
     }
 
-    /// <summary>Empties the slots a row's values were moved to and marks them deleted, as Access leaves them.</summary>
-    private void Empty(List<(int Page, int Row)> moved)
+    /// <summary>
+    /// Empties the slots a row's values were moved to, once they are elsewhere, and marks them deleted, as Access
+    /// leaves them (measured, DAO 16, #58). A page with a row left on it is listed in the table's free-space map when
+    /// the row came home (<paramref name="cameHome"/>) and the page had no room, before, for what it lost and a slot -
+    /// as a delete lists one (<see cref="Remove"/>) - and is not when the values moved on to another page.
+    /// <para>
+    /// A page left with no row on it Access gives back to the file, out of the table's maps, and takes again for the
+    /// next page it needs, its slots begun again from the first: that is what keeps a row updated back and forth from
+    /// growing Access's file. This library adds every page at the end of the file and takes none back from it, so it
+    /// keeps such a page for the table, begun again with no slots, and lists it: the next row, or values moved, go to
+    /// it as they would to the page Access takes back. Every slot on it is a deleted one - values moved there and gone
+    /// again, which only their row's pointer named, or a row deleted with its index entries - so, as in the page Access
+    /// begins again, a slot number is used again only where nothing in the file names it.
+    /// </para>
+    /// </summary>
+    private void Leave(TableDefinition table, List<(int Page, int Row)> moved, bool cameHome)
     {
+        var room = _file.ListedDataPages;
         foreach (var (pageNumber, row) in moved)
         {
-            byte[] page = _file.ReadPage(pageNumber);
+            byte[] page    = _file.ReadPage(pageNumber);
+            int roomBefore = ByteUtil.GetShort(page, JetFormat.OffsetDataFreeSpace);
+            int lost       = UsageMap.GetRowLength(page, row, _file.Format);
             TryReplace(page, row, Array.Empty<byte>(), JetFormat.DeletedRowFlags);
+            if (!HoldsARow(page))
+            {
+                _file.WritePage(pageNumber, PageAllocator.NewDataPage(_file.Format, table.TdefPageNumber));
+                room.List(table, pageNumber, _allocator);
+                continue;
+            }
             _file.WritePage(pageNumber, page);
+            if (cameHome && roomBefore < lost + JetFormat.SizeRowEntry)
+                room.List(table, pageNumber, _allocator);
         }
+    }
+
+    /// <summary>Whether a slot of <paramref name="page"/> is not a deleted one: a row, a row's pointer, or values moved there.</summary>
+    private bool HoldsARow(byte[] page)
+    {
+        var format = _file.Format;
+        int rows   = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+        for (int r = 0; r < rows; r++)
+            if ((ByteUtil.GetUShort(page, format.OffsetDataRowTable + r * JetFormat.SizeRowEntry) & JetFormat.DeletedRowFlags) != JetFormat.DeletedRowFlags)
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -450,14 +518,31 @@ internal sealed class DataPageWriter
         // Free any LVAL chains referenced by this row.
         FreeRowLvalChains(table, rowBytes, decoder);
 
-        // Mark the slot as deleted, and with it wherever Access had moved the row's values to.
+        // The row leaves its page, and its values the page they had been moved to.
         var moved = new List<(int Page, int Row)>();
         DataRows.Read(_file, page, rowIndex, moved);
-        int slotOff = _file.Format.OffsetDataRowTable + rowIndex * JetFormat.SizeRowEntry;
-        ByteUtil.PutUShort(page, slotOff, (ushort)(ByteUtil.GetUShort(page, slotOff) | JetFormat.DeletedRowFlags));
-        _file.WritePage(pageNumber, page);
-        DataRows.MarkDeleted(_file, moved);
+        Remove(table, pageNumber, page, rowIndex);
+        foreach (var (movedPage, movedRow) in moved)
+            Remove(table, movedPage, _file.ReadPage(movedPage), movedRow);
         return values;
+    }
+
+    /// <summary>
+    /// Takes the bytes of a deleted row, or of the values it had moved to another page, off <paramref name="page"/>,
+    /// as Access deletes a row (measured, DAO 16, #58): the page's other rows close up over them, and the slot stays -
+    /// marked deleted, with both flag bits, and no bytes - and is never used again. The page is listed in the table's
+    /// free-space map when it had no room, before, for what it lost and a slot: Access lists a page so, and only so, for
+    /// a delete, whatever room the delete leaves it (at a byte either side, for rows of 101 to 401 bytes). A delete
+    /// gives no page back to the file, even one it leaves with no row: Access keeps such a page for the table.
+    /// </summary>
+    private void Remove(TableDefinition table, int pageNumber, byte[] page, int rowIndex)
+    {
+        int roomBefore = ByteUtil.GetShort(page, JetFormat.OffsetDataFreeSpace);
+        int lost       = UsageMap.GetRowLength(page, rowIndex, _file.Format);
+        TryReplace(page, rowIndex, Array.Empty<byte>(), JetFormat.DeletedRowFlags);
+        _file.WritePage(pageNumber, page);
+        if (roomBefore < lost + JetFormat.SizeRowEntry)
+            _file.ListedDataPages.List(table, pageNumber, _allocator);
     }
 
     /// <summary>
