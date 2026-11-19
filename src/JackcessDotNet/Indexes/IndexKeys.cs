@@ -81,21 +81,16 @@ internal static class IndexKeys
 
     /// <summary>
     /// True when the key <see cref="Encode"/> makes of <paramref name="values"/> is the key Access writes for them,
-    /// as far as it has been measured against ACE: the keys of every type this library writes, but for a Date/Time
-    /// Extended column, which Access keys by the bytes it stored, in either of two forms, where this library keys
-    /// the date it reads as the first form (#51); and for a key cut at <see cref="MaxKeyLength"/> in an index of
-    /// several columns, only where those columns are Text and Long, the shapes the cut was measured in (#56). An
-    /// entry is judged by such a key alone: anywhere else, what an index holds for a row is believed, and the row is
-    /// not looked for through the index.
+    /// as far as it has been measured against ACE: the keys of every type this library writes - a Date/Time Extended
+    /// value's made of the bytes the row stores, as Access makes it (#51) - but for a key cut at
+    /// <see cref="MaxKeyLength"/> in an index of several columns, only where those columns are Text and Long, the
+    /// shapes the cut was measured in (#56). An entry is judged by such a key alone: anywhere else, what an index
+    /// holds for a row is believed, and the row is not looked for through the index.
     /// </summary>
     public static bool MatchesAccess(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
-    {
-        foreach (var column in columns)
-            if (column.Column.DataType == DataType.DateTimeExtended) return false;
-        return columns.Count == 1
-            || columns.All(c => c.Column.DataType is DataType.Text or DataType.Int32)
-            || !IsCut(columns, values);
-    }
+        => columns.Count == 1
+        || columns.All(c => c.Column.DataType is DataType.Text or DataType.Int32)
+        || !IsCut(columns, values);
 
     /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
     internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
@@ -254,8 +249,10 @@ internal static class IndexKeys
             case DataType.DateTimeExtended:
                 // The 42 bytes the row stores, in 8-byte segments each followed by a length byte: 9 for a
                 // segment with more after it, and after the last, which is filled out with zeros, the bytes it
-                // has of the value - 2. Text, so the keys sort as the dates do.
-                byte[] stored = ExtendedDateTimeCodec.Encode((DateTime)value!);
+                // has of the value - 2. Access keys the bytes in whichever form they are, and whatever date they
+                // say (#51), so the two forms of one date are two keys and the keys sort as the bytes do; a
+                // caller's DateTime is keyed in the form Access's INSERT writes, as Access keys a date it is given.
+                byte[] stored = value is StoredExtendedDate row ? row.Bytes : ExtendedDateTimeCodec.Encode((DateTime)value!);
                 bytes = new byte[(stored.Length / 8 + 1) * 9];
                 for (int segment = 0; segment * 8 < stored.Length; segment++)
                 {

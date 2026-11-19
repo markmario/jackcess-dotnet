@@ -200,6 +200,14 @@ internal sealed class IndexWriter
     /// pages up the tree as they fill. Returns whether the tree holds another entry under <paramref name="key"/>,
     /// as the pages read on the way down show it, with no page read to find out: the entry before the new one
     /// and the entry after it.
+    /// <para>
+    /// An entry the tree holds already is not added again: a tree holds each entry once. Access walks a row whose
+    /// entry an index holds twice twice; deleting the row it takes one of the two out, and the other, pointing at no
+    /// row, is a child for which it refuses to delete the row's parent; and DAO compacts a file whose primary key holds
+    /// one without the key (measured). Such an entry is where the new one would go, in the leaf the way down comes to,
+    /// so finding it reads no page; whether another entry is under the key then reads the next leaf when the entry is
+    /// its leaf's last, as <see cref="Remove(Target, byte[], int, out bool)"/> does.
+    /// </para>
     /// </summary>
     internal bool Insert(Target target, byte[] key, int rowPointer)
     {
@@ -216,6 +224,12 @@ internal sealed class IndexWriter
         }
         int at = FirstAtLeast(page.Entries, entry);
         if (at < 0) at = page.Entries.Count;
+        if (at < page.Entries.Count && Compare(page.Entries[at], entry) == 0)
+        {
+            if (HasNeighbourUnder(key, page.Entries, at - 1, at + 1, path)) return true;
+            return at == page.Entries.Count - 1 && page.Next > 0
+                && ReadFor(target, page.Next).Entries is { Count: > 0 } next && CompareBytes(next[0].Key, key) == 0;
+        }
         bool another = HasNeighbourUnder(key, page.Entries, at - 1, at, path);
         page.Entries.Insert(at, entry);
         page.Level = 0;

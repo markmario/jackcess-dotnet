@@ -112,20 +112,46 @@ changed since 1.2.2.
   entry that points at a row of the table is believed, as Access believes it: a row with its key is refused, and
   the entry stays, whatever this library makes of the row's values - its key for them may not be the one Access
   wrote, and an entry Access wrote taken out on that judgement is a row Access can then neither find nor update.
-  Only with `Database.VerifyIndexes`, and where the row's key is one this library makes as Access does (not a
-  Date/Time Extended column, #51; not a key cut at 510 bytes in an index of several columns other than Text and
-  Long), is such an entry the row's wrong one: a row with its key is taken, the entry goes, and the row is entered
-  under its own key. A removal that takes out a leaf's last entry reads the next leaf's first, one page more, for
-  another entry under the key. An index with no such entry costs nothing more to write to.
-- **A Date/Time Extended key is never looked for through an index**, and a row with one takes its entries with it
-  however ACE keyed them. ACE stores such a value in a second form after an SQL `UPDATE` and keys it by those
-  bytes (#51): a search by this library's key missed the row, so that, enforcing foreign keys, a parent was deleted
-  from under a child ACE had keyed so - ACE refuses that delete - and a removal by that key left the row's entry
-  pointing at no row, which ACE then listed as a row and took a child of. The table is read for such a key, as for
-  one no index can be searched for, with or without `Database.VerifyIndexes`. A row's entry is taken out under this
-  library's key, as any row's is, so a row in the form this library and ACE's `INSERT` write costs what a Date/Time
-  row does; only a row with no entry there, one ACE stored in its second form, has its entries found by the row they
-  point at, every leaf of the index read. This fixes a defect on `main`.
+  Only with `Database.VerifyIndexes`, and where the row's key is one this library makes as Access does (not a key
+  cut at 510 bytes in an index of several columns other than Text and Long), is such an entry the row's wrong one:
+  a row with its key is taken, the entry goes, and the row is entered under its own key. A removal that takes out
+  a leaf's last entry reads the next leaf's first, one page more, for another entry under the key. An index with
+  no such entry costs nothing more to write to. An update of a row whose wrong entry is moved enters the row under
+  its new key once, and an entry an index holds already is never added again; this fixes a defect on `main`, where
+  such a row was entered twice - by the move, which read the row as it was being written, and by the update - and
+  Access walked it twice, refused to delete a parent of it once it had deleted the row, and DAO compacted a file
+  whose primary key held such an entry without the key.
+- **A Date/Time Extended value is keyed by the 42 bytes its row stores, as Access keys it** (#51); this fixes a
+  defect on `main`. Access writes a date in more than one form - its `INSERT` the time of day in 100-nanosecond
+  units and a count of 7, its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset the time in whole seconds and
+  a count of 0 - and keys each by its bytes, not by the date they say: one date in two forms is two keys, which a
+  unique index and a primary key take, and a child whose bytes are another form of its parent's date has no parent
+  (Access refuses its insert, and a relationship created over it). This library keyed the date it read, in the
+  first form. So,
+  enforcing foreign keys, a parent was deleted from under a child ACE had keyed in the second form, and its entries
+  left pointing at no row; a child with a date its parent has in another form was taken; verifying its indexes, it
+  refused a row ACE takes beside one in the second form; and an index or a primary key added over rows in another
+  form held them under keys ACE does not look under, or refused a primary key over two forms of one date. Now a
+  row's key is made of its bytes, in whichever form they are, and a caller's `DateTime` is keyed in the first form,
+  which is what Access's `INSERT` writes and this library writes: every entry ACE made over rows in its two forms,
+  and in three more it reads a date from but does not write, is the key this library makes. Such an index is
+  searched for a relationship's rows and a unique index's duplicates as an index of any other type is. A
+  `DateTime` looked for through one - `Table.FindRowByPrimaryKey`, an index cursor's `FindRow`, `FindRowByEntry`
+  and `FindRowsByEntry` - is looked for under the key of each form, so a row ACE stored in its second form is
+  found, as a cursor over the table finds it (it was not); in a range's entry and given to
+  `FindClosestRowByEntry` it is the first form's key, as Access's `BETWEEN` through an index has it. A `Joiner`
+  joins a row read from a table on the bytes it stores. A row in the second form is deleted, or its date
+  rewritten, for what a Date/Time row costs, its entry found under the key of its bytes: at 5,000 rows 6 pages
+  where 86 were read, every leaf of the index. An entry a version of this library since 2930d3f made for a row in
+  another form - when it added the index or rewrote the row - is under the key of its date in the first form, or of
+  no value, and is looked for there, one way down the tree each, when the row has none under the key of its bytes.
+  A relationship's search for such a row, a unique index's for its duplicate and a `Joiner`'s by its bytes look
+  under the key of its date in the first form as well, each row found there read and compared by its bytes: looked
+  for under the key of its bytes alone, the child of a parent being deleted was missed, trusting the index - the
+  parent was deleted from under it, and a new date did not cascade to it - where `main` found it under the key it
+  had made. No search looks under the key of no value, under which every row with no value is, each of which would
+  be read: a row the versions from 2930d3f to db6f93b entered there is found when it is deleted or its date
+  rewritten, and by a search with `Database.VerifyIndexes`, and not by a search that trusts the index.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
@@ -220,8 +246,7 @@ changed since 1.2.2.
     exponent it is written with. Bytes longer than a Binary column are refused as text longer than its column is,
     with `ColumnValueTooLongException`.
 - **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
-  `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
-  which is not the key Access makes for it.
+  `UPDATE` leaves in a row, which was read as null. Its index key is made of its bytes, as Access makes it (#51).
 - **A new table or relationship has its owner's entry in `MSysACEs`**, with the others its container passes
   on, as Access gives them (#37). Without it, Access in an `.mdb` did not read a table this library made in a
   database DAO had created, nor drop a relationship it made.

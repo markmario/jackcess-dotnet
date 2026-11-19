@@ -38,6 +38,10 @@ namespace JackcessDotNet;
 /// that (<see cref="ReadsAs"/>): a row is read with its date rounded to the millisecond, and the date a caller
 /// has read from a row, or has written to one, finds that row again, which the double of a
 /// <see cref="DateTime"/> does not for a third of the dates Access computes.</item>
+/// <item>A Date/Time Extended is the 42 bytes the row stores (<see cref="StoredExtendedDate"/>). A
+/// <see cref="DateTime"/> looked for matches every row whose bytes say that date, in whichever form Access stored
+/// them, as Access's <c>=</c> matches them where no index answers it; the bytes a row stores match the rows that
+/// store exactly them, as a relationship matches a child to its parent (#51).</item>
 /// <item>A null is never a match: a row with no value in a column is not found by looking for null.</item>
 /// </list>
 /// </summary>
@@ -45,8 +49,8 @@ internal static class ValueMatch
 {
     /// <summary>
     /// Whether <paramref name="stored"/>, a row's value in <paramref name="column"/> as its index keys are made
-    /// of it (<see cref="RowDecoder.DecodeForKey"/>: a Date/Time as the double stored), is the value
-    /// <paramref name="asked"/> for.
+    /// of it (<see cref="RowDecoder.DecodeForKey"/>: a Date/Time as the double stored, a Date/Time Extended as its
+    /// 42 bytes), is the value <paramref name="asked"/> for.
     /// </summary>
     public static bool Matches(Column column, object? stored, object? asked)
     {
@@ -60,6 +64,10 @@ internal static class ValueMatch
                     if (asked is DateTime date) return ReadsAs(has) == AsStored(date);
                     return IsNumber(asked!)
                         && BitConverter.DoubleToInt64Bits(has) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture));
+                case DataType.DateTimeExtended:
+                    if (asked is StoredExtendedDate bytes) return bytes.Equals(stored);
+                    DateTime? says = stored is StoredExtendedDate extended ? extended.Date : stored as DateTime?;
+                    return asked is DateTime when && says == when;
                 case DataType.Text:
                 case DataType.Memo:
                     return SameText(column, Convert.ToString(stored, CultureInfo.InvariantCulture)!, Convert.ToString(asked, CultureInfo.InvariantCulture)!);
