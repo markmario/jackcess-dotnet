@@ -220,4 +220,33 @@ public sealed class CurrencyValueTests : IDisposable
         Assert.Equal(new[] { 1, 2 }, Ids(child.CreateIndexCursor("ByK").FindRowsByEntry(0.09375)));
         Assert.Throws<ConstraintViolationException>(() => parent.Delete(parent.FindRowByPrimaryKey(1.23465m)!));
     }
+
+    [Fact]
+    public void A_Currency_property_is_the_number_taken_to_four_places_as_Access_takes_it()
+    {
+        using (var db = Create(FileFormat.Access2010))
+        {
+            var table = CreateKeyed(db);
+            table.Properties.Set("Half", DataType.Currency, 0.03125);
+            table.Properties.Set("UnderAHalf", DataType.Currency, 0.00015);
+            table.Properties.Set("Long", DataType.Currency, 562949953421312.5);
+            table.Properties.Set("Decimal", DataType.Currency, 1.23465m);
+            table.Properties.Set("Text", DataType.Currency, "0.03125");
+            table.Properties.Set("Kept", 0.00025m);
+            foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 1e20, 922337203685477.58075m })
+                Assert.Throws<ArgumentException>(() => table.Properties.Set("Bad", DataType.Currency, bad));
+            table.Properties.Save();
+        }
+        using (var db = Database.Open(_file!))
+        {
+            var properties = db.GetTable("K").Properties;
+            Assert.Equal(0.0312m, properties["Half"]);
+            Assert.Equal(0.0001m, properties["UnderAHalf"]);
+            Assert.Equal(562949953421312.5m, properties["Long"]);
+            Assert.Equal(1.2346m, properties["Decimal"]);
+            Assert.Equal(0.0312m, properties["Text"]);
+            Assert.Equal(0.0002m, properties["Kept"]);
+            Assert.Null(properties["Bad"]);
+        }
+    }
 }
