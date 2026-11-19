@@ -467,8 +467,9 @@ internal sealed class TableIndexes
         TakeOutEntriesSeenToBeNoRows(writer);
         foreach (var entry in entries)
         {
-            // Another entry under the key of a row a unique index compares is not that of a row with the key, or
-            // the row would have been refused: it goes, or Access would not find the row through the index.
+            // Another entry under the key of a row a unique index compares points at no row, or - the index
+            // verified - is another row's wrong one, or the row would have been refused: it goes
+            // (TakeOutIfNoRows), or Access would not find the row through the index.
             bool another = writer.Insert(entry.Tree.Target, entry.Key, rowPointer);
             if (ComparesRows(entry) && (another || entry.IsCut))
                 TakeOutEntriesOfNoRow(writer, entry, rowPointer);
