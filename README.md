@@ -739,7 +739,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
   9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
   it has no time zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row
-  stores, in whichever form Access wrote them, as Access makes it.
+  stores, in whichever form Access wrote them, as Access makes it. A value DAO's `AddNew` stored, in a layout of
+  its own, is read as null ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)).
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
