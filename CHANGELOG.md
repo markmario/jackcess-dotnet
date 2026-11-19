@@ -28,8 +28,9 @@ changed since 1.2.2.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
   `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
   by side, and checks the packages each target of the package depends on.
-- **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
-  format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
+- **Files Access accepts.** Every change listed under
+  [What this fork changes](https://github.com/markmario/jackcess-dotnet/blob/main/docs/differences.md#what-this-fork-changes):
+  files up to the format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
   Extended columns, and foreign keys enforced.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
@@ -162,7 +163,8 @@ changed since 1.2.2.
   made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
   German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
   General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
-  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  are written to, where they were refused. Every other order is refused as before;
+  [Indexes and keys](https://github.com/markmario/jackcess-dotnet/blob/main/docs/indexes.md#refused) lists the ones
   measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
   General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
   and ß among accented letters).
@@ -295,7 +297,7 @@ changed since 1.2.2.
   - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
     searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
     non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
-    "stale integrity hash" this README warned of does not arise.
+    "stale integrity hash" the README of 1.2.2 warned of does not arise.
 
 ### Breaking changes to the public API
 
