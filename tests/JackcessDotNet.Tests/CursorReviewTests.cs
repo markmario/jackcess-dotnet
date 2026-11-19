@@ -91,4 +91,112 @@ public sealed class CursorReviewTests : IDisposable
         Assert.Equal(new[] { 1, 2, 3 }, table.CreateIndexCursor("ByD", new IndexRange { EndEntry = E(new DateTime(100, 1, 2)) })
             .Select(r => (int)r["L"]!).OrderBy(l => l));
     }
+
+    // ── What an update of a Row assigns ──────────────────────────────────────
+
+    [Fact]
+    public void A_column_assigned_the_value_it_has_is_checked_and_one_not_assigned_is_not()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 20 }, new ColumnDefinition("C", DataType.Text) { MaxLength = 20 },
+        }, "Id");
+        table.Insert(new Row { ["Id"] = 1, ["A"] = "", ["B"] = "b", ["C"] = null });
+        table.Columns.First(c => c.Name == "A").Properties.Set("AllowZeroLength", false);
+        table.Columns.First(c => c.Name == "C").Properties.Set("Required", true);
+        table.Properties.Save();
+        var before = IndexChecks.AllPages(db);
+
+        // Access refuses an update that assigns the column the value it already has (DAO: Edit, the field given
+        // its own value, Update; SQL: UPDATE T SET A = '', and SET A = A), however it came to be given it...
+        var row = table.FindRowByPrimaryKey(1)!;
+        row["A"] = "";
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+        row = table.FindRowByPrimaryKey(1)!;
+        row["A"] = "x";
+        row["A"] = "";
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+        row = table.FindRowByPrimaryKey(1)!;
+        row["C"] = null;
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+        row = table.FindRowByPrimaryKey(1)!;
+        row.Remove("C");
+        row.Add("C", null);
+        Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+        IndexChecks.AssertUnchanged(before, db);
+
+        // ...and takes one that assigns another column only, or nothing.
+        table.Update(table.FindRowByPrimaryKey(1)!);
+        row = table.FindRowByPrimaryKey(1)!;
+        row["B"] = "b2";
+        table.Update(row);
+        Assert.Equal("|b2|", string.Join("|", table.FindRowByPrimaryKey(1)!.Values.Skip(1)));
+    }
+
+    [Fact]
+    public void A_column_assigned_is_written_when_it_is_not_what_the_file_has()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 20 },
+            new ColumnDefinition("Bin", DataType.Binary) { MaxLength = 8 }, new ColumnDefinition("Ole", DataType.OleObject),
+        }, "Id");
+        table.Insert(new Row { ["Id"] = 1, ["A"] = "a", ["Bin"] = new byte[] { 1, 2, 3 }, ["Ole"] = new byte[] { 4, 5, 6 } });
+
+        // Another Row changed the column in between: assigning the value this one was read with writes it.
+        var stale = table.FindRowByPrimaryKey(1)!;
+        var other = table.FindRowByPrimaryKey(1)!;
+        other["A"] = "other";
+        table.Update(other);
+        stale["A"] = "a";
+        table.Update(stale);
+        Assert.Equal("a", table.FindRowByPrimaryKey(1)!["A"]);
+
+        // A byte array changed in place and given to the row again is written; one only changed in place is not.
+        var row = table.FindRowByPrimaryKey(1)!;
+        var bin = (byte[])row["Bin"]!;
+        var ole = (byte[])row["Ole"]!;
+        bin[0] = 9; ole[0] = 9;
+        row["Bin"] = bin;
+        row["Ole"] = ole;
+        table.Update(row);
+        Assert.Equal(new byte[] { 9, 2, 3 }, table.FindRowByPrimaryKey(1)!["Bin"]);
+        Assert.Equal(new byte[] { 9, 5, 6 }, table.FindRowByPrimaryKey(1)!["Ole"]);
+        row = table.FindRowByPrimaryKey(1)!;
+        ((byte[])row["Bin"]!)[0] = 7;
+        table.Update(row);
+        Assert.Equal(new byte[] { 9, 2, 3 }, table.FindRowByPrimaryKey(1)!["Bin"]);
+
+        // Nothing assigned, or a column assigned what the file holds: nothing written.
+        long writes = db.File.WriteCount;
+        table.Update(table.FindRowByPrimaryKey(1)!);
+        row = table.FindRowByPrimaryKey(1)!;
+        row["A"] = "a";
+        row["Bin"] = new byte[] { 9, 2, 3 };
+        table.Update(row);
+        Assert.Equal(writes, db.File.WriteCount);
+    }
+
+    [Fact]
+    public void A_joiner_joins_on_the_date_a_row_has_been_given()
+    {
+        using var db = Database.Create(_path);
+        var from = db.CreateTable("F", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", DataType.DateTime) }, "Id");
+        var to = db.CreateTable("O", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", DataType.DateTime) },
+            new[] { "Id" }, new[] { new IndexDefinition("ByD", "D") });
+        var first = new DateTime(2024, 1, 1);
+        from.Insert(new Row { ["Id"] = 1, ["D"] = first });
+        to.Insert(new Row { ["Id"] = 10, ["D"] = first });
+        to.Insert(new Row { ["Id"] = 20, ["D"] = first.AddDays(1) });
+
+        var join = new Joiner(from, new[] { "D" }, to, new[] { "D" });
+        var row = from.FindRowByPrimaryKey(1)!;
+        Assert.Equal(10, join.FindFirstRow(row)?["Id"]);
+        row["D"] = first.AddDays(1);
+        Assert.Equal(20, join.FindFirstRow(row)?["Id"]);
+        Assert.Equal(new[] { 20 }, join.FindRows(row).Select(r => (int)r["Id"]!));
+    }
 }

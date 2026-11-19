@@ -24,7 +24,10 @@ namespace JackcessDotNet;
 /// <para>
 /// The entries keep the order they were added in. Changing a row changes nothing in the file until it is given
 /// to an insert or an update. A row that was read knows where it was read from (<see cref="Id"/>), which is how
-/// <see cref="Table.Update"/> and <see cref="Table.Delete"/> find it.
+/// <see cref="Table.Update"/> and <see cref="Table.Delete"/> find it, and which of its columns have been given a
+/// value since - with the indexer or <see cref="Add"/>, whatever the value - which are the columns
+/// <see cref="Table.Update"/> assigns. A value changed in place and not given to the row again (a byte array whose
+/// bytes are changed) is not one of them.
 /// </para>
 /// </summary>
 public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<string, object?>
@@ -37,37 +40,31 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     private Table? _source;
     private int    _pointer;
 
-    // The row as it was read, kept from the moment it is first changed: what an update compares it with, to
-    // write the values that changed and no others.
-    private KeyValuePair<string, object?>[]? _asRead;
+    // The columns of a row that was read that have been given a value since - with the indexer or Add, whatever
+    // the value: what an update assigns, as Access's Edit and Update assign the fields given a value in between.
+    private HashSet<string>? _assigned;
 
-    private void BeforeChange()
+    private void Assigned(string columnName)
     {
-        if (_source is not null && _asRead is null) _asRead = _entries.ToArray();
+        if (_source is not null) (_assigned ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(columnName);
     }
 
     /// <summary>
-    /// The entries whose values are not what the row was read with: every one of a column it was not read with,
-    /// and none for a row that has not been changed. A byte array is compared by what it holds when it was
-    /// replaced; one changed in place is the array that was read, and is not seen to have changed.
+    /// The entries of the columns given a value since the row was read, in the row's order, with the values they
+    /// have now - the value it was read with among them: what <see cref="Table.Update"/> assigns. Empty for a
+    /// row nothing has been given to since. A column taken out of the row is not among them.
     /// </summary>
-    internal Row ChangesSinceRead()
+    internal Row AssignedSinceRead()
     {
-        var changes = new Row();
-        if (_asRead is null) return changes;
+        var assigned = new Row();
+        if (_assigned is null) return assigned;
         foreach (var entry in _entries)
-        {
-            bool found = false;
-            foreach (var was in _asRead)
-            {
-                if (!string.Equals(was.Key, entry.Key, StringComparison.OrdinalIgnoreCase)) continue;
-                found = ValueMatch.IsAsRead(was.Value, entry.Value);
-                break;
-            }
-            if (!found) changes[entry.Key] = entry.Value;
-        }
-        return changes;
+            if (_assigned.Contains(entry.Key)) assigned.Add(entry.Key, entry.Value);
+        return assigned;
     }
+
+    /// <summary>Whether <paramref name="columnName"/> has been given a value since the row was read (<see cref="AssignedSinceRead"/>).</summary>
+    internal bool WasAssigned(string columnName) => _assigned?.Contains(columnName) == true && _places.ContainsKey(columnName);
 
     /// <summary>
     /// Where the row is in the table it was read from, or null for a row that was not read from a table: one a
@@ -85,9 +82,9 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// <summary>Notes that the row is the one at <paramref name="pointer"/> in <paramref name="source"/>.</summary>
     internal void ReadFrom(Table source, int pointer)
     {
-        _source  = source;
-        _pointer = pointer;
-        _asRead  = null;
+        _source   = source;
+        _pointer  = pointer;
+        _assigned = null;
     }
 
     /// <summary>Notes that the row is in no table any longer: it was deleted.</summary>
@@ -136,7 +133,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         set
         {
             if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-            BeforeChange();
+            Assigned(columnName);
             if (_places.TryGetValue(columnName, out int at))
             {
                 // The entry keeps the name it was added under.
@@ -206,7 +203,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
         if (_places.ContainsKey(columnName))
             throw new ArgumentException($"The row already has a value for column '{columnName}'.", nameof(columnName));
-        BeforeChange();
+        Assigned(columnName);
         _places.Add(columnName, _entries.Count);
         _entries.Add(new KeyValuePair<string, object?>(columnName, value));
     }
@@ -240,7 +237,6 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
         if (!_places.TryGetValue(columnName, out int at)) return false;
 
-        BeforeChange();
         _entries.RemoveAt(at);
         _places.Remove(columnName);
         for (int i = at; i < _entries.Count; i++)
@@ -251,7 +247,6 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// <summary>Takes every column out of the row.</summary>
     public void Clear()
     {
-        BeforeChange();
         _entries.Clear();
         _places.Clear();
     }

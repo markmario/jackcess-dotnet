@@ -630,17 +630,22 @@ public sealed class Table
 
     /// <summary>
     /// Updates <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or
-    /// <see cref="FindRowByPrimaryKey"/> - and changed since: the row in the file is given the values
-    /// <paramref name="row"/> now has. Jackcess's <c>updateRow</c>. The row is found by where it was read
-    /// (<see cref="Row.Id"/>), whatever key the table has: one of several columns, or none.
+    /// <see cref="FindRowByPrimaryKey"/> - and given values since: the row in the file is given the values of the
+    /// columns assigned since it was read, with the indexer or <see cref="Row.Add"/>, as Access's <c>Edit</c> and
+    /// <c>Update</c> assign the fields given a value in between. Jackcess's <c>updateRow</c>. The row is found by
+    /// where it was read (<see cref="Row.Id"/>), whatever key the table has: one of several columns, or none.
     /// <para>
-    /// Only what changed is written: the values given to <paramref name="row"/> since it was read that are not
-    /// what it was read with. Every other column is left as the file has it, unread: a long value is neither
-    /// read nor written again, and a Date/Time keeps every digit Access stored, which a <see cref="DateTime"/>
-    /// does not always hold. (A byte array changed in place is the array that was read, and is not seen to have
-    /// changed: give the row a new one.) An AutoNumber column keeps the value the row has: another in <paramref name="row"/> is ignored,
-    /// unless <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's
-    /// counter moves the counter up to it.
+    /// A column is assigned whatever its value: one given the value it was read with is assigned too, and is
+    /// checked against its column's rules and written when the file no longer holds that value - another update
+    /// has changed it since this row was read. Of what is assigned, only a value that is not what the file holds
+    /// now is written; a Memo or OLE value assigned is written whatever it holds, as it is not read to be
+    /// compared. A column not assigned is left as the file has it, unread: a long value is neither read nor
+    /// written again, and a Date/Time keeps every digit Access stored, which a <see cref="DateTime"/> does not
+    /// always hold. A value changed in place and not given to the row again - a byte array whose bytes are
+    /// changed - is not assigned, and is not written: give it to the row again. An AutoNumber column keeps the
+    /// value the row has: another in <paramref name="row"/> is ignored, unless
+    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
+    /// moves the counter up to it.
     /// </para>
     /// <para>
     /// The row's entry in each of the table's indexes follows it, under its new values - a changed primary key
@@ -665,10 +670,11 @@ public sealed class Table
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, has a null in
     /// a column of the primary key or of an index that requires its values, or breaks a relationship that is
-    /// enforced; or <paramref name="row"/> gives no value to a required column (<see cref="Column.IsRequired"/>),
-    /// or a zero-length string to a Text or Memo column that does not allow one
-    /// (<see cref="Column.AllowZeroLength"/>). Only the columns whose values were changed are checked against
-    /// those two properties, as Access checks an update. The row is left as it was.
+    /// enforced; or a column <paramref name="row"/> assigns has no value and is required
+    /// (<see cref="Column.IsRequired"/>), or is a zero-length string in a Text or Memo column that does not allow
+    /// one (<see cref="Column.AllowZeroLength"/>) - even the value the row already holds, as Access refuses it.
+    /// Only the columns assigned are checked against those two properties, as Access checks an update. The row
+    /// is left as it was.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">A Text value is longer than its column. The row is left as it was.</exception>
     /// <exception cref="NotSupportedException">
@@ -679,7 +685,7 @@ public sealed class Table
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         int pointer = PointerOf(row, nameof(row));
-        UpdateAt(pointer, row.ChangesSinceRead(), areChanges: true);
+        UpdateAt(pointer, row.AssignedSinceRead());
         row.ReadFrom(this, pointer);
     }
 
@@ -762,12 +768,8 @@ public sealed class Table
     /// own already, as <see cref="Update"/> describes, and returns where the row is afterwards.
     /// </summary>
     /// <param name="rowPtr">Where the row is.</param>
-    /// <param name="values">The values to give it, by column name.</param>
-    /// <param name="areChanges">
-    /// Whether <paramref name="values"/> are known to be changes - a <see cref="Row"/>'s since it was read - and so
-    /// are not compared with what the row holds.
-    /// </param>
-    internal int UpdateAt(int rowPtr, Row values, bool areChanges = false)
+    /// <param name="values">The values the update assigns, by column name.</param>
+    internal int UpdateAt(int rowPtr, Row values)
     {
         _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
@@ -776,17 +778,15 @@ public sealed class Table
         var newValues = RowValues.AsWritten(values, _definition.Columns);
 
         // What the columns' properties refuse, of the columns the update gives a value - the value the row has
-        // already among them: Access does not look at the others, so a row that already breaks a rule in one of
-        // them is still updated. (An AutoNumber is the table's to give, and is not looked at.)
+        // already among them, which Access refuses too: Access does not look at the others, so a row that already
+        // breaks a rule in one of them is still updated. (An AutoNumber is the table's to give, and is not looked
+        // at.)
         EnsureColumnRules(new Row(newValues.Where(v => !_autoNumberColumns.Any(c =>
             c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase)))), assignedOnly: true);
 
-        // What the row holds for the columns named, as a caller reads them: a value given as the row has it is
-        // not a change, and is left as the file has it. A long value is not read to see: one that is given is
-        // written.
-        var named = areChanges
-            ? new List<Column>()
-            : _definition.Columns.Where(c => newValues.ContainsKey(c.Name) && !c.DataType.IsLongValue()).ToList();
+        // What the row holds now for the columns named, as a caller reads them: a value given as the file has it
+        // is not a change, and is left as it is. A long value is not read to see: one that is given is written.
+        var named = _definition.Columns.Where(c => newValues.ContainsKey(c.Name) && !c.DataType.IsLongValue()).ToList();
         var held  = _dataWriter.ReadRowAsReadAt(_definition, rowPtr, named) ?? throw NoRowAt(Name, rowPtr);
         newValues = new Row(newValues.Where(v => !held.TryGetValue(v.Key, out var has) || !ValueMatch.IsAsRead(has, v.Value)));
 
