@@ -448,8 +448,9 @@ public class Cursor : IEnumerable<Row>
     /// regard to case or to spaces at its end, an accent making another letter; and character for character
     /// where this library makes no index key for the text. A number is matched with a number of another type
     /// that is equal to it, a Double or a Single by its bits, and text is never read as a number. A Date/Time is
-    /// the number the row stores, days since 30 December 1899: a <see cref="DateTime"/> finds every row whose
-    /// number reads as that <see cref="DateTime"/>, so the date read from a row finds the row again, and a
+    /// the number the row stores, days since 30 December 1899: a <see cref="DateTime"/>, taken first to what it
+    /// reads as once a row stores it (to the millisecond, as <see cref="DateTime.Now"/> is not), finds every row
+    /// whose number reads as that, so the date read from a row, or written to it, finds the row again; and a
     /// <see cref="double"/> the row that stores exactly that number (<see cref="GetCurrentRowDateNumber"/> gives
     /// a row's), so two dates less than a millisecond apart are told apart. A null is never a match: a row with
     /// no value in a column is not found by looking for null. A cursor over a table and one over an index find

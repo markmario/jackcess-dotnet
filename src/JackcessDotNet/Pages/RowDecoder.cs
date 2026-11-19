@@ -316,19 +316,22 @@ internal sealed class RowDecoder
         => ReadLvalBytes(row, start, len);
 
     /// <summary>
-    /// Decodes a Jet ShortDateTime (OLE Automation date = days since 1899-12-30).
-    /// Out-of-range values (corruption, sentinels) become <see cref="DateTime.MinValue"/>
-    /// rather than throw, matching Jackcess Java which returns the row but logs.
-    /// Valid OADate range is roughly [-657434.0, 2958465.99] (years 100..9999).
+    /// Decodes a Jet ShortDateTime (OLE Automation date = days since 1899-12-30): null for a number no date is
+    /// (corruption, sentinels), rather than throw.
     /// </summary>
     private static DateTime? DecodeShortDateTime(byte[] row, int offset) => ReadDate(ByteUtil.GetDouble(row, offset));
 
-    /// <summary>The <see cref="DateTime"/> a stored Date/Time number is read as; null for one no date is.</summary>
+    /// <summary>
+    /// The <see cref="DateTime"/> a stored Date/Time number is read as, rounded to the millisecond; null for one no
+    /// date is. The dates are those Access holds, 1 January 100 to 31 December 9999, each day at any time: a number
+    /// above -657435 and below 2958466 (measured with ACE 16: <c>CDate(-657434.99998842593)</c>, 1 January 100 at
+    /// 23:59:59, is taken and read as that; <c>CDate(-657435)</c> and <c>CDate(2958466)</c> are refused).
+    /// </summary>
     internal static DateTime? ReadDate(double oa)
     {
         if (double.IsNaN(oa) || double.IsInfinity(oa)) return null;
-        if (oa < -657434.0 || oa > 2958465.99999999) return null;
+        if (oa <= -657435.0 || oa >= 2958466.0) return null;
         try   { return DateTime.FromOADate(oa); }
-        catch { return null; }
+        catch (ArgumentException) { return null; }
     }
 }

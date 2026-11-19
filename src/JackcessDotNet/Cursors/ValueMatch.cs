@@ -18,9 +18,10 @@ namespace JackcessDotNet;
 /// caller's taken to the column's type as a row would store it: +0.0 and -0.0 are two keys to Access and to an
 /// index, and so are a Double and the next Double after it. Text is no number.</item>
 /// <item>A Date/Time is the double the row stores, days since 30 December 1899. A number looked for is that
-/// double, matched by its bits (#35). A <see cref="DateTime"/> looked for matches every stored value that
-/// reads as that <see cref="DateTime"/> (<see cref="ReadsAs"/>): a row is read with its date rounded to the
-/// millisecond, and the date a caller has read from a row finds that row again, which the double of a
+/// double, matched by its bits (#35). A <see cref="DateTime"/> looked for is first taken to what it reads as once
+/// a row stores it (<see cref="AsStored"/>: to the millisecond), and matches every stored value that reads as
+/// that (<see cref="ReadsAs"/>): a row is read with its date rounded to the millisecond, and the date a caller
+/// has read from a row, or has written to one, finds that row again, which the double of a
 /// <see cref="DateTime"/> does not for a third of the dates Access computes.</item>
 /// <item>A null is never a match: a row with no value in a column is not found by looking for null.</item>
 /// </list>
@@ -41,7 +42,7 @@ internal static class ValueMatch
             {
                 case DataType.DateTime:
                     double has = stored is DateTime read ? read.ToOADate() : Convert.ToDouble(stored, CultureInfo.InvariantCulture);
-                    if (asked is DateTime date) return ReadsAs(has) == date;
+                    if (asked is DateTime date) return ReadsAs(has) == AsStored(date);
                     return IsNumber(asked!)
                         && BitConverter.DoubleToInt64Bits(has) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture));
                 case DataType.Text:
@@ -74,12 +75,21 @@ internal static class ValueMatch
     public static DateTime? ReadsAs(double stored) => RowDecoder.ReadDate(stored);
 
     /// <summary>
-    /// The least and the greatest double that read as <paramref name="date"/>: the stored values a lookup for it
-    /// finds. Both are the date's own double when nothing reads as it (a date finer than a millisecond). For a
-    /// time on 30 December 1899 the negative of each number reads as it too; those are not within these.
+    /// What <paramref name="date"/> reads as once a row stores it: the date rounded to the millisecond, as
+    /// <see cref="DateTime.Now"/> and any date finer than that are. A date a row cannot store is returned as it is.
     /// </summary>
+    /// <exception cref="OverflowException"><paramref name="date"/> is before 1 January 100, which no row stores.</exception>
+    public static DateTime AsStored(DateTime date) => ReadsAs(date.ToOADate()) ?? date;
+
+    /// <summary>
+    /// The least and the greatest double that read as <paramref name="date"/> once a row stores it
+    /// (<see cref="AsStored"/>): the stored values a lookup for it finds. For a time on 30 December 1899 the
+    /// negative of each number reads as it too; those are not within these.
+    /// </summary>
+    /// <exception cref="OverflowException"><paramref name="date"/> is before 1 January 100, which no row stores.</exception>
     public static (double Least, double Greatest) StoredRange(DateTime date)
     {
+        date = AsStored(date);
         double exact = date.ToOADate();
         if (ReadsAs(exact) != date) return (exact, exact);
         const double twoMilliseconds = 2.0 / 86_400_000;
