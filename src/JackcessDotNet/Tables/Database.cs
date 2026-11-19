@@ -259,8 +259,8 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Creates a new blank Access 2000-2003 database (an .mdb, <see cref="FileFormat.Access2000"/>) at
     /// <paramref name="path"/> and returns it open and ready for use. That is the format Jackcess creates when
-    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another. A file already at
-    /// <paramref name="path"/> is replaced.
+    /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another, and says what a failure to write
+    /// the new file leaves. A file already at <paramref name="path"/> is replaced.
     /// </summary>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file at <paramref name="path"/> open - Access,
@@ -268,6 +268,10 @@ public sealed class Database : IDisposable
     /// </exception>
     /// <param name="path">The path of the file to create.</param>
     /// <returns>The new database, open. The caller disposes it.</returns>
+    /// <exception cref="IOException">
+    /// The file could not be made at <paramref name="path"/>, or writing it failed; see
+    /// <see cref="Create(string, FileFormat)"/> for what is left at the path.
+    /// </exception>
     public static Database Create(string path) => Create(path, FileFormat.Access2000);
 
     /// <summary>
@@ -281,6 +285,13 @@ public sealed class Database : IDisposable
     /// The new file is a copy of an empty database Access's own engine made. Tables
     /// made in an Access 2000-2003 or an Access 2007 file sort their text in General - Legacy, as Access's own do
     /// there; in the later formats they sort in General.
+    /// </para>
+    /// <para>
+    /// When writing the new file fails part-way - a full disk - it is closed and deleted, and the failure is thrown:
+    /// nothing that is part of a database is left at <paramref name="path"/>. When it cannot be deleted either -
+    /// another process holds it - an <see cref="IOException"/> says that the incomplete file is still there, with
+    /// the failure as its <see cref="Exception.InnerException"/>: delete it before using the path again. A file that
+    /// was there before is not put back; it was replaced when the new one was begun.
     /// </para>
     /// </summary>
     /// <exception cref="DatabaseInUseException">
@@ -296,16 +307,44 @@ public sealed class Database : IDisposable
     /// nor written, as in Jackcess. Nothing is created, and a file already at <paramref name="path"/> is left as
     /// it was.
     /// </exception>
+    /// <exception cref="IOException">
+    /// The file could not be made at <paramref name="path"/> - nothing is changed there - or writing it failed. A
+    /// file whose writing failed has been deleted; when it could not be, the exception says the incomplete file is
+    /// still at <paramref name="path"/>, and the failure is its <see cref="Exception.InnerException"/>.
+    /// </exception>
     public static Database Create(string path, FileFormat format)
     {
         var jetFormat = JetFormat.For(format);
         if (jetFormat.IsReadOnly) throw PageFile.ReadOnlyFormat($"'{path}' was not created.");
-        var file = new PageFile(path, jetFormat, FileMode.Create);
-        var db   = new Database(file);
+        return CreateIn(new PageFile(path, jetFormat, FileMode.Create));
+    }
 
-        DatabaseHeader.Create(jetFormat).WriteTo(file);
-
-        return db;
+    /// <summary>
+    /// Writes a new, empty database into <paramref name="file"/>, a file just made at its path, and returns it open.
+    /// When writing it fails, the file is closed and deleted - nothing that is part of a database is left at the
+    /// path, and no handle is left open on it - and the failure is thrown (#60). When the file cannot be deleted, an
+    /// <see cref="IOException"/> says the incomplete file is still at the path, the failure inside it.
+    /// </summary>
+    internal static Database CreateIn(PageFile file)
+    {
+        try
+        {
+            DatabaseHeader.Create(file.Format).WriteTo(file);
+            return new Database(file);
+        }
+        catch (Exception failure)
+        {
+            file.Dispose();
+            try { System.IO.File.Delete(file.Path); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"The new database '{file.Path}' could not be written, and the incomplete file it left there could not be " +
+                    $"removed ({e.Message}): delete it before using the path again.",
+                    failure);
+            }
+            throw;
+        }
     }
 
     /// <summary>
@@ -661,7 +700,9 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Creates a table: writes its definition, registers it in the catalog, and returns the <see cref="Table"/>,
-    /// ready for rows. The key's index is kept as rows are inserted, updated and deleted.
+    /// ready for rows. The key's index is kept as rows are inserted, updated and deleted. What can refuse the table
+    /// does so before anything is written, and what is written is taken back if writing it fails: a table refused,
+    /// or one the file fails to take part-way (a full disk), leaves the file byte for byte as it was, without it.
     /// <code>
     ///   db.CreateTable("Loose", columns);                       // no primary key
     ///   db.CreateTable("People", columns, "Id");                // a key of one column
@@ -689,7 +730,8 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Creates a table with indexes beside its primary key: single- or multi-column, unique or not. Every index is
     /// kept as rows are inserted, updated and deleted, and a unique index refuses a duplicate before anything of
-    /// the row is written.
+    /// the row is written. The table is written whole or not at all, as
+    /// <see cref="CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> writes one.
     /// </summary>
     /// <param name="name">The table's name, which no other table of the database has.</param>
     /// <param name="columns">The table's columns, in their order: at least one.</param>
@@ -804,6 +846,11 @@ public sealed class Database : IDisposable
         // full disk, when a page is added - must not leave a file marked for a table it does not have.
         byte? version = FormatVersionFor($"Table '{name}' was not created", columns, format);
 
+        // What follows writes, and is written whole or not at all (#60): inside an undo scope, or the caller's when
+        // the table is part of a larger change (an import), a failure part-way - a full disk - takes back every page
+        // written and appended, so that no half-made table is left in the catalog for Access to refuse to read.
+        using var undo = _file.BeginUndoUnlessOpen();
+
         // 1. Allocate the TDEF page (content written in step 6).
         int tdefPage = _allocator.AllocatePage();
 
@@ -875,6 +922,7 @@ public sealed class Database : IDisposable
 
         // 8. The file's version, for a column older versions of Access do not have: one page, written in place.
         if (version is { } newer) DatabaseHeader.RaiseVersion(_file, newer);
+        undo?.Commit();
 
         propertyMaps.Written(propertyNames);
         var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
