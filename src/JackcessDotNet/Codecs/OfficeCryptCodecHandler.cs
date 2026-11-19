@@ -6,37 +6,35 @@ using System.Xml.Linq;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Office Crypto codec for password-protected <c>.accdb</c> databases. Covers
-/// two of the schemes Access can produce:
+/// Office Crypto codec for password-protected <c>.accdb</c> databases, as Jackcess-encrypt's
+/// <c>OfficeCryptCodecHandler</c> reads them. Covers the schemes Access can produce:
 ///
 /// <list type="bullet">
 ///   <item>
 ///     <b>Agile Encryption</b> (Office 2010+, vMajor=4, vMinor=4) —
 ///     MS-OFFCRYPTO §2.3.4.10–13. PBKDF2-style key derivation with configurable
-///     hash, AES in CBC mode for page crypto.
+///     hash, AES in CBC mode for page crypto. What ACE 16 gives a database it makes
+///     with a password, in either .accdb format (tools/protected-fixtures.ps1).
 ///   </item>
 ///   <item>
 ///     <b>ECMA Standard Encryption</b> (Office 2007, vMajor∈{2,3,4}, vMinor=2)
-///     — MS-OFFCRYPTO §2.3.4.5–9. SHA-1 over 50 000 iterations, AES in ECB mode
-///     for page crypto, key size declared in the EncryptionHeader struct.
+///     — MS-OFFCRYPTO §2.3.4.5–9. SHA-1 over 50 000 iterations, worked out once for
+///     the file, AES in ECB mode for page crypto, key size declared in the
+///     EncryptionHeader struct; and the "non-standard" form of it Jackcess-encrypt
+///     reads, with no iterations. No Access is known to give an .accdb ECMA Standard
+///     Encryption, and no file of it was found: such a file is read, as the
+///     specification says, and not written (<see cref="WriteRefusal"/>).
 ///   </item>
+///   <item><b>RC4 CryptoAPI Encryption</b> (Access 2007's own) — MS-OFFCRYPTO §2.3.5.</item>
 /// </list>
 ///
-/// Both variants are read-only — encryption (write) is out of scope; encrypted
-/// files open and decode pages, attempts to write throw <see cref="NotSupportedException"/>.
+/// Every page but the first is decrypted as it is read and encrypted as it is written, so a file opened with its
+/// password is read and written like any other - but for one in ECMA Standard Encryption, which is only read.
 /// </summary>
 internal sealed class OfficeCryptCodecHandler : ICodecHandler
 {
-    // Header / encryption-info offsets shared across all schemes.
-    private const int OffsetEncodingKey    = 0x3E;
-    private const int EncodingKeyLength    = 4;
+    // Where the EncryptionInfo structure starts in the header.
     private const int CryptStructureOffset = 0x299;
-
-    // Bytes 38..42 of BASE_HEADER_MASK (Jackcess's per-byte XOR mask for page 0,
-    // starting at offset OFFSET_MASKED_HEADER = 0x18). At rest the encoding-key
-    // slot (offset 0x3E = mask index 38) is XOR'd with these 4 bytes; we have
-    // to undo the mask before using the value as crypto input.
-    private static readonly byte[] HeaderMaskAtEncodingKey = { 0xFB, 0x8A, 0xBC, 0x4E };
 
     // Flags inside the EncryptionHeader (MS-OFFCRYPTO 2.3.2).
     private const int FCryptoApiFlag = 0x04;
@@ -56,21 +54,35 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
     private readonly Func<byte[], int, byte[]> _decryptPage;
     private readonly Func<byte[], int, byte[]> _encryptPage;
     private readonly string _schemeDescription;
+    private readonly Func<int>? _hashesWorkedOut;
 
     private OfficeCryptCodecHandler(
         byte[] encodingKey,
         Func<byte[], int, byte[]> decryptPage,
         Func<byte[], int, byte[]> encryptPage,
-        string schemeDescription)
+        string schemeDescription,
+        string? writeRefusal = null,
+        Func<int>? hashesWorkedOut = null)
     {
         _encodingKey       = encodingKey;
         _decryptPage       = decryptPage;
         _encryptPage       = encryptPage;
         _schemeDescription = schemeDescription;
+        WriteRefusal       = writeRefusal;
+        _hashesWorkedOut   = hashesWorkedOut;
     }
 
     /// <summary>Short label for the active scheme — useful in error messages.</summary>
     public string Scheme => _schemeDescription;
+
+    /// <inheritdoc/>
+    public string? WriteRefusal { get; }
+
+    /// <summary>
+    /// For ECMA Standard Encryption, and the non-standard AES: how many times the hash every page's key starts from
+    /// has been worked out - its 50,000 iterations, in ECMA Standard - which is once a file. For tests.
+    /// </summary>
+    internal int HashesWorkedOut => _hashesWorkedOut?.Invoke() ?? 0;
 
     /// <summary>
     /// Inspects <paramref name="headerPage"/> (page 0 of the database) and, if
@@ -79,55 +91,11 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
     /// encoding-key slot at 0x3E is zeroed).
     /// </summary>
     /// <exception cref="InvalidCredentialException">Password verification failed.</exception>
-    /// <exception cref="NotSupportedException">Scheme not implemented (RC4, extensible).</exception>
+    /// <exception cref="NotSupportedException">Scheme not implemented: extensible encryption, or an unknown version.</exception>
     public static OfficeCryptCodecHandler? FromDbHeader(byte[] headerPage, string password)
     {
-        if (headerPage is null || headerPage.Length < CryptStructureOffset + 2)
+        if (!TryReadEncryptionInfo(headerPage, out byte[] encodingKey, out int p, out int infoEnd, out int vMajor, out int vMinor))
             return null;
-
-        // Encoding-key slot all-zero → file isn't encrypted; ignore the password.
-        bool isBlank = true;
-        for (int i = 0; i < EncodingKeyLength; i++)
-            if (headerPage[OffsetEncodingKey + i] != 0) { isBlank = false; break; }
-        if (isBlank) return null;
-
-        byte[] encodingKey = new byte[EncodingKeyLength];
-        Buffer.BlockCopy(headerPage, OffsetEncodingKey, encodingKey, 0, EncodingKeyLength);
-
-        // The encoding key on disk is XOR'd against BASE_HEADER_MASK[38..42] —
-        // Jackcess Java does this de-obfuscation at the PageChannel layer before
-        // the codec ever sees page 0. We don't have that layer here, so undo
-        // the mask in place. (Same bytes for Jet 4 and Jet 12+ — only the trailing
-        // 2 bytes of the full mask differ between versions, way past our slot.)
-        for (int i = 0; i < EncodingKeyLength; i++)
-            encodingKey[i] ^= HeaderMaskAtEncodingKey[i];
-
-        // Re-check after demask: if the unmasked key is all zero, the file is
-        // unencrypted (the on-disk masked bytes happened to equal the mask).
-        bool unmaskedBlank = true;
-        for (int i = 0; i < EncodingKeyLength; i++)
-            if (encodingKey[i] != 0) { unmaskedBlank = false; break; }
-        if (unmaskedBlank) return null;
-
-        // u16 infoLen — declared length of the EncryptionInfo blob.
-        short infoLen = BitConverter.ToInt16(headerPage, CryptStructureOffset);
-        int infoStart = CryptStructureOffset + 2;
-        int infoEnd   = infoStart + infoLen;
-        if (infoEnd > headerPage.Length)
-            throw new InvalidDataException("EncryptionInfo struct extends past the header page.");
-
-        // Some unencrypted .accdb files have random non-zero bytes at the
-        // encoding-key offset (used for unrelated page scrambling, not crypto).
-        // If the EncryptionInfo length is zero or the version field is empty,
-        // the file isn't actually encrypted — bail out so the caller can open
-        // it with the null codec instead of failing the version dispatch.
-        if (infoLen <= 0) return null;
-
-        int p = infoStart;
-        int vMajor = BitConverter.ToUInt16(headerPage, p); p += 2;
-        int vMinor = BitConverter.ToUInt16(headerPage, p); p += 2;
-
-        if (vMajor == 0 && vMinor == 0) return null;
 
         byte[] pwdBytes = string.IsNullOrEmpty(password)
             ? Array.Empty<byte>()
@@ -152,6 +120,52 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
         throw new NotSupportedException(
             $"Unsupported Office encryption version: vMajor={vMajor}, vMinor={vMinor}.");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="headerPage"/> - page 0 of an .accdb, as the file holds it - says the file is
+    /// encrypted, so that it cannot be read without its password: what <see cref="FromDbHeader"/> returns a codec
+    /// for, whatever the password.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The header's EncryptionInfo runs past the page.</exception>
+    public static bool IsEncrypted(byte[] headerPage)
+        => TryReadEncryptionInfo(headerPage, out _, out _, out _, out _, out _);
+
+    /// <summary>
+    /// Reads where the header's EncryptionInfo is, and its version, when the header says the file is encrypted.
+    /// False for a file that is not: its encoding key is all zero, or its EncryptionInfo is empty or of version
+    /// 0.0 - some unencrypted .accdb files have bytes in the key's place that are not a key.
+    /// </summary>
+    private static bool TryReadEncryptionInfo(byte[] headerPage, out byte[] encodingKey, out int afterVersion,
+                                              out int infoEnd, out int vMajor, out int vMinor)
+    {
+        encodingKey = Array.Empty<byte>();
+        afterVersion = infoEnd = vMajor = vMinor = 0;
+        if (headerPage is null || headerPage.Length < CryptStructureOffset + 2)
+            return false;
+
+        // A file whose key bytes are all zero on disk is taken as not encrypted, as is one whose key, once the
+        // header's mask is off, is all zero (Jackcess takes the mask off as it reads page 0).
+        bool isBlank = true;
+        for (int i = 0; i < HeaderMask.EncodingKeyLength; i++)
+            if (headerPage[HeaderMask.EncodingKeyAt + i] != 0) { isBlank = false; break; }
+        if (isBlank) return false;
+
+        encodingKey = HeaderMask.EncodingKey(headerPage);
+        if (encodingKey.All(b => b == 0)) return false;
+
+        // u16 infoLen — declared length of the EncryptionInfo blob.
+        short infoLen = BitConverter.ToInt16(headerPage, CryptStructureOffset);
+        int infoStart = CryptStructureOffset + 2;
+        infoEnd = infoStart + infoLen;
+        if (infoEnd > headerPage.Length)
+            throw new InvalidDataException("EncryptionInfo struct extends past the header page.");
+        if (infoLen <= 0) return false;
+
+        vMajor = BitConverter.ToUInt16(headerPage, infoStart);
+        vMinor = BitConverter.ToUInt16(headerPage, infoStart + 2);
+        afterVersion = infoStart + 4;
+        return vMajor != 0 || vMinor != 0;
     }
 
     public byte[] DecodePage(byte[] rawPage, int pageNumber)
@@ -195,6 +209,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             descriptor.KeyData.CipherAlgorithm,
             descriptor.KeyData.CipherChaining,
             "key data");
+        descriptor.Validate();
 
         if (!AgileEngine.VerifyPassword(descriptor, pwdBytes))
             throw new InvalidCredentialException(
@@ -228,6 +243,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             public required int    SaltSize        { get; init; }
             public required int    BlockSize       { get; init; }
             public required int    KeyBits         { get; init; }
+            public required int    HashSize        { get; init; }
             public required string CipherAlgorithm { get; init; }   // "AES"
             public required string CipherChaining  { get; init; }   // "ChainingModeCBC"
             public required string HashAlgorithm   { get; init; }   // "SHA512", etc.
@@ -239,6 +255,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             public required int    SaltSize                   { get; init; }
             public required int    BlockSize                  { get; init; }
             public required int    KeyBits                    { get; init; }
+            public required int    HashSize                   { get; init; }
             public required int    SpinCount                  { get; init; }
             public required string CipherAlgorithm            { get; init; }
             public required string CipherChaining             { get; init; }
@@ -282,6 +299,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                     SaltSize        = AttrInt   (keyDataEl, "saltSize"),
                     BlockSize       = AttrInt   (keyDataEl, "blockSize"),
                     KeyBits         = AttrInt   (keyDataEl, "keyBits"),
+                    HashSize        = AttrInt   (keyDataEl, "hashSize"),
                     CipherAlgorithm = AttrString(keyDataEl, "cipherAlgorithm"),
                     CipherChaining  = AttrString(keyDataEl, "cipherChaining"),
                     HashAlgorithm   = AttrString(keyDataEl, "hashAlgorithm"),
@@ -292,6 +310,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                     SaltSize                   = AttrInt   (passwordEncryptor, "saltSize"),
                     BlockSize                  = AttrInt   (passwordEncryptor, "blockSize"),
                     KeyBits                    = AttrInt   (passwordEncryptor, "keyBits"),
+                    HashSize                   = AttrInt   (passwordEncryptor, "hashSize"),
                     SpinCount                  = AttrInt   (passwordEncryptor, "spinCount"),
                     CipherAlgorithm            = AttrString(passwordEncryptor, "cipherAlgorithm"),
                     CipherChaining             = AttrString(passwordEncryptor, "cipherChaining"),
@@ -304,7 +323,65 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             };
         }
 
-        private static int    AttrInt   (XElement el, string name) => int.Parse(AttrString(el, name));
+        // MS-OFFCRYPTO 2.3.4.10's bound on spinCount; AES's block, in bytes.
+        private const int MaxSpinCount = 10_000_000;
+        private const int AesBlock = 16;
+
+        /// <summary>
+        /// Refuses, with <see cref="InvalidDataException"/>, a descriptor with a value MS-OFFCRYPTO (2.3.4.10) does not
+        /// allow, or the cipher and hash it names do not take, of those the password and the pages are worked out
+        /// with: each element's salt (1 to 65,536 bytes, as many as its saltSize says), block (16 bytes, AES's), key
+        /// (128, 192 or 256 bits) and hash (the length its algorithm gives); the spin count (0 to 10,000,000); and the
+        /// encrypted values (whole blocks; the key value the data key's bytes or more, an AES key's length). Checked
+        /// before anything is worked out from them: a damaged descriptor is refused as the file is opened, not at a
+        /// page, and a spin count past the bound is not spun.
+        /// </summary>
+        internal void Validate()
+        {
+            Check("keyData", KeyData.SaltSize, KeyData.SaltValue, KeyData.BlockSize, KeyData.KeyBits, KeyData.HashSize, KeyData.HashAlgorithm);
+            Check("encryptedKey", PasswordKey.SaltSize, PasswordKey.SaltValue, PasswordKey.BlockSize, PasswordKey.KeyBits,
+                  PasswordKey.HashSize, PasswordKey.HashAlgorithm);
+            if (PasswordKey.SpinCount is < 0 or > MaxSpinCount)
+                throw Damaged("encryptedKey", "spinCount", PasswordKey.SpinCount, "0 to 10,000,000");
+            foreach (var (name, value) in new[]
+                     {
+                         ("encryptedVerifierHashInput", PasswordKey.EncryptedVerifierHashInput),
+                         ("encryptedVerifierHashValue", PasswordKey.EncryptedVerifierHashValue),
+                         ("encryptedKeyValue", PasswordKey.EncryptedKeyValue),
+                     })
+                if (value.Length == 0 || value.Length % AesBlock != 0)
+                    throw Damaged("encryptedKey", name, $"{value.Length} bytes", $"whole blocks of {AesBlock} bytes");
+            int keyValue = PasswordKey.EncryptedKeyValue.Length;
+            if (keyValue < KeyData.KeyBits / 8 || keyValue is not (16 or 24 or 32))
+                throw Damaged("encryptedKey", "encryptedKeyValue", $"{keyValue} bytes",
+                              $"an AES key of at least the {KeyData.KeyBits / 8} bytes keyData's keyBits says");
+        }
+
+        private static void Check(string element, int saltSize, byte[] saltValue, int blockSize, int keyBits, int hashSize, string hashAlgorithm)
+        {
+            if (saltSize is < 1 or > 65_536)
+                throw Damaged(element, "saltSize", saltSize, "1 to 65,536");
+            if (saltValue.Length != saltSize)
+                throw Damaged(element, "saltValue", $"{saltValue.Length} bytes", $"the {saltSize} its saltSize says");
+            if (blockSize != AesBlock)
+                throw Damaged(element, "blockSize", blockSize, $"{AesBlock}, AES's");
+            if (keyBits is not (128 or 192 or 256))
+                throw Damaged(element, "keyBits", keyBits, "128, 192 or 256, AES's");
+            int length = HashLength(hashAlgorithm);
+            if (hashSize != length)
+                throw Damaged(element, "hashSize", hashSize, $"{length}, {hashAlgorithm}'s");
+        }
+
+        private static InvalidDataException Damaged(string element, string attribute, object value, string allowed)
+            => new($"<{element}> has {attribute} {value}, where it is {allowed}.");
+
+        private static int AttrInt(XElement el, string name)
+        {
+            string text = AttrString(el, name);
+            return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value)
+                ? value
+                : throw new InvalidDataException($"<{el.Name.LocalName}> has {name} '{text}', which is not a whole number an int holds.");
+        }
         private static byte[] AttrBase64(XElement el, string name) => Convert.FromBase64String(AttrString(el, name));
         private static string AttrString(XElement el, string name)
             => el.Attribute(name)?.Value
@@ -344,8 +421,12 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             var pk = d.PasswordKey;
             int keyByteLen = pk.KeyBits / 8;
             byte[] key = CryptDeriveKey(password, KeyValueBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            return AesCbcDecrypt(key, pk.SaltValue, pk.EncryptedKeyValue);
+            return AesCbcDecrypt(key, PasswordIv(pk), pk.EncryptedKeyValue);
         }
+
+        // The password key encryptor's IV: its salt, cut or padded with 0x36 to the block (MS-OFFCRYPTO 2.3.4.12),
+        // which for Access's salt of 16 bytes is the salt.
+        private static byte[] PasswordIv(AgileDescriptor.PasswordKeyEncryptor pk) => FixToLength(pk.SaltValue, pk.BlockSize, 0x36);
 
         public static bool VerifyPassword(AgileDescriptor d, byte[] password)
         {
@@ -354,10 +435,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             int blockSize  = pk.BlockSize;
 
             byte[] verifierKey = CryptDeriveKey(password, VerifierInputBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            byte[] verifier    = AesCbcDecrypt(verifierKey, pk.SaltValue, pk.EncryptedVerifierHashInput);
+            byte[] verifier    = AesCbcDecrypt(verifierKey, PasswordIv(pk), pk.EncryptedVerifierHashInput);
 
             byte[] valueKey    = CryptDeriveKey(password, VerifierValueBlock, pk.SaltValue, pk.SpinCount, keyByteLen, pk.HashAlgorithm);
-            byte[] storedHash  = AesCbcDecrypt(valueKey, pk.SaltValue, pk.EncryptedVerifierHashValue);
+            byte[] storedHash  = AesCbcDecrypt(valueKey, PasswordIv(pk), pk.EncryptedVerifierHashValue);
 
             byte[] testHash = HashBytes(pk.HashAlgorithm, verifier, Array.Empty<byte>());
             if ((testHash.Length % blockSize) != 0)
@@ -379,12 +460,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
         /// <summary>
         /// Inverse of <see cref="DecryptPage"/> — same key + page-derived IV,
-        /// AES-CBC encrypt instead of decrypt. The data-integrity HMAC in the
-        /// descriptor is NOT recomputed (it would require deriving the HMAC key
-        /// from the master key and re-hashing the whole encrypted stream),
-        /// so a re-encrypted file may be rejected by Office's integrity check.
-        /// Our own Database.Open does not enforce HMAC, so the
-        /// round-trip through this library is lossless.
+        /// AES-CBC encrypt instead of decrypt. The descriptor Access writes for a
+        /// database has no data-integrity element (a document's encrypted package
+        /// has one; a database's pages have none to keep), and Access reads, seeks,
+        /// adds to and compacts a file whose pages were written here.
         /// </summary>
         public static byte[] EncryptPage(
             AgileDescriptor d, byte[] keyValue, byte[] encodingKey,
@@ -445,11 +524,16 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             if (!engine.VerifyPassword(pwdBytes))
                 throw new InvalidCredentialException(
                     "Incorrect password for ECMA Standard-encrypted .accdb (Office 2007).");
+            // No Access is known to give an .accdb this encryption, and no file of it was found: what this library
+            // would write to one could not be checked against Access, so it is read only.
             return new OfficeCryptCodecHandler(
                 encodingKey,
                 (page, pageNumber) => engine.DecryptPage(pwdBytes, encodingKey, page, pageNumber),
                 (page, pageNumber) => engine.EncryptPage(pwdBytes, encodingKey, page, pageNumber),
-                $"ECMA Standard Encryption (Office 2007, AES-{info.KeySizeBits})");
+                $"ECMA Standard Encryption (Office 2007, AES-{info.KeySizeBits})",
+                writeRefusal: "An .accdb in ECMA Standard Encryption is read and not written by this library: no file of it " +
+                              "was found to check what it would write against Access.",
+                hashesWorkedOut: () => engine.HashesWorkedOut);
         }
 
         return BuildRc4OrNonStandard(headerPage, p, infoEnd, encodingKey, pwdBytes);
@@ -496,7 +580,8 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                 encodingKey,
                 (page, pageNumber) => engine.DecryptPage(pwdBytes, encodingKey, page, pageNumber),
                 (page, pageNumber) => engine.EncryptPage(pwdBytes, encodingKey, page, pageNumber),
-                $"Non-Standard AES Encryption (compat mode 0, AES-{info.KeySizeBits})");
+                $"Non-Standard AES Encryption (compat mode 0, AES-{info.KeySizeBits})",
+                hashesWorkedOut: () => engine.HashesWorkedOut);
         }
         catch (Exception fallbackEx) when (fallbackEx is not InvalidCredentialException)
         {
@@ -640,7 +725,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         private const int DefaultIterations = 50_000;
         private readonly StandardEncryptionInfo _info;
         private readonly int _iterations;
-        private byte[]? _baseHashCache;
+        private byte[]? _hashed;
+
+        /// <summary>How many times <see cref="Hashed"/> has worked the hash out: once, for the engine's password.</summary>
+        internal int HashesWorkedOut { get; private set; }
 
         public StandardEngine(StandardEncryptionInfo info, int iterations = DefaultIterations)
         {
@@ -679,16 +767,14 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         }
 
         /// <summary>
-        /// Derives the per-block AES key (MS-OFFCRYPTO 2.3.4.7). The base hash
-        /// (SHA1(salt || password)) is cached so the 50 000-iteration loop only
-        /// runs once per password — without this, every page decode would re-run
-        /// the spin loop.
+        /// SHA1(salt || password) hashed over again, 50,000 times in ECMA Standard Encryption (MS-OFFCRYPTO 2.3.4.7):
+        /// what every block's key starts from, the same for every page of the file, so it is worked out once - the
+        /// password is the engine's, which only a codec built for it uses.
         /// </summary>
-        private byte[] ComputeEncryptionKey(byte[] password, byte[] blockBytes)
+        private byte[] Hashed(byte[] password)
         {
-            byte[] baseHash = _baseHashCache ??= HashBytes("SHA1", _info.Salt, password);
-
-            byte[] iterHash = baseHash;
+            if (_hashed is not null) return _hashed;
+            byte[] hash = HashBytes("SHA1", _info.Salt, password);
             byte[] indexBuf = new byte[4];
             for (int i = 0; i < _iterations; i++)
             {
@@ -696,10 +782,19 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                 indexBuf[1] = (byte)((i >> 8)  & 0xFF);
                 indexBuf[2] = (byte)((i >> 16) & 0xFF);
                 indexBuf[3] = (byte)((i >> 24) & 0xFF);
-                iterHash = HashBytes("SHA1", indexBuf, iterHash);
+                hash = HashBytes("SHA1", indexBuf, hash);
             }
+            HashesWorkedOut++;
+            return _hashed = hash;
+        }
 
-            byte[] finalHash = HashBytes("SHA1", iterHash, blockBytes);
+        /// <summary>
+        /// Derives the per-block AES key (MS-OFFCRYPTO 2.3.4.7): the hash of <see cref="Hashed"/> and the block, a
+        /// page's - the encoding key with its number XORed in - or the verifier's, 0.
+        /// </summary>
+        private byte[] ComputeEncryptionKey(byte[] password, byte[] blockBytes)
+        {
+            byte[] finalHash = HashBytes("SHA1", Hashed(password), blockBytes);
 
             // Expand finalHash → 2 × hashLen by XOR-padding twice (2.3.4.7).
             byte[] x1 = HashBytes("SHA1", GenXBytes(finalHash, 0x36), Array.Empty<byte>());
@@ -837,7 +932,7 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
 
     private static byte[] ApplyPageNumber(byte[] encodingKey, int pageNumber)
     {
-        byte[] block = new byte[EncodingKeyLength];
+        byte[] block = new byte[HeaderMask.EncodingKeyLength];
         block[0] = (byte)((pageNumber       & 0xFF) ^ encodingKey[0]);
         block[1] = (byte)(((pageNumber>>8 ) & 0xFF) ^ encodingKey[1]);
         block[2] = (byte)(((pageNumber>>16) & 0xFF) ^ encodingKey[2]);
@@ -887,6 +982,20 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         }
         return HashOneShot(algorithm, combined);
     }
+
+    // The bytes the hash algorithm HashOneShot names gives.
+    private static int HashLength(string algorithm) =>
+        algorithm.ToUpperInvariant().Replace("-", "").Replace("_", "") switch
+        {
+            "SHA1"   => 20,
+            "SHA256" => 32,
+            "SHA384" => 48,
+            "SHA512" => 64,
+            "MD5"    => 16,
+            _ => throw new NotSupportedException(
+                   $"Hash algorithm '{algorithm}' is not supported by the Office Crypt codec port. " +
+                   "Supported: SHA1, SHA256, SHA384, SHA512, MD5."),
+        };
 
     private static byte[] HashOneShot(string algorithm, byte[] data) =>
         algorithm.ToUpperInvariant().Replace("-", "").Replace("_", "") switch

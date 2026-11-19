@@ -5,62 +5,59 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// End-to-end tests for the Office Agile-Encryption codec (Office 2010+ .accdb).
-/// Uses real password-protected fixtures from the upstream jackcess-encrypt repo.
-/// Those are NOT committed here (unlike tests/corpus) — they live in a separate
-/// project. Set <c>JACKCESS_ENCRYPT_FIXTURES</c> to that repo's
-/// <c>src/test/resources/data</c> to run these; without it every test below
-/// early-returns rather than failing, so a fresh clone needn't fetch anything.
+/// End-to-end tests for the Office codec of an encrypted .accdb, and the Jet codec of an encoded .mdb.
+/// <para>
+/// The .accdb files ACE makes with a password (Assets/dao-accdb2007-password.accdb and dao-accdb2010-password.accdb,
+/// made by tools/protected-fixtures.ps1) are Agile-encrypted, and every test of that scheme runs on them.
+/// </para>
+/// <para>
+/// The schemes ACE no longer makes - RC4 CryptoAPI (Access 2007's own), and the non-standard AES Jackcess-encrypt
+/// reads - and files Access itself made are in the jackcess-encrypt project's test data, which is not committed here.
+/// Set <c>JACKCESS_ENCRYPT_FIXTURES</c> to that repository's <c>src/test/data</c> folder to run the tests of them;
+/// without it they are skipped.
+/// </para>
 /// </summary>
 public sealed class OfficeCryptTests
 {
-    private static readonly string FixtureRoot =
-        Environment.GetEnvironmentVariable("JACKCESS_ENCRYPT_FIXTURES")
-        ?? @"D:/Projects/jackcess-encrypt/src/test/resources/data";
+    private const string Password = ProtectedFileTests.Password;
+    private const string AgileFixture = "dao-accdb2010-password.accdb";
 
-    private static bool FixtureExists(string name)
-        => File.Exists(Path.Combine(FixtureRoot, name));
+    private static readonly string? FixtureRoot = Environment.GetEnvironmentVariable("JACKCESS_ENCRYPT_FIXTURES");
 
-    [Fact]
-    public void Open_Db2013Enc_WithCorrectPassword_Succeeds()
+    /// <summary>The path of a jackcess-encrypt fixture; the test is skipped when the fixtures are not there.</summary>
+    private static string External(string name)
     {
-        string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(path)) return;   // skip when fixtures absent
+        string? path = FixtureRoot is null ? null : Path.Combine(FixtureRoot, name);
+        if (path is null || !File.Exists(path))
+            Assert.Skip($"{name} is jackcess-encrypt's test data: set JACKCESS_ENCRYPT_FIXTURES to its src/test/data folder.");
+        return path!;
+    }
 
-        // db2013-enc.accdb seeds a "Customers" table (not "Table1" — that's the
-        // Standard 2007 fixture). Match the upstream Java test names so we can
-        // cross-check assertions against the reference port.
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "1234" });
-        var tables = db.GetTableNames();
-        Assert.Contains("Customers", tables);
+    private static byte[] ReadHeaderPage(string path) => File.ReadAllBytes(path).Take(4096).ToArray();
 
-        // Upstream seeds 7 rows with columns ID + Field1; we just confirm we
-        // can decrypt + parse a TDEF + read rows without crashing.
-        var t = db.GetTable("Customers");
-        var rows = t.Rows.ToList();
-        Assert.NotNull(rows);
-        Assert.NotEmpty(rows);
+    // ── Agile Encryption: the .accdb files ACE makes ─────────────────────────
+
+    [Theory]
+    [InlineData("dao-accdb2007-password.accdb")]
+    [InlineData("dao-accdb2010-password.accdb")]
+    public void Open_AgileAccdb_WithCorrectPassword_ReadsEveryRow(string fixture)
+    {
+        using var db = Database.Open(ProtectedFileTests.Asset(fixture), new DatabaseOpenOptions { Password = Password });
+        ProtectedFileTests.AssertItemsAsDaoReadsThem(db, fixture);
     }
 
     [Fact]
-    public void Open_Db2013Enc_WithWrongPassword_Throws()
+    public void Open_AgileAccdb_WithWrongPassword_Throws()
     {
-        string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(path)) return;
-
         Assert.Throws<InvalidCredentialException>(
-            () => Database.Open(path, new DatabaseOpenOptions { Password = "definitely-not-1234" }));
+            () => Database.Open(ProtectedFileTests.Asset(AgileFixture), new DatabaseOpenOptions { Password = "definitely-not-it" }));
     }
 
     [Fact]
-    public void Open_Db2013Enc_WithoutPassword_GivesClearError()
+    public void Open_AgileAccdb_WithoutPassword_GivesClearError()
     {
-        string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(path)) return;
-
-        // Opening an encrypted .accdb without a password should produce a clear
-        // "appears encrypted" error rather than a cryptic page-parse crash.
-        var ex = Assert.ThrowsAny<Exception>(() => Database.Open(path));
+        // Opening an encrypted .accdb without a password says so, rather than failing on a page it cannot parse.
+        var ex = Assert.Throws<InvalidCredentialException>(() => Database.Open(ProtectedFileTests.Asset(AgileFixture)));
         Assert.Contains("encrypted", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -71,58 +68,240 @@ public sealed class OfficeCryptTests
         // (i.e. the file isn't encrypted). Use any unencrypted .accdb from the
         // main jackcess corpus.
         string? path = TestCorpus.Files("*.accdb", "V2007", "V2010", "V2019").FirstOrDefault();
-        if (path is null) return;
+        if (path is null) Assert.Skip("The corpus has no .accdb.");
 
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "this-password-is-ignored" });
+        using var db = Database.Open(path!, new DatabaseOpenOptions { Password = "this-password-is-ignored" });
         Assert.NotEmpty(db.GetTableNames().Concat(db.GetSystemTableNames()));
     }
+
+    [Fact]
+    public void Write_Then_Reopen_Agile_PreservesAddedRow()
+        => DoWriteThenReopen(ProtectedFileTests.Asset(AgileFixture), Password);
+
+    [Fact]
+    public void Encode_RoundTrips_ThroughTheCodec_Agile()
+    {
+        var codec = OfficeCryptCodecHandler.FromDbHeader(ReadHeaderPage(ProtectedFileTests.Asset(AgileFixture)), Password);
+        Assert.NotNull(codec);
+
+        byte[] plaintext = new byte[4096];
+        new Random(456).NextBytes(plaintext);
+        byte[] encoded = codec!.EncodePage(plaintext, pageNumber: 17);
+        byte[] decoded = codec.DecodePage(encoded, pageNumber: 17);
+
+        Assert.Equal(plaintext, decoded);
+        Assert.NotEqual(plaintext, encoded);
+    }
+
+    [Fact]
+    public void Encode_Page0_IsPassedThrough()
+    {
+        var codec = OfficeCryptCodecHandler.FromDbHeader(ReadHeaderPage(ProtectedFileTests.Asset(AgileFixture)), Password);
+        Assert.NotNull(codec);
+
+        byte[] page0 = new byte[4096];
+        new Random(7).NextBytes(page0);
+        Assert.Equal(page0, codec!.EncodePage(page0, pageNumber: 0));
+        Assert.Equal(page0, codec.DecodePage(page0, pageNumber: 0));
+    }
+
+    [Fact]
+    public void Codec_AdvertisesActiveSchemeOnAccessor()
+    {
+        var codec = OfficeCryptCodecHandler.FromDbHeader(ReadHeaderPage(ProtectedFileTests.Asset(AgileFixture)), Password);
+        Assert.NotNull(codec);
+        Assert.Contains("Agile", codec!.Scheme);
+    }
+
+    [Fact]
+    public void Write_ManyRows_UnderAgileEncryption_AllSurviveReopen()
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), $"bulk_{Guid.NewGuid():N}.accdb");
+        File.Copy(ProtectedFileTests.Asset(AgileFixture), tmp);
+        try
+        {
+            using (var db = Database.Open(tmp, new DatabaseOpenOptions { Password = Password }))
+            {
+                var t = db.GetTable("Items");
+                for (int i = 0; i < 50; i++)
+                    t.Insert(new Row { ["Id"] = 100 + i, ["Name"] = $"bulk-{i}" });
+            }
+
+            using var reopen = Database.Open(tmp, new DatabaseOpenOptions { Password = Password });
+            var rows = reopen.GetTable("Items").Rows.ToList();
+            Assert.Equal(60 + 50, rows.Count);
+            Assert.Equal(50, rows.Count(r => (r.GetValueOrDefault("Name") as string)?.StartsWith("bulk-") == true));
+        }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+    }
+
+    // ── Header-mask demask edge case ────────────────────────────────────────
+
+    [Fact]
+    public void FromDbHeader_EncodingKeyEqualsHeaderMask_TreatedAsUnencrypted()
+    {
+        // Synthetic page: bytes at 0x3E are exactly the header mask, so after
+        // demasking the encoding key is all zero → file is not encrypted.
+        // Real-world example: linkeeTest.accdb from the main jackcess corpus.
+        byte[] page = new byte[4096];
+        page[0x3E] = 0xFB; page[0x3F] = 0x8A;     // these are HEADER_MASK[38..42]
+        page[0x40] = 0xBC; page[0x41] = 0x4E;
+        // EncryptionInfo struct left all-zero, so the version field reads 0.0.
+
+        var codec = OfficeCryptCodecHandler.FromDbHeader(page, "any-password");
+        Assert.Null(codec);
+        Assert.False(OfficeCryptCodecHandler.IsEncrypted(page));
+    }
+
+    // ── jackcess-encrypt's fixtures (optional) ───────────────────────────────
+
+    [Fact]
+    public void Open_Db2013Enc_WithCorrectPassword_Succeeds()
+    {
+        using var db = Database.Open(External("db2013-enc.accdb"), new DatabaseOpenOptions { Password = "1234" });
+        Assert.Contains("Customers", db.GetTableNames());
+        Assert.NotEmpty(db.GetTable("Customers").Rows.ToList());
+    }
+
+    [Fact]
+    public void Open_Db2013Enc_WithWrongPassword_Throws()
+        => Assert.Throws<InvalidCredentialException>(
+            () => Database.Open(External("db2013-enc.accdb"), new DatabaseOpenOptions { Password = "definitely-not-1234" }));
 
     [Theory]
     [InlineData("db2007-enc.accdb")]
     [InlineData("db2007-oldenc.accdb")]
     public void Open_StandardEncryption2007_WithCorrectPassword_Succeeds(string fixtureName)
     {
-        string path = Path.Combine(FixtureRoot, fixtureName);
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
+        using var db = Database.Open(External(fixtureName), new DatabaseOpenOptions { Password = "Test123" });
         Assert.Contains("Table1", db.GetTableNames());
-        var rows = db.GetTable("Table1").Rows.ToList();
-        Assert.NotNull(rows);   // tolerant of empty/seeded content; just must not crash
+        Assert.NotNull(db.GetTable("Table1").Rows.ToList());
     }
 
     [Theory]
     [InlineData("db2007-enc.accdb")]
     [InlineData("db2007-oldenc.accdb")]
     public void Open_StandardEncryption2007_WithWrongPassword_Throws(string fixtureName)
-    {
-        string path = Path.Combine(FixtureRoot, fixtureName);
-        if (!File.Exists(path)) return;
+        => Assert.Throws<InvalidCredentialException>(
+            () => Database.Open(External(fixtureName), new DatabaseOpenOptions { Password = "definitely-wrong" }));
 
-        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = "definitely-wrong" }));
+    [Theory]
+    [InlineData("db2007-enc.accdb", "Test123")]
+    [InlineData("db2007-oldenc.accdb", "Test123")]
+    [InlineData("db-nonstandard.accdb", "password")]
+    [InlineData("db2013-enc.accdb", "1234")]
+    public void Write_Then_Reopen_PreservesAddedRow(string fixtureName, string password)
+        => DoWriteThenReopen(External(fixtureName), password);
+
+    [Fact]
+    public void Encode_RoundTrips_ThroughTheCodec_Rc4CryptoApi()
+    {
+        var codec = OfficeCryptCodecHandler.FromDbHeader(ReadHeaderPage(External("db2007-oldenc.accdb")), "Test123");
+        Assert.NotNull(codec);
+
+        byte[] plaintext = new byte[4096];
+        new Random(123).NextBytes(plaintext);
+        byte[] encoded = codec!.EncodePage(plaintext, pageNumber: 42);
+        Assert.Equal(plaintext, codec.DecodePage(encoded, pageNumber: 42));
+        Assert.NotEqual(plaintext, encoded);
     }
 
-    // ── Write / round-trip tests ─────────────────────────────────────────────
+    [Fact]
+    public void Open_NonStandardAesAccdb_WithCorrectPassword_Succeeds()
+    {
+        // db-nonstandard.accdb has FAES_FLAG clear yet uses AES; falls back
+        // to the "compat mode 0" path (AES with 0 hash iterations).
+        using var db = Database.Open(External("db-nonstandard.accdb"), new DatabaseOpenOptions { Password = "password" });
+        Assert.NotEmpty(db.GetTableNames());
+    }
 
     [Fact]
-    public void Write_Then_Reopen_Standard2007_PreservesAddedRow()
-        => DoWriteThenReopen("db2007-enc.accdb", "Test123");
+    public void Open_NonStandardAesAccdb_WithWrongPassword_Throws()
+        => Assert.Throws<InvalidCredentialException>(
+            () => Database.Open(External("db-nonstandard.accdb"), new DatabaseOpenOptions { Password = "wrong" }));
+
+    [Theory]
+    [InlineData("db2013-enc.accdb",    "1234",    "Agile")]
+    [InlineData("db2007-enc.accdb",    "Test123", "Agile")]      // Office 2007 file but actually Agile
+    [InlineData("db2007-oldenc.accdb", "Test123", "RC4")]        // true RC4 CryptoAPI
+    [InlineData("db-nonstandard.accdb","password","Non-Standard")]
+    public void Codec_Scheme_NamesActualEncryptionFlavor(string fixtureName, string password, string expectedSchemeFragment)
+    {
+        var codec = OfficeCryptCodecHandler.FromDbHeader(ReadHeaderPage(External(fixtureName)), password);
+        Assert.NotNull(codec);
+        Assert.Contains(expectedSchemeFragment, codec!.Scheme, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
-    public void Write_Then_Reopen_Agile2013_PreservesAddedRow()
-        => DoWriteThenReopen("db2013-enc.accdb", "1234");
+    public void Read_Db2013Enc_Customers_HasSevenSeededRows_WithExpectedField1Values()
+    {
+        // From doCheckOffice2013Db in upstream Java: Customers table seeded with
+        // ID 1-7 / Field1 values { "Test","Test2","a",null,"c","d","f" }.
+        using var db = Database.Open(External("db2013-enc.accdb"), new DatabaseOpenOptions { Password = "1234" });
+        var rows = db.GetTable("Customers").Rows.ToList().OrderBy(r => Convert.ToInt32(r["ID"])).ToList();
+        Assert.Equal(new[] { "Test", "Test2", "a", null, "c", "d", "f" }, rows.Select(r => r.GetValueOrDefault("Field1")));
+    }
+
+    [Theory]
+    [InlineData("db2007-enc.accdb")]
+    [InlineData("db2007-oldenc.accdb")]
+    public void Read_Db2007_Table1_HasOneSeededRow_FooField1(string fixtureName)
+    {
+        // From doCheckOfficeDb in upstream Java: Table1 seeded with ID=1, Field1="foo" - Agile in db2007-enc, RC4
+        // CryptoAPI in db2007-oldenc.
+        using var db = Database.Open(External(fixtureName), new DatabaseOpenOptions { Password = "Test123" });
+        var row = db.GetTable("Table1").Rows.Single();
+        Assert.Equal(1, Convert.ToInt32(row["ID"]));
+        Assert.Equal("foo", row["Field1"]);
+    }
+
+    [Fact]
+    public void Read_NonStandardAccdb_TableOne_HasIdColumn()
+    {
+        // db-nonstandard.accdb's table is "Table_One" (not "Table1") with an "ID"
+        // column — matches upstream testNonStandardProvider.
+        using var db = Database.Open(External("db-nonstandard.accdb"), new DatabaseOpenOptions { Password = "password" });
+        Assert.Contains(db.GetTable("Table_One").Columns, c => c.Name.Equals("ID", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("db-enc.mdb")]
+    [InlineData("db97-enc.mdb")]
+    public void Read_EncodedMdb_WithNoPassword_Table1_AsJackcessEncryptReadsIt(string fixtureName)
+    {
+        // From doCheckJetDb in upstream Java: an encoded Access 2000 file and an Access 97 one, which Jackcess-encrypt
+        // opens with no password - the key is in the header.
+        using var db = Database.Open(External(fixtureName));
+        var rows = db.GetTable("Table1").Rows.OrderBy(r => Convert.ToInt32(r["ID"])).ToList();
+        Assert.Equal(new object?[] { "hello", "world" }, rows.Select(r => r["col1"]));
+        Assert.Equal(new[] { 0, 42 }, rows.Select(r => Convert.ToInt32(r["col2"])));
+    }
+
+    [Theory]
+    [InlineData("pwd-set.mdb")]
+    [InlineData("pwd2-set.mdb")]
+    public void Open_MdbWithDatabasePassword_NeedsIt(string fixtureName)
+    {
+        string path = External(fixtureName);
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path));
+        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = "TestPassword" }));
+        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "testpassword" });
+        Assert.NotEmpty(db.GetTableNames());
+    }
+
+    // ── Write / round-trip ───────────────────────────────────────────────────
 
     /// <summary>
     /// Shared write-roundtrip: open the fixture, insert a row built from the
     /// real column list (skipping auto-num PKs), reopen, verify the row count
     /// increased. Column-name-agnostic so it works on whatever schema the
-    /// upstream fixture happens to ship with.
+    /// fixture happens to ship with.
     /// </summary>
-    private void DoWriteThenReopen(string fixtureName, string password)
+    private static void DoWriteThenReopen(string src, string password)
     {
-        string src = Path.Combine(FixtureRoot, fixtureName);
-        if (!File.Exists(src)) return;
-
         string tmp = Path.Combine(Path.GetTempPath(), $"rw_{Guid.NewGuid():N}.accdb");
         File.Copy(src, tmp);
         try
@@ -157,7 +336,7 @@ public sealed class OfficeCryptTests
 
     private static object? DummyValueFor(Column col) => col.DataType switch
     {
-        DataType.Int32          => 1,
+        DataType.Int32          => 1_000_001,
         DataType.Int16           => (short)1,
         DataType.Byte          => (byte)1,
         DataType.Double        => 1.0,
@@ -172,243 +351,4 @@ public sealed class OfficeCryptTests
         DataType.DateTime => new DateTime(2024, 1, 1),
         _                      => null,
     };
-
-    [Fact]
-    public void Encode_RoundTrips_ThroughTheCodec_Standard()
-    {
-        // Synthetic page round-trip: encode then decode must yield the original
-        // bytes for any page number > 0. Independent of any on-disk file.
-        string src = Path.Combine(FixtureRoot, "db2007-enc.accdb");
-        if (!File.Exists(src)) return;
-
-        byte[] header = ReadHeaderPage(src);
-        var codec = OfficeCryptCodecHandler.FromDbHeader(header, "Test123");
-        Assert.NotNull(codec);
-
-        byte[] plaintext = new byte[4096];
-        new Random(123).NextBytes(plaintext);
-        byte[] encoded = codec!.EncodePage(plaintext, pageNumber: 42);
-        byte[] decoded = codec.DecodePage(encoded, pageNumber: 42);
-
-        Assert.Equal(plaintext, decoded);
-        Assert.NotEqual(plaintext, encoded);
-    }
-
-    [Fact]
-    public void Encode_RoundTrips_ThroughTheCodec_Agile()
-    {
-        string src = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(src)) return;
-
-        byte[] header = ReadHeaderPage(src);
-        var codec = OfficeCryptCodecHandler.FromDbHeader(header, "1234");
-        Assert.NotNull(codec);
-
-        byte[] plaintext = new byte[4096];
-        new Random(456).NextBytes(plaintext);
-        byte[] encoded = codec!.EncodePage(plaintext, pageNumber: 17);
-        byte[] decoded = codec.DecodePage(encoded, pageNumber: 17);
-
-        Assert.Equal(plaintext, decoded);
-        Assert.NotEqual(plaintext, encoded);
-    }
-
-    [Fact]
-    public void Encode_Page0_IsPassedThrough()
-    {
-        string src = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(src)) return;
-
-        byte[] header = ReadHeaderPage(src);
-        var codec = OfficeCryptCodecHandler.FromDbHeader(header, "1234");
-        Assert.NotNull(codec);
-
-        byte[] page0 = new byte[4096];
-        new Random(7).NextBytes(page0);
-        Assert.Equal(page0, codec!.EncodePage(page0, pageNumber: 0));
-        Assert.Equal(page0, codec.DecodePage(page0, pageNumber: 0));
-    }
-
-    private static byte[] ReadHeaderPage(string path)
-    {
-        byte[] all = File.ReadAllBytes(path);
-        byte[] page0 = new byte[4096];
-        Buffer.BlockCopy(all, 0, page0, 0, Math.Min(all.Length, page0.Length));
-        return page0;
-    }
-
-    // ── Non-Standard AES variant (db-nonstandard.accdb fixture) ─────────────
-
-    [Fact]
-    public void Open_NonStandardAesAccdb_WithCorrectPassword_Succeeds()
-    {
-        // db-nonstandard.accdb has FAES_FLAG clear yet uses AES; falls back
-        // to the "compat mode 0" path (AES with 0 hash iterations).
-        string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "password" });
-        Assert.NotEmpty(db.GetTableNames());
-    }
-
-    [Fact]
-    public void Open_NonStandardAesAccdb_WithWrongPassword_Throws()
-    {
-        string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
-        if (!File.Exists(path)) return;
-
-        Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = "wrong" }));
-    }
-
-    // ── Scheme reporting per encryption variant ─────────────────────────────
-
-    [Theory]
-    [InlineData("db2013-enc.accdb",    "1234",    "Agile")]
-    [InlineData("db2007-enc.accdb",    "Test123", "Agile")]      // Office 2007 file but actually Agile
-    [InlineData("db2007-oldenc.accdb", "Test123", "RC4")]        // true RC4 CryptoAPI
-    [InlineData("db-nonstandard.accdb","password","Non-Standard")]
-    public void Codec_Scheme_NamesActualEncryptionFlavor(
-        string fixtureName, string password, string expectedSchemeFragment)
-    {
-        string path = Path.Combine(FixtureRoot, fixtureName);
-        if (!File.Exists(path)) return;
-
-        byte[] header = ReadHeaderPage(path);
-        var codec = OfficeCryptCodecHandler.FromDbHeader(header, password);
-        Assert.NotNull(codec);
-        Assert.Contains(expectedSchemeFragment, codec!.Scheme,
-                        StringComparison.OrdinalIgnoreCase);
-    }
-
-    // ── Seeded-data round-trip (not just "doesn't crash") ───────────────────
-
-    [Fact]
-    public void Read_Db2013Enc_Customers_HasSevenSeededRows_WithExpectedField1Values()
-    {
-        // From doCheckOffice2013Db in upstream Java: Customers table seeded with
-        // ID 1-7 / Field1 values { "Test","Test2","a",null,"c","d","f" }.
-        string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "1234" });
-        var rows = db.GetTable("Customers").Rows.ToList()
-                     .OrderBy(r => Convert.ToInt32(r["ID"])).ToList();
-        Assert.Equal(7, rows.Count);
-
-        var expected = new[] { "Test", "Test2", "a", null, "c", "d", "f" };
-        for (int i = 0; i < expected.Length; i++)
-        {
-            object? actual = rows[i].GetValueOrDefault("Field1");
-            Assert.Equal(expected[i], actual);
-        }
-    }
-
-    [Fact]
-    public void Read_Db2007Enc_Table1_HasOneSeededRow_FooField1()
-    {
-        // From doCheckOfficeDb in upstream Java: Table1 seeded with ID=1, Field1="foo".
-        string path = Path.Combine(FixtureRoot, "db2007-enc.accdb");
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
-        var rows = db.GetTable("Table1").Rows.ToList();
-        var row  = rows.Single();
-        Assert.Equal(1,     Convert.ToInt32(row["ID"]));
-        Assert.Equal("foo", row["Field1"]);
-    }
-
-    [Fact]
-    public void Read_Db2007OldEnc_Table1_HasOneSeededRow_RC4Path()
-    {
-        // Same seeded shape as db2007-enc, but this file is RC4 CryptoAPI rather
-        // than Agile — confirms the RC4 codec actually decrypts data, not just
-        // verifies passwords.
-        string path = Path.Combine(FixtureRoot, "db2007-oldenc.accdb");
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "Test123" });
-        var row = db.GetTable("Table1").Rows.Single();
-        Assert.Equal(1,     Convert.ToInt32(row["ID"]));
-        Assert.Equal("foo", row["Field1"]);
-    }
-
-    [Fact]
-    public void Read_NonStandardAccdb_TableOne_HasIdColumn()
-    {
-        // db-nonstandard.accdb's table is "Table_One" (not "Table1") with an "ID"
-        // column — matches upstream testNonStandardProvider.
-        string path = Path.Combine(FixtureRoot, "db-nonstandard.accdb");
-        if (!File.Exists(path)) return;
-
-        using var db = Database.Open(path, new DatabaseOpenOptions { Password = "password" });
-        var t = db.GetTable("Table_One");
-        Assert.Contains(t.Columns, c => c.Name.Equals("ID", StringComparison.OrdinalIgnoreCase));
-    }
-
-    // ── Bulk write under encryption ─────────────────────────────────────────
-
-    [Fact]
-    public void Write_ManyRows_UnderAgileEncryption_AllSurviveReopen()
-    {
-        string src = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(src)) return;
-
-        string tmp = Path.Combine(Path.GetTempPath(), $"bulk_{Guid.NewGuid():N}.accdb");
-        File.Copy(src, tmp);
-        try
-        {
-            int initialCount;
-            using (var db = Database.Open(tmp, new DatabaseOpenOptions { Password = "1234" }))
-            {
-                var t = db.GetTable("Customers");
-                initialCount = t.Rows.Count();
-                for (int i = 0; i < 50; i++)
-                    t.Insert(new Row { ["ID"] = 100 + i, ["Field1"] = $"bulk-{i}" });
-            }
-
-            using var reopen = Database.Open(tmp, new DatabaseOpenOptions { Password = "1234" });
-            var rows = reopen.GetTable("Customers").Rows.ToList();
-            Assert.Equal(initialCount + 50, rows.Count);
-            Assert.Equal(50, rows.Count(r => (r.GetValueOrDefault("Field1") as string)?.StartsWith("bulk-") == true));
-        }
-        finally
-        {
-            if (File.Exists(tmp)) File.Delete(tmp);
-        }
-    }
-
-    // ── Header-mask demask edge case ────────────────────────────────────────
-
-    [Fact]
-    public void FromDbHeader_EncodingKeyEqualsHeaderMask_TreatedAsUnencrypted()
-    {
-        // Synthetic page: bytes at 0x3E are exactly the header mask, so after
-        // demasking the encoding key is all zero → file is not encrypted.
-        // Real-world example: linkeeTest.accdb from the main jackcess corpus.
-        byte[] page = new byte[4096];
-        page[0x3E] = 0xFB; page[0x3F] = 0x8A;     // these are HEADER_MASK[38..42]
-        page[0x40] = 0xBC; page[0x41] = 0x4E;
-        // EncryptionInfo struct left all-zero, so the version field reads 0.0.
-
-        var codec = OfficeCryptCodecHandler.FromDbHeader(page, "any-password");
-        Assert.Null(codec);
-    }
-
-    [Fact]
-    public void Codec_AdvertisesActiveSchemeOnAccessor()
-    {
-        // Read the header and ask the codec which scheme it picked. The factory
-        // is the public-surface entry point; tests are the only consumer of the
-        // Scheme property right now, but it's useful for debugging in the wild.
-        string path = Path.Combine(FixtureRoot, "db2013-enc.accdb");
-        if (!File.Exists(path)) return;
-
-        byte[] header = File.ReadAllBytes(path);
-        // Trim to first page (the header lives in page 0; default page size = 4 KiB).
-        byte[] page0 = new byte[4096];
-        Buffer.BlockCopy(header, 0, page0, 0, Math.Min(header.Length, page0.Length));
-        var codec = OfficeCryptCodecHandler.FromDbHeader(page0, "1234");
-        Assert.NotNull(codec);
-        Assert.Contains("Agile", codec!.Scheme);
-    }
 }
