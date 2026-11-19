@@ -256,6 +256,48 @@ public sealed class ProtectedFileTests : IDisposable
         finally { File.Delete(path); }
     }
 
+    // An encrypted file grown past 65,536 pages, where a page's number no longer fits in two bytes - an .mdb with a
+    // password, encoded, and an Agile .accdb - is read back through its key as it was written, its own table with it.
+    // That Access reads it, finds its rows through the key and compacts it is ExportMdb.Interop's
+    // ProtectedFilesInAccessTests, under the same variable. Each file grows past 270 MB, so the test runs only when
+    // JACKCESS_PAST_65536_PAGES is set.
+    [Theory]
+    [InlineData("dao-jet4-password-encoded.mdb")]
+    [InlineData("dao-accdb2010-password.accdb")]
+    public void An_encrypted_file_grown_past_65536_pages_reads_back_through_its_key(string fixture)
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JACKCESS_PAST_65536_PAGES")))
+            Assert.Skip("Grows a file past 270 MB: set JACKCESS_PAST_65536_PAGES to run it.");
+        string path = CopyOf(fixture);
+        static byte[] Blob(int id)
+        {
+            var bytes = new byte[3000];
+            for (int i = 0; i < bytes.Length; i++) bytes[i] = (byte)(id * 31 + i * 7);
+            BitConverter.GetBytes(id).CopyTo(bytes, 0);
+            return bytes;
+        }
+
+        int last = 0;
+        using (var db = Database.Open(path, new DatabaseOpenOptions { Password = Password }))
+        {
+            var big = db.CreateTable("Big", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Blob", DataType.OleObject) }, "Id");
+            while (new FileInfo(path).Length < (65_536L + 400) * 4096)
+            {
+                var rows = new List<Row>(1000);
+                for (int i = 0; i < 1000; i++) { last++; rows.Add(new Row { ["Id"] = last, ["Blob"] = Blob(last) }); }
+                big.InsertRange(rows);
+            }
+        }
+
+        Assert.True(new FileInfo(path).Length / 4096 > 65_536, $"only {new FileInfo(path).Length / 4096} pages");
+        using var reopened = Database.Open(path, new DatabaseOpenOptions { Password = Password });
+        var table = reopened.GetTable("Big");
+        Assert.Equal(last, table.RowCount);
+        for (int id = last - 49; id <= last; id++)
+            Assert.Equal(Blob(id), (byte[])table.FindRowByPrimaryKey(id)!["Blob"]!);
+        AssertItemsAsDaoReadsThem(reopened, fixture);
+    }
+
     [Theory]
     [MemberData(nameof(EncodedOnly))]
     public void An_encoded_file_without_a_password_opens_with_any_password_or_none(string fixture)
