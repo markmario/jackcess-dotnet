@@ -16,7 +16,13 @@ public sealed class ColumnValueTooLongException : ArgumentException
     /// <param name="maxLength">The most characters the column holds.</param>
     /// <param name="length">The characters the value has.</param>
     public ColumnValueTooLongException(string columnName, int maxLength, int length)
-        : base($"Column '{columnName}' holds at most {maxLength} characters; the value has {length}.")
+        : this(columnName, maxLength, length, $"Column '{columnName}' holds at most {maxLength} characters; the value has {length}.")
+    {
+    }
+
+    /// <summary>The exception with a message of the caller's, which says where the value came from: an import's row.</summary>
+    internal ColumnValueTooLongException(string columnName, int maxLength, int length, string message)
+        : base(message)
     {
         ColumnName = columnName;
         MaxLength = maxLength;

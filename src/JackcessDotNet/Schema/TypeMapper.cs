@@ -1,146 +1,510 @@
+using System.Globalization;
+using System.Numerics;
+
 namespace JackcessDotNet;
 
 /// <summary>
-/// Maps .NET CLR types onto Jet <see cref="DataType"/>s and builds the matching
-/// <see cref="Column"/> definitions. Used by the import wrappers
-/// (<see cref="DatabaseImporter"/>) so callers can hand over a
-/// <c>DataTable</c>/<c>DataSet</c>/<c>IEnumerable&lt;T&gt;</c> and get a sensibly-typed
-/// Access schema without spelling it out themselves.
+/// The columns an import makes for a source's CLR types, and the values it writes to a column: each one the column
+/// holds exactly, or none (#44). Used by <see cref="DatabaseImporter"/>.
+/// <para>
+/// A column a table is made with holds every value the source has: its type follows the CLR type, and a length,
+/// precision or scale that the values need follows the values. A value given to a column that is there already is
+/// converted to the column's type only when the column holds it exactly; any other is refused with the reason.
+/// </para>
 /// </summary>
 internal static class TypeMapper
 {
-    /// <summary>
-    /// Default text length for inferred string columns when no
-    /// <see cref="System.ComponentModel.DataAnnotations.MaxLengthAttribute"/>
-    /// or <c>DataColumn.MaxLength</c> is supplied. Strings longer than this at
-    /// import time will overflow the Text column's byte limit — use a Memo
-    /// instead via <see cref="ColumnFromClrType"/>'s explicit hints.
-    /// </summary>
-    public const int DefaultTextCharLength = 255;
+    /// <summary>The most characters a Text column holds; a longer string is a Memo's.</summary>
+    public const int MaxTextLength = 255;
 
-    /// <summary>Threshold beyond which strings flip to Memo (no inline limit).</summary>
-    public const int MemoLengthThreshold = 255;
+    /// <summary>The most bytes a Binary column holds; a longer value is an OLE Object's.</summary>
+    public const int MaxBinaryLength = 255;
+
+    /// <summary>The most digits a Decimal column holds.</summary>
+    public const int MaxDecimalPrecision = 28;
+
+    /// <summary>The precision Access gives a Decimal column it is not told one for, and that the importer gives one at least.</summary>
+    public const int DefaultDecimalPrecision = 18;
+
+    private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
+
+    /// <summary>The type a value of <paramref name="clrType"/> is imported as: a nullable's underlying type, an enum's integer type.</summary>
+    public static Type ImportedType(Type clrType)
+    {
+        Type t = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        return t.IsEnum ? Enum.GetUnderlyingType(t) : t;
+    }
+
+    /// <summary>Whether a column can be made for values of <paramref name="clrType"/>.</summary>
+    public static bool IsMappable(Type clrType) => MapClrType(clrType, largeNumber: false) is not null;
 
     /// <summary>
-    /// Resolves <paramref name="clrType"/> (incl. Nullable&lt;T&gt;) to a Jet
-    /// <see cref="DataType"/>. Returns null when the type can't be represented.
+    /// The type of the column a value of <paramref name="clrType"/> is imported into, before the values are looked
+    /// at - a Text column may become a Memo, and a Binary one an OLE Object, for their length; or null for a type a
+    /// database has no column for.
+    /// <list type="bullet">
+    ///   <item><see cref="sbyte"/> is an Integer (<see cref="DataType.Int16"/>), Access's Byte being 0 to 255;
+    ///   <see cref="ushort"/> a Long Integer (<see cref="DataType.Int32"/>), Access's Integer being signed.</item>
+    ///   <item><see cref="uint"/> and <see cref="long"/> are Large Numbers in a file of Access 2016's format or a later
+    ///   one (<paramref name="largeNumber"/>), and Decimals of 10 and 19 digits in a file of an older format: a Large
+    ///   Number column would raise the file to Access 2016's format (<see cref="Database.FormatVersionFor"/>), which
+    ///   Access 2010 and 2013 do not open, and an import does not change a file's format. Java Jackcess, likewise,
+    ///   makes a Large Number only in a format that has it (<c>DataType.fromSQLType</c>), and a Long Integer
+    ///   otherwise, which does not hold every value. <see cref="ulong"/> is a Decimal of 20 digits, past what a
+    ///   Large Number holds.</item>
+    ///   <item><see cref="decimal"/> is a Decimal, whose precision and scale the values give (Currency keeps four
+    ///   places after the point, and would round the rest).</item>
+    ///   <item><c>byte[]</c> is an OLE Object unless a length that every value fits is known
+    ///   (<see cref="ColumnFor"/>).</item>
+    /// </list>
     /// </summary>
-    public static DataType? MapClrType(Type clrType)
+    /// <param name="clrType">The CLR type of the source's column or property.</param>
+    /// <param name="largeNumber">Whether the file is of Access 2016's format or a later one, which has the Large Number.</param>
+    public static DataType? MapClrType(Type clrType, bool largeNumber)
     {
         if (clrType is null) return null;
+        Type t = ImportedType(clrType);
 
-        // Unwrap Nullable<T> — Access columns are nullable by default.
-        Type t = Nullable.GetUnderlyingType(clrType) ?? clrType;
-
-        // Enums: take the underlying primitive.
-        if (t.IsEnum) t = Enum.GetUnderlyingType(t);
-
-        if (t == typeof(bool))     return DataType.Boolean;
-        if (t == typeof(byte))     return DataType.Byte;
-        if (t == typeof(sbyte))    return DataType.Byte;       // signed 8-bit → unsigned Byte
-        if (t == typeof(short))    return DataType.Int16;
-        if (t == typeof(ushort))   return DataType.Int16;
-        if (t == typeof(int))      return DataType.Int32;
-        if (t == typeof(uint))     return DataType.Int32;
-        if (t == typeof(long))     return DataType.Int64;       // Large Number: an .accdb's; a table with one is refused in an .mdb
-        if (t == typeof(ulong))    return DataType.Int32;
-        if (t == typeof(float))    return DataType.Single;
-        if (t == typeof(double))   return DataType.Double;
-        if (t == typeof(decimal))  return DataType.Currency;      // 4-decimal precision is usually enough
-        if (t == typeof(DateTime)) return DataType.DateTime;
+        if (t == typeof(bool))           return DataType.Boolean;
+        if (t == typeof(byte))           return DataType.Byte;
+        if (t == typeof(sbyte))          return DataType.Int16;
+        if (t == typeof(short))          return DataType.Int16;
+        if (t == typeof(ushort))         return DataType.Int32;
+        if (t == typeof(int))            return DataType.Int32;
+        if (t == typeof(uint))           return largeNumber ? DataType.Int64 : DataType.Decimal;
+        if (t == typeof(long))           return largeNumber ? DataType.Int64 : DataType.Decimal;
+        if (t == typeof(ulong))          return DataType.Decimal;
+        if (t == typeof(float))          return DataType.Single;
+        if (t == typeof(double))         return DataType.Double;
+        if (t == typeof(decimal))        return DataType.Decimal;
+        if (t == typeof(DateTime))       return DataType.DateTime;
         if (t == typeof(DateTimeOffset)) return DataType.DateTime;
-        if (t == typeof(Guid))     return DataType.Guid;
-        if (t == typeof(string))   return DataType.Text;       // caller may promote to Memo on length
-        if (t == typeof(char))     return DataType.Text;
-        if (t == typeof(byte[]))   return DataType.Binary;     // caller may promote to OLE on length
-
+        if (t == typeof(Guid))           return DataType.Guid;
+        if (t == typeof(string))         return DataType.Text;
+        if (t == typeof(char))           return DataType.Text;
+        if (t == typeof(byte[]))         return DataType.OleObject;
         return null;
     }
 
     /// <summary>
-    /// Builds a <see cref="Column"/> from a property/column name + CLR type, with
-    /// optional max-length hint and autonumber flag. String fields longer than
-    /// <see cref="MemoLengthThreshold"/> chars are promoted to <see cref="DataType.Memo"/>;
-    /// byte arrays longer than 255 bytes are promoted to <see cref="DataType.OleObject"/>.
-    /// Returns null if the type isn't mappable.
+    /// The column a table is made with for a source column or property of <paramref name="clrType"/> whose values
+    /// are <paramref name="values"/>: one that holds every one of them exactly. Null for a type a database has no
+    /// column for.
+    /// <list type="bullet">
+    ///   <item>Text of the length the source gives (<paramref name="maxLength"/>) when every value fits it, and of 255
+    ///   characters when it gives none and every value fits that; otherwise a Memo.</item>
+    ///   <item>Binary of the length the source gives when it is 255 bytes or fewer and every value fits it; otherwise
+    ///   an OLE Object.</item>
+    ///   <item>A Decimal of a <see cref="decimal"/>: its scale the most places after the point a value has, as the
+    ///   value holds it, and its precision the digits the values need, 18 (Access's default) at least. When the
+    ///   values need more than 28 digits, the places they have only as trailing zeros are given up; when they still
+    ///   need more, the column is refused.</item>
+    /// </list>
     /// </summary>
-    public static Column? ColumnFromClrType(
-        string name, Type clrType, int? maxLength = null, bool autoNumber = false)
+    /// <param name="name">The column's name.</param>
+    /// <param name="clrType">The CLR type of the source column or property.</param>
+    /// <param name="maxLength">The length the source gives a string or a byte array, or null.</param>
+    /// <param name="autoNumber">Whether the column is an AutoNumber: an <see cref="int"/> the source numbers.</param>
+    /// <param name="required">Whether the source takes no null in the column.</param>
+    /// <param name="values">The values the column is to hold.</param>
+    /// <param name="largeNumber">Whether the file is of Access 2016's format or a later one, which has the Large Number.</param>
+    /// <exception cref="NotHeldException">
+    /// The column is a Decimal and its values need more digits than a Decimal column holds.
+    /// </exception>
+    public static Column? ColumnFor(string name, Type clrType, int? maxLength, bool autoNumber, bool required,
+                                    IReadOnlyCollection<object?> values, bool largeNumber)
     {
-        var dt = MapClrType(clrType);
-        if (dt is null) return null;
+        var mapped = MapClrType(clrType, largeNumber);
+        if (mapped is not { } dataType) return null;
+        Type t = ImportedType(clrType);
+        int? declared = maxLength is > 0 ? maxLength : null;
 
-        var definition = new ColumnDefinition(name, dt.Value);
-
-        // String/byte-array promotion based on max length.
-        if (dt == DataType.Text && maxLength is int charCap && charCap > MemoLengthThreshold)
+        ColumnDefinition definition;
+        switch (dataType)
         {
-            definition = new ColumnDefinition(name, DataType.Memo);
-        }
-        else if (dt == DataType.Text)
-        {
-            definition.MaxLength = maxLength ?? DefaultTextCharLength;
-        }
-        else if (dt == DataType.Binary && maxLength is int byteCap && byteCap > 255)
-        {
-            definition = new ColumnDefinition(name, DataType.OleObject);
-        }
-        else if (dt == DataType.Binary)
-        {
-            definition.MaxLength = maxLength ?? 50;
+            case DataType.Text:
+            {
+                int longest = values.Select(v => v switch { string s => s.Length, char => 1, _ => 0 }).DefaultIfEmpty(0).Max();
+                int length = declared ?? MaxTextLength;
+                definition = length <= MaxTextLength && longest <= length
+                    ? new ColumnDefinition(name, DataType.Text) { MaxLength = length }
+                    : new ColumnDefinition(name, DataType.Memo);
+                break;
+            }
+            case DataType.OleObject:
+            {
+                int longest = values.OfType<byte[]>().Select(b => b.Length).DefaultIfEmpty(0).Max();
+                definition = declared is { } length && length <= MaxBinaryLength && longest <= length
+                    ? new ColumnDefinition(name, DataType.Binary) { MaxLength = length }
+                    : new ColumnDefinition(name, DataType.OleObject);
+                break;
+            }
+            case DataType.Decimal:
+            {
+                var (precision, scale) = t == typeof(uint) ? (10, 0)
+                                       : t == typeof(long) ? (19, 0)
+                                       : t == typeof(ulong) ? (20, 0)
+                                       : DecimalShapeOf(values.OfType<decimal>());
+                definition = new ColumnDefinition(name, DataType.Decimal) { Precision = (byte)precision, Scale = (byte)scale };
+                break;
+            }
+            default:
+                definition = new ColumnDefinition(name, dataType);
+                break;
         }
 
         if (autoNumber && definition.DataType == DataType.Int32)
             definition.IsAutoNumber = true;
-
+        // An AutoNumber has its number in every row, and a Yes/No its value: Access gives neither a Required property.
+        definition.IsRequired = required && !definition.IsAutoNumber && definition.DataType != DataType.Boolean;
         return definition.ToColumn(nameof(name));
     }
 
     /// <summary>
-    /// Converts an arbitrary boxed value to the form expected by <see cref="RowEncoder"/>
-    /// for <paramref name="targetType"/>. Handles widening (long→int), nullable
-    /// unwrapping, enum-to-underlying, and DBNull.
+    /// The precision and scale of a Decimal column that holds every one of <paramref name="values"/> exactly.
     /// </summary>
-    public static object? CoerceForJet(object? value, DataType targetType)
+    /// <exception cref="NotHeldException">No Decimal column holds them all: they need more than 28 digits.</exception>
+    private static (int Precision, int Scale) DecimalShapeOf(IEnumerable<decimal> values)
     {
-        if (value is null || value == DBNull.Value) return null;
-
-        // Unwrap nullable.
-        if (value.GetType().IsGenericType
-            && value.GetType().GetGenericTypeDefinition() == typeof(Nullable<>))
+        int scale = 0, significantScale = 0, integerDigits = 0;
+        decimal widest = 0m;
+        foreach (decimal value in values)
         {
-            // Boxed Nullable<T> always boxes as the underlying value or null — covered above.
+            scale = Math.Max(scale, ScaleOf(value));
+            significantScale = Math.Max(significantScale, SignificantScaleOf(value));
+            int digits = IntegerDigitsOf(value);
+            if (digits > integerDigits) { integerDigits = digits; widest = value; }
         }
 
-        // Enum → underlying.
-        if (value.GetType().IsEnum)
-            value = Convert.ChangeType(value, Enum.GetUnderlyingType(value.GetType()));
+        // The places a value has only as trailing zeros (1.50 as 1.5) are given up only when keeping them would take
+        // more digits than a column holds: the column keeps the source's scale where it can.
+        if (integerDigits + scale > MaxDecimalPrecision) scale = significantScale;
+        if (integerDigits + scale > MaxDecimalPrecision)
+            throw new NotHeldException(
+                $"its values need {integerDigits + scale} digits - {widest.ToString(Invariant)} has {integerDigits} before the " +
+                $"point, and a value has {scale} after it - and an Access Decimal column holds {MaxDecimalPrecision}: no column " +
+                "holds them all exactly");
+        return (Math.Max(DefaultDecimalPrecision, integerDigits + scale), scale);
+    }
 
-        return targetType switch
+    /// <summary>The places after the point <paramref name="value"/> holds, trailing zeros included.</summary>
+    private static int ScaleOf(decimal value) => (decimal.GetBits(value)[3] >> 16) & 0xFF;
+
+    /// <summary>The places after the point <paramref name="value"/> needs: its scale without trailing zeros.</summary>
+    private static int SignificantScaleOf(decimal value)
+    {
+        int scale = ScaleOf(value);
+        while (scale > 0 && decimal.Round(value, scale - 1) == value) scale--;
+        return scale;
+    }
+
+    /// <summary>The digits of <paramref name="value"/> before the point: 0 for one less than 1 in size.</summary>
+    private static int IntegerDigitsOf(decimal value)
+    {
+        decimal whole = decimal.Truncate(Math.Abs(value));
+        int digits = 0;
+        while (whole >= 1m)
         {
-            DataType.Boolean       => Convert.ToBoolean(value),
-            DataType.Byte          => Convert.ToByte(value),
-            DataType.Int16           => Convert.ToInt16(value),
-            DataType.Int32          => Convert.ToInt32(value),
-            DataType.Single         => Convert.ToSingle(value),
-            DataType.Double        => Convert.ToDouble(value),
-            DataType.Currency         => Convert.ToDecimal(value),
-            DataType.Decimal       => Convert.ToDecimal(value),
-            DataType.DateTime => value is DateTimeOffset dto
-                                        ? dto.UtcDateTime
-                                        : Convert.ToDateTime(value),
-            DataType.Int64        => Convert.ToInt64(value),
-            DataType.DateTimeExtended => value is DateTimeOffset extended
-                                        ? extended.UtcDateTime
-                                        : Convert.ToDateTime(value),
-            DataType.Guid          => value is Guid g ? g : new Guid(value.ToString()!),
-            DataType.Text          => Convert.ToString(value),
-            DataType.Memo          => Convert.ToString(value),
-            DataType.Binary        => value is byte[] b ? b : throw new ArgumentException(
-                                        $"Cannot coerce {value.GetType()} into Binary column"),
-            DataType.OleObject           => value is byte[] o ? o : throw new ArgumentException(
-                                        $"Cannot coerce {value.GetType()} into OLE column"),
-            _                      => value,
+            whole = decimal.Truncate(whole / 10m);
+            digits++;
+        }
+        return digits;
+    }
+
+    // ── A value as its column holds it ──────────────────────────────────────
+
+    /// <summary>
+    /// A value a column does not hold exactly, and why: what <see cref="ToColumnValue"/> throws, which the importer
+    /// turns into a refusal that names the row.
+    /// </summary>
+    internal sealed class NotHeldException : Exception
+    {
+        internal NotHeldException(string reason, int? tooLong = null) : base(reason) => TooLong = tooLong;
+
+        /// <summary>
+        /// For a value longer than its column - text in characters, bytes for a Binary column - the value's length;
+        /// otherwise null.
+        /// </summary>
+        internal int? TooLong { get; }
+    }
+
+    /// <summary>
+    /// <paramref name="value"/> as <paramref name="column"/> holds it - a <see cref="bool"/>, the integer type of the
+    /// column's size, <see cref="float"/>, <see cref="double"/>, <see cref="decimal"/>, <see cref="DateTime"/>,
+    /// <see cref="Guid"/>, <see cref="string"/> or <c>byte[]</c> - when the column holds it exactly; null for a null.
+    /// <list type="bullet">
+    ///   <item>A number goes to a numeric column when the column holds its value: an integer in range, a
+    ///   <see cref="decimal"/> with no more places than a Currency's four or a Decimal's scale, nor more digits than
+    ///   its precision. A floating-point value and a <see cref="decimal"/> go to each other's columns when the value
+    ///   the column holds converts back to the one given.</item>
+    ///   <item>Text goes to a numeric, Yes/No, Date/Time or GUID column when it reads, in the invariant culture, as a
+    ///   value the column holds; a value goes to a Text or Memo column as its invariant text, which reads back as
+    ///   it (a <see cref="double"/> in its round-trip form, a date in ISO 8601).</item>
+    ///   <item>A Text or Binary column of one length (SQL's CHAR and BINARY) takes a value of that length only:
+    ///   a shorter one would read back filled with spaces or zeros.</item>
+    ///   <item>A Binary or OLE Object column takes an empty byte array as <see cref="Table.Insert"/> writes one: a
+    ///   value of no bytes, which ACE reads back as one, and DAO shows as Null.</item>
+    ///   <item>A Yes/No column takes a <see cref="bool"/> and no null, which it would read as No; no number, of
+    ///   which only 0 and 1 would read back as they were.</item>
+    ///   <item>A Date/Time column takes a date from 1 January 100, the first it holds, to the millisecond it is
+    ///   read and written at; Date/Time Extended any <see cref="DateTime"/>. A <see cref="DateTimeOffset"/> is its
+    ///   UTC date and time, and so is text with an offset; text without one is the date and time it says, whatever
+    ///   the machine's time zone.</item>
+    /// </list>
+    /// </summary>
+    /// <exception cref="NotHeldException">The column does not hold the value exactly.</exception>
+    public static object? ToColumnValue(object? value, Column column)
+    {
+        if (value is null || value is DBNull)
+        {
+            if (column.DataType == DataType.Boolean)
+                throw new NotHeldException("a Yes/No column holds no null, and Access would read it as No");
+            return null;
+        }
+        if (value.GetType().IsEnum) value = Convert.ChangeType(value, Enum.GetUnderlyingType(value.GetType()), Invariant);
+
+        return column.DataType switch
+        {
+            DataType.Boolean          => BooleanOf(value),
+            DataType.Byte             => (byte)IntegerOf(value, byte.MinValue, byte.MaxValue, "a Byte column holds 0 to 255"),
+            DataType.Int16            => (short)IntegerOf(value, short.MinValue, short.MaxValue, "an Integer column holds -32,768 to 32,767"),
+            DataType.Int32            => (int)IntegerOf(value, int.MinValue, int.MaxValue, "a Long Integer column holds -2,147,483,648 to 2,147,483,647"),
+            DataType.Int64            => IntegerOf(value, long.MinValue, long.MaxValue, "a Large Number column holds 64-bit integers"),
+            DataType.Single           => SingleOf(value),
+            DataType.Double           => DoubleOf(value),
+            DataType.Currency         => CurrencyOf(value),
+            DataType.Decimal          => DecimalOf(value, column.Precision, column.Scale),
+            DataType.DateTime         => DateTimeOf(value, extended: false),
+            DataType.DateTimeExtended => DateTimeOf(value, extended: true),
+            DataType.Guid             => GuidOf(value),
+            DataType.Text             => TextOf(value, column),
+            DataType.Memo             => TextOf(value, column: null),
+            DataType.Binary           => BinaryOf(value, column),
+            DataType.OleObject        => value as byte[] ?? throw NotOfType(value, "an OLE Object column holds bytes"),
+            _                         => throw new NotHeldException($"a {column.DataType} column is not written by this library"),
         };
+    }
+
+    private static NotHeldException NotOfType(object value, string what)
+        => new($"{Describe(value)} is a {value.GetType().Name}, and {what}");
+
+    private static string Describe(object value) => value switch
+    {
+        string s   => $"'{(s.Length > 40 ? s.Substring(0, 40) + "..." : s)}'",
+        byte[] b   => $"{b.Length} bytes",
+        double d   => ExactNumber.Text(d),
+        float f    => ExactNumber.Text(f),
+        DateTime t => t.ToString("o", Invariant),
+        IFormattable f => f.ToString(null, Invariant),
+        _          => value.ToString() ?? "",
+    };
+
+    private static bool BooleanOf(object value) => value switch
+    {
+        bool b => b,
+        string s when bool.TryParse(s, out bool parsed) => parsed,
+        _ => throw NotOfType(value, "a Yes/No column takes a bool, or the text True or False: of a number only 0 and 1 would read back as they were"),
+    };
+
+    // The numbers a value stands for, for a column that takes numbers, the one it is exactly first: an integer or a
+    // decimal, itself; a double or a float, the number it is and the one its round-trip form denotes (0.1 for the
+    // double 0.1); text, the number it denotes in the invariant culture. All are worked out exactly, so what a column
+    // takes is the same on every target. Refused with why for a value that is no number.
+    private static ExactNumber[] NumbersOf(object value, string what)
+    {
+        switch (value)
+        {
+            case bool or char:
+                throw NotOfType(value, $"{what} takes numbers");
+            case sbyte v:   return new[] { ExactNumber.Of((long)v) };
+            case byte v:    return new[] { ExactNumber.Of((long)v) };
+            case short v:   return new[] { ExactNumber.Of((long)v) };
+            case ushort v:  return new[] { ExactNumber.Of((long)v) };
+            case int v:     return new[] { ExactNumber.Of((long)v) };
+            case uint v:    return new[] { ExactNumber.Of((long)v) };
+            case long v:    return new[] { ExactNumber.Of(v) };
+            case ulong v:   return new[] { ExactNumber.Of(v) };
+            case decimal v: return new[] { ExactNumber.Of(v) };
+            case double d when double.IsNaN(d) || double.IsInfinity(d):
+                throw new NotHeldException($"{Describe(value)} is not a number {what} holds");
+            case float f when float.IsNaN(f) || float.IsInfinity(f):
+                throw new NotHeldException($"{Describe(value)} is not a number {what} holds");
+            case double d:  return ExactAndShortest(ExactNumber.Of(d), ExactNumber.Shortest(d));
+            case float f:   return ExactAndShortest(ExactNumber.Of(f), ExactNumber.Shortest(f));
+            case string s when ExactNumber.TryParse(s, out ExactNumber parsed):
+                return new[] { parsed };
+            case string:
+                throw NotOfType(value, $"it does not read as a number, and {what} takes numbers");
+            default:
+                throw NotOfType(value, $"{what} takes numbers");
+        }
+    }
+
+    private static ExactNumber[] ExactAndShortest(ExactNumber exact, ExactNumber shortest)
+        => exact == shortest ? new[] { exact } : new[] { exact, shortest };
+
+    private static long IntegerOf(object value, long min, long max, string range)
+    {
+        bool whole = false;
+        foreach (ExactNumber number in NumbersOf(value, "an integer column"))
+        {
+            if (number.Scale > 0) continue;
+            whole = true;
+            if (number.Exponent > 19) continue;   // past every 64-bit integer
+            BigInteger integer = number.Unscaled * BigInteger.Pow(10, -number.Scale);
+            if (integer >= min && integer <= max) return (long)integer;
+        }
+        throw new NotHeldException(whole
+            ? $"{Describe(value)} is out of range: {range}"
+            : $"{Describe(value)} is not a whole number, and {range}");
+    }
+
+    // A number goes to a Double or a Single column when the double or float nearest it is that number, or has it as
+    // its round-trip form: text reads back as the number it denotes, and a decimal as itself.
+    private static float SingleOf(object value)
+    {
+        switch (value)
+        {
+            case float f: return f;
+            case double d:
+            {
+                float single = (float)d;
+                if ((double)single == d || double.IsNaN(d)) return single;
+                throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(single)}");
+            }
+        }
+        ExactNumber number = NumbersOf(value, "a Single column")[0];
+        if (number.NearestSingle() is not float nearest)
+            throw new NotHeldException($"{Describe(value)} is out of range: a Single column holds -3.4028235E+38 to 3.4028235E+38");
+        if (ExactNumber.Of(nearest) == number || ExactNumber.Shortest(nearest) == number) return nearest;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(nearest)}");
+    }
+
+    private static double DoubleOf(object value)
+    {
+        switch (value)
+        {
+            case double d: return d;
+            case float f: return f;
+        }
+        ExactNumber number = NumbersOf(value, "a Double column")[0];
+        if (number.NearestDouble() is not double nearest)
+            throw new NotHeldException($"{Describe(value)} is out of range: a Double column holds -1.7976931348623157E+308 to 1.7976931348623157E+308");
+        if (ExactNumber.Of(nearest) == number || ExactNumber.Shortest(nearest) == number) return nearest;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {ExactNumber.Text(nearest)}");
+    }
+
+    private static readonly decimal CurrencyMax = 922_337_203_685_477.5807m;
+    private static readonly decimal CurrencyMin = -922_337_203_685_477.5808m;
+
+    private static decimal CurrencyOf(object value)
+    {
+        bool tooManyPlaces = true;
+        foreach (ExactNumber number in NumbersOf(value, "a Currency column"))
+        {
+            if (number.Scale > 4) continue;
+            tooManyPlaces = false;
+            if (number.ToDecimal() is decimal held && held >= CurrencyMin && held <= CurrencyMax) return held;
+        }
+        throw new NotHeldException(tooManyPlaces
+            ? $"{Describe(value)} has more than four places after the point, and a Currency column keeps four"
+            : $"{Describe(value)} is out of range: a Currency column holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807");
+    }
+
+    private static decimal DecimalOf(object value, int precision, int scale)
+    {
+        bool tooManyPlaces = true;
+        foreach (ExactNumber number in NumbersOf(value, "a Decimal column"))
+        {
+            if (number.Scale > Math.Min(scale, MaxDecimalPrecision)) continue;
+            tooManyPlaces = false;
+            if (precision > 0 && !number.IsZero && number.Exponent >= precision - scale) continue;
+            if (number.ToDecimal() is decimal held) return held;
+        }
+        throw new NotHeldException(tooManyPlaces
+            ? $"{Describe(value)} has more than {scale} places after the point, and the Decimal column keeps {scale}"
+            : $"{Describe(value)} has more digits than the Decimal column's {precision}, {scale} of them after the point");
+    }
+
+    // The first date a Date/Time column holds: an OLE Automation date starts at 1 January 100.
+    private static readonly DateTime FirstDateTime = new(100, 1, 1);
+
+    // The day Access gives a time without a date, in a Date/Time column and a Date/Time Extended one alike (measured:
+    // ACE 16 inserts '10:30' in either as 30 December 1899 10:30): the day an OLE Automation date counts from.
+    private static readonly DateTime TimeOnlyDay = new(1899, 12, 30);
+
+    private static DateTime DateTimeOf(object value, bool extended)
+    {
+        DateTime date = value switch
+        {
+            DateTime d       => d,
+            DateTimeOffset o => o.UtcDateTime,
+            // Text with an offset is the UTC time it denotes, as a DateTimeOffset is; text without one is the time it
+            // says. Neither depends on the machine's time zone. A time without a date is on the day Access gives one,
+            // not on the day it is imported - "10:30" is 30 December 1899 10:30 - its offset, if it has one, taken from it.
+            string s when DateTimeOffset.TryParse(s, Invariant, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed)
+                => IsTimeOnly(s) ? TimeOnlyDay + parsed.DateTime.TimeOfDay - parsed.Offset : parsed.UtcDateTime,
+            _ => throw NotOfType(value, $"a {(extended ? "Date/Time Extended" : "Date/Time")} column takes dates"),
+        };
+        if (!extended && date < FirstDateTime)
+            throw new NotHeldException($"{Describe(date)} is before 1 January 100, the first date a Date/Time column holds");
+        return date;
+    }
+
+    // Whether text is a time with no date: .NET reads one as on the day it is read, and as on 1 January 1 when told
+    // not to take the day; text with a date reads the same either way.
+    private static bool IsTimeOnly(string text)
+    {
+        const DateTimeStyles utc = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
+        return DateTime.TryParse(text, Invariant, utc | DateTimeStyles.NoCurrentDateDefault, out DateTime withoutToday)
+            && DateTime.TryParse(text, Invariant, utc, out DateTime withToday)
+            && withoutToday != withToday;
+    }
+
+    private static Guid GuidOf(object value) => value switch
+    {
+        Guid g => g,
+        string s when Guid.TryParse(s, out Guid parsed) => parsed,
+        _ => throw NotOfType(value, "a GUID column takes a Guid or its text"),
+    };
+
+    private static string TextOf(object value, Column? column)
+    {
+        string text = value switch
+        {
+            string s         => s,
+            char c           => c.ToString(),
+            bool b           => b ? "True" : "False",
+            double d         => ExactNumber.Text(d),
+            float f          => ExactNumber.Text(f),
+            DateTime d       => d.ToString("o", Invariant),
+            DateTimeOffset o => o.ToString("o", Invariant),
+            Guid g           => g.ToString("D"),
+            sbyte or byte or short or ushort or int or uint or long or ulong or decimal => Convert.ToString(value, Invariant)!,
+            _ => throw NotOfType(value, $"a {(column?.DataType ?? DataType.Memo)} column takes text, or a value with an exact text"),
+        };
+        if (column is null) return text;
+
+        int length = column.MaxLength;
+        if (!column.IsVariableLength && text.Length != length)
+            throw new NotHeldException(
+                $"{Describe(text)} has {text.Length} characters, and the column holds exactly {length} (SQL's CHAR): it would read back filled with spaces",
+                text.Length > length ? text.Length : null);
+        if (text.Length > length)
+            throw new NotHeldException($"{Describe(text)} has {text.Length} characters, and the column holds {length}", text.Length);
+        return text;
+    }
+
+    private static byte[] BinaryOf(object value, Column column)
+    {
+        var bytes = value as byte[] ?? throw NotOfType(value, "a Binary column holds bytes");
+        int length = column.LengthInBytes;
+        // Longer than the column, a value is refused as too long, as Access refuses it (ColumnValueTooLongException).
+        if (bytes.Length > length)
+            throw new NotHeldException($"{bytes.Length} bytes are more than the {length} the Binary column holds", bytes.Length);
+        if (!column.IsVariableLength && bytes.Length != length)
+            throw new NotHeldException(
+                $"{bytes.Length} bytes are not the {length} the column holds (SQL's BINARY): a shorter value would read back filled with zeros");
+        return bytes;
     }
 }

@@ -130,16 +130,9 @@ public sealed class RefusalTypeTests : IDisposable
     [Fact]
     public void A_file_the_password_does_not_open_is_refused_as_a_wrong_credential()
     {
-        using (var db = Database.Create(_path, FileFormat.Access2000))
-            People(db);
-
-        // The catalog's page no longer reads as a table definition, which is how a file encrypted with another
-        // password looks to one that has the wrong one.
-        using (var stream = new FileStream(_path, FileMode.Open, FileAccess.ReadWrite))
-        {
-            stream.Position = 2 * 4096;
-            stream.Write(new byte[] { 0xA7, 0x5C, 0x13, 0xE9 }, 0, 4);
-        }
+        // A file with a database password, which Access made (tools/protected-fixtures.ps1). The password is checked
+        // against the one its header keeps; a damaged file is another refusal (ProtectedFileTests).
+        File.Copy(ProtectedFileTests.Asset("dao-jet4-password.mdb"), _path, overwrite: true);
 
         Assert.Throws<InvalidCredentialException>(() => Database.Open(_path, new DatabaseOpenOptions { Password = "not the password" }));
         // Nothing is left holding the file.

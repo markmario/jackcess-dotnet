@@ -37,8 +37,8 @@ internal static class SchemaChange
 
         if (string.IsNullOrWhiteSpace(given.Name) || given.Name.Length > MaxNameLength)
             throw new ArgumentException($"A column's name is 1 to {MaxNameLength} characters; '{given.Name}' is not.", nameof(given));
-        if (table.Columns.Any(c => string.Equals(c.Name, given.Name, StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException($"Table '{table.Name}' already has a column named '{given.Name}'. Nothing was changed.", nameof(given));
+        if (table.Columns.FirstOrDefault(c => ObjectNames.Same(c.Name, given.Name)) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken.Name, given.Name)}. Nothing was changed.", nameof(given));
         if (table.Columns.Count >= MaxColumns)
             throw new ArgumentException($"Table '{table.Name}' has {MaxColumns} columns, the most a table has. Nothing was changed.", nameof(given));
         if (given.DataType == DataType.Complex || given.IsCalculated || !Enum.IsDefined(typeof(DataType), given.DataType))
@@ -207,8 +207,8 @@ internal static class SchemaChange
     private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
                                      byte flags, byte indexType, Func<Index, bool> shares, int alsoIndexes = 0)
     {
-        if (table.Indexes.Any(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException($"Table '{table.Name}' already has an index named '{name}'. Nothing was changed.");
+        if (table.Indexes.FirstOrDefault(ix => ObjectNames.Same(ix.Name, name)) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken.Name, name)}. Nothing was changed.");
         if (table.Indexes.Count + alsoIndexes >= IndexDefinition.MaxIndexesPerTable)
             throw new ArgumentException(
                 $"Table '{table.Name}' has {table.Indexes.Count + alsoIndexes} indexes; a table has at most {IndexDefinition.MaxIndexesPerTable}. Nothing was changed.");

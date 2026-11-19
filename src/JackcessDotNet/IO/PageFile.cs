@@ -16,9 +16,10 @@ internal sealed class PageFile : IDisposable
     public int PageCount { get { ThrowIfDisposed(); return (int)(_stream.Length / _format.PageSize); } }
 
     /// <summary>
-    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read.
+    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read, or
+    /// one protected by a codec that writes nothing (<see cref="ICodecHandler.WriteRefusal"/>).
     /// </summary>
-    internal bool IsReadOnly => _readOnly;
+    internal bool IsReadOnly => _readOnly || Codec.WriteRefusal is not null;
 
     private void ThrowIfDisposed()
     {
@@ -95,8 +96,8 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Per-page codec applied on every Read/Write. Default is the identity
-    /// (<see cref="NullCodecHandler.Instance"/>); <see cref="Database.Open(string)"/> may
-    /// install a different one for encrypted files (none implemented today).
+    /// (<see cref="NullCodecHandler.Instance"/>); <see cref="Database.Open(string, DatabaseOpenOptions)"/>
+    /// installs another for an encoded .mdb or an encrypted .accdb.
     /// </summary>
     public ICodecHandler Codec { get; set; } = NullCodecHandler.Instance;
 
@@ -168,11 +169,11 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Refuses a change to a file this library only reads: one opened in a format that is only read
-    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one. Every operation that writes
-    /// calls it before it does anything else, so a refused one leaves the file, and what the caller gave it, as
-    /// they were.
+    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one, or one protected by a codec that
+    /// writes nothing (ECMA Standard Encryption). Every operation that writes calls it before it does anything else,
+    /// so a refused one leaves the file, and what the caller gave it, as they were.
     /// </summary>
-    /// <exception cref="NotSupportedException">The file is an Access 97 one.</exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one, or an .accdb in ECMA Standard Encryption.</exception>
     internal void EnsureWritable()
     {
         if (ReadOnlyRefusal is { } why) throw new NotSupportedException(why);
@@ -183,7 +184,9 @@ internal sealed class PageFile : IDisposable
     /// throws, asked for instead.
     /// </summary>
     internal string? ReadOnlyRefusal
-        => _readOnly ? ReadOnlyFormat($"'{_path}' was not changed.").Message : null;
+        => _readOnly ? ReadOnlyFormat($"'{_path}' was not changed.").Message
+         : Codec.WriteRefusal is { } why ? $"{why} '{_path}' was not changed."
+         : null;
 
     /// <summary>What refuses a write to, or the creation of, a file in a format that is only read.</summary>
     internal static NotSupportedException ReadOnlyFormat(string whatWasNotDone)
