@@ -88,8 +88,17 @@ namespace System.Collections.Generic
             value = pair.Value;
         }
     }
+}
 
-    // Dictionary.GetValueOrDefault arrived in netstandard2.1 (CollectionExtensions).
+namespace JackcessDotNet
+{
+    using System.Collections.Generic;
+
+    // Dictionary.GetValueOrDefault arrived in netstandard2.1 (CollectionExtensions). In this
+    // namespace, not System.Collections.Generic: the netstandard2.0 assembly also loads on .NET,
+    // where the framework has the method in that namespace, and a caller that sees both (the
+    // tests, through InternalsVisibleTo) could not say which it meant. An extension in the
+    // caller's own namespace is found first.
     internal static class DictionaryCompatExtensions
     {
         public static TValue? GetValueOrDefault<TKey, TValue>(this IReadOnlyDictionary<TKey, TValue> dictionary, TKey key)
