@@ -34,7 +34,9 @@ namespace JackcessDotNet;
 /// the source's maximum length, or of 255 characters when it has none, when every value fits that, and
 /// <see cref="DataType.Memo"/> otherwise. A <c>byte[]</c> is <see cref="DataType.Binary"/> of the source's maximum
 /// length when it has one of 255 bytes or fewer and every value fits it, and <see cref="DataType.OleObject"/>
-/// otherwise. A nullable type is its underlying type, and an enum its underlying integer type.
+/// otherwise - a <c>byte[]</c> the source gives no length, as Java's importer makes a BLOB or LONGVARBINARY one: it
+/// holds every value, and every value added later, of any length. A nullable type is its underlying type, and an
+/// enum its underlying integer type.
 /// </para>
 /// <para>
 /// An import does not change the file's format. A Large Number column makes a file of an older format one of Access
@@ -97,8 +99,9 @@ public static class DatabaseImporter
     /// <para>
     /// The table is named <see cref="ImportOptions.TableName"/>, or else <see cref="DataTable.TableName"/>, or
     /// else <c>Table1</c>. A column takes its name and its type from the source's column, as
-    /// <see cref="DatabaseImporter"/> describes, the length of text and bytes from its
-    /// <see cref="DataColumn.MaxLength"/> and its values, and is required when its
+    /// <see cref="DatabaseImporter"/> describes, the length of text from its <see cref="DataColumn.MaxLength"/> and
+    /// its values - a <see cref="byte"/> array column, which a <see cref="DataColumn"/> gives no length, is an OLE
+    /// Object, which holds any - and is required when its
     /// <see cref="DataColumn.AllowDBNull"/> is false; an <see cref="int"/> column with
     /// <see cref="DataColumn.AutoIncrement"/> is an AutoNumber. The primary key is
     /// <see cref="ImportOptions.PrimaryKey"/>, or else the source's <see cref="DataTable.PrimaryKey"/>, of one column
@@ -130,7 +133,7 @@ public static class DatabaseImporter
     /// the new table does not have, or holds an empty name. Nothing is imported.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">
-    /// Adding to a table, a text value is longer than its column. Nothing is imported.
+    /// Adding to a table, a value is longer than its column: text, or bytes for a Binary column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
@@ -209,7 +212,7 @@ public static class DatabaseImporter
     /// table is one its column does not hold exactly. Nothing is imported.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">
-    /// Adding to a table, a text value is longer than its column. Nothing is imported.
+    /// Adding to a table, a value is longer than its column: text, or bytes for a Binary column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// A table is refused as <see cref="ImportTable(Database, DataTable, ImportOptions)"/> refuses one. Nothing is
@@ -279,7 +282,8 @@ public static class DatabaseImporter
     /// Every public instance property that can be read is a column, in the order reflection lists them, which is
     /// the order they are declared in, but an indexer and a property with <see cref="NotMappedAttribute"/>. A
     /// column is named for its property, or as its <see cref="ColumnAttribute"/> names it, and takes its type as
-    /// <see cref="DatabaseImporter"/> describes; <see cref="MaxLengthAttribute"/> is its length, for text and bytes;
+    /// <see cref="DatabaseImporter"/> describes; <see cref="MaxLengthAttribute"/> is its length, for text and bytes
+    /// (a <see cref="byte"/> array without one is an OLE Object, which holds any);
     /// it is required when its property has <see cref="RequiredAttribute"/> or is of a value type that is not
     /// nullable; and an <see cref="int"/> property with <see cref="DatabaseGeneratedAttribute"/> of
     /// <see cref="DatabaseGeneratedOption.Identity"/> is an AutoNumber. The primary key is
@@ -316,7 +320,7 @@ public static class DatabaseImporter
     /// names a column the new table does not have, or holds an empty name. Nothing is imported.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">
-    /// Adding to a table, a text value is longer than its column. Nothing is imported.
+    /// Adding to a table, a value is longer than its column: text, or bytes for a Binary column. Nothing is imported.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
@@ -675,7 +679,7 @@ public static class DatabaseImporter
     /// <paramref name="raw"/> as <paramref name="column"/> holds it, or the refusal, saying which row and column
     /// held a value the column does not hold exactly.
     /// </summary>
-    /// <exception cref="ColumnValueTooLongException">Text longer than its column.</exception>
+    /// <exception cref="ColumnValueTooLongException">A value longer than its column: text, or bytes for a Binary column.</exception>
     /// <exception cref="ArgumentException">Any other value the column does not hold exactly.</exception>
     private static object? Converted(object? raw, Column column, string where, string paramName)
     {
@@ -686,7 +690,7 @@ public static class DatabaseImporter
         catch (TypeMapper.NotHeldException notHeld)
         {
             string message = $"The value of {column.Name} in {where} is not imported: {notHeld.Message}. Nothing was imported.";
-            if (notHeld.TextLength is { } length)
+            if (notHeld.TooLong is { } length)
                 throw new ColumnValueTooLongException(column.Name, column.MaxLength, length, message);
             throw new ArgumentException(message, paramName);
         }

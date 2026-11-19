@@ -145,7 +145,9 @@ changed since 1.2.2.
     need, 18 at least - refused past 28 - where Currency rounded past four places. A `string` with no length is
     Text(255) when every value fits and a Memo otherwise, and one with a length longer than a value is a Memo (a
     longer value stopped the import). A `byte[]` is Binary only where a length is given and every value fits it,
-    and an OLE Object otherwise: it was Binary(50), which took a longer value.
+    and an OLE Object otherwise: it was Binary(50), which took a longer value that ACE could not then read. A
+    `byte[]` the source gives no length - every `DataTable`'s, whose `DataColumn.MaxLength` takes none - is an OLE
+    Object, as Java's importer makes a BLOB one: it holds every value, and any added later.
   - **A null for a Yes/No column, and a date before 1 January 100, are refused.** They were stored as No, and
     `DateTime.MinValue` as 30 December 1899. An empty byte array is written as `Table.Insert` writes one: a value
     of no bytes, as ACE's own INSERT writes it, which ACE's OLE DB and SQL read back as one, and DAO as Null.
@@ -163,7 +165,8 @@ changed since 1.2.2.
     Whether a number goes to a numeric column is worked out exactly, so it is the same on every target. Text goes
     to a numeric column as the number it denotes, only when the column holds exactly that number; NaN, the
     infinities and a number past the column's range, or too near 0 for it, are refused, whatever the size of the
-    exponent it is written with.
+    exponent it is written with. Bytes longer than a Binary column are refused as text longer than its column is,
+    with `ColumnValueTooLongException`.
 - **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
   `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
   which is not the key Access makes for it.

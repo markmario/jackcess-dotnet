@@ -296,6 +296,78 @@ public sealed class ImportExactnessTests : IDisposable
         [MaxLength(10)] public byte[]? Overflowing { get; set; }
     }
 
+    private static byte[] BytesOf(int length, int seed) => Enumerable.Range(0, length).Select(i => (byte)(i * 7 + seed)).ToArray();
+
+    private sealed class Sized
+    {
+        public int Id { get; set; }
+        public byte[]? Unsized { get; set; }
+        [MaxLength(64)] public byte[]? Of64 { get; set; }
+        [MaxLength(255)] public byte[]? Of255 { get; set; }
+        [MaxLength(300)] public byte[]? Of300 { get; set; }
+    }
+
+    // A byte[] the source gives no length - a DataTable's, whose DataColumn takes none, or a property without
+    // [MaxLength] - is an OLE Object, which holds every value whole: 51, 64 and 300 bytes here. One given a length of
+    // 255 bytes or fewer is a Binary of it; one given more, an OLE Object, as a Binary holds 255 at most. The column
+    // was Binary(50), which a longer value overran.
+    [Fact]
+    public void A_byte_array_without_a_length_is_an_OLE_Object_that_holds_every_value_whole()
+    {
+        var source = new DataTable("Blobs");
+        source.Columns.Add("Id", typeof(int));
+        source.Columns.Add("Data", typeof(byte[]));
+        source.Rows.Add(1, BytesOf(64, 1));
+        source.Rows.Add(2, BytesOf(300, 2));
+        source.Rows.Add(3, BytesOf(51, 3));
+        source.Rows.Add(4, DBNull.Value);
+        var objects = new[]
+        {
+            new Sized { Id = 1, Unsized = BytesOf(51, 4), Of64 = BytesOf(64, 5), Of255 = BytesOf(255, 6), Of300 = BytesOf(300, 7) },
+            new Sized { Id = 2, Unsized = BytesOf(64, 8), Of64 = BytesOf(1, 9), Of255 = null, Of300 = BytesOf(12, 10) },
+            new Sized { Id = 3, Unsized = BytesOf(300, 11) },
+        };
+        using (var db = Database.Create(_path))
+        {
+            db.ImportTable(source);
+            db.ImportTable(objects, new ImportOptions { TableName = "Objects" });
+        }
+
+        using var reopen = Database.Open(_path);
+        Assert.Equal(DataType.OleObject, ColumnNamed(reopen.GetTable("Blobs"), "Data").DataType);
+        Assert.Equal(new object?[] { BytesOf(64, 1), BytesOf(300, 2), BytesOf(51, 3), null }, ValuesOf(reopen, "Blobs", "Data"));
+        var t = reopen.GetTable("Objects");
+        Assert.Equal(DataType.OleObject, ColumnNamed(t, "Unsized").DataType);
+        Assert.Equal((DataType.Binary, 64), (ColumnNamed(t, "Of64").DataType, ColumnNamed(t, "Of64").MaxLength));
+        Assert.Equal((DataType.Binary, 255), (ColumnNamed(t, "Of255").DataType, ColumnNamed(t, "Of255").MaxLength));
+        Assert.Equal(DataType.OleObject, ColumnNamed(t, "Of300").DataType);
+        foreach (string column in new[] { "Unsized", "Of64", "Of255", "Of300" })
+            Assert.Equal(objects.Select(o => (object?)typeof(Sized).GetProperty(column)!.GetValue(o)), ValuesOf(reopen, "Objects", column));
+    }
+
+    // Added to a Binary column that is there, bytes longer than it are refused as too long, as Access refuses them
+    // (ColumnValueTooLongException), and nothing is added.
+    [Fact]
+    public void Bytes_longer_than_a_Binary_column_that_is_there_are_refused_as_too_long()
+    {
+        using (var db = Database.Create(_path))
+            db.CreateTable("Blobs", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Data", DataType.Binary) { MaxLength = 50 } }, "Id");
+        var source = new DataTable("Blobs");
+        source.Columns.Add("Id", typeof(int));
+        source.Columns.Add("Data", typeof(byte[]));
+        source.Rows.Add(1, BytesOf(50, 1));
+        source.Rows.Add(2, BytesOf(64, 2));
+
+        var tooLong = RefusedAndUnchanged<ColumnValueTooLongException>(_path, db => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
+        Assert.Equal(("Data", 50, 64), (tooLong.ColumnName, tooLong.MaxLength, tooLong.Length));
+        Assert.Contains("Nothing was imported", tooLong.Message);
+
+        source.Rows[1]["Data"] = BytesOf(50, 2);
+        using (var db = Database.Open(_path)) db.ImportTable(source, new ImportOptions { AppendIfExists = true });
+        using var reopen = Database.Open(_path);
+        Assert.Equal(new object?[] { BytesOf(50, 1), BytesOf(50, 2) }, ValuesOf(reopen, "Blobs", "Data"));
+    }
+
     [Fact]
     public void Text_is_Text_only_where_every_value_fits_its_length()
     {
@@ -711,7 +783,6 @@ public sealed class ImportExactnessTests : IDisposable
         new object[] { "N", typeof(decimal), 1234.56m, 1.234m },
         new object[] { "N", typeof(decimal), 9999.99m, 10000m },
         new object[] { "Y", typeof(object), true, 1 },
-        new object[] { "Bin", typeof(byte[]), new byte[4], new byte[5] },
         new object[] { "When", typeof(DateTime), new DateTime(2000, 1, 1), new DateTime(50, 1, 1) },
         new object[] { "G", typeof(string), Guid.Empty.ToString(), "not a guid" },
     };
@@ -734,12 +805,16 @@ public sealed class ImportExactnessTests : IDisposable
     }
 
     [Fact]
-    public void Text_longer_than_its_column_is_refused_as_too_long_and_nothing_is_added()
+    public void Text_or_bytes_longer_than_their_column_are_refused_as_too_long_and_nothing_is_added()
     {
         TableWithEveryType();
         var source = TableOf("X", typeof(string), "fits", "sixsix");
         var refusal = RefusedAndUnchanged<ColumnValueTooLongException>(_path, db => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
         Assert.Equal(("X", 5, 6), (refusal.ColumnName, refusal.MaxLength, refusal.Length));
+
+        var bytes = TableOf("Bin", typeof(byte[]), new byte[4], new byte[5]);
+        refusal = RefusedAndUnchanged<ColumnValueTooLongException>(_path, db => db.ImportTable(bytes, new ImportOptions { AppendIfExists = true }));
+        Assert.Equal(("Bin", 4, 5), (refusal.ColumnName, refusal.MaxLength, refusal.Length));
     }
 
     [Fact]

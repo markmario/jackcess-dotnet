@@ -219,10 +219,13 @@ internal static class TypeMapper
     /// </summary>
     internal sealed class NotHeldException : Exception
     {
-        internal NotHeldException(string reason, int? textLength = null) : base(reason) => TextLength = textLength;
+        internal NotHeldException(string reason, int? tooLong = null) : base(reason) => TooLong = tooLong;
 
-        /// <summary>For a text value longer than its column, the value's length; otherwise null.</summary>
-        internal int? TextLength { get; }
+        /// <summary>
+        /// For a value longer than its column - text in characters, bytes for a Binary column - the value's length;
+        /// otherwise null.
+        /// </summary>
+        internal int? TooLong { get; }
     }
 
     /// <summary>
@@ -496,11 +499,12 @@ internal static class TypeMapper
     {
         var bytes = value as byte[] ?? throw NotOfType(value, "a Binary column holds bytes");
         int length = column.LengthInBytes;
+        // Longer than the column, a value is refused as too long, as Access refuses it (ColumnValueTooLongException).
+        if (bytes.Length > length)
+            throw new NotHeldException($"{bytes.Length} bytes are more than the {length} the Binary column holds", bytes.Length);
         if (!column.IsVariableLength && bytes.Length != length)
             throw new NotHeldException(
                 $"{bytes.Length} bytes are not the {length} the column holds (SQL's BINARY): a shorter value would read back filled with zeros");
-        if (bytes.Length > length)
-            throw new NotHeldException($"{bytes.Length} bytes are more than the {length} the Binary column holds");
         return bytes;
     }
 }
