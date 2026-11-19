@@ -362,7 +362,7 @@ public sealed class SecondReviewTests : IDisposable
         int pages = db.File.PageCount;
 
         var eleven = Enumerable.Range(0, 11).Select(i => Long($"K{i}")).ToArray();
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("Wide key", eleven, eleven.Select(c => c.Name).ToArray()));
         Assert.Equal(pages, db.File.PageCount);
 
         var named = Enumerable.Range(0, 120).Select(i => Long($"{i:D3}" + new string('x', 60))).ToArray();

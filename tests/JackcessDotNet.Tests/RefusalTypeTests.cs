@@ -102,7 +102,7 @@ public sealed class RefusalTypeTests : IDisposable
         Assert.Throws<ConstraintViolationException>(() => people.AddIndex(new IndexDefinition("UniqueName", "Name") { IsUnique = true }));
         Assert.Throws<ConstraintViolationException>(() => people.AddIndex(new IndexDefinition("RequiredName", "Name") { IsRequired = true }));
         // The index is at fault here, not the rows.
-        Assert.Throws<InvalidOperationException>(() => people.AddIndex(new IndexDefinition("ByNothing", "Nowhere")));
+        Assert.Throws<ArgumentException>(() => people.AddIndex(new IndexDefinition("ByNothing", "Nowhere")));
     }
 
     [Fact]

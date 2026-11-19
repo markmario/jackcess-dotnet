@@ -370,9 +370,9 @@ internal static class SchemaChange
 
         // The tables, by the names the catalog has for them: MSysRelationships holds those.
         string fromName = db.Catalog.TableNameAsListed(definition.FromTableName)
-            ?? throw new InvalidOperationException($"Table '{definition.FromTableName}' was not found in this database. Nothing was changed.");
+            ?? throw new ArgumentException($"Table '{definition.FromTableName}' was not found in this database. Nothing was changed.", nameof(definition));
         string toName = db.Catalog.TableNameAsListed(definition.ToTableName)
-            ?? throw new InvalidOperationException($"Table '{definition.ToTableName}' was not found in this database. Nothing was changed.");
+            ?? throw new ArgumentException($"Table '{definition.ToTableName}' was not found in this database. Nothing was changed.", nameof(definition));
         var parent = db.GetTable(fromName);
         var child  = db.GetTable(toName);
         bool sameTable = string.Equals(fromName, toName, StringComparison.OrdinalIgnoreCase);
@@ -592,7 +592,7 @@ internal static class SchemaChange
 
     private static Column ColumnOf(TableDefinition table, string name, string what)
         => table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException($"{what} column '{name}' was not found in table '{table.Name}'. Nothing was changed.");
+            ?? throw new ArgumentException($"{what} column '{name}' was not found in table '{table.Name}'. Nothing was changed.");
 
     /// <summary>
     /// After a change is written: every <see cref="Table"/> open on the table reads its definition again, and the

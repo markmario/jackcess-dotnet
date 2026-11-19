@@ -118,7 +118,7 @@ public sealed class CompositePrimaryKeyTests : IDisposable
             .Select(i => new ColumnDefinition($"C{i}", DataType.Int32)).ToArray();
         var pkNames = columns.Select(c => c.Name).ToArray();
 
-        Assert.Throws<InvalidOperationException>(
+        Assert.Throws<ArgumentException>(
             () => db.CreateTable("TooMany", columns, primaryKey: pkNames));
     }
 

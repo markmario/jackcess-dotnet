@@ -532,7 +532,7 @@ public sealed class SecondaryIndexTests : IDisposable
         // A type whose keys the engine does not write, a column the table has not, a name given twice,
         // a descending column that is not the index's.
         Assert.Throws<NotSupportedException>(() => db.CreateTable("T", columns, new[] { "Id" }, new[] { new IndexDefinition("ByAmount", "Amount") }));
-        Assert.Throws<InvalidOperationException>(() => db.CreateTable("T", columns, new[] { "Id" }, new[] { new IndexDefinition("ByNothing", "Missing") }));
+        Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, new[] { "Id" }, new[] { new IndexDefinition("ByNothing", "Missing") }));
         Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, new[] { "Id" },
             new[] { new IndexDefinition("ByName", "Name"), new IndexDefinition("byname", "Id") }));
         Assert.Throws<ArgumentException>(() => db.CreateTable("T", columns, new[] { "Id" }, new[] { new IndexDefinition("PrimaryKey", "Name") }));

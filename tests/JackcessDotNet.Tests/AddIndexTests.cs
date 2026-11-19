@@ -227,7 +227,7 @@ public sealed class AddIndexTests : IDisposable
     {
         CreateWithRows(40).Dispose();
         AssertRefusedAndUnchanged<ArgumentException>(table => table.AddIndex(new IndexDefinition("primarykey", "Grp")));
-        AssertRefusedAndUnchanged<InvalidOperationException>(table => table.AddIndex(new IndexDefinition("ByNothing", "Nowhere")));
+        AssertRefusedAndUnchanged<ArgumentException>(table => table.AddIndex(new IndexDefinition("ByNothing", "Nowhere")));
         AssertRefusedAndUnchanged<ArgumentException>(
             table => table.AddIndex(new IndexDefinition("Descending", "Grp") { DescendingColumns = { "Seq" } }));
     }

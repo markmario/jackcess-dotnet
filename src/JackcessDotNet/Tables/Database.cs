@@ -635,8 +635,8 @@ public sealed class Database : IDisposable
     /// </param>
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>), or the primary key names a column that is not among them. Nothing is
-    /// created.
+    /// (<see cref="ColumnDefinition"/>), or the primary key names a column that is not among them or more
+    /// columns than a key has. Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The primary key is on a column whose keys this library does not write as Access does, or the database
@@ -656,8 +656,8 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, or two indexes
-    /// have one name. Nothing is created.
+    /// (<see cref="ColumnDefinition"/>), the primary key or an index names a column that is not among them, the
+    /// primary key names more columns than a key has, or two indexes have one name. Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
@@ -865,14 +865,12 @@ public sealed class Database : IDisposable
         for (short i = 0; i < columns.Count; i++)
             columns[i].Ordinal = i;
 
-        // A primary key's columns come in the call that names the table's columns: one that is not among them
-        // is a fault in the arguments.
+        // A key's or an index's columns come in the call that names the table's columns: one that is not among
+        // them is a fault in the arguments.
         Column Find(string column, string what, bool ofPrimaryKey = false)
         {
             var found = columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))
-                ?? throw (ofPrimaryKey
-                    ? new ArgumentException($"{what} column '{column}' not found in table '{table}'.", "primaryKey")
-                    : new InvalidOperationException($"{what} column '{column}' not found in table '{table}'."));
+                ?? throw new ArgumentException($"{what} column '{column}' not found in table '{table}'.", ofPrimaryKey ? "primaryKey" : "indexes");
             if (!IndexKeys.CanEncode(found))
                 throw new NotSupportedException(
                     $"{what} on '{column}' is not supported: {IndexKeys.WhyNot(found)}, " +
@@ -884,8 +882,8 @@ public sealed class Database : IDisposable
         if (pkColumns is { Count: > 0 })
         {
             if (pkColumns.Count > IndexDefinition.MaxColumns)
-                throw new InvalidOperationException(
-                    $"Composite primary keys are limited to {IndexDefinition.MaxColumns} columns; got {pkColumns.Count}.");
+                throw new ArgumentException(
+                    $"Composite primary keys are limited to {IndexDefinition.MaxColumns} columns; got {pkColumns.Count}.", "primaryKey");
             planned.Add(new PlannedIndex(
                 TableDefinition.PrimaryKeyIndexName,
                 pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key", ofPrimaryKey: true), TableDefinition.AscendingColumnFlag)).ToList(),
@@ -1047,17 +1045,18 @@ public sealed class Database : IDisposable
     /// </summary>
     /// <returns>The relationship, as <see cref="GetRelationships"/> lists it from then on.</returns>
     /// <exception cref="ArgumentException">
-    /// The definition names no columns, or a different number on each side, or a column twice on one side of a
-    /// relationship with referential integrity; or asks for a cascade without referential integrity.
+    /// The definition names a table or a column that is not there; names no columns, or a different number on
+    /// each side, or a column twice on one side of a relationship with referential integrity; or asks for a
+    /// cascade without referential integrity. Nothing is changed.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// With referential integrity: a row of the referring table refers to no row of the referenced table.
     /// Nothing is changed.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// A table or column is not there; two matched columns are of different types; a relationship of that name
-    /// exists, or the referring table has an index of that name; or, with referential integrity, the referenced
-    /// columns have no unique index (or primary key) on exactly them. Nothing is changed.
+    /// Two matched columns are of different types; a relationship of that name exists, or the referring table
+    /// has an index of that name; or, with referential integrity, the referenced columns have no unique index
+    /// (or primary key) on exactly them. Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the foreign key is on a column whose index keys this library does not write;
