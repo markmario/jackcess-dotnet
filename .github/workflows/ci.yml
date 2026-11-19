@@ -1,43 +1,62 @@
-# Build + full test suite on every push and every pull request, on every branch.
+# Build + full test suite on every pull request and on every push to main.
 #
-# Separate from publish.yml deliberately: publishing is gated on release tags,
-# but a feature branch needs to know it is green BEFORE it opens a PR. This
-# workflow never publishes anything.
+# Separate from publish.yml deliberately: publishing is gated on release tags.
+# This workflow never publishes anything.
+#
+# A branch is tested by its pull request, not by its pushes as well: with both
+# triggers every commit of an open pull request ran twice. A branch with no pull
+# request yet is run by hand (workflow_dispatch).
+#
+# The jobs run side by side, each on a runner of its own: one builds every
+# target, and one for each framework builds that framework alone and runs the
+# tests on it. One after another on one runner they took 13 minutes.
 name: ci
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
+# A newer run of the same pull request or branch cancels the older one. Not on
+# main: every run there has a group of its own and runs to the end, so each
+# commit of main has a result.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  # Every target at once, as a release builds them: a break in one (missing BCL
+  # surface, see Util/FrameworkCompat.cs), a warning the project makes an error
+  # (the public API files, XML documentation) and the package the build writes.
+  build:
+    name: build (every target)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
 
       # 11.0.x builds everything: the library targets net11.0, and an SDK older
       # than a project's newest target cannot restore it, so global.json asks
-      # for 11.0.100 or later. It also runs the tests on Microsoft Testing
-      # Platform (global.json), as every SDK from 10 does, and reads the .slnx,
-      # as every SDK from 9.0.2xx does.
-      # 10.0.x for its runtime: the tests run on net10.0 as well as net11.0.
-      # .NET Framework 4.8, the tests' third framework, is part of the runner.
+      # for 11.0.100 or later. It also reads the .slnx, as every SDK from
+      # 9.0.2xx does. 10.0.x for the net10.0 target's reference assemblies.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             10.0.x
             11.0.x
 
-      # Hash every fixture against tests/corpus/MANIFEST.sha256 BEFORE building.
-      # A missing, truncated, edited or newline-mangled .mdb otherwise surfaces
-      # as a baffling parser failure a long way from the cause; this turns it
-      # into one line naming the file. Runs first so it costs 2s to rule out.
+      # The packages a restore would download, kept from the last run whose
+      # project files were these.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-build-${{ hashFiles('**/*.csproj', 'global.json') }}
+
+      # Hash every fixture against tests/corpus/MANIFEST.sha256. A missing,
+      # truncated, edited or newline-mangled .mdb otherwise surfaces as a
+      # baffling parser failure a long way from the cause; this turns it into
+      # one line naming the file. Here and not in each test job: every job
+      # checks out the same commit, so one check covers them all.
       - name: Verify test corpus
         shell: pwsh
         run: ./tools/corpus.ps1
@@ -57,48 +76,138 @@ jobs:
       - name: Restore
         run: dotnet restore JackcessDotNet.slnx
 
-      # The library multi-targets net10.0, net11.0, net48 and netstandard2.0;
-      # build them all so a break in one (missing BCL surface, see
-      # Util/FrameworkCompat.cs) fails here and not in a downstream consumer.
       - name: Build (net10.0 + net11.0 + net48 + netstandard2.0)
         run: dotnet build JackcessDotNet.slnx --configuration Release --no-restore
 
-      # No --filter. The whole suite runs, corpus tests included: they are the
-      # only thing that checks this parser against files real Access wrote.
-      # One framework to a step: run together they write the same report file
-      # name, and a step of its own says which framework failed.
-      - name: Test (net10.0)
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net10.0 --report-xunit-trx --report-xunit-trx-filename test-results-net10.0.trx
+      # The build writes the package (GeneratePackageOnBuild). What it says each
+      # target depends on is what an application on that target restores, so it
+      # is stated here and a change to it fails: .NET 10 and 11 need no package,
+      # and the netstandard2.0 assembly - the one .NET 8 and 9 and .NET
+      # Framework 4.7.2 get - needs all four of these.
+      - name: Check the package's dependencies
+        shell: pwsh
+        run: |
+          $expected = [ordered]@{
+            'net10.0'          = ''
+            'net11.0'          = ''
+            '.NETFramework4.8' = 'Microsoft.Bcl.HashCode 6.0.0, System.Memory 4.6.0'
+            '.NETStandard2.0'  = 'Microsoft.Bcl.HashCode 6.0.0, System.ComponentModel.Annotations 5.0.0, System.Memory 4.6.0, System.Text.Encoding.CodePages 8.0.0'
+          }
+          $nupkg = @(Get-ChildItem artifacts/*.nupkg)
+          if ($nupkg.Count -ne 1) { throw "Expected one .nupkg in artifacts/, found $($nupkg.Count)" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($nupkg[0].FullName)
+          try {
+            $entry = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' }
+            $reader = New-Object IO.StreamReader($entry.Open())
+            $nuspec = [xml]$reader.ReadToEnd()
+            $reader.Dispose()
+            $libs = @($zip.Entries | Where-Object { $_.FullName -like 'lib/*/JackcessDotNet.dll' } | ForEach-Object { $_.FullName.Split('/')[1] } | Sort-Object)
+          } finally { $zip.Dispose() }
+          "lib: $($libs -join ', ')"
+          if (($libs -join ', ') -ne 'net10.0, net11.0, net48, netstandard2.0') { throw "The package's lib folders are $($libs -join ', ')" }
+          $groups = @($nuspec.package.metadata.dependencies.group)
+          if ($groups.Count -ne $expected.Count) { throw "The package has $($groups.Count) dependency groups, expected $($expected.Count)" }
+          foreach ($group in $groups) {
+            $target = $group.targetFramework
+            $has = (@($group.dependency | Where-Object { $_ } | ForEach-Object { "$($_.id) $($_.version)" } | Sort-Object) -join ', ')
+            "${target}: $(if ($has) { $has } else { 'no package' })"
+            if (-not $expected.Contains($target)) { throw "The package has a dependency group for $target" }
+            if ($has -ne $expected[$target]) { throw "${target} depends on [$has], expected [$($expected[$target])]" }
+          }
 
-      - name: Test (net11.0)
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net11.0 --report-xunit-trx --report-xunit-trx-filename test-results-net11.0.trx
+  # The whole suite on one framework, corpus tests included (no --filter): they
+  # are the only thing that checks this parser against files real Access wrote.
+  # A job builds its own framework rather than download what the build job
+  # built: building one framework takes less time than an artifact's round
+  # trip, and no job waits for another.
+  #
+  # net48 is the only test of the library itself on .NET Framework: its
+  # assembly has code of its own (Util/FrameworkCompat.cs) and the framework's
+  # own text encodings, hashing, parsing and formatting.
+  #
+  # netstandard2.0, the library's fourth target, has no runtime of its own, so
+  # no test project can target it. NetStandardAsset has the test project
+  # reference that assembly whatever its own framework: on net10.0 it is loaded
+  # as an application on .NET 8 or 9 loads it, and on net48 as one on .NET
+  # Framework 4.7.2 does.
+  frameworks:
+    name: test (${{ matrix.name }})
+    runs-on: windows-latest
+    strategy:
+      # Every framework runs to the end, so one run reports every failure.
+      fail-fast: false
+      matrix:
+        include:
+          - name: net10.0
+            id: net10.0
+            framework: net10.0
+            sdks: "10.0.x\n11.0.x"
+          - name: net11.0
+            id: net11.0
+            framework: net11.0
+            sdks: 11.0.x
+          - name: net48
+            id: net48
+            framework: net48
+            sdks: 11.0.x
+          - name: netstandard2.0 on net10.0
+            id: netstandard2.0-net10.0
+            framework: net10.0
+            properties: -p:NetStandardAsset=true
+            sdks: "10.0.x\n11.0.x"
+          - name: netstandard2.0 on net48
+            id: netstandard2.0-net48
+            framework: net48
+            properties: -p:NetStandardAsset=true
+            sdks: 11.0.x
+    steps:
+      - uses: actions/checkout@v7
 
-      # The only test of the library itself on .NET Framework: its net48
-      # assembly has code of its own (Util/FrameworkCompat.cs) and the
-      # framework's own text encodings, hashing, parsing and formatting.
-      - name: Test (net48)
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net48 --report-xunit-trx --report-xunit-trx-filename test-results-net48.trx
+      # 11.0.x builds and runs the tests on Microsoft Testing Platform
+      # (global.json), as every SDK from 10 does. 10.0.x where the tests run on
+      # its runtime. .NET Framework 4.8 is part of the runner.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ matrix.sdks }}
 
-      # The fourth target has no runtime of its own, so no test project can
-      # target it. NetStandardAsset has the test project reference the
-      # netstandard2.0 assembly whatever its own framework: on net10.0 it is
-      # loaded as an application on .NET 8 or 9 loads it, and on net48 as one
-      # on .NET Framework 4.7.2 does. A build of its own (bin/Release-netstandard),
-      # after the tests above: it restores the test project again, with the
-      # packages that assembly needs.
-      - name: Build (the tests against the netstandard2.0 assembly)
-        run: dotnet build tests/JackcessDotNet.Tests --configuration Release -p:NetStandardAsset=true
+      # As in the build job. A cache to a job: the netstandard2.0 jobs restore
+      # packages the others do not.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ matrix.id }}-${{ hashFiles('**/*.csproj', 'global.json') }}
 
-      - name: Test (netstandard2.0 on net10.0)
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net10.0 -p:NetStandardAsset=true --report-xunit-trx --report-xunit-trx-filename test-results-netstandard2.0-net10.0.trx
+      # The test project for this framework, and of the library only the
+      # assembly it references.
+      - name: Build
+        run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework ${{ matrix.framework }} ${{ matrix.properties }}
 
-      - name: Test (netstandard2.0 on net48)
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework net48 -p:NetStandardAsset=true --report-xunit-trx --report-xunit-trx-filename test-results-netstandard2.0-net48.trx
+      # A report to a job, named for it, since every job would write the same name.
+      - name: Test
+        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework ${{ matrix.framework }} ${{ matrix.properties }} --report-xunit-trx --report-xunit-trx-filename test-results-${{ matrix.id }}.trx
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results
+          name: test-results-${{ matrix.id }}
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
+
+  # One check with the name this workflow's only job had, for anything that
+  # waits on "test": it passes when the build and every framework did.
+  test:
+    name: test
+    if: always()
+    needs: [build, frameworks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: The build and every framework passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then exit 1; fi
+          done
