@@ -20,9 +20,9 @@ neither the Jackcess authors nor Mehran Ghanizadeh maintain or endorse it. It di
 
 The library is a C# port of the [`spannm/jackcess`](https://github.com/spannm/jackcess) Java
 project (a maintained fork of the original [Jackcess](https://jackcess.sourceforge.io/)
-by James Ahlborn). The Java project remains the source of truth for the Jet
-file format; this port tracks its behaviour and reuses its test corpus for
-verification.
+by James Ahlborn). The Java project is where this port learned the Jet file format: it tracks the Java
+project's behaviour and reuses its test corpus for verification, and where Access and Jackcess differ, it follows
+Access.
 
 ## Installing
 
@@ -342,21 +342,20 @@ reaches and the index pages that lead to them - a cascade delete of five rows ab
 has a thousand rows or a million - and holds only those rows in memory. Every row a cascade rewrites or deletes
 keeps its entry in every index of its table, so Access still finds it, and still protects its parent, afterwards.
 
-An index is trusted to hold every row of its table, as Access and Java Jackcess trust one
-([qcatco/exportmdb.interop#78](https://github.com/qcatco/exportmdb.interop/issues/78)): rows are found through it,
-and a unique index that has no entry for a value is taken to mean no row has it. Nothing is read to check.
+An index is trusted to hold every row of its table, as Access and Java Jackcess trust one: rows are found through
+it, and a unique index that has no entry for a value is taken to mean no row has it. Nothing is read to check.
 
-**`Database.VerifyIndexes`: for files an earlier version wrote to.** Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
-primary key and no other index, and kept the primary key under the value a row was *found by*. In a table Access
+**`Database.VerifyIndexes`: for files an earlier version wrote to.** Versions of this library before it kept every
+index - the `JackcessDotNet` package up to 1.2.2, and builds of this repository before 18 November 2026 (a427b84) -
+kept a table's primary key and no other index, and kept the primary key under the value a row was *found by*. No
+release of `Jackcess.Net` is one of them. In a table Access
 made with indexes, a row one of them inserted is in no index but the primary key; a row one of them updated is in
 each other index where it was before the update; and a row whose primary key one of them changed is in the key
 under the value it had. Nothing in a file says that one of them wrote to it - a count of entries does not (after
 such an update an index has an entry for every row, by number), nor does the number an index's definition keeps,
 which is of keys ever added.
 
-With such a file, and by default, this library does what Access does with it
-([#64](https://github.com/qcatco/exportmdb.interop/issues/64),
-[#73](https://github.com/qcatco/exportmdb.interop/issues/73)):
+With such a file, and by default, this library does what Access does with it:
 
 - enforcing foreign keys, a row that is not in the index on its foreign key is no one's child - its parent is
   deleted or re-keyed and the row left an orphan;
@@ -445,8 +444,8 @@ insert reads are the ones it read before. An index that is not unique is not loo
 `VerifyIndexes` - its entries under one key are its rows' - and an entry whose row has gone does no harm to this
 library either way: each row found is read and compared.
 
-`tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
-earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
+`tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and this
+library then wrote to at 3ad3aed, before it kept every index, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`
 beside it is the same for unique indexes and a primary key, made by `tools/legacy-unique-indexes.ps1`.
 `ace-extended-date-forms.accdb` holds Date/Time Extended values in every form Access reads a date from, with
 indexes ACE made over them (`tools/ace-extended-date-forms.ps1`); `engine-913240c-extended-date-keys.accdb` and
@@ -486,8 +485,7 @@ refused (`NotSupportedException`): rows of such a table are not yet written corr
 ## Changing a table, and creating a relationship
 
 A table that already has rows - one Access made or one this library made - can be given a column, an index or
-a primary key, and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do
-([qcatco/exportmdb.interop#37](https://github.com/qcatco/exportmdb.interop/issues/37)):
+a primary key, and two tables a relationship, as Jackcess's `TableUpdater` and `RelationshipBuilder` do:
 
 ```csharp
 using var db = Database.Open("Shop.mdb");
@@ -886,7 +884,8 @@ Limits to know about:
   the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as
   it does when Access adds the table: an Access older than that then refuses to open the file. Jackcess
   refuses the table instead.
-- `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
+- `Database.Create` with `FileFormat.Access2016` or `FileFormat.Access2019` makes the Access 2010 file with the
+  later version in its header,
   which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
   such a column.
 - An import (`DatabaseImporter`) does not change a file's format: a `long` or `uint` column or property is a
@@ -977,7 +976,7 @@ entry for such a key:
 | Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
 | This library | the same bytes as Access | found | the same | entry removed |
 | This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry - Access's key of the same values with the last byte 0 | found | seen by a unique index when the row it points at has the value; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
-| This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
+| This library before that (the `JackcessDotNet` package up to 1.2.2 among its versions), and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
 
 - **Lookups** of a value whose key is cut do not search the index: an index
   cursor goes through the index's rows, comparing each, and any other lookup
@@ -991,14 +990,14 @@ entry for such a key:
   digest replaced when its table is next changed.
 - **Uniqueness** follows Access: two values cut to the same entry are
   duplicates, whichever way the existing one is stored. A file an earlier
-  release wrote may hold two such rows (their whole keys differed); neither
+  version wrote may hold two such rows (their whole keys differed); neither
   can then be rewritten until the other is deleted. A key cut with the earlier
   digest is Access's key of another value - with the same text, (A, 1)'s and
   (A, 255)'s are (A, 0)'s - so an entry found under it alone is a duplicate only
   when the row it points at has the new row's value: the row is read.
 - **Deletes and updates** remove the entry the row actually has, cut either
   way or whole, matched by its row. A row with no entry at all - earlier
-  releases kept only the primary key - has nothing to remove, and that is not
+  versions kept only the primary key - has nothing to remove, and that is not
   an error.
 - Access itself does not seek a whole key: until such a row is rewritten,
   Access finds it by a scan but not through the index. Nor does it find, update
@@ -1009,8 +1008,9 @@ entry for such a key:
   is cut - a row Access wrote itself no more than one this library wrote - where
   DAO's `Seek` through the same index does.
 
-`tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
-earlier release wrote, made by `tools/legacy-long-keys.ps1`, and
+`tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file this
+library wrote at 696ca52, when it wrote long keys whole, made by
+`tools/legacy-long-keys.ps1`, and
 `engine-913240c-cut-keys.mdb` one this library wrote with the earlier digest,
 made by `tools/earlier-cut-keys.ps1`. `IndexKeys/cut-keys-*.tsv` hold the
 entries ACE wrote for keys of several columns, made by `tools/ace-cut-keys.ps1`.
@@ -1020,17 +1020,17 @@ entries ACE wrote for keys of several columns, made by `tools/ace-cut-keys.ps1`.
 Rows are read and written by the table's own definition - where it keeps each column, including after columns
 have been deleted - and a row Access moved to another page is read where its pointer leads.
 
-- **Decimal values written by releases before this read back as different numbers.** A Decimal is stored as
-  four 32-bit words; earlier releases wrote and read sixteen bytes in the other order, so they and Access never
-  agreed (a 1 written by an earlier release is 16,777,216 to Access, and now to this library too). Such a value
-  cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
-  certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
+- **Decimal values an earlier version wrote read back as different numbers.** A Decimal is stored as
+  four 32-bit words; earlier versions (the `JackcessDotNet` package up to 1.2.2 among them) wrote and read sixteen
+  bytes in the other order, so they and Access never agreed (a 1 written by an earlier version is 16,777,216 to
+  Access, and to this library too). Such a value cannot be told from one Access wrote; one that reads with more
+  digits than its column's precision is almost certainly one. Access-written Decimals, which earlier versions
+  misread, read correctly.
 
   `DecimalByteOrder.Find(database)`, and the same for a `Table`, in the `JackcessDotNet.Diagnostics` namespace,
   lists the values that read with more digits
   than their column holds: the table, the column, the row (its primary key, and its place among the table's rows),
-  the value as it reads and the value its bytes make in the earlier order
-  ([qcatco/exportmdb.interop#66](https://github.com/qcatco/exportmdb.interop/issues/66)). It changes nothing - a
+  the value as it reads and the value its bytes make in the earlier order. It changes nothing - a
   read returns what it did - and repairs nothing:
 
   ```csharp
@@ -1046,8 +1046,8 @@ have been deleted - and a row Access moved to another page is read where its poi
   the file has no such value.
 
   A stored number that runs past 96 bits - the first of the four words set, which Access never writes - reads as
-  the number its low 96 bits make, with its sign, as Access reads it through its OLE DB provider and through DAO
-  ([qcatco/exportmdb.interop#74](https://github.com/qcatco/exportmdb.interop/issues/74)); it read as null before.
+  the number its low 96 bits make, with its sign, as Access reads it through its OLE DB provider and through DAO;
+  earlier versions read it as null.
   2^96 + 12345 in a `DECIMAL(5,2)` column is 123.45. Such a value is always listed, with `IsCut` set, whatever
   its low 96 bits make. Java Jackcess returns all 128 bits as a `BigDecimal`, which a `decimal` cannot hold.
 
@@ -1084,13 +1084,13 @@ have been deleted - and a row Access moved to another page is read where its poi
   gives that column a value that fits.
 - **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**
   (`InvalidDataException` naming the page), not a missing row.
-- **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
+- **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier versions carry the
   first bit alone; they stay deleted for this library and for Access, which reads, edits and compacts such a
   table as any other.
 - **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
   has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
   replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
-  placement of earlier releases - the last chunk on a page with other values' - which is smaller (a fifth
+  placement of earlier versions - the last chunk on a page with other values' - which is smaller (a fifth
   smaller for 5,000-character Memos, nearly half for values just over one page) and reads the same, but is not
   safe for Access to edit long values in. A file written that way keeps its shared pages when it is added to.
   Added to in the default placement, such a file gets no value on a page that may hold the end of a chain.
@@ -1101,7 +1101,9 @@ have been deleted - and a row Access moved to another page is read where its poi
   reads the pages its map lists, once.
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
-versions of the engine.
+versions of the engine. Nothing builds it, and it does not compile against the public API: it calls
+`ListTables` and `ReadAllRows`, whose places `GetTableNames` and `GetSystemTableNames`, and `Table.Rows`, have
+taken ([#47](https://github.com/markmario/jackcess-dotnet/issues/47)).
 
 ## Access 97 files are read-only
 
@@ -1117,8 +1119,7 @@ fallback format is used only for a file whose header does not say. `Database.IsR
 is. No row or table definition is made in Access 97's format either: `RowEncoder` and
 `TableDefinition.Serialize` refuse it. Earlier versions
 wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data and its count of
-variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back as null
-(qcatco/exportmdb.interop#67).
+variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back as null.
 
 What is read of one:
 
@@ -1129,7 +1130,7 @@ What is read of one:
 - **Indexes of any depth.** A Jet 3 index page has the length of the prefix its entries share in one byte, at
   offset 20, and the page's level in the next; Jet 4 has two bytes and then the level. Read as two bytes, the
   prefix of every page above the leaves was 256 too long for each level, and a lookup through such a page could
-  miss its row (qcatco/exportmdb.interop#59). Jackcess reads two bytes there and keeps no level for Jet 3; the
+  miss its row. Jackcess reads two bytes there and keeps no level for Jet 3; the
   pages Access 97 wrote have 0 in the second on every leaf and 1 on every page above the leaves, and those Jet
   4.0 wrote have 2 on the page above those.
 - **The rows of one key, wherever they are.** An index that is not unique can hold the entries of one key on
@@ -1169,8 +1170,10 @@ dotnet test JackcessDotNet.slnx --configuration Release
   is installed, in ExportMdb.Interop's suite.
 
 Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
-Older issue numbers in comments and in this README, such as `qcatco/exportmdb.interop#64`, are in
-ExportMdb.Interop's tracker, where the work was tracked until this repository had its own.
+Some comments in the source still cite issues of ExportMdb.Interop's tracker (`qcatco/exportmdb.interop`), which
+is private: the work was tracked there until this repository had its own, and
+[#47](https://github.com/markmario/jackcess-dotnet/issues/47) replaces those citations with this repository's
+issues.
 
 ## Releasing
 
@@ -1181,14 +1184,16 @@ commit. Merge, then tag the merge commit and push the tag. `.github/workflows/pu
    own line (the merge commit, not a commit inside a pull request), above every release so far, at or above
    `MinimumReleaseVersion` in the project file, and not already released. A refused tag publishes nothing;
    delete it, fix what it tripped over, and tag again.
-2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the four
-   frameworks, `LICENSE` and `NOTICE`, and the assembly, file and product versions of each DLL.
+2. **Builds and tests** the tagged commit, packs it at that version, and checks what ships: the ID, the version
+   and the commit it names, the four frameworks, `LICENSE`, `NOTICE`, `README.md`, `CHANGELOG.md` and the icon,
+   that no assembly is strong-named, and the assembly, file and product versions of each DLL.
 3. **Waits for approval** of the `nuget` environment, then pushes the package and its symbols to nuget.org
    through [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) - there is no
    API key in the repository - and makes a GitHub Release.
 
-Every other run of that workflow - a pull request, a push to `main`, a run by hand - rehearses the same steps at
-`<next version>-ci.<run>` and publishes nothing.
+Every other run of that workflow - a pull request, a push to `main`, a run by hand - rehearses the tag check
+against the next version, and packs and checks the package at `<next version>-ci.<run>`; it publishes nothing,
+and leaves the tests to `ci.yml`.
 
 Before tagging, move what `src/JackcessDotNet/PublicAPI.Unshipped.txt` lists into `PublicAPI.Shipped.txt`, and give
 `CHANGELOG.md`'s Unreleased section the version. A change that removes or changes public API raises
