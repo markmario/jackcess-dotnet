@@ -60,7 +60,7 @@ What a build from source writes, and the version it has: [Building](building-and
   Access 2007's, 2010's, 2016's or 2019's format ([Creating a file](file-formats.md#creating-a-file)).
 - `Database.IsReadOnly` says whether a database can be written to: an Access 97 file, for one, is only read
   ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)).
-- `db.GetTable(name)` gives a table, and `Database.TryGetTable` asks for one without an exception when there is
+- `db.GetTable(name)` gives a table. `Database.TryGetTable` asks for a table without an exception when there is
   none.
 - While a `Database` has a file open, Access should not be given it:
   [Sharing a file with Access](sharing.md).

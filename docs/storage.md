@@ -49,8 +49,7 @@ updated back and forth past its page's room makes the file grow until Access com
   again and write over them.
 - **Pages given back** - a dropped index's, a dropped column's long values - are free in the database's own map
   of its pages, as Access leaves them; this library adds pages at the end of the file and does not itself take a
-  freed one
-  ([Dropping and renaming](tables-and-schema.md#dropping-and-renaming)).
+  freed one ([Dropping and renaming](tables-and-schema.md#dropping-and-renaming)).
 - **A new index's pages, and a new Memo or OLE column's,** are listed in usage maps on a page of their own
   ([How a table is written](tables-and-schema.md#how-a-table-is-written)).
 

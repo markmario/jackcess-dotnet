@@ -182,7 +182,6 @@ longer than an entry holds ([Keys longer than 510 bytes](indexes.md#keys-longer-
   unique index, a null in a key - throws `ConstraintViolationException`, with or without
   `Database.EnforceForeignKeys` ([Relationships and foreign keys](relationships.md)). It derives from
   `InvalidOperationException`, which is what these threw before it, so a handler for that still catches one.
-  `Database.TryGetTable` asks for a table without an exception when there is none.
 - **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
   written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
   not of its type, or a row too large leaves the file byte for byte as it was. A failure of the file itself (the

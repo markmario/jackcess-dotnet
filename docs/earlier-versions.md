@@ -20,8 +20,8 @@ say what each of the other differences does, and how to find it where it can be 
 ## Indexes that do not hold every row
 
 **`Database.VerifyIndexes`: for files an earlier version wrote to.** Versions of this library before it kept every
-index - the `JackcessDotNet` package up to 1.2.2, and builds of this repository before 18 November 2026 (a427b84) -
-kept a table's primary key and no other index, and kept the primary key under the value a row was *found by*. In a
+index - the `JackcessDotNet` package up to 1.2.2, and builds of this repository before a427b84, of 18 November
+2026 - kept a table's primary key and no other index, and kept the primary key under the value a row was *found by*. In a
 table Access made with indexes, a row one of them inserted is in no index but the primary key; a row one of them
 updated is in each other index where it was before the update; and a row whose primary key one of them changed is
 in the key under the value it had. Nothing in a file says that one of them wrote to it - a count of entries does
