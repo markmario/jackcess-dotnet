@@ -85,6 +85,11 @@ changes with them.
 
 ### Added
 
+- **Properties are written** (#27). `PropertyMap.Set`, `Remove` and `Save` change the properties of a table
+  (`Table.Properties`) and of a column (`Column.Properties`), and `TryGetProperty` gives a property's type and
+  whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
+  are the database's own, read and written the same way. A property Access wrote and the caller did not change
+  goes back byte for byte.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.

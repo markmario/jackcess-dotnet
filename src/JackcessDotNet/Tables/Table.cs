@@ -30,14 +30,24 @@ public sealed class Table
     /// <summary>The AutoNumber columns, in column-number order: the order an insert fills them in.</summary>
     private IReadOnlyList<Column> _autoNumberColumns { get { Refresh(); return _readAutoNumberColumns; } }
 
+    /// <param name="file">The file the table is in.</param>
+    /// <param name="allocator">What appends pages to the file.</param>
+    /// <param name="definition">The table's definition, as its definition page holds it.</param>
+    /// <param name="owningDb">The database the table was opened from, which changes to its schema and properties go through.</param>
+    /// <param name="properties">
+    /// The table's properties and its columns', as the catalog has them; null to read them from the catalog when
+    /// they are first asked for.
+    /// </param>
     internal Table(PageFile file, PageAllocator allocator, TableDefinition definition,
-                   Database? owningDb = null)
+                   Database? owningDb = null, PropertyMaps? properties = null)
     {
         _file        = file        ?? throw new ArgumentNullException(nameof(file));
         _allocator   = allocator   ?? throw new ArgumentNullException(nameof(allocator));
         _dataWriter  = new DataPageWriter(file, allocator);
         _owningDb    = owningDb;
         Use(definition ?? throw new ArgumentNullException(nameof(definition)), file.DefinitionVersion(definition.TdefPageNumber));
+
+        if (properties is not null) _propertiesCache = Attach(properties);
     }
 
     private void Use(TableDefinition definition, int version)
@@ -159,24 +169,24 @@ public sealed class Table
         {
             if (_propertiesCache is not null) return _propertiesCache;
             var catalog = new SystemCatalog(_file);
-            byte[]? bytes = catalog.GetPropertyBytesForObject(_definition.TdefPageNumber);
-            _propertiesCache = PropertyMapReader.Read(bytes, _file.Format);
-            return _propertiesCache;
+            byte[]? bytes = catalog.GetPropertyBytesForObject(_readDefinition.TdefPageNumber);
+            return _propertiesCache = Attach(PropertyMapReader.Read(bytes, _file.Format));
         }
     }
 
-    // The maps handed out for columns Access keeps no properties for, by column name.
-    private Dictionary<string, PropertyMap>? _noProperties;
+    // The table's maps are saved through its database, to the table's row of the catalog.
+    private PropertyMaps Attach(PropertyMaps maps)
+    {
+        if (_owningDb is { } db)
+        {
+            int id = _readDefinition.TdefPageNumber;
+            maps.Saver = saved => db.SaveProperties(saved, () => db.Catalog.FindObject(id), $"table '{Name}'");
+        }
+        return maps;
+    }
 
     /// <summary>The properties of <paramref name="column"/>: the map the catalog has under its name, or an empty one.</summary>
-    internal PropertyMap PropertiesOf(Column column)
-    {
-        if (PropertyMaps.Get(column.Name) is { } map) return map;
-        _noProperties ??= new Dictionary<string, PropertyMap>(StringComparer.OrdinalIgnoreCase);
-        if (!_noProperties.TryGetValue(column.Name, out var none))
-            _noProperties[column.Name] = none = new PropertyMap(column.Name, 0x01);
-        return none;
-    }
+    internal PropertyMap PropertiesOf(Column column) => PropertyMaps.GetOrAdd(column.Name, PropertyMap.ColumnType);
 
     // ── Reading ───────────────────────────────────────────────────────────────
 

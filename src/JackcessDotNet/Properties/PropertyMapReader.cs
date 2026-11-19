@@ -40,51 +40,65 @@ internal static class PropertyMapReader
     /// <summary>
     /// Decodes <paramref name="propBytes"/> into a <see cref="PropertyMaps"/>.
     /// Returns an empty <see cref="PropertyMaps"/> on null/empty input or when
-    /// the signature is unrecognised.
+    /// the signature is unrecognised. What is read is kept as it was stored - the names in their order, each
+    /// value's bytes and flags - so that <see cref="PropertyMapWriter"/> writes back the value it was read from;
+    /// a value that was not read whole says why in <see cref="PropertyMaps.UnreadReason"/>, and is not written.
     /// </summary>
     public static PropertyMaps Read(byte[]? propBytes, JetFormat format)
     {
         var maps = new PropertyMaps();
-        if (propBytes is null || propBytes.Length < 4) return maps;
+        if (propBytes is null || propBytes.Length == 0) return maps;
 
         int pos = 0;
         if (Matches(propBytes, 0, SignatureJet4)) pos = 4;
         else if (Matches(propBytes, 0, SignatureJet3)) pos = 4;
-        else return maps;   // unknown signature — give up gracefully
+        else
+        {
+            maps.UnreadReason = "the value does not begin as a property value does";
+            return maps;   // unknown signature — give up gracefully
+        }
 
-        List<string>? propNames = null;
+        bool namesRead = false;
         while (pos + 6 <= propBytes.Length)
         {
             int   chunkLen   = ByteUtil.GetInt  (propBytes, pos);
             short blockType  = ByteUtil.GetShort(propBytes, pos + 4);
             int   blockStart = pos + 6;
             int   blockEnd   = pos + chunkLen;
-            if (chunkLen <= 6 || blockEnd > propBytes.Length) break;
+            if (chunkLen < 6 || blockEnd > propBytes.Length) break;
 
             if (blockType == BlockTypeNameList)
-                propNames = ReadNameList(propBytes, blockStart, blockEnd, format);
-            else if (propNames is not null)
-                ReadValueBlock(propBytes, blockStart, blockEnd, blockType, propNames, format, maps);
+            {
+                // One list of names, before the values that use it, is all a value this library writes back has.
+                if (namesRead || !maps.IsEmpty) maps.UnreadReason ??= "the value lists its property names more than once";
+                namesRead = true;
+                if (!ReadNameList(propBytes, blockStart, blockEnd, format, maps.Names))
+                    maps.UnreadReason ??= "the list of property names is not whole";
+            }
+            else if (namesRead)
+                ReadValueBlock(propBytes, blockStart, blockEnd, blockType, maps.Names, format, maps);
+            else
+                maps.UnreadReason ??= "the value has properties before it has their names";
 
             pos = blockEnd;
         }
+        if (pos != propBytes.Length) maps.UnreadReason ??= "the value has bytes that are not a block of properties";
 
         return maps;
     }
 
-    private static List<string> ReadNameList(byte[] buf, int start, int end, JetFormat format)
+    private static bool ReadNameList(byte[] buf, int start, int end, JetFormat format, List<string> names)
     {
-        var names = new List<string>();
         int pos = start;
         while (pos + 2 <= end)
         {
             int nameLen = ByteUtil.GetShort(buf, pos);
             pos += 2;
-            if (nameLen < 0 || pos + nameLen > end) break;
+            if (nameLen < 0 || pos + nameLen > end) return false;
             names.Add(DecodeName(buf, pos, nameLen, format));
             pos += nameLen;
         }
-        return names;
+        return pos == end;
     }
 
     private static void ReadValueBlock(
@@ -101,40 +115,52 @@ internal static class PropertyMapReader
         {
             int subLen = ByteUtil.GetInt(buf, pos);
             int subEnd = pos + subLen;
-            if (subLen > 6 && subEnd <= end)
-            {
-                int nameLen = ByteUtil.GetShort(buf, pos + 4);
-                if (nameLen >= 0 && pos + 6 + nameLen <= end)
-                    mapName = DecodeName(buf, pos + 6, nameLen, format);
-            }
+            int nameLen = subLen >= 6 && subEnd <= end ? ByteUtil.GetShort(buf, pos + 4) : -1;
+            if (nameLen >= 0 && pos + 6 + nameLen <= end)
+                mapName = DecodeName(buf, pos + 6, nameLen, format);
+            // Written back, the sub-block is its length, the name's length and the name, and nothing else.
+            if (subLen < 4 || subEnd > end || nameLen < 0 || subLen != 6 + nameLen)
+                maps.UnreadReason ??= $"the name of a block of properties ('{mapName}') is not laid out as this library writes one";
             pos = subEnd;
         }
+        else
+            maps.UnreadReason ??= "a block of properties has no name";
 
-        var map = new PropertyMap(mapName, (byte)blockType);
+        if (maps.Has(mapName, blockType))
+            maps.UnreadReason ??= $"the value has two blocks of properties for '{mapName}'";
+        var map = new PropertyMap(mapName, blockType);
 
         while (pos + 8 <= end)
         {
             int  valLen   = ByteUtil.GetShort(buf, pos);
             int  valEnd   = pos + valLen;
             if (valLen < 8 || valEnd > end) break;
-            bool isDdl    = buf[pos + 2] != 0;
+            byte flags    = buf[pos + 2];
             byte dtByte   = buf[pos + 3];
             int  nameIdx  = ByteUtil.GetShort(buf, pos + 4);
             int  dataSize = ByteUtil.GetShort(buf, pos + 6);
             int  dataStart = pos + 8;
             if (dataSize < 0 || dataStart + dataSize > end) break;
+            if (valLen != 8 + dataSize)
+                maps.UnreadReason ??= $"a property of '{mapName}' has bytes after its value";
 
             if (nameIdx >= 0 && nameIdx < propNames.Count)
             {
                 string propName = propNames[nameIdx];
                 var dataType = (DataType)dtByte;
                 object? value = DecodeValue(buf, dataStart, dataSize, dataType, format);
-                map.Add(new PropertyMap.Property(propName, dataType, value, isDdl));
+                if (map.TryGetProperty(propName, out _))
+                    maps.UnreadReason ??= $"'{mapName}' has the property '{propName}' twice";
+                map.Add(new PropertyMap.Property(propName, dataType, value, flags, buf.Slice(dataStart, dataStart + dataSize)));
             }
+            else
+                maps.UnreadReason ??= $"a property of '{mapName}' has a name the value does not list";
 
             pos = valEnd;
         }
+        if (pos != end) maps.UnreadReason ??= $"the properties of '{mapName}' are not whole";
 
+        map.IsEmptyInFile = map.Count == 0;
         maps.Add(map);
     }
 

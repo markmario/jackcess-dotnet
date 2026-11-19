@@ -78,6 +78,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
+  byte as it was. See [Properties](#properties).
 - **`.accdb` files are created**, in the Access 2007, 2010, 2016 and 2019 formats, where every version asked
   for made an Access 2000 `.mdb`. The two empty `.accdb` databases a new file is copied from were made by
   DAO's `CreateDatabase` (`tools/empty-databases.ps1`), not taken from Jackcess; `empty2003.mdb` is
@@ -414,6 +416,39 @@ index slots.
   first.
 - Nothing is dropped or renamed: no column, index or relationship.
 
+## Properties
+
+Access keeps a table's properties, its columns' and the database's own as named, typed values in the catalog.
+They are read, changed and written, as Jackcess's `PropertyMap` is (#27):
+
+```csharp
+using var db = Database.Open("Shop.mdb");
+var orders = db.GetTable("Orders");
+
+orders.Properties.Set("Description", "One row an order");
+orders.Columns.First(c => c.Name == "Placed").Properties.Set("Caption", "Placed on");
+orders.Properties.Save();                         // the table's and its columns', together
+
+db.DatabaseProperties.Set("AppTitle", "The shop");
+db.DatabaseProperties.Save();
+string? title = (string?)db.SummaryProperties["Title"];
+```
+
+- **`Set` and `Remove` change the map; `Save` writes it.** A table's own properties and its columns' are one
+  value in the file, so saving any of those maps saves them all. A save is written whole or not at all.
+- **What Access wrote goes back as it was.** A property that was read and not changed is written with the bytes
+  and flags it had, and the names the file lists keep their places: a value saved with nothing changed is the
+  same bytes. (Jackcess lists the names again and encodes every value again.)
+- **Types.** A property that is there keeps its type. A new one takes the type Access keeps that name as
+  (`DefaultValue` a Memo, `Required` a Yes/No, `Format` Text, and so on) or else the type of the value; an
+  overload names the type. Access keeps no property as a Large Number or a Decimal - DAO refuses to make one,
+  and reads a Large Number property as 0 - so neither is written.
+- **The database's three sets**: `DatabaseProperties` (what DAO's `Database.Properties` lists beyond its
+  built-in ones), `SummaryProperties` and `UserDefinedProperties` (the Summary and Custom sheets). The last
+  two are kept with documents that Access's own interface adds to a database. A database made by DAO alone,
+  or by this library as an `.accdb`, has neither, and saving to one is refused: the library does not add the
+  document. Its new `.mdb` has both.
+
 ## Importing from `DataTable`, `DataSet`, or `IEnumerable<T>`
 
 Skip the schema boilerplate — the importer infers columns from the source type:
@@ -462,6 +497,7 @@ materialising the whole table.
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |
 | Memo / OLE long values                            | ✅      |
 | PropertyMap & MSysRelationships                   | ✅      |
+| Properties written: a table's, a column's, the database's own, Summary and Custom | ✅ Summary and Custom only where the database has their documents |
 | Password-protected `.mdb` (Jet RC4 codec)         | ✅      |
 | Password-protected `.accdb` (Agile Encryption, Office 2010+) | ✅ Read + write¹ |
 | Password-protected `.accdb` (ECMA Standard Encryption, Office 2007) | ✅ Read + write |
