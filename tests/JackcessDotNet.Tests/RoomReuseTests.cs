@@ -427,6 +427,46 @@ public sealed class RoomReuseTests : IDisposable
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 30);
     }
 
+    /// <summary>
+    /// A Memo or OLE value made longer - a chain of two chunks - and shorter - one chunk, then in the row - again and
+    /// again, a session to each change: a page of its column that a change emptied is used again by a chain written in
+    /// a later session. Earlier, a session whose first long value was a chain added two pages; Access's file gains a
+    /// few pages, whatever the sessions.
+    /// </summary>
+    [Theory]
+    [InlineData(DataType.Memo)]
+    [InlineData(DataType.OleObject)]
+    public void A_long_value_made_longer_and_shorter_grows_the_file_by_a_page_at_most(DataType type)
+    {
+        object Value(int bytes) => type == DataType.Memo
+            ? new string('Ω', bytes / 2)
+            : Enumerable.Range(0, bytes).Select(i => (byte)(1 + i % 250)).ToArray();
+        using (var db = Database.Create(_path))
+        {
+            var table = db.CreateTable("L", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("M", type) }, "Id");
+            for (int id = 1; id <= 10; id++) table.Insert(new Row { ["Id"] = id, ["M"] = Value(3_000) });
+        }
+        long pages = new FileInfo(_path).Length / 4096;
+
+        for (int i = 0; i < 100; i++)
+            foreach (int bytes in new[] { 6_000, 3_000, 20 })
+            {
+                using var db = Database.Open(_path);
+                var table = db.GetTable("L");
+                var row = table.FindRowByPrimaryKey(5)!;
+                row["M"] = Value(bytes);
+                table.Update(row);
+            }
+
+        Assert.InRange(new FileInfo(_path).Length / 4096 - pages, 0, 1);
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("L");
+            Assert.Equal(Value(20), table.FindRowByPrimaryKey(5)!["M"]);
+            Assert.Equal(Value(3_000), table.FindRowByPrimaryKey(6)!["M"]);
+        }
+    }
+
     // ── What finding room costs ──────────────────────────────────────────────
 
     [Fact]
