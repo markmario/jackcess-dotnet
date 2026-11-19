@@ -30,12 +30,12 @@ namespace JackcessDotNet;
 /// </para>
 /// <para>
 /// A Date/Time Extended value is keyed by the bytes its row stores, and Access writes a date in two forms: its
-/// <c>INSERT</c> in one, its SQL <c>UPDATE</c> and DAO's <c>Edit</c> in another. A <see cref="DateTime"/> looked for
-/// in such a column is looked for under the key of each form, so a lookup finds the rows in either - where Access's
-/// own <c>=</c> through an index finds the first form alone. In a range's entry or given to
-/// <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first form, and
-/// rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in the second
-/// form is where its bytes are, which is not always where its date is.
+/// <c>INSERT</c> in one, its SQL <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset in another. A
+/// <see cref="DateTime"/> looked for in such a column is looked for under the key of each form, so a lookup finds the
+/// rows in either - where Access's own <c>=</c> through an index finds the first form alone. In a range's entry or
+/// given to <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first
+/// form, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in the
+/// second form is where its bytes are, which is not always where its date is.
 /// </para>
 /// <para>
 /// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
@@ -1026,7 +1026,8 @@ public sealed class IndexCursor : Cursor
             if (extended is { } when)
             {
                 // Each form Access writes the date in is a key of its own, and a row with the date is under one of
-                // them: ACE's INSERT writes the first, its SQL UPDATE and DAO's Edit the second (#51).
+                // them: ACE's INSERT writes the first, its SQL UPDATE and DAO's AddNew and Edit on a dynaset the
+                // second (#51).
                 foreach (byte[] form in ExtendedDateTimeCodec.FormsOf(when))
                 {
                     if (Key(new StoredExtendedDate(form)) is not { } key) return null;

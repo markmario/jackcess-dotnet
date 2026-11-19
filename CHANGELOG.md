@@ -71,10 +71,11 @@ changed since 1.2.2.
   whose primary key held such an entry without the key.
 - **A Date/Time Extended value is keyed by the 42 bytes its row stores, as Access keys it** (#51); this fixes a
   defect on `main`. Access writes a date in more than one form - its `INSERT` the time of day in 100-nanosecond
-  units and a count of 7, its SQL `UPDATE` and DAO's `Edit` the time in whole seconds and a count of 0 - and keys
-  each by its bytes, not by the date they say: one date in two forms is two keys, which a unique index and a
-  primary key take, and a child whose bytes are another form of its parent's date has no parent (Access refuses its
-  insert, and a relationship created over it). This library keyed the date it read, in the first form. So,
+  units and a count of 7, its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset the time in whole seconds and
+  a count of 0 - and keys each by its bytes, not by the date they say: one date in two forms is two keys, which a
+  unique index and a primary key take, and a child whose bytes are another form of its parent's date has no parent
+  (Access refuses its insert, and a relationship created over it). This library keyed the date it read, in the
+  first form. So,
   enforcing foreign keys, a parent was deleted from under a child ACE had keyed in the second form, and its entries
   left pointing at no row; a child with a date its parent has in another form was taken; verifying its indexes, it
   refused a row ACE takes beside one in the second form; and an index or a primary key added over rows in another

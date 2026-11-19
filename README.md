@@ -200,9 +200,11 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     Access's join does, unless the row has been given a date in that column since.
   - *A Date/Time Extended* is the 42 bytes the row stores, which Access keys and orders a value by
     ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)): its `INSERT` writes a date in one form, and its
-    SQL `UPDATE` and DAO's `Edit` in another, the time of day in whole seconds. A `DateTime` finds every row whose
-    bytes say that date: through an index under the key of each form, where Access's own `=` through an index
-    finds the first form alone (measured; without an index it finds both). A value in a form that reads as its
+    SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset in another, the time of day in whole seconds (measured;
+    on a table-type recordset the two write a layout of their own, which is read as null:
+    [#64](https://github.com/markmario/jackcess-dotnet/issues/64)). A `DateTime` finds every row whose bytes say that
+    date: through an index under the key of each form, where Access's own `=` through an index finds the first form
+    alone (measured; without an index it finds both). A value in a form that reads as its
     date and that Access was not seen to write - a space or a plus sign among its digits - is found by a cursor over
     the table, and not through an index, which holds it under a key of its own. In a range's entry and given to
     `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
@@ -410,10 +412,10 @@ Keys are matched as Access matches them - as its indexes hold them:
   and the next Double after it. A Date/Time by the double the row stores, which a `DateTime` does not always hold.
 - **A Date/Time Extended by the 42 bytes the row stores**, as Access matches it
   ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)). Access writes a date in more than one form - its
-  `INSERT` with the time of day in 100-nanosecond units, its SQL `UPDATE` and DAO's `Edit` in whole seconds - and a
-  child whose bytes are another form of its parent's date has no parent: Access refuses its insert, and a
-  relationship created over it. A `DateTime` a caller gives is the form `INSERT` writes, which is the form this
-  library writes.
+  `INSERT` with the time of day in 100-nanosecond units, its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset
+  in whole seconds - and a child whose bytes are another form of its parent's date has no parent: Access refuses its
+  insert, and a relationship created over it. A `DateTime` a caller gives is the form `INSERT` writes, which is the
+  form this library writes.
 - **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
   A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
 
@@ -745,8 +747,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
   9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
   it has no time zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row
-  stores, in whichever form Access wrote them, as Access makes it. A value DAO's `AddNew` stored, in a layout of
-  its own, is read as null ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)).
+  stores, in whichever form Access wrote them, as Access makes it. A value DAO stored through a table-type
+  recordset (`dbOpenTable`), whose `AddNew` and `Edit` write a layout of their own, is read as null
+  ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)).
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](tests/corpus/README.md).
