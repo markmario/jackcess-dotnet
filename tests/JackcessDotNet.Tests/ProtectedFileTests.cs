@@ -153,6 +153,46 @@ public sealed class ProtectedFileTests : IDisposable
         }
     }
 
+    // An .accdb whose description of its encryption is damaged is a damaged file: NotSupportedException, with its
+    // password, as every damaged file is; without a password, it is refused for wanting one, or as damaged when not
+    // even that can be read.
+    [Theory]
+    [InlineData("keyData", "an element's '<' made 'x'")]
+    [InlineData("spinCount", "not a number")]
+    [InlineData("saltValue", "not base64")]
+    [InlineData("keyBits", "255 bits for the password's key")]
+    [InlineData("length", "past the page")]
+    public void An_accdb_whose_encryption_description_is_damaged_is_refused_as_damaged(string where, string damage)
+    {
+        _ = damage;
+        byte[] file = File.ReadAllBytes(Asset("dao-accdb2010-password.accdb"));
+        const int xmlAt = 0x29B + 8;   // after the version and the reserved word
+        string xml = System.Text.Encoding.UTF8.GetString(file, xmlAt, 3000);
+        int At(string text, int from = 0) => xmlAt + System.Text.Encoding.UTF8.GetByteCount(xml.Substring(0, xml.IndexOf(text, from, StringComparison.Ordinal)));
+        switch (where)
+        {
+            case "keyData":   file[At("<keyData")] = (byte)'x'; break;
+            case "spinCount": file[At("spinCount=\"") + 11] = (byte)'z'; break;
+            case "saltValue": file[At("saltValue=\"") + 11] = (byte)'*'; break;
+            case "keyBits":
+                // The password key encryptor's: keyData's says the data key's size, which the engine takes from the key.
+                int bits = At("keyBits=\"", xml.IndexOf("encryptedKey", StringComparison.Ordinal)) + 9;
+                file[bits] = (byte)'2'; file[bits + 1] = (byte)'5'; file[bits + 2] = (byte)'5';
+                break;
+            case "length":    file[0x299] = 0xFF; file[0x29A] = 0x7F; break;
+        }
+        string path = Path.Combine(Path.GetTempPath(), $"damaged_{Guid.NewGuid():N}.accdb");
+        File.WriteAllBytes(path, file);
+        try
+        {
+            var refused = Assert.Throws<NotSupportedException>(() => Database.Open(path, new DatabaseOpenOptions { Password = Password }).Dispose());
+            Assert.Contains("damaged", refused.Message);
+            var without = Record.Exception(() => Database.Open(path).Dispose());
+            Assert.True(without is InvalidCredentialException or NotSupportedException, $"{without?.GetType().Name}: {without?.Message}");
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [MemberData(nameof(EncodedOnly))]
     public void An_encoded_file_without_a_password_opens_with_any_password_or_none(string fixture)

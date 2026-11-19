@@ -188,7 +188,9 @@ changed since 1.2.2.
   - **An encrypted .accdb opened without a password throws `InvalidCredentialException`**; it was
     `NotSupportedException`. A file whose catalog does not read, when its header names no protection, is refused
     as damaged with `NotSupportedException` whatever password is given; with a password it was
-    `InvalidCredentialException`.
+    `InvalidCredentialException`. So is an .accdb whose header describes its encryption in a way that does not
+    read, opened with its password: it threw `FormatException`, `InvalidDataException` or
+    `CryptographicException`, as the damage fell.
   - **An .accdb in ECMA Standard Encryption is read and not written**: `IsReadOnly`, and a write is refused with
     `NotSupportedException` before anything is written, as in an Access 97 file. No Access is known to give an
     .accdb this encryption (Access 2007 uses RC4 CryptoAPI, and later versions Agile Encryption), and no file of

@@ -235,7 +235,9 @@ compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
   past its header is read.
 - A file that is not protected opens whatever password is given: the password is not looked at.
 - A file whose catalog does not read, with nothing in its header to account for it, is refused as damaged with
-  `NotSupportedException`, whatever password is given.
+  `NotSupportedException`, whatever password is given; so is an .accdb whose header describes its encryption in a
+  way that does not read (a length past the page, XML that does not parse, a value that is not one), given its
+  password.
 - An .mdb's password is at most 20 characters, which is all DAO takes; an Access 97 file keeps it in the code page
   of its text (1252), converted as Windows converts text to it: a character the code page lacks is the one Windows'
   best fit gives for it (L for Ł) or a question mark (Cyrillic, Chinese). Jet 3 checks a password given after the

@@ -330,8 +330,9 @@ public sealed class Database : IDisposable
     /// <see cref="DatabaseOpenOptions.FallbackFormat"/> says what to read it as.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The file is damaged - its catalog does not read, and its header names no protection that accounts for it -
-    /// or it is an .accdb encrypted in a way this library does not read.
+    /// The file is damaged - its catalog does not read, and its header names no protection that accounts for it; or
+    /// it is an .accdb whose header describes its encryption in a way that does not read: a length past the page, XML
+    /// that does not parse, a value that is not one - or it is an .accdb encrypted in a way this library does not read.
     /// </exception>
     /// <param name="path">The path of the file to open.</param>
     /// <param name="options">What is known about the file.</param>
@@ -422,16 +423,28 @@ public sealed class Database : IDisposable
             return;
         }
 
-        // An .accdb with a password is encrypted with it: there is no reading it without.
-        if (password is null)
+        // An .accdb with a password is encrypted with it: there is no reading it without. A description of the
+        // encryption in the header that does not read - its length past the page, XML that does not parse, a number
+        // or a base64 value that is not one, a key size AES has not - is a damaged file, as one whose catalog does not
+        // read is (EnsureCatalogReads); a wrong password is told by the description's verifier, and a damaged verifier
+        // is not told from one.
+        try
         {
-            if (OfficeCryptCodecHandler.IsEncrypted(header))
-                throw new InvalidCredentialException(
-                    $"'{path}' is encrypted with a password: open it with a DatabaseOpenOptions that has its Password.");
-            return;
+            if (password is null)
+            {
+                if (OfficeCryptCodecHandler.IsEncrypted(header))
+                    throw new InvalidCredentialException(
+                        $"'{path}' is encrypted with a password: open it with a DatabaseOpenOptions that has its Password.");
+                return;
+            }
+            if (OfficeCryptCodecHandler.FromDbHeader(header, password) is { } encrypted)
+                file.Codec = encrypted;
         }
-        if (OfficeCryptCodecHandler.FromDbHeader(header, password) is { } encrypted)
-            file.Codec = encrypted;
+        catch (Exception e) when (e is not (InvalidCredentialException or NotSupportedException or IOException))
+        {
+            throw new NotSupportedException(
+                $"File '{path}' is damaged: the description of its encryption in its header does not read ({e.GetType().Name}: {e.Message}).", e);
+        }
     }
 
     /// <summary>
