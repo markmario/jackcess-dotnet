@@ -178,7 +178,9 @@ changed since 1.2.2.
   (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
   - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with
     another, an Access 97 or 2000-2003 file that has one throws `InvalidCredentialException`. It opened with any
-    password, or none.
+    password, or none. An Access 97 file's password is compared, as Jet 3 compares it, in the file's code page:
+    the password given is converted to it as Windows converts text, a character the code page lacks becoming its
+    best fit or a question mark, as the stored one was.
   - **An encoded .mdb opens** (Access's Encrypt Database, DAO's `dbEncrypt`), with no password, as Access opens
     one, and is read and written: its pages are RC4 under the four bytes its header holds at 0x3E, as
     Jackcess-encrypt reads them. None opened before: the key was taken from the password, which the encoding does

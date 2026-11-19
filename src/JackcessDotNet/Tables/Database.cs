@@ -406,10 +406,10 @@ public sealed class Database : IDisposable
 
         if (format.Version is FileFormat.Access97 or FileFormat.Access2000)
         {
-            // Access checks a database password exactly, and opens a file whose pages are encoded with no password
-            // at all: the key is in the header (tools/protected-fixtures.ps1).
-            string expected = HeaderMask.DatabasePassword(header, format);
-            if (expected.Length > 0 && !string.Equals(password, expected, StringComparison.Ordinal))
+            // Access checks a database password exactly - an Access 97 one in the file's code page, after converting
+            // the one given to it - and opens a file whose pages are encoded with no password at all: the key is in
+            // the header (tools/protected-fixtures.ps1, tools/jet3-password-fixture.ps1).
+            if (!HeaderMask.OpensWith(header, format, password))
                 throw new InvalidCredentialException(password is null
                     ? $"'{path}' has a database password: open it with a DatabaseOpenOptions that has its Password."
                     : $"The password given is not the database password of '{path}'.");

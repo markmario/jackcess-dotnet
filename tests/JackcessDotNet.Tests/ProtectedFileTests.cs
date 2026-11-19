@@ -127,6 +127,32 @@ public sealed class ProtectedFileTests : IDisposable
         File.Delete(copy);
     }
 
+    // Jet 3 keeps an Access 97 file's password in its code page, 1252 here, converted as Windows converts text to it -
+    // a character the code page lacks is the one Windows' best fit gives for it (L for Ł, z for ź), or a question mark
+    // (Cyrillic, Chinese) - and checks a password given after the same conversion, case and all. What DAO 3.6 opens the
+    // file with, and refuses, as tools/jet3-password-fixture.ps1 found when it made the file:
+    [Theory]
+    [InlineData("Пароль密码Łódź", true)]   // the password, Пароль密码Łódź
+    [InlineData("ПАРОЛЬ密码Łódź", true)]   // its Cyrillic in upper case
+    [InlineData("????????Lódz", true)]                                                    // as the file holds it
+    [InlineData("Пароль密码Lódz", true)]             // Ł and ź as their best fit
+    [InlineData("Пароль密码Lodz", false)]                 // o, which is not ó
+    [InlineData("Пароль密码łódź", false)]  // a lower-case ł, which is l
+    [InlineData("????????", false)]
+    public void An_Access_97_password_outside_its_code_page_opens_the_file_as_Jet_3_opens_it(string password, bool opens)
+    {
+        string path = Asset("dao-jet3-password-outside-1252.mdb");
+        if (opens)
+        {
+            using var db = Database.Open(path, new DatabaseOpenOptions { Password = password });
+            Assert.Equal(1, db.GetTable("T").Rows.Single()["A"]);
+        }
+        else
+        {
+            Assert.Throws<InvalidCredentialException>(() => Database.Open(path, new DatabaseOpenOptions { Password = password }));
+        }
+    }
+
     [Theory]
     [MemberData(nameof(EncodedOnly))]
     public void An_encoded_file_without_a_password_opens_with_any_password_or_none(string fixture)

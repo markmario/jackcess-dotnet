@@ -68,6 +68,29 @@ internal static class HeaderMask
         return UpToNull(System.Text.Encoding.Unicode.GetString(password));
     }
 
+    /// <summary>
+    /// Whether <paramref name="password"/> opens the file as Access opens it: the file has no database password, or
+    /// this is it, exactly. An Access 97 file keeps its password in its code page, converted as Windows converts text
+    /// to it - a character the code page lacks is the one Windows' best fit gives for it (L for Ł), or a question mark
+    /// (Cyrillic, Chinese) - and Jet 3 checks a password given after the same conversion, case and all: passwords
+    /// that convert alike open the file alike (<c>tools/jet3-password-fixture.ps1</c>). An Access 2000-2003 file
+    /// keeps its password in UTF-16.
+    /// </summary>
+    internal static bool OpensWith(byte[] header, JetFormat format, string? password)
+    {
+        if (format.Version == FileFormat.Access97)
+        {
+            byte[] stored = Unmasked(header, PasswordAt, PasswordLength);
+            int length = Array.IndexOf(stored, (byte)0);
+            if (length < 0) length = stored.Length;
+            if (length == 0) return true;
+            // The code page's encoding converts as Windows does, its best fit included, on every target.
+            return password is not null && format.TextEncoding.GetBytes(password).SequenceEqual(stored.Take(length));
+        }
+        string expected = DatabasePassword(header, format);
+        return expected.Length == 0 || string.Equals(password, expected, StringComparison.Ordinal);
+    }
+
     // A double's whole number as Java's (int) cast takes it, which Jackcess masks the password with: toward zero,
     // and held to an int's range (0 for NaN). A file's creation date is a few tens of thousands of days.
     private static int WholeDays(double days)
