@@ -450,6 +450,33 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Subset(ofNoRowBefore.ToHashSet(), ofNoRow.ToHashSet());
     }
 
+    // An entry an earlier version put under another key - U's row 2, its date in the second form, under the key of
+    // no value, as 913240c entered such a row - is the row's wrong one with VerifyIndexes: when the table next
+    // changes it is moved to the key of the row's bytes, as an entry of any other type is (#36). Trusting the index,
+    // it stays where it is, believed, as Access believes it. Before #51 such a row's key was not one this library made
+    // as Access does, and its entry was believed either way.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_entry_under_a_key_an_earlier_version_made_is_moved_to_the_key_of_the_row_s_bytes_with_VerifyIndexes(bool verify)
+    {
+        using var db = Database.Open(Copy(Forms));
+        var u = db.GetTable("U");
+        var ku = u.Indexes.Single(ix => ix.Name == "KU");
+        var target = IndexWriter.Target.For(u.Definition.TdefPageNumber, ku);
+        var writer = new IndexWriter(db.File, new PageAllocator(db.File));
+        int row2 = Pointers(u)[2];
+        writer.Remove(target, KeyOfBytes(Encoding.ASCII.GetBytes(Stored[2])), row2, out bool found);
+        Assert.True(found);
+        writer.Insert(target, IndexKeys.Encode(ku.Columns, new object?[] { null }), row2);
+        Assert.Single(Audit(db, "U").Wrong);
+
+        db.VerifyIndexes = verify;
+        u.Insert(new Row { ["Id"] = 7, ["UForm"] = "a day on", ["K"] = D0.AddDays(1) });
+        if (verify) Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 5));
+        else Assert.Single(Audit(db, "U").Wrong);
+    }
+
     // ── What it costs ───────────────────────────────────────────────────────
 
     /// <summary>A date in Access's second form, built here as ACE's SQL UPDATE writes it (measured).</summary>
