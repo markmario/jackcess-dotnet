@@ -42,7 +42,7 @@ internal static class TypeMapper
         if (t == typeof(ushort))   return DataType.Int16;
         if (t == typeof(int))      return DataType.Int32;
         if (t == typeof(uint))     return DataType.Int32;
-        if (t == typeof(long))     return DataType.Int32;       // truncated to 32-bit Long
+        if (t == typeof(long))     return DataType.Int64;       // Large Number: an .accdb's; a table with one is refused in an .mdb
         if (t == typeof(ulong))    return DataType.Int32;
         if (t == typeof(float))    return DataType.Single;
         if (t == typeof(double))   return DataType.Double;

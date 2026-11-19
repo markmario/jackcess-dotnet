@@ -13,7 +13,9 @@ namespace JackcessDotNet;
 /// A column's type follows the CLR type of the source's column or property. <see cref="bool"/> is
 /// <see cref="DataType.Boolean"/>; <see cref="byte"/> and <see cref="sbyte"/> are <see cref="DataType.Byte"/>;
 /// <see cref="short"/> and <see cref="ushort"/> are <see cref="DataType.Int16"/>; <see cref="int"/>,
-/// <see cref="uint"/>, <see cref="long"/> and <see cref="ulong"/> are <see cref="DataType.Int32"/>;
+/// <see cref="uint"/> and <see cref="ulong"/> are <see cref="DataType.Int32"/>; <see cref="long"/> is
+/// <see cref="DataType.Int64"/> (Large Number), which only an .accdb has - in an .mdb a table with a
+/// <see cref="long"/> column or property is refused, with <see cref="NotSupportedException"/>, before it is made;
 /// <see cref="float"/> is <see cref="DataType.Single"/>; <see cref="double"/> is <see cref="DataType.Double"/>;
 /// <see cref="decimal"/> is <see cref="DataType.Currency"/>; <see cref="DateTime"/> and
 /// <see cref="DateTimeOffset"/> are <see cref="DataType.DateTime"/>, a <see cref="DateTimeOffset"/> stored as its
@@ -22,7 +24,7 @@ namespace JackcessDotNet;
 /// none, and <see cref="DataType.Memo"/> when that length is more than 255. A <c>byte[]</c> is
 /// <see cref="DataType.Binary"/> of the source's maximum length, 50 bytes when it has none, and
 /// <see cref="DataType.OleObject"/> when that length is more than 255. A nullable type is its underlying type,
-/// and an enum its underlying integer type. A value that does not fit its column's type - a <see cref="long"/>
+/// and an enum its underlying integer type. A value that does not fit its column's type - a <see cref="ulong"/>
 /// beyond a 32-bit integer - stops the import at its row, with <see cref="OverflowException"/>.
 /// </para>
 /// <para>
@@ -101,7 +103,10 @@ public static class DatabaseImporter
     /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
-    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
+    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// </exception>
     public static Table ImportTable(this Database database, DataTable table, ImportOptions options)
     {
         if (database is null) throw new ArgumentNullException(nameof(database));
@@ -231,7 +236,10 @@ public static class DatabaseImporter
     /// </exception>
     /// <exception cref="ConstraintViolationException">A row breaks a rule of its table.</exception>
     /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
-    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
+    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// </exception>
     public static IReadOnlyList<Table> ImportTables(this Database database, DataSet dataSet, ImportOptions options)
     {
         if (database is null) throw new ArgumentNullException(nameof(database));
@@ -325,7 +333,10 @@ public static class DatabaseImporter
     /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
-    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The database is an Access 97 file, which is only read; or it is an .mdb and the source has a
+    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number): the table is not made.
+    /// </exception>
     public static Table ImportTable<T>(this Database database, IEnumerable<T> items, ImportOptions options)
     {
         if (database is null) throw new ArgumentNullException(nameof(database));
