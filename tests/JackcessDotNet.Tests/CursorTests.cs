@@ -111,7 +111,7 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.CreateIndexCursor();
+        var c = t.CreateCursor();
 
         Row? r = c.FindRow("Name", "P4");
 
@@ -124,7 +124,7 @@ public sealed class CursorTests : IDisposable
     {
         var (db, t) = OpenWithPeople();
         using var _ = db;
-        var c = t.CreateIndexCursor();
+        var c = t.CreateCursor();
 
         Assert.Null(c.FindRow("Name", "DoesNotExist"));
     }

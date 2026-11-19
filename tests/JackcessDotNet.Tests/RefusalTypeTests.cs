@@ -60,8 +60,13 @@ public sealed class RefusalTypeTests : IDisposable
 
         // Assert.Throws takes the exact type: none of these is the derived one.
         Assert.Throws<InvalidOperationException>(() => db.CreateTable("PEOPLE", new[] { new ColumnDefinition("Id", DataType.Int32) }));
-        Assert.Throws<InvalidOperationException>(() => people.UpdateByPrimaryKey(2, new Row { ["Name"] = "Bea" }));
-        Assert.Throws<InvalidOperationException>(() => people.DeleteRow("Id", 2));
+
+        // A row that is no longer where it was read.
+        var gone = people.FindRowByPrimaryKey(1)!;
+        var same = people.FindRowByPrimaryKey(1)!;
+        people.Delete(gone);
+        Assert.Throws<InvalidOperationException>(() => people.Delete(same));
+        Assert.Throws<InvalidOperationException>(() => { same["Name"] = "Bea"; people.Update(same); });
     }
 
     [Fact]

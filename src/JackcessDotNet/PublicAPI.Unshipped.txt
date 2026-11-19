@@ -40,13 +40,28 @@ JackcessDotNet.ConstraintViolationException
 JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message) -> void
 JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.Cursor
+JackcessDotNet.Cursor.ColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>?
+JackcessDotNet.Cursor.ColumnNames.set -> void
 JackcessDotNet.Cursor.Current.get -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.DeleteCurrentRow() -> void
+JackcessDotNet.Cursor.EnumerateBackward() -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
+JackcessDotNet.Cursor.FindNextRow(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! pattern) -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.FindNextRow(string! columnName, object? value) -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.FindRow(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! pattern) -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.FindRow(string! columnName, object? value) -> JackcessDotNet.Row?
+JackcessDotNet.Cursor.GetCurrentRowValue(string! columnName) -> object?
 JackcessDotNet.Cursor.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.Row!>!
+JackcessDotNet.Cursor.GetSavepoint() -> JackcessDotNet.CursorSavepoint!
+JackcessDotNet.Cursor.IsAfterLast.get -> bool
+JackcessDotNet.Cursor.IsBeforeFirst.get -> bool
 JackcessDotNet.Cursor.MoveAfterLast() -> void
 JackcessDotNet.Cursor.MoveBeforeFirst() -> void
 JackcessDotNet.Cursor.MoveNext() -> bool
 JackcessDotNet.Cursor.MovePrevious() -> bool
+JackcessDotNet.Cursor.RestoreSavepoint(JackcessDotNet.CursorSavepoint! savepoint) -> void
 JackcessDotNet.Cursor.Table.get -> JackcessDotNet.Table!
+JackcessDotNet.Cursor.UpdateCurrentRow(JackcessDotNet.Row! values) -> void
+JackcessDotNet.CursorSavepoint
 JackcessDotNet.DataType
 JackcessDotNet.DataType.Binary = 9 -> JackcessDotNet.DataType
 JackcessDotNet.DataType.Boolean = 1 -> JackcessDotNet.DataType
@@ -154,9 +169,10 @@ JackcessDotNet.IndexColumn.Column.get -> JackcessDotNet.Column!
 JackcessDotNet.IndexColumn.IsAscending.get -> bool
 override JackcessDotNet.IndexColumn.ToString() -> string!
 JackcessDotNet.IndexCursor
-JackcessDotNet.IndexCursor.FindRow(string! columnName, object? value) -> JackcessDotNet.Row?
+JackcessDotNet.IndexCursor.FindClosestRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
 JackcessDotNet.IndexCursor.FindRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
-JackcessDotNet.IndexCursor.Index.get -> JackcessDotNet.Index?
+JackcessDotNet.IndexCursor.FindRowsByEntry(params object?[]! entryValues) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
+JackcessDotNet.IndexCursor.Index.get -> JackcessDotNet.Index!
 JackcessDotNet.IndexDefinition
 JackcessDotNet.IndexDefinition.Columns.get -> System.Collections.Generic.IReadOnlyList<string!>!
 JackcessDotNet.IndexDefinition.DescendingColumns.get -> System.Collections.Generic.ICollection<string!>!
@@ -170,6 +186,16 @@ JackcessDotNet.IndexDefinition.IsUnique.set -> void
 const JackcessDotNet.IndexDefinition.MaxColumns = 10 -> int
 const JackcessDotNet.IndexDefinition.MaxIndexesPerTable = 32 -> int
 JackcessDotNet.IndexDefinition.Name.get -> string!
+JackcessDotNet.IndexRange
+JackcessDotNet.IndexRange.EndEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.EndEntry.set -> void
+JackcessDotNet.IndexRange.IndexRange() -> void
+JackcessDotNet.IndexRange.IsEndInclusive.get -> bool
+JackcessDotNet.IndexRange.IsEndInclusive.set -> void
+JackcessDotNet.IndexRange.IsStartInclusive.get -> bool
+JackcessDotNet.IndexRange.IsStartInclusive.set -> void
+JackcessDotNet.IndexRange.StartEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.StartEntry.set -> void
 JackcessDotNet.JoinType
 JackcessDotNet.JoinType.Inner = 0 -> JackcessDotNet.JoinType
 JackcessDotNet.JoinType.LeftOuter = 1 -> JackcessDotNet.JoinType
@@ -226,6 +252,7 @@ JackcessDotNet.Row.ContainsKey(string! columnName) -> bool
 JackcessDotNet.Row.Count.get -> int
 JackcessDotNet.Row.GetEnumerator() -> System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string!, object?>>!
 JackcessDotNet.Row.GetValue<T>(string! columnName) -> T?
+JackcessDotNet.Row.Id.get -> JackcessDotNet.RowId?
 JackcessDotNet.Row.IsNull(string! columnName) -> bool
 JackcessDotNet.Row.Keys.get -> System.Collections.Generic.ICollection<string!>!
 JackcessDotNet.Row.Remove(string! columnName) -> bool
@@ -235,6 +262,18 @@ JackcessDotNet.Row.TryGetValue(string! columnName, out object? value) -> bool
 JackcessDotNet.Row.Values.get -> System.Collections.Generic.ICollection<object?>!
 JackcessDotNet.Row.this[string! columnName].get -> object?
 JackcessDotNet.Row.this[string! columnName].set -> void
+JackcessDotNet.RowId
+JackcessDotNet.RowId.CompareTo(JackcessDotNet.RowId other) -> int
+JackcessDotNet.RowId.Equals(JackcessDotNet.RowId other) -> bool
+override JackcessDotNet.RowId.Equals(object? obj) -> bool
+override JackcessDotNet.RowId.GetHashCode() -> int
+JackcessDotNet.RowId.PageNumber.get -> int
+JackcessDotNet.RowId.RowId() -> void
+JackcessDotNet.RowId.RowId(int pageNumber, int rowNumber) -> void
+JackcessDotNet.RowId.RowNumber.get -> int
+override JackcessDotNet.RowId.ToString() -> string!
+static JackcessDotNet.RowId.operator !=(JackcessDotNet.RowId left, JackcessDotNet.RowId right) -> bool
+static JackcessDotNet.RowId.operator ==(JackcessDotNet.RowId left, JackcessDotNet.RowId right) -> bool
 JackcessDotNet.Table
 JackcessDotNet.Table.AddColumn(JackcessDotNet.ColumnDefinition! column) -> JackcessDotNet.Column!
 JackcessDotNet.Table.AddIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.Index!
@@ -243,8 +282,10 @@ JackcessDotNet.Table.AllowAutoNumberInsert.set -> void
 JackcessDotNet.Table.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>!
 JackcessDotNet.Table.CreateCursor() -> JackcessDotNet.Cursor!
 JackcessDotNet.Table.CreateIndexCursor() -> JackcessDotNet.IndexCursor!
+JackcessDotNet.Table.CreateIndexCursor(JackcessDotNet.IndexRange! range) -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.CreateIndexCursor(string! indexName) -> JackcessDotNet.IndexCursor!
-JackcessDotNet.Table.DeleteRow(string! columnName, object! value) -> void
+JackcessDotNet.Table.CreateIndexCursor(string! indexName, JackcessDotNet.IndexRange! range) -> JackcessDotNet.IndexCursor!
+JackcessDotNet.Table.Delete(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.FindRowByPrimaryKey(params object?[]! primaryKey) -> JackcessDotNet.Row?
 JackcessDotNet.Table.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
 JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void
@@ -254,5 +295,5 @@ JackcessDotNet.Table.Name.get -> string!
 JackcessDotNet.Table.Properties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
-JackcessDotNet.Table.UpdateByPrimaryKey(object! primaryKeyValue, JackcessDotNet.Row! newValues) -> void
+JackcessDotNet.Table.Update(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.Validate(JackcessDotNet.Row! row) -> void

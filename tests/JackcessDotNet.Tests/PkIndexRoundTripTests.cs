@@ -141,9 +141,8 @@ public sealed class PkIndexRoundTripTests : IDisposable
         var t = db.CreateTable("Articles", ArticlesCols());   // no primaryKey
         t.Insert(new Row { ["Id"] = 1, ["Title"] = "A" });
 
-        var c = t.CreateIndexCursor();
-
-        Assert.Throws<InvalidOperationException>(() => c.Table.FindRowByPrimaryKey(1));
+        Assert.Throws<InvalidOperationException>(() => t.CreateIndexCursor());
+        Assert.Throws<InvalidOperationException>(() => t.FindRowByPrimaryKey(1));
     }
 
     [Fact]

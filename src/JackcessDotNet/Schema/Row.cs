@@ -22,8 +22,9 @@ namespace JackcessDotNet;
 /// <c>DataRow</c>, and is never what a read returns.
 /// </para>
 /// <para>
-/// The entries keep the order they were added in. A row is not tied to the table it came from: changing it
-/// changes nothing in the file until it is given to an insert or an update.
+/// The entries keep the order they were added in. Changing a row changes nothing in the file until it is given
+/// to an insert or an update. A row that was read knows where it was read from (<see cref="Id"/>), which is how
+/// <see cref="Table.Update"/> and <see cref="Table.Delete"/> find it.
 /// </para>
 /// </summary>
 public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<string, object?>
@@ -31,6 +32,33 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     // The entries in the order they were added, and where each column's entry is.
     private readonly List<KeyValuePair<string, object?>> _entries;
     private readonly Dictionary<string, int> _places;
+
+    // The table the row was read from and where in it, for a row that was read.
+    private Table? _source;
+    private int    _pointer;
+
+    /// <summary>
+    /// Where the row is in the table it was read from, or null for a row that was not read from a table: one a
+    /// caller made, a copy of another row, or a row that has been deleted. <see cref="Table.Update"/> gives the
+    /// row its new id when it has rewritten it. Jackcess's <c>Row.getId</c>.
+    /// </summary>
+    public RowId? Id => _source is null ? null : RowId.FromPointer(_pointer);
+
+    /// <summary>The table the row was read from, or null (<see cref="Id"/>).</summary>
+    internal Table? Source => _source;
+
+    /// <summary>The row's place as one number (<see cref="RowPointer"/>); meaningful only with a <see cref="Source"/>.</summary>
+    internal int Pointer => _pointer;
+
+    /// <summary>Notes that the row is the one at <paramref name="pointer"/> in <paramref name="source"/>.</summary>
+    internal void ReadFrom(Table source, int pointer)
+    {
+        _source  = source;
+        _pointer = pointer;
+    }
+
+    /// <summary>Notes that the row is in no table any longer: it was deleted.</summary>
+    internal void Detach() => _source = null;
 
     /// <summary>Creates a row with no values.</summary>
     public Row()
@@ -46,7 +74,10 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         _places  = new Dictionary<string, int>(capacity, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Creates a row with the values of <paramref name="values"/>, in their order: a copy of another row, for one.</summary>
+    /// <summary>
+    /// Creates a row with the values of <paramref name="values"/>, in their order: a copy of another row, for one.
+    /// A copy of a row that was read is a new row, with no <see cref="Id"/>.
+    /// </summary>
     /// <exception cref="ArgumentException">Two of the values are for one column.</exception>
     public Row(IEnumerable<KeyValuePair<string, object?>> values) : this()
     {

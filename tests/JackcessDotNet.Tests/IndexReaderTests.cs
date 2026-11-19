@@ -66,7 +66,7 @@ public sealed class IndexReaderTests
                 }
                 if (byKey.Count == 0) continue;
 
-                var cursor = table.CreateIndexCursor();
+                var cursor = table.CreateIndexCursor(ix.Name);
                 int probesThisIndex = 0;
                 foreach (var (key, expected) in byKey)
                 {
@@ -122,7 +122,7 @@ public sealed class IndexReaderTests
 
                 // Cap per-index probes to keep the suite fast — some test tables
                 // have 66k+ rows and a linear scan inside the verifier per lookup is O(n²).
-                var cursor = table.CreateIndexCursor();
+                var cursor = table.CreateIndexCursor(ix.Name);
                 int probesThisIndex = 0;
                 int hits = 0;
                 int cap = 0;

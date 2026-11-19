@@ -11,45 +11,63 @@ namespace JackcessDotNet;
 ///   while (cursor.MoveNext())
 ///       Use(cursor.Current!);
 /// </code>
-/// A cursor moves forwards and backwards. It holds no handle and needs no disposing; like the
-/// <see cref="Database"/> it reads, it is for one thread at a time. It lists the table's pages when it is
-/// created: rows on pages the table gains afterwards are not visited.
+/// A cursor moves forwards and backwards, finds rows by the values they have (<see cref="FindRow(string, object?)"/>,
+/// <see cref="FindNextRow(string, object?)"/>), and updates or deletes the row it is on
+/// (<see cref="UpdateCurrentRow"/>, <see cref="DeleteCurrentRow"/>), keeping every index and relationship as
+/// <see cref="Table.Update"/> and <see cref="Table.Delete"/> do. It holds no handle and needs no disposing; like
+/// the <see cref="Database"/> it reads, it is for one thread at a time.
+/// <para>
+/// It lists the table's pages when it is created, and again each time it is put before the first row or after
+/// the last: rows on pages the table gains in between are not visited.
+/// </para>
 /// </summary>
 public class Cursor : IEnumerable<Row>
 {
-    private   readonly PageFile        _file;
-    private   readonly TableDefinition _definition;
-    private   readonly Table           _table;
-    private   readonly List<int>       _ownedPages;
-    private   readonly RowDecoder      _decoder;
+    private readonly PageFile        _file;
+    private readonly TableDefinition _definition;
+    private readonly Table           _table;
+    private readonly RowDecoder      _decoder;
+    private List<int>                _ownedPages;
 
-    // Members IndexCursor needs for index-driven random access.
     internal PageFile        File       => _file;
     internal TableDefinition Definition => _definition;
-    internal RowDecoder      Decoder    => _decoder;
 
+    // Where the cursor is among the table's pages and their rows: before the first page (-1), after the last
+    // (the number of pages), or at a row's slot - which may hold no row any longer.
     private int  _pageIndex;
     private int  _rowIndex;
     private Row? _currentRow;
+
+    // The rows this cursor's updates have written: an updated row is written again further on in the table,
+    // where the cursor would otherwise come to it a second time.
+    private HashSet<int>? _rewritten;
+
+    // The page last read, kept while nothing has been written to the file.
+    private byte[]? _page;
+    private int     _pageNumber = -1;
+    private long    _pageStamp;
 
     internal Cursor(Table table, PageFile file, TableDefinition definition)
     {
         _table      = table;
         _file       = file;
         _definition = definition;
-
-        var format = _file.Format;
-        byte[] umapPage = _file.ReadPage(_definition.UmapPageNumber);
-        _ownedPages = UsageMap.GetOwnedPages(umapPage, _definition.OwnedPagesRow, format, _file);
+        _ownedPages = OwnedPages();
 
         var lvalReader = _definition.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null;
-        _decoder = new RowDecoder(format, _definition.Columns, lvalReader);
+        _decoder = new RowDecoder(_file.Format, _definition.Columns, lvalReader);
 
-        MoveBeforeFirst();
+        _pageIndex = -1;
+        _rowIndex  = -1;
     }
+
+    private List<int> OwnedPages()
+        => UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, _file.Format, _file);
 
     /// <summary>The table whose rows the cursor reads.</summary>
     public Table Table => _table;
+
+    // ── Moving ────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Puts the cursor before the first row, where a new cursor is: the next <see cref="MoveNext"/> moves to the
@@ -57,9 +75,9 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     public void MoveBeforeFirst()
     {
-        _pageIndex  = -1;
-        _rowIndex   = -1;
+        _rewritten  = null;
         _currentRow = null;
+        ToStart();
     }
 
     /// <summary>
@@ -68,31 +86,22 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     public void MoveAfterLast()
     {
-        _pageIndex  = _ownedPages.Count;
-        _rowIndex   = 0;
+        _rewritten  = null;
         _currentRow = null;
+        ToEnd();
     }
 
-    /// <summary>
-    /// The columns rows are read with, or null (as at first) for all of them. A reader that looks at a few columns of
-    /// every row is spared decoding the rest, long values among them.
-    /// </summary>
-    internal IReadOnlyList<Column>? ColumnsToRead { get; set; }
+    /// <summary>Whether the cursor is before the first row: where a new cursor is, and where moving back past the first row leaves it.</summary>
+    public bool IsBeforeFirst => AtStart;
+
+    /// <summary>Whether the cursor is after the last row: where moving on past the last row leaves it.</summary>
+    public bool IsAfterLast => AtEnd;
 
     /// <summary>
-    /// Whether rows are read with their values as their index keys are made of them
-    /// (<see cref="RowDecoder.DecodeForKey"/>): a Date/Time as the double the row stores, which a
-    /// <see cref="DateTime"/> does not always hold. For a reader that compares values with keys.
-    /// </summary>
-    internal bool ValuesAsStored { get; set; }
-
-    /// <summary>The current row's pointer (<see cref="RowPointer"/>); meaningful only while there is a current row.</summary>
-    internal int CurrentRowPointer => RowPointer.Pack(_ownedPages[_pageIndex], _rowIndex);
-
-    /// <summary>
-    /// The row the cursor is on, or null when it is on none: before the first row, after the last, or after a
-    /// move that found no row. The row has an entry for every column of the table, in the table's column order:
-    /// <c>null</c> for a column with no value.
+    /// The row the cursor is on, or null when it is on none: before the first row, after the last, after a move
+    /// that found no row, or once the row it was on has been deleted. The row has an entry for every column the
+    /// cursor reads (<see cref="ColumnNames"/>), in the table's column order: <c>null</c> for a column with no
+    /// value.
     /// </summary>
     public Row? Current => _currentRow;
 
@@ -110,116 +119,458 @@ public class Cursor : IEnumerable<Row>
     public bool MovePrevious() => PreviousRow() is not null;
 
     /// <summary>Moves to the next live row and returns it, or null when there are no more rows.</summary>
-    internal Row? NextRow()
-    {
-        // Re-anchor onto the next slot, skipping deleted/overflow rows transparently.
-        int curPageIdx = _pageIndex;
-        int curRowIdx  = _rowIndex + 1;
-
-        if (curPageIdx < 0) { curPageIdx = 0; curRowIdx = 0; }
-
-        while (curPageIdx < _ownedPages.Count)
-        {
-            byte[] page     = _file.ReadPage(_ownedPages[curPageIdx]);
-            int    rowCount = ByteUtil.GetShort(page, _file.Format.OffsetDataNumRows);
-
-            while (curRowIdx < rowCount)
-            {
-                Row? r = TryReadRow(page, curRowIdx);
-                if (r is not null)
-                {
-                    _pageIndex  = curPageIdx;
-                    _rowIndex   = curRowIdx;
-                    _currentRow = r;
-                    return r;
-                }
-                curRowIdx++;
-            }
-            curPageIdx++;
-            curRowIdx = 0;
-        }
-
-        // Walked off the end.
-        _pageIndex  = _ownedPages.Count;
-        _rowIndex   = 0;
-        _currentRow = null;
-        return null;
-    }
+    internal Row? NextRow() => Move(forward: true);
 
     /// <summary>Moves to the previous live row and returns it, or null at the beginning.</summary>
-    internal Row? PreviousRow()
+    internal Row? PreviousRow() => Move(forward: false);
+
+    private Row? Move(bool forward)
     {
-        int curPageIdx = _pageIndex;
-        int curRowIdx  = _rowIndex - 1;
-
-        if (curPageIdx >= _ownedPages.Count)
+        while (Step(forward) is { } pointer)
         {
-            curPageIdx = _ownedPages.Count - 1;
-            if (curPageIdx >= 0)
-            {
-                byte[] last = _file.ReadPage(_ownedPages[curPageIdx]);
-                curRowIdx = ByteUtil.GetShort(last, _file.Format.OffsetDataNumRows) - 1;
-            }
+            if (_rewritten is not null && _rewritten.Contains(pointer)) continue;
+            if (ReadRow(pointer) is { } row) return _currentRow = row;
         }
+        return _currentRow = null;
+    }
 
-        while (curPageIdx >= 0)
+    // ── What a kind of cursor says of its order ──────────────────────────────
+
+    /// <summary>Puts the cursor before its first row; the table's pages are listed again.</summary>
+    private protected virtual void ToStart()
+    {
+        _ownedPages = OwnedPages();
+        _pageIndex  = -1;
+        _rowIndex   = -1;
+    }
+
+    /// <summary>Puts the cursor after its last row; the table's pages are listed again.</summary>
+    private protected virtual void ToEnd()
+    {
+        _ownedPages = OwnedPages();
+        _pageIndex  = _ownedPages.Count;
+        _rowIndex   = 0;
+    }
+
+    private protected virtual bool AtStart => _pageIndex < 0;
+
+    private protected virtual bool AtEnd => _pageIndex >= _ownedPages.Count;
+
+    /// <summary>
+    /// Moves one place on (or back) in the cursor's order and returns the pointer (<see cref="RowPointer"/>) of
+    /// what is there, which need not be a row any longer; null, with the cursor left after its last row (or
+    /// before its first), when there is no further place.
+    /// </summary>
+    private protected virtual int? Step(bool forward)
+    {
+        var format = _file.Format;
+        if (forward)
         {
-            byte[] page = _file.ReadPage(_ownedPages[curPageIdx]);
-            while (curRowIdx >= 0)
+            int pageIndex = _pageIndex;
+            int rowIndex  = _rowIndex + 1;
+            if (pageIndex < 0) { pageIndex = 0; rowIndex = 0; }
+
+            for (; pageIndex < _ownedPages.Count; pageIndex++, rowIndex = 0)
             {
-                Row? r = TryReadRow(page, curRowIdx);
-                if (r is not null)
+                if (rowIndex >= SlotsOn(_ownedPages[pageIndex])) continue;
+                _pageIndex = pageIndex;
+                _rowIndex  = rowIndex;
+                return RowPointer.Pack(_ownedPages[pageIndex], rowIndex);
+            }
+            _pageIndex = _ownedPages.Count;
+            _rowIndex  = 0;
+            return null;
+        }
+        else
+        {
+            int pageIndex = _pageIndex;
+            int rowIndex  = _rowIndex - 1;
+            if (pageIndex >= _ownedPages.Count)
+            {
+                pageIndex = _ownedPages.Count - 1;
+                rowIndex  = pageIndex >= 0 ? SlotsOn(_ownedPages[pageIndex]) - 1 : -1;
+            }
+
+            while (pageIndex >= 0)
+            {
+                if (rowIndex >= 0)
                 {
-                    _pageIndex  = curPageIdx;
-                    _rowIndex   = curRowIdx;
-                    _currentRow = r;
-                    return r;
+                    _pageIndex = pageIndex;
+                    _rowIndex  = rowIndex;
+                    return RowPointer.Pack(_ownedPages[pageIndex], rowIndex);
                 }
-                curRowIdx--;
+                pageIndex--;
+                if (pageIndex >= 0) rowIndex = SlotsOn(_ownedPages[pageIndex]) - 1;
             }
-            curPageIdx--;
-            if (curPageIdx >= 0)
-            {
-                byte[] prev = _file.ReadPage(_ownedPages[curPageIdx]);
-                curRowIdx = ByteUtil.GetShort(prev, _file.Format.OffsetDataNumRows) - 1;
-            }
+            _pageIndex = -1;
+            _rowIndex  = -1;
+            return null;
         }
+    }
 
-        MoveBeforeFirst();
-        return null;
+    // The slots a pointer can name on a page: Jet addresses a row on its page with one byte.
+    private int SlotsOn(int pageNumber)
+        => Math.Min((int)ByteUtil.GetShort(PageAt(pageNumber), _file.Format.OffsetDataNumRows), 256);
+
+    /// <summary>Where the cursor is, to come back to (<see cref="Restore"/>).</summary>
+    private protected virtual object Place()
+        => AtStart ? PlaceBeforeFirst : AtEnd ? PlaceAfterLast : (object)RowPointer.Pack(_ownedPages[_pageIndex], _rowIndex);
+
+    /// <summary>Puts the cursor back where <see cref="Place"/> said it was.</summary>
+    private protected virtual void Restore(object place)
+    {
+        if (ReferenceEquals(place, PlaceBeforeFirst)) { _pageIndex = -1; _rowIndex = -1; return; }
+        if (ReferenceEquals(place, PlaceAfterLast))   { _pageIndex = _ownedPages.Count; _rowIndex = 0; return; }
+
+        int pointer   = (int)place;
+        int pageIndex = _ownedPages.BinarySearch(RowPointer.Page(pointer));
+        if (pageIndex < 0) pageIndex = _ownedPages.IndexOf(RowPointer.Page(pointer));
+        if (pageIndex < 0)
+        {
+            // A page the table has lost since - it gives none up - is past every page it has.
+            _pageIndex = _ownedPages.Count;
+            _rowIndex  = 0;
+            return;
+        }
+        _pageIndex = pageIndex;
+        _rowIndex  = RowPointer.Row(pointer);
+    }
+
+    private protected static readonly object PlaceBeforeFirst = new();
+    private protected static readonly object PlaceAfterLast   = new();
+
+    // ── Reading ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The names of the columns rows are read with, in the table's column order, or null (as at first) for all
+    /// of them. A cursor that reads a few columns of every row is spared decoding the rest, long values among
+    /// them: Jackcess's column names of an iterable. A row read with some of the columns can be given to
+    /// <see cref="Table.Update"/> and <see cref="UpdateCurrentRow"/> like any other; the columns it was not read
+    /// with keep their values. Setting it does not read the current row again.
+    /// </summary>
+    /// <exception cref="ArgumentException">The value names no column, or a column the table does not have.</exception>
+    public IReadOnlyList<string>? ColumnNames
+    {
+        get => ColumnsToRead?.Select(c => c.Name).ToArray();
+        set
+        {
+            if (value is null) { ColumnsToRead = null; return; }
+            var asked = value.Select(name => ColumnNamed(name, nameof(value))).ToList();
+            if (asked.Count == 0)
+                throw new ArgumentException("A cursor reads at least one column: give null for all of them.", nameof(value));
+            ColumnsToRead = _definition.Columns.Where(asked.Contains).ToList();
+        }
     }
 
     /// <summary>
-    /// Reads the live row at <paramref name="pageNumber"/>/<paramref name="rowIndex"/>.
-    /// Returns null if that slot is deleted or malformed; an overflow row is read where its pointer leads.
-    /// Used by <see cref="IndexCursor"/> for index-driven random access.
+    /// The columns rows are read with, or null (as at first) for all of them. A reader that looks at a few columns of
+    /// every row is spared decoding the rest, long values among them.
     /// </summary>
-    internal Row? ReadRowAt(int pageNumber, int rowIndex)
+    internal IReadOnlyList<Column>? ColumnsToRead { get; set; }
+
+    /// <summary>
+    /// Whether rows are read with their values as their index keys are made of them
+    /// (<see cref="RowDecoder.DecodeForKey"/>): a Date/Time as the double the row stores, which a
+    /// <see cref="DateTime"/> does not always hold. For a reader that compares values with keys.
+    /// </summary>
+    internal bool ValuesAsStored { get; set; }
+
+    /// <summary>The current row's pointer (<see cref="RowPointer"/>); meaningful only while there is a current row.</summary>
+    internal int CurrentRowPointer => _currentRow!.Pointer;
+
+    /// <summary>
+    /// Reads one column of the row the cursor is on, as the file has it at this moment: Jackcess's
+    /// <c>getCurrentRowValue</c>. Only that column is decoded, so a long value the row also holds is not read.
+    /// </summary>
+    /// <param name="columnName">The column's name, whatever the case of its letters.</param>
+    /// <returns>The value, or null for a column with no value.</returns>
+    /// <exception cref="ArgumentException">The table has no column of that name.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
+    /// through something other than this cursor since the cursor read it.
+    /// </exception>
+    public object? GetCurrentRowValue(string columnName)
     {
-        byte[] page = _file.ReadPage(pageNumber);
-        return TryReadRow(page, rowIndex);
+        var column = ColumnNamed(columnName, nameof(columnName));
+        var row    = OnRow();
+        var read   = _table.ReadRowAsReadAt(row.Pointer, new[] { column }) ?? throw Table.NoRowAt(_table.Name, row.Pointer);
+        return read[column.Name];
+    }
+
+    private protected Column ColumnNamed(string columnName, string parameterName)
+    {
+        if (columnName is null) throw new ArgumentNullException(parameterName);
+        return _definition.Columns.FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"Table '{_definition.Name}' has no column named '{columnName}'.", parameterName);
+    }
+
+    private Row OnRow()
+        => _currentRow ?? throw new InvalidOperationException(
+            "The cursor is not on a row: it is before the first row or after the last, its last move found none, or the row it was on has been deleted.");
+
+    private byte[] PageAt(int pageNumber)
+    {
+        if (_page is null || _pageNumber != pageNumber || _pageStamp != _file.ChangeStamp)
+        {
+            _page       = _file.ReadPage(pageNumber);
+            _pageNumber = pageNumber;
+            _pageStamp  = _file.ChangeStamp;
+        }
+        return _page;
     }
 
     /// <summary>
-    /// Decodes the row at <paramref name="rowIndex"/> on <paramref name="page"/>.
-    /// Returns null if the slot is deleted or malformed; an overflow row is read where its pointer leads.
+    /// The row at <paramref name="pointer"/>, with the columns the cursor reads, or null when no row of the table
+    /// is there: a slot of a deleted row, or of values moved from another slot; a pointer an index entry kept
+    /// after its row had gone.
     /// </summary>
-    private Row? TryReadRow(byte[] page, int rowIndex)
+    private protected Row? ReadRow(int pointer)
     {
-        if (DataRows.Read(_file, page, rowIndex) is not { } rowBytes) return null;
+        int pageNumber = RowPointer.Page(pointer);
+        if (pageNumber <= 0 || pageNumber >= _file.PageCount) return null;
+        byte[] page = PageAt(pageNumber);
+        if (page[0] != JetFormat.PageTypeData || ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) != _definition.TdefPageNumber)
+            return null;
+        if (DataRows.Read(_file, page, RowPointer.Row(pointer)) is not { } rowBytes) return null;
 
         // Every column read has its entry, in the table's order: null for a column with no value.
         var columns = ColumnsToRead ?? _definition.Columns;
         var row = new Row(columns.Count);
         foreach (var col in columns)
             row[col.Name] = ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col);
+        row.ReadFrom(_table, pointer);
         return row;
     }
+
+    // ── Changing the current row ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Gives the row the cursor is on the values in <paramref name="values"/>, as <see cref="Table.Update"/>
+    /// does - every index kept, every enforced relationship kept or the update refused: Jackcess's
+    /// <c>updateCurrentRowFromMap</c>. A column <paramref name="values"/> does not name keeps its value.
+    /// <see cref="Current"/> is the row as it is afterwards.
+    /// <para>
+    /// The cursor stays where it is: the next move goes on to the row after the one updated. The updated row is
+    /// written again further on in the table, and this cursor does not come to it a second time on its way,
+    /// until it is put before the first row or after the last.
+    /// </para>
+    /// </summary>
+    /// <param name="values">The values to give the row, by column name.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="values"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
+    /// through something other than this cursor since the cursor read it. Nothing is written.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// The updated row would break a rule of the table or of a relationship (<see cref="Table.Update"/>). The
+    /// row is left as it was.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The table's rows cannot be changed (<see cref="Table.Update"/>). Nothing is written.</exception>
+    public void UpdateCurrentRow(Row values)
+    {
+        if (values is null) throw new ArgumentNullException(nameof(values));
+        var row     = OnRow();
+        int pointer = row.Pointer;
+        int written = _table.UpdateAt(pointer, values);
+        if (written != pointer) (_rewritten ??= new HashSet<int>()).Add(written);
+        _currentRow = ReadRow(written);
+    }
+
+    /// <summary>
+    /// Deletes the row the cursor is on, as <see cref="Table.Delete"/> does - its index entries gone, the rows
+    /// that refer to it through an enforced relationship deleted, set to null, or refusing the delete: Jackcess's
+    /// <c>deleteCurrentRow</c>. The cursor stays where it is, on no row: <see cref="Current"/> is null, and the
+    /// next move goes on to the row after the one deleted.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted or updated
+    /// through something other than this cursor since the cursor read it. Nothing is deleted.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// Rows of another table refer to the row through a relationship that is enforced and does not cascade.
+    /// Nothing is deleted.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The table's rows cannot be changed (<see cref="Table.Delete"/>). Nothing is deleted.</exception>
+    public void DeleteCurrentRow()
+    {
+        var row = OnRow();
+        _table.DeleteAt(row.Pointer);
+        row.Detach();
+        _currentRow = null;
+    }
+
+    // ── Finding ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Moves to the first row, in the cursor's order, whose <paramref name="columnName"/> is
+    /// <paramref name="value"/>, and returns it; when there is none, returns null and leaves the cursor where it
+    /// was. Jackcess's <c>findFirstRow</c>.
+    /// <para>
+    /// A value is matched as the row stores it. Text is matched exactly, a number with a number of another type
+    /// that is equal to it, and a Double or a Single by its bits. A Date/Time is the number the row stores, days
+    /// since 30 December 1899: a <see cref="DateTime"/> finds the row that stores the number it converts to
+    /// (<see cref="DateTime.ToOADate"/>), and a <see cref="double"/> the row that stores that number, so two
+    /// dates less than a millisecond apart are told apart. A null is never a match: a row with no value in a
+    /// column is not found by looking for null.
+    /// </para>
+    /// </summary>
+    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
+    /// <param name="value">The value to look for. Null finds no row.</param>
+    /// <returns>The row, which is then <see cref="Current"/>, or null when no row has the value in that column.</returns>
+    /// <exception cref="ArgumentException">The table has no column of that name.</exception>
+    public Row? FindRow(string columnName, object? value)
+        => Find(new[] { (ColumnNamed(columnName, nameof(columnName)), value) }, fromStart: true);
+
+    /// <summary>
+    /// Moves to the first row, in the cursor's order, that has every value of <paramref name="pattern"/> in the
+    /// column it is named for, and returns it; when there is none, returns null and leaves the cursor where it
+    /// was. Jackcess's <c>findFirstRow</c> with a row pattern. Values are matched as
+    /// <see cref="FindRow(string, object?)"/> matches one.
+    /// </summary>
+    /// <param name="pattern">The values to look for, by column name. A <see cref="Row"/> is one.</param>
+    /// <returns>The row, which is then <see cref="Current"/>, or null when no row matches.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="pattern"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="pattern"/> has no values, or names a column the table does not have.
+    /// </exception>
+    public Row? FindRow(IReadOnlyDictionary<string, object?> pattern)
+        => Find(PatternOf(pattern, nameof(pattern)), fromStart: true);
+
+    /// <summary>
+    /// Moves to the next row after the one the cursor is on, in the cursor's order, whose
+    /// <paramref name="columnName"/> is <paramref name="value"/>, and returns it; when there is none, returns
+    /// null and leaves the cursor where it was. Jackcess's <c>findNextRow</c>. Values are matched as
+    /// <see cref="FindRow(string, object?)"/> matches one.
+    /// </summary>
+    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
+    /// <param name="value">The value to look for. Null finds no row.</param>
+    /// <returns>The row, which is then <see cref="Current"/>, or null when no further row has the value in that column.</returns>
+    /// <exception cref="ArgumentException">The table has no column of that name.</exception>
+    public Row? FindNextRow(string columnName, object? value)
+        => Find(new[] { (ColumnNamed(columnName, nameof(columnName)), value) }, fromStart: false);
+
+    /// <summary>
+    /// Moves to the next row after the one the cursor is on, in the cursor's order, that has every value of
+    /// <paramref name="pattern"/> in the column it is named for, and returns it; when there is none, returns
+    /// null and leaves the cursor where it was. Jackcess's <c>findNextRow</c> with a row pattern. Values are
+    /// matched as <see cref="FindRow(string, object?)"/> matches one.
+    /// </summary>
+    /// <param name="pattern">The values to look for, by column name. A <see cref="Row"/> is one.</param>
+    /// <returns>The row, which is then <see cref="Current"/>, or null when no further row matches.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="pattern"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="pattern"/> has no values, or names a column the table does not have.
+    /// </exception>
+    public Row? FindNextRow(IReadOnlyDictionary<string, object?> pattern)
+        => Find(PatternOf(pattern, nameof(pattern)), fromStart: false);
+
+    private (Column Column, object? Value)[] PatternOf(IReadOnlyDictionary<string, object?> pattern, string parameterName)
+    {
+        if (pattern is null) throw new ArgumentNullException(parameterName);
+        var values = pattern.Select(v => (ColumnNamed(v.Key, parameterName), v.Value)).ToArray();
+        if (values.Length == 0)
+            throw new ArgumentException("A pattern names at least one column and the value to find in it.", parameterName);
+        return values;
+    }
+
+    /// <summary>
+    /// Moves to the first row (or the next after the cursor's place) that matches <paramref name="pattern"/> and
+    /// returns it, read with the cursor's own columns; with none, returns null and leaves the cursor as it was.
+    /// </summary>
+    private protected Row? Find(IReadOnlyList<(Column Column, object? Value)> pattern, bool fromStart)
+    {
+        // A null is never a match, so a pattern with one matches no row.
+        if (pattern.Any(p => RowValues.IsNull(p.Value))) return null;
+
+        object place      = Place();
+        var    current    = _currentRow;
+        var    rewritten  = _rewritten;
+        var    columns    = ColumnsToRead;
+        bool   asStored   = ValuesAsStored;
+        int?   found;
+
+        // Only the pattern's columns are decoded while looking, as their keys are made of them.
+        ColumnsToRead  = pattern.Select(p => p.Column).Distinct().ToList();
+        ValuesAsStored = true;
+        try
+        {
+            if (fromStart) _rewritten = null;
+            found = Seek(pattern, fromStart);
+        }
+        finally
+        {
+            ColumnsToRead  = columns;
+            ValuesAsStored = asStored;
+        }
+
+        if (found is { } pointer && ReadRow(pointer) is { } row)
+            return _currentRow = row;
+
+        Restore(place);
+        _currentRow = current;
+        _rewritten  = rewritten;
+        return null;
+    }
+
+    /// <summary>
+    /// Moves on to the first row matching <paramref name="pattern"/> - from before the first row, or from where
+    /// the cursor is - and returns its pointer, or null when there is none. The cursor reads the pattern's
+    /// columns, as stored, while this runs.
+    /// </summary>
+    private protected virtual int? Seek(IReadOnlyList<(Column Column, object? Value)> pattern, bool fromStart)
+    {
+        if (fromStart) ToStart();
+        while (Move(forward: true) is { } row)
+            if (Matches(row, pattern)) return row.Pointer;
+        return null;
+    }
+
+    private protected static bool Matches(Row row, IReadOnlyList<(Column Column, object? Value)> pattern)
+    {
+        foreach (var (column, value) in pattern)
+            if (!ValueMatch.Matches(column, row[column.Name], value)) return false;
+        return true;
+    }
+
+    /// <summary>Moves on (or back) to the next row there is and returns it, as <see cref="MoveNext"/> does, for a kind of cursor to look through its rows with.</summary>
+    private protected Row? MoveToRow(bool forward) => Move(forward);
+
+    /// <summary>Has the cursor pass no row for having rewritten it: it is being put somewhere else altogether.</summary>
+    private protected void ForgetRewrittenRows() => _rewritten = null;
+
+    // ── Savepoints ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Notes where the cursor is, to come back to with <see cref="RestoreSavepoint"/>: Jackcess's
+    /// <c>getSavepoint</c>. A savepoint is a place in the cursor's order, not a copy of a row.
+    /// </summary>
+    public CursorSavepoint GetSavepoint() => new(this, Place());
+
+    /// <summary>
+    /// Puts the cursor back where it was when <paramref name="savepoint"/> was taken: Jackcess's
+    /// <c>restoreSavepoint</c>. <see cref="Current"/> is the row at that place as the file has it now - null when
+    /// the cursor was on no row, or when the row has since been deleted or updated, which writes it elsewhere;
+    /// the next move goes on from that place either way.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="savepoint"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="savepoint"/> was taken from another cursor.</exception>
+    public void RestoreSavepoint(CursorSavepoint savepoint)
+    {
+        if (savepoint is null) throw new ArgumentNullException(nameof(savepoint));
+        if (!ReferenceEquals(savepoint.Cursor, this))
+            throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
+        Restore(savepoint.Place);
+        _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
+    }
+
+    /// <summary>The pointer of the place the cursor is at, or null before the first row and after the last.</summary>
+    private protected virtual int? PointerAt()
+        => AtStart || AtEnd ? null : RowPointer.Pack(_ownedPages[_pageIndex], _rowIndex);
 
     // ── IEnumerable ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The table's rows from the first: the cursor is put before the first row, then moved through them all.
+    /// The cursor's rows from the first: the cursor is put before the first row, then moved through them all.
     /// Enumerating moves the cursor itself, so one cursor is enumerated by one loop at a time.
     /// </summary>
     /// <returns>An enumerator that reads a row each time it is moved, and leaves the cursor after the last row.</returns>
@@ -229,5 +580,32 @@ public class Cursor : IEnumerable<Row>
         while (NextRow() is { } r) yield return r;
     }
 
+    /// <summary>
+    /// The cursor's rows from the last to the first: the cursor is put after the last row, then moved back
+    /// through them all. Enumerating moves the cursor itself, so one cursor is enumerated by one loop at a time.
+    /// </summary>
+    /// <returns>Rows that are read as they are enumerated; the cursor is left before the first row.</returns>
+    public IEnumerable<Row> EnumerateBackward()
+    {
+        MoveAfterLast();
+        while (PreviousRow() is { } r) yield return r;
+    }
+
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>
+/// A place a <see cref="Cursor"/> was at, to put it back to: taken with <see cref="Cursor.GetSavepoint"/> and
+/// given to <see cref="Cursor.RestoreSavepoint"/> of the same cursor. Jackcess's <c>Cursor.Savepoint</c>.
+/// </summary>
+public sealed class CursorSavepoint
+{
+    internal CursorSavepoint(Cursor cursor, object place)
+    {
+        Cursor = cursor;
+        Place  = place;
+    }
+
+    internal Cursor Cursor { get; }
+    internal object Place  { get; }
 }

@@ -221,6 +221,7 @@ public sealed class Table
                     var row = new Row(definition.Columns.Count);
                     foreach (var col in definition.Columns)
                         row[col.Name] = decoder.Decode(rowBytes, col);
+                    row.ReadFrom(this, RowPointer.Pack(pageNum, r));
                     yield return row;
                 }
             }
@@ -234,26 +235,81 @@ public sealed class Table
     public Cursor CreateCursor() => new Cursor(this, _file, _definition);
 
     /// <summary>
-    /// Creates a cursor that finds rows through the table's primary key (<see cref="IndexCursor.FindRow"/>,
-    /// <see cref="IndexCursor.FindRowByEntry"/>).
+    /// Creates a cursor over the table's rows in the order of its primary key, which finds rows through that
+    /// key (<see cref="IndexCursor.FindRowByEntry"/>, <see cref="IndexCursor.FindClosestRowByEntry"/>).
     /// </summary>
-    public IndexCursor CreateIndexCursor() => new IndexCursor(this, _file, _definition, indexName: null);
+    /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
+    /// <exception cref="NotSupportedException">The primary key's index was not read from the table's definition.</exception>
+    public IndexCursor CreateIndexCursor() => new IndexCursor(this, _file, _definition, PrimaryKeyIndex(), range: null);
 
     /// <summary>
-    /// Creates a cursor that finds rows through the index named <paramref name="indexName"/>, whatever the case
-    /// of its letters. The name is an index's name (<see cref="Indexes"/>), not a column's: a primary key is
-    /// asked for by its index's name, "PrimaryKey" in a table Access or this library made, or with
-    /// <see cref="CreateIndexCursor()"/>.
+    /// Creates a cursor over the rows of the table's primary key that are in <paramref name="range"/>, in the
+    /// key's order.
+    /// </summary>
+    /// <param name="range">The entries the cursor's rows are between.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="range"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// An entry of <paramref name="range"/> has no values, more values than the key has columns, or a value that
+    /// is not one its column holds.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
+    /// <exception cref="NotSupportedException">
+    /// No key is made for an entry of <paramref name="range"/> (<see cref="IndexCursor.FindClosestRowByEntry"/>
+    /// says when), or the primary key's index was not read from the table's definition.
+    /// </exception>
+    public IndexCursor CreateIndexCursor(IndexRange range)
+        => new IndexCursor(this, _file, _definition, PrimaryKeyIndex(), range ?? throw new ArgumentNullException(nameof(range)));
+
+    /// <summary>
+    /// Creates a cursor over the table's rows in the order of the index named <paramref name="indexName"/>,
+    /// whatever the case of its letters, which finds rows through that index. The name is an index's name
+    /// (<see cref="Indexes"/>), not a column's: a primary key is asked for by its index's name, "PrimaryKey" in a
+    /// table Access or this library made, or with <see cref="CreateIndexCursor()"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The table has no index of that name.</exception>
+    /// <exception cref="NotSupportedException">The index was not read whole from the table's definition.</exception>
     public IndexCursor CreateIndexCursor(string indexName)
-        => new IndexCursor(this, _file, _definition, indexName ?? throw new ArgumentNullException(nameof(indexName)));
+        => new IndexCursor(this, _file, _definition, IndexNamed(indexName), range: null);
+
+    /// <summary>
+    /// Creates a cursor over the rows of the index named <paramref name="indexName"/> that are in
+    /// <paramref name="range"/>, in the index's order.
+    /// </summary>
+    /// <param name="indexName">The index's name, whatever the case of its letters.</param>
+    /// <param name="range">The entries the cursor's rows are between.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="indexName"/> or <paramref name="range"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table has no index of that name; or an entry of <paramref name="range"/> has no values, more values
+    /// than the index has columns, or a value that is not one its column holds.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// No key is made for an entry of <paramref name="range"/> (<see cref="IndexCursor.FindClosestRowByEntry"/>
+    /// says when), or the index was not read whole from the table's definition.
+    /// </exception>
+    public IndexCursor CreateIndexCursor(string indexName, IndexRange range)
+        => new IndexCursor(this, _file, _definition, IndexNamed(indexName), range ?? throw new ArgumentNullException(nameof(range)));
+
+    // A name is an index's name and nothing else, as in Jackcess's Table.getIndex: not the name of a column the
+    // primary key happens to be on, which another index may have for its own name.
+    private Index IndexNamed(string indexName)
+    {
+        if (indexName is null) throw new ArgumentNullException(nameof(indexName));
+        return _definition.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, indexName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"Table '{Name}' has no index named '{indexName}'.", nameof(indexName));
+    }
+
+    private Index PrimaryKeyIndex()
+        => _definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)
+            ?? throw new InvalidOperationException(
+                $"Table '{Name}' has no primary key. Give the name of one of its indexes, or read its rows in the " +
+                "order they are stored with CreateCursor.");
 
     /// <summary>
     /// The row whose primary key is <paramref name="primaryKey"/>, or null when the table has none: one value for
     /// a key of one column, and for a key of several a value for each, in the key's order. The row is found
-    /// through the primary key's index when its keys are ones this library makes, and otherwise by reading the
-    /// table.
+    /// through the primary key's index when its keys are ones this library makes, and otherwise by going
+    /// through the table's rows. Values are matched as <see cref="Cursor.FindRow(string, object?)"/> matches
+    /// them.
     /// </summary>
     /// <exception cref="ArgumentException">The number of values is not the number of columns in the primary key.</exception>
     /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
@@ -272,11 +328,15 @@ public sealed class Table
                 $"The primary key of '{definition.Name}' has {keyColumns.Count} column(s) " +
                 $"({string.Join(", ", keyColumns)}); {primaryKey.Length} value(s) were given.", nameof(primaryKey));
 
-        if (keyColumns.Count == 1)
-            return new IndexCursor(this, _file, definition, indexName: null).FindRow(keyColumns[0], primaryKey[0]);
+        // Through the key's index; a key whose index was not read is looked for among the rows as they are stored.
+        if (definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey) is { RootPageNumber: > 0 } keyIndex
+            && keyIndex.Columns.Count == keyColumns.Count)
+            return new IndexCursor(this, _file, definition, keyIndex, range: null).FindRowByEntry(primaryKey);
 
-        string? keyIndex = definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey)?.Name;
-        return new IndexCursor(this, _file, definition, keyIndex).FindRowByEntry(primaryKey);
+        var pattern = new Row();
+        for (int i = 0; i < keyColumns.Count; i++)
+            pattern[keyColumns[i]] = primaryKey[i];
+        return new Cursor(this, _file, definition).FindRow(pattern);
     }
 
     // ── Row operations ────────────────────────────────────────────────────────
@@ -286,7 +346,7 @@ public sealed class Table
     /// A new data page is allocated automatically if the current one is full.
     /// The total row count in the table's TDEF is updated on every insert.
     /// The row gains its entry in each of the table's indexes - its primary key and every other - so Access
-    /// finds it through them and <see cref="IndexCursor.FindRow"/> can use them.
+    /// finds it through them and an <see cref="IndexCursor"/> can use them.
     /// <para>
     /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values
     /// afterwards: a Long column gets one more than <see cref="LastAutoNumber"/>, a Guid column a new GUID. A
@@ -431,42 +491,126 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Updates the row with the given primary-key value.
-    /// Old LVAL chunks are freed and their space is reclaimed before the new row is written.
-    /// The row's entry in each of the table's indexes moves to the rewritten row, under its new values - a
-    /// changed primary key among them - as Access keeps an index.
-    /// An AutoNumber column keeps the value the row has: one in <paramref name="newValues"/> is ignored, unless
-    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
-    /// moves the counter up to it.
+    /// Updates <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or
+    /// <see cref="FindRowByPrimaryKey"/> - and changed since: the row in the file is given the values
+    /// <paramref name="row"/> now has. Jackcess's <c>updateRow</c>. The row is found by where it was read
+    /// (<see cref="Row.Id"/>), whatever key the table has: one of several columns, or none.
+    /// <para>
+    /// Only what changed is written. A value that is still what the row was read with is left as the file has
+    /// it, and so is a column <paramref name="row"/> has no entry for: a long value is neither read nor written
+    /// again, and a Date/Time keeps every digit Access stored, which a <see cref="DateTime"/> does not always
+    /// hold. An AutoNumber column keeps the value the row has: another in <paramref name="row"/> is ignored,
+    /// unless <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's
+    /// counter moves the counter up to it.
+    /// </para>
+    /// <para>
+    /// The row's entry in each of the table's indexes follows it, under its new values - a changed primary key
+    /// among them - as Access keeps an index, and with <see cref="Database.EnforceForeignKeys"/> the
+    /// relationships the table is in are kept: the rows a cascade reaches are changed with it, or nothing is.
+    /// The row is written again at another place in the table, and <paramref name="row"/> has its new
+    /// <see cref="Row.Id"/> afterwards; another <see cref="Row"/> read from the same place is no longer the
+    /// row's.
+    /// </para>
     /// </summary>
-    /// <param name="primaryKeyValue">The value the row has in the primary key's column.</param>
-    /// <param name="newValues">
-    /// The values to give the row, by column name. A column it does not name keeps the value it has.
-    /// </param>
-    /// <exception cref="ArgumentNullException"><paramref name="newValues"/> is null.</exception>
+    /// <param name="row">The row, as read from this table, with the values to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
+    /// table's. Nothing is written.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// No row has that primary key, or the table's primary key is not one column: it has none, or one of
-    /// several columns. Nothing is written.
+    /// The row is no longer where it was read: it has been deleted, or updated through another
+    /// <see cref="Row"/>, since. Nothing is written.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
-    /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
-    /// in a column of the primary key or of an index that requires its values. The row is left as it was.
+    /// The updated row would be a duplicate of another in the primary key or another unique index, has a null in
+    /// a column of the primary key or of an index that requires its values, or breaks a relationship that is
+    /// enforced. The row is left as it was.
     /// </exception>
+    /// <exception cref="ColumnValueTooLongException">A Text value is longer than its column. The row is left as it was.</exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
     /// 97 file, which is only read. Nothing is written.
     /// </exception>
-    public void UpdateByPrimaryKey(object primaryKeyValue, Row newValues)
+    public void Update(Row row)
+    {
+        if (row is null) throw new ArgumentNullException(nameof(row));
+        row.ReadFrom(this, UpdateAt(PointerOf(row, nameof(row)), row));
+    }
+
+    /// <summary>
+    /// Deletes <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or
+    /// <see cref="FindRowByPrimaryKey"/>. Jackcess's <c>deleteRow</c>. The row is found by where it was read
+    /// (<see cref="Row.Id"/>), whatever key the table has: one of several columns, or none.
+    /// <para>
+    /// The long values the row holds are freed, the table counts one row fewer, and the row's entries leave the
+    /// table's indexes. With <see cref="Database.EnforceForeignKeys"/> the relationships the table is in are
+    /// kept: the rows that refer to it are deleted or set to null with it, as their relationship says, or the
+    /// delete is refused and nothing is changed. <paramref name="row"/> has no <see cref="Row.Id"/> afterwards.
+    /// </para>
+    /// </summary>
+    /// <param name="row">The row, as read from this table.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
+    /// table's. Nothing is deleted.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The row is no longer where it was read: it has been deleted, or updated through another
+    /// <see cref="Row"/>, since. Nothing is deleted.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// Rows of another table refer to the row through a relationship that is enforced and does not cascade.
+    /// Nothing is deleted.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The table has an index whose keys this library does not write as Access does, has a calculated column, or
+    /// is a table of an Access 97 file, which is only read. Nothing is deleted.
+    /// </exception>
+    public void Delete(Row row)
+    {
+        if (row is null) throw new ArgumentNullException(nameof(row));
+        DeleteAt(PointerOf(row, nameof(row)));
+        row.Detach();
+    }
+
+    /// <summary>Where <paramref name="row"/> was read from this table, as one number (<see cref="RowPointer"/>).</summary>
+    private int PointerOf(Row row, string parameterName)
+    {
+        if (row.Source is not { } source)
+            throw new ArgumentException(
+                $"The row was not read from table '{Name}': it has no Id. Read the row - with Rows, a cursor or " +
+                "FindRowByPrimaryKey - and give that row its new values.", parameterName);
+        if (!ReferenceEquals(source._file, _file) || source._definition.TdefPageNumber != _definition.TdefPageNumber)
+            throw new ArgumentException($"The row was read from table '{source.Name}', not from '{Name}'.", parameterName);
+        return row.Pointer;
+    }
+
+    /// <summary>What says that the row a caller named by its place is not there.</summary>
+    internal static InvalidOperationException NoRowAt(string tableName, int rowPtr)
+        => new($"No row of table '{tableName}' is at page {RowPointer.Page(rowPtr)}, row {RowPointer.Row(rowPtr)} any longer: " +
+               "it has been deleted, or updated and so written elsewhere, since it was read. Nothing was changed.");
+
+    /// <summary>
+    /// Gives the row at <paramref name="rowPtr"/> the values of <paramref name="values"/> that are not the row's
+    /// own already, as <see cref="Update"/> describes, and returns where the row is afterwards.
+    /// </summary>
+    internal int UpdateAt(int rowPtr, Row values)
     {
         _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
 
         // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
-        if (newValues is not null)
-            newValues = RowValues.AsWritten(newValues, _definition.Columns);
+        var newValues = RowValues.AsWritten(values, _definition.Columns);
+
+        // What the row holds for the columns named, as a caller reads them: a value given back as it was read is
+        // not a change, and is left as the file has it.
+        var named = _definition.Columns.Where(c => newValues.ContainsKey(c.Name)).ToList();
+        var held  = _dataWriter.ReadRowAsReadAt(_definition, rowPtr, named) ?? throw NoRowAt(Name, rowPtr);
+        newValues = new Row(newValues.Where(v => !held.TryGetValue(v.Key, out var has) || !ValueMatch.IsAsRead(has, v.Value)));
 
         int? highestGiven = null;
-        if (newValues is not null && _autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
+        if (_autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
         {
             // A null, or DBNull, is not a number to bring: the column keeps the one it has, whether or not a row
             // may bring its own. Access holds no AutoNumber as null.
@@ -479,22 +623,46 @@ public sealed class Table
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
+        if (newValues.Count == 0) return rowPtr;
 
         // With foreign keys enforced, a table in a relationship is changed through the enforcer: the row, and the
         // rows a cascade reaches, or nothing.
-        if (_definition.PrimaryKeyColumnName is not null && _owningDb?.ForeignKeysFor(this) is { } foreignKeys)
+        int newRowPtr;
+        if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
         {
-            foreignKeys.Update(this, primaryKeyValue, newValues ?? throw new ArgumentNullException(nameof(newValues)));
-            if (highestGiven is { } brought)
-                _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, brought);
-            return;
+            newRowPtr = foreignKeys.Update(this, rowPtr, newValues);
         }
-
-        var entries = new EntryMove(_indexes, refuseDuplicates: true);
-        var (oldRowPtr, newRowPtr) = _dataWriter.UpdateRowByPrimaryKeyMoving(_definition, primaryKeyValue, newValues!, entries.BeforeChange);
+        else
+        {
+            var entries = new EntryMove(_indexes, refuseDuplicates: true);
+            newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
+            entries.Follow(rowPtr, newRowPtr);
+        }
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
-        entries.Follow(oldRowPtr, newRowPtr);
+        return newRowPtr;
+    }
+
+    /// <summary>
+    /// Deletes the row at <paramref name="rowPtr"/> as <see cref="Delete"/> describes: through the foreign-key
+    /// enforcer for a table in a relationship that is enforced.
+    /// </summary>
+    internal void DeleteAt(int rowPtr)
+    {
+        _file.EnsureWritable();
+        _indexes.EnsureCanBeKept();
+        if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
+            foreignKeys.Delete(this, rowPtr);
+        else
+            DeleteRowAt(rowPtr);
+    }
+
+    /// <summary>The row at <paramref name="rowPtr"/> as a cursor reads it, every column or those of <paramref name="columns"/>; null when no row is there.</summary>
+    internal Row? ReadRowAsReadAt(int rowPtr, IEnumerable<Column>? columns = null)
+    {
+        var row = _dataWriter.ReadRowAsReadAt(_definition, rowPtr, columns ?? _definition.Columns);
+        row?.ReadFrom(this, rowPtr);
+        return row;
     }
 
     /// <summary>
@@ -540,18 +708,19 @@ public sealed class Table
 
     /// <summary>
     /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="changes"/> laid over it, its entry in
-    /// every index following it, as <see cref="UpdateByPrimaryKey"/> does for the row it finds. Duplicates are
-    /// the enforcer's to have refused.
+    /// every index following it, as <see cref="Update"/> does, and returns where the row is afterwards.
+    /// Duplicates are the enforcer's to have refused, and no relationship is looked at.
     /// </summary>
-    internal void RewriteRowAt(int rowPtr, Row changes)
+    internal int RewriteRowAt(int rowPtr, Row changes)
     {
         _file.EnsureWritable();
         var entries = new EntryMove(_indexes, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
+        return newRowPtr;
     }
 
-    /// <summary>Deletes the row at <paramref name="rowPtr"/>, as <see cref="DeleteRow"/> does the row it finds.</summary>
+    /// <summary>Deletes the row at <paramref name="rowPtr"/>, as <see cref="Delete"/> does. No relationship is looked at.</summary>
     internal void DeleteRowAt(int rowPtr)
     {
         _file.EnsureWritable();
@@ -566,36 +735,6 @@ public sealed class Table
 
     /// <summary>The table's indexes: what a row's entries in them are, and the rows an index holds for a key.</summary>
     internal TableIndexes IndexEntries => _indexes;
-
-    /// <summary>
-    /// Deletes the first row where <paramref name="columnName"/> equals <paramref name="value"/>.
-    /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
-    /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
-    /// </summary>
-    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
-    /// <param name="value">The value the row to delete has in that column.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="columnName"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">
-    /// The table has no column of that name, or no row has the value in it. Nothing is deleted.
-    /// </exception>
-    /// <exception cref="NotSupportedException">
-    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
-    /// 97 file, which is only read. Nothing is deleted.
-    /// </exception>
-    public void DeleteRow(string columnName, object value)
-    {
-        _file.EnsureWritable();
-        _indexes.EnsureCanBeKept();
-        if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
-        {
-            foreignKeys.Delete(this, columnName ?? throw new ArgumentNullException(nameof(columnName)), value);
-            return;
-        }
-
-        // A row is always reported: with none to delete, DeleteFirstMatch throws.
-        if (_dataWriter.DeleteFirstMatch(_definition, columnName, value) is { } row)
-            RecordDeleted(row.RowPtr, row.Values);
-    }
 
     /// <summary>What follows a row's deletion, however it was found: one row fewer, and its index entries gone.</summary>
     private void RecordDeleted(int rowPtr, Row values)

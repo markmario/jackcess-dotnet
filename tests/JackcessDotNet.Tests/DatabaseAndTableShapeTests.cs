@@ -190,10 +190,11 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         Assert.True(table.CreateIndexCursor().Index!.IsPrimaryKey);
         Assert.Equal("ByName", table.CreateIndexCursor("byname").Index!.Name);
         Assert.Equal("PrimaryKey", table.CreateIndexCursor("primarykey").Index!.Name);
-        Assert.Throws<ArgumentNullException>(() => table.CreateIndexCursor(null!));
+        Assert.Throws<ArgumentNullException>(() => table.CreateIndexCursor((string)null!));
 
         var loose = db.CreateTable("Loose", new[] { new ColumnDefinition("Id", DataType.Int32) });
-        Assert.Null(loose.CreateIndexCursor().Index);
+        // An index cursor is for an index: a table with no primary key has none to make one for.
+        Assert.Throws<InvalidOperationException>(() => loose.CreateIndexCursor());
     }
 
     [Fact]

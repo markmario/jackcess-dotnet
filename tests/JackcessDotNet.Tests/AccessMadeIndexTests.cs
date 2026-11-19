@@ -459,7 +459,7 @@ public sealed class AccessMadeIndexTests : IDisposable
             foreach (var row in all.Take(5))
             {
                 var column = table.Columns.First(c => row.TryGetValue(c.Name, out var v) && v is string or int or short);
-                Assert.NotNull(table.CreateIndexCursor().FindRow(column.Name, row[column.Name]!));
+                Assert.NotNull(table.CreateCursor().FindRow(column.Name, row[column.Name]!));
             }
         }
 

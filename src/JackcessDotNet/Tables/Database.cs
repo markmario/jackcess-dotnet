@@ -78,8 +78,8 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Whether the relationships in <c>MSysRelationships</c> that have referential integrity are kept, as
-    /// Access keeps them, by <see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/> and
-    /// <see cref="Table.DeleteRow"/>. Default <c>true</c>, as in Jackcess; Access itself always keeps them. When
+    /// Access keeps them, by <see cref="Table.Insert"/>, <see cref="Table.Update"/> and
+    /// <see cref="Table.Delete"/>. Default <c>true</c>, as in Jackcess; Access itself always keeps them. When
     /// <c>false</c> nothing is checked and nothing cascades, and a file can be left with rows Access takes to
     /// be impossible: a row that refers to no parent, or a parent deleted from under its children.
     /// <para>
@@ -170,7 +170,7 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// <b>What it does:</b> the first time a session compares a row with a table's unique indexes
-    /// (<see cref="Table.Insert"/>, <see cref="Table.UpdateByPrimaryKey"/>, <see cref="Table.Validate"/>), or
+    /// (<see cref="Table.Insert"/>, <see cref="Table.Update"/>, <see cref="Table.Validate"/>), or
     /// looks for rows through an index to keep a relationship, the table is read once and each index's entries
     /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
     /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows

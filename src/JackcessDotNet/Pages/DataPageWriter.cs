@@ -197,147 +197,19 @@ internal sealed class DataPageWriter
         return rowCount;   // 0-based row index on this page
     }
 
-    // ── UpdateRowByPrimaryKey ─────────────────────────────────────────────────
-
-    /// <summary>
-    /// Finds the row whose primary-key column equals <paramref name="primaryKeyValue"/>
-    /// (linear scan of all owned data pages), merges <paramref name="newValues"/> into it,
-    /// marks the old row as deleted, and re-inserts the merged row.
-    /// Returns the new row's <see cref="RowPointer"/>.
-    /// </summary>
-    public int UpdateRowByPrimaryKey(TableDefinition table, object primaryKeyValue, Row newValues)
-        => UpdateRowByPrimaryKeyMoving(table, primaryKeyValue, newValues).NewRowPtr;
-
-    /// <summary>
-    /// As <see cref="UpdateRowByPrimaryKey"/>, with the old row's pointer too: the row moves.
-    /// <paramref name="beforeChange"/> is given the row as it was, the row as it will be and the old row's pointer
-    /// once the new row is known to be writable and before anything is changed: what it throws refuses the update
-    /// with the table as it was.
-    /// </summary>
-    internal (int OldRowPtr, int NewRowPtr) UpdateRowByPrimaryKeyMoving(
-        TableDefinition table, object primaryKeyValue, Row newValues, Action<Row, Row, int>? beforeChange = null)
-    {
-        if (table    is null) throw new ArgumentNullException(nameof(table));
-        if (newValues is null) throw new ArgumentNullException(nameof(newValues));
-
-        if (table.PrimaryKeyColumnName is null)
-            throw new InvalidOperationException(
-                "PrimaryKeyColumnName is not set on this TableDefinition. " +
-                "Specify a primary key column when calling Database.CreateTable.");
-
-        var format  = _file.Format;
-        var columns = table.Columns;
-        var lvalReader = table.LvalColumnUmapPages.Count > 0
-            ? new LvalReader(_file)
-            : null;
-        var decoder = new RowDecoder(format, columns, lvalReader);
-
-        // Locate the primary-key column descriptor.
-        Column? pkCol = null;
-        foreach (var col in columns)
-        {
-            if (col.Name.Equals(table.PrimaryKeyColumnName, StringComparison.OrdinalIgnoreCase))
-            {
-                pkCol = col;
-                break;
-            }
-        }
-        if (pkCol is null)
-            throw new InvalidOperationException(
-                $"Primary key column '{table.PrimaryKeyColumnName}' not found in table '{table.Name}'.");
-
-        byte[] umapPage  = _file.ReadPage(table.UmapPageNumber);
-        var    ownedList = UsageMap.GetOwnedPages(umapPage, table.OwnedPagesRow, format, _file);
-
-        foreach (int pageNum in ownedList)
-        {
-            byte[] dp       = _file.ReadPage(pageNum);
-            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
-
-            for (int r = 0; r < rowCount; r++)
-            {
-                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // deleted
-
-                object? pkVal = decoder.Decode(rowBytes, pkCol);
-                if (pkVal is null || !PrimaryKeysEqual(pkVal, primaryKeyValue)) continue;
-
-                return (RowPointer.Pack(pageNum, r), Rewrite(table, decoder, dp, pageNum, r, rowBytes, newValues, beforeChange, keepStoredDates: false));
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"No row with primary key '{primaryKeyValue}' found in table '{table.Name}'.");
-    }
-
-    // ── DeleteRow ─────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Finds the first row where <paramref name="columnName"/> equals <paramref name="value"/>
-    /// (linear scan), frees its LVAL chains, and marks the slot as deleted.
-    /// The caller is responsible for decrementing the TDEF row count.
-    /// </summary>
-    public void DeleteRow(TableDefinition table, string columnName, object value)
-        => DeleteFirstMatch(table, columnName, value);
-
-    /// <summary>
-    /// As <see cref="DeleteRow"/>, reporting the deleted row: its pointer and the values its index keys were
-    /// made of, for its entries to leave the table's indexes. Null when no row matched.
-    /// </summary>
-    internal (int RowPtr, Row Values)? DeleteFirstMatch(TableDefinition table, string columnName, object value)
-    {
-        if (table is null)      throw new ArgumentNullException(nameof(table));
-        if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-
-        Column? targetCol = null;
-        foreach (var col in table.Columns)
-        {
-            if (col.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase))
-            {
-                targetCol = col;
-                break;
-            }
-        }
-        if (targetCol is null)
-            throw new InvalidOperationException(
-                $"Column '{columnName}' not found in table '{table.Name}'.");
-
-        var format     = _file.Format;
-        var lvalReader = table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null;
-        var decoder    = new RowDecoder(format, table.Columns, lvalReader);
-
-        byte[] umapPage  = _file.ReadPage(table.UmapPageNumber);
-        var    ownedList = UsageMap.GetOwnedPages(umapPage, table.OwnedPagesRow, format, _file);
-
-        foreach (int pageNum in ownedList)
-        {
-            byte[] dp       = _file.ReadPage(pageNum);
-            int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
-
-            for (int r = 0; r < rowCount; r++)
-            {
-                if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;   // already deleted
-
-                object? colVal = decoder.Decode(rowBytes, targetCol);
-                if (!PrimaryKeysEqual(colVal, value)) continue;
-
-                return (RowPointer.Pack(pageNum, r), Delete(table, decoder, dp, pageNum, r, rowBytes));
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"No row with {columnName} = '{value}' found in table '{table.Name}'.");
-    }
-
     // ── A row at a known place ────────────────────────────────────────────────
 
     /// <summary>
-    /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="newValues"/> laid over its own, exactly as
-    /// <see cref="UpdateRowByPrimaryKeyMoving"/> rewrites the row it finds - <paramref name="beforeChange"/>
-    /// included - and returns where the row now is. One thing differs: a Date/Time value the change does not
-    /// touch is written back as the double the row stored, not as the <see cref="DateTime"/> it reads as, which
-    /// does not hold every double Access writes. A row rewritten here is one its caller did not name - a cascade
-    /// reached it - and a date of it that a relationship refers to must still be the date its parent has.
+    /// Rewrites the row at <paramref name="rowPtr"/> with <paramref name="newValues"/> laid over its own, and
+    /// returns where the row now is: the old row is deleted and the merged one added, so the row moves.
+    /// <paramref name="beforeChange"/> is given the row as it was, the row as it will be and the old row's pointer
+    /// once the new row is known to be writable and before anything is changed: what it throws refuses the update
+    /// with the table as it was. A Date/Time value the change does not touch is written back as the double the
+    /// row stored, not as the <see cref="DateTime"/> it reads as, which does not hold every double Access writes:
+    /// a date a relationship refers to must still be the date its parent has, and the row's index keys the keys
+    /// its values have.
     /// </summary>
+    /// <exception cref="InvalidOperationException">No row of the table is at <paramref name="rowPtr"/>.</exception>
     internal int RewriteRowAt(TableDefinition table, int rowPtr, Row newValues, Action<Row, Row, int>? beforeChange = null)
     {
         var (page, rowBytes) = ReadLiveRow(table, rowPtr);
@@ -345,9 +217,10 @@ internal sealed class DataPageWriter
     }
 
     /// <summary>
-    /// Deletes the row at <paramref name="rowPtr"/>, exactly as <see cref="DeleteFirstMatch"/> deletes the row it
-    /// finds, and reports the values its index keys were made of. The caller takes one off the TDEF's row count.
+    /// Deletes the row at <paramref name="rowPtr"/> - its long values freed, its slot marked - and reports the
+    /// values its index keys were made of. The caller takes one off the TDEF's row count.
     /// </summary>
+    /// <exception cref="InvalidOperationException">No row of the table is at <paramref name="rowPtr"/>.</exception>
     internal Row DeleteRowAt(TableDefinition table, int rowPtr)
     {
         var (page, rowBytes) = ReadLiveRow(table, rowPtr);
@@ -485,6 +358,21 @@ internal sealed class DataPageWriter
         return row;
     }
 
+    /// <summary>
+    /// The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/> as a caller reads them
+    /// (<see cref="RowDecoder.Decode(byte[], Column)"/>), an entry for each, or null when no row of the table is
+    /// there: what an update compares the values it is given with, to leave alone those that are the row's own.
+    /// </summary>
+    internal Row? ReadRowAsReadAt(TableDefinition table, int rowPtr, IEnumerable<Column> columns)
+    {
+        if (TryReadLiveRow(table, rowPtr) is not { } found) return null;
+        var decoder = DecoderFor(table);
+        var row = new Row();
+        foreach (var column in columns)
+            row[column.Name] = decoder.Decode(found.RowBytes, column);
+        return row;
+    }
+
     private RowDecoder DecoderFor(TableDefinition table)
         => new(_file.Format, table.Columns, table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
 
@@ -523,37 +411,6 @@ internal sealed class DataPageWriter
             if (kept is not null && kept.ContainsKey(column)) continue;
             LvalUmapRef? owner = table.LvalColumnUmapPages.TryGetValue(column.Name, out var umap) ? umap : null;
             lvalFree.FreeChain(lvalPage, lvalRow, chained, owner);
-        }
-    }
-
-    /// <summary>
-    /// How a value a caller names a row by is matched to a stored one - the one comparison every lookup that
-    /// confirms a row uses. A floating-point value is matched by its bits, the caller's taken to the column's type
-    /// as a row would store it: +0.0 and -0.0 are two keys to Access and to the index, and so are a Double and the
-    /// next Double after it, which a comparison as decimals called equal - an update by the second rewrote the
-    /// first. Anything else is equal, or equal as numbers (a Long column's 5 for a caller's 5L; a Currency or a
-    /// Decimal exactly, as decimals compare). Text is matched exactly. A Date/Time is matched as it is read, to
-    /// the millisecond.
-    /// </summary>
-    internal static bool PrimaryKeysEqual(object? stored, object? requested)
-    {
-        if (stored is null || requested is null) return stored is null && requested is null;
-        try
-        {
-            switch (stored)
-            {
-                case double d:
-                    return BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(requested));
-                case float f:
-                    return BitConverter.ToInt32(BitConverter.GetBytes(f), 0)
-                        == BitConverter.ToInt32(BitConverter.GetBytes(Convert.ToSingle(requested)), 0);
-            }
-            if (Equals(stored, requested)) return true;
-            return Convert.ToDecimal(stored) == Convert.ToDecimal(requested);
-        }
-        catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
-        {
-            return false;
         }
     }
 }

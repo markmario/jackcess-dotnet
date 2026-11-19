@@ -137,40 +137,37 @@ internal sealed class ForeignKeyEnforcer
     // ── Update ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// <see cref="Table.UpdateByPrimaryKey"/> for a table in a relationship: the row is changed, and with it the
-    /// rows a cascade reaches, or nothing is.
+    /// <see cref="Table.Update"/> for a table in a relationship: the row at <paramref name="pointer"/> is given
+    /// <paramref name="newValues"/>, and with it the rows a cascade reaches are changed, or nothing is. Returns
+    /// where the row is afterwards.
     /// </summary>
-    internal void Update(Table table, object primaryKeyValue, Row newValues)
+    /// <exception cref="InvalidOperationException">No row of the table is at <paramref name="pointer"/>.</exception>
+    internal int Update(Table table, int pointer, Row newValues)
     {
         var changes = new Changes(this);
         var rows    = changes.RowsOf(table);
-        var row = rows.FirstWith(table.Definition.PrimaryKeyColumnName!, primaryKeyValue)
-            ?? throw new InvalidOperationException(
-                $"No row with primary key '{primaryKeyValue}' found in table '{table.Name}'.");
+        var row     = rows.At(pointer) ?? throw Table.NoRowAt(table.Name, pointer);
 
         // Everything given is written to the row; what the relationships and indexes care about is worked through first.
         row.Changes = new Row(newValues);
         var tracked = new Row(newValues.Where(v => rows.Tracks(v.Key)));
         Run(() => Change(changes, rows, row, tracked, cascade: null));
         changes.Write();
+        return row.WrittenAt ?? pointer;
     }
 
     // ── Delete ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// <see cref="Table.DeleteRow"/> for a table in a relationship: the row is deleted, and with it the rows a
-    /// cascade reaches, or nothing is.
+    /// <see cref="Table.Delete"/> for a table in a relationship: the row at <paramref name="pointer"/> is deleted,
+    /// and with it the rows a cascade reaches, or nothing is.
     /// </summary>
-    internal void Delete(Table table, string columnName, object? value)
+    /// <exception cref="InvalidOperationException">No row of the table is at <paramref name="pointer"/>.</exception>
+    internal void Delete(Table table, int pointer)
     {
-        var column = table.Columns.FirstOrDefault(c => c.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException($"Column '{columnName}' not found in table '{table.Name}'.");
-
         var changes = new Changes(this);
-        var rows    = changes.RowsOf(table, alsoTrack: column.Name);
-        var row = rows.FirstWith(column.Name, value, nullMatchesNull: true)
-            ?? throw new InvalidOperationException(
-                $"No row with {columnName} = '{value}' found in table '{table.Name}'.");
+        var rows    = changes.RowsOf(table);
+        var row     = rows.At(pointer) ?? throw Table.NoRowAt(table.Name, pointer);
 
         Run(() => Remove(changes, rows, row));
         changes.Write();
@@ -519,17 +516,6 @@ internal sealed class ForeignKeyEnforcer
     }
 
     /// <summary>
-    /// A stored value as a caller reads it (<see cref="RowDecoder.Decode(byte[], Column)"/>): what the value a caller names a row by
-    /// is matched against, with enforcement on as without it.
-    /// </summary>
-    private static object? AsRead(Column column, object? stored)
-    {
-        if (column.DataType != DataType.DateTime || stored is not double days) return stored;
-        try { return DateTime.FromOADate(days); }
-        catch (ArgumentException) { return null; }
-    }
-
-    /// <summary>
     /// Whether two values, each as a row stores it (<see cref="Stored"/>), are the same stored value. Floating-point
     /// values are compared by their bits: converted to anything else, two Doubles that differ can come out equal.
     /// </summary>
@@ -595,7 +581,7 @@ internal sealed class ForeignKeyEnforcer
         /// <summary>The table's rows in this change: none read until one is asked for.</summary>
         internal TableRows RowsOf(string name) => _rows.TryGetValue(name, out var rows) ? rows : RowsOf(Table(name));
 
-        internal TableRows RowsOf(Table table, string? alsoTrack = null)
+        internal TableRows RowsOf(Table table)
         {
             _tables[table.Name] = table;
             // What a check looks at: the columns a relationship names on this table's side, and every column of an
@@ -611,7 +597,6 @@ internal sealed class ForeignKeyEnforcer
                     if (IsTable(relationship.ToTableName, table.Name)) tracked.Add(to);
                 }
             foreach (string column in table.Definition.EffectivePrimaryKeyColumns) tracked.Add(column);
-            if (alsoTrack is not null) tracked.Add(alsoTrack);
             return _rows[table.Name] = new TableRows(this, table, tracked);
         }
 
@@ -659,7 +644,7 @@ internal sealed class ForeignKeyEnforcer
                     table.DeleteRowAt(row.Pointer);
             foreach (var (table, rows) in changed)
                 foreach (var row in rows.Where(r => !r.Deleted))
-                    table.RewriteRowAt(row.Pointer, row.Changes!);
+                    row.WrittenAt = table.RewriteRowAt(row.Pointer, row.Changes!);
             undo.Commit();
         }
     }
@@ -676,6 +661,8 @@ internal sealed class ForeignKeyEnforcer
         /// <summary>What is to be written to the row, or null when it is left as it is.</summary>
         internal Row? Changes { get; set; }
         internal bool Deleted { get; set; }
+        /// <summary>Where the row is once its changes are written (a rewritten row moves); null until then.</summary>
+        internal int? WrittenAt { get; set; }
     }
 
     /// <summary>
@@ -776,46 +763,8 @@ internal sealed class ForeignKeyEnforcer
                     finder.Add(row);
         }
 
-        /// <summary>
-        /// The first row, in table order, whose <paramref name="column"/> is <paramref name="value"/> as the row
-        /// operations match a value a caller names a row by - through an index on the column when there is one,
-        /// and otherwise, or when the index has no such row, by reading the table until it is found.
-        /// </summary>
-        internal TrackedRow? FirstWith(string column, object? value, bool nullMatchesNull = false)
-        {
-            // As without enforcement: the value is matched against the row's as a caller reads it.
-            var asked = _columns[_tracked[column]];
-            object? Read(TrackedRow row) => AsRead(asked, Value(row, column));
-            bool Matches(TrackedRow row)
-                => !row.Deleted && (nullMatchesNull || Read(row) is not null)
-                && DataPageWriter.PrimaryKeysEqual(Read(row), value);
-
-            if (!_allRead && value is not null
-                && Table.IndexEntries.RowPointersFor(new[] { column }, new[] { value }) is { } pointers)
-            {
-                var found = pointers.Select(ReadAt).Where(row => row is not null && Matches(row)).OrderBy(row => (uint)row!.Pointer).FirstOrDefault();
-                if (found is not null) return found;
-            }
-            if (_allRead) return _read.Values.OrderBy(row => (uint)row.Pointer).FirstOrDefault(Matches);
-
-            // Read until it is found, keeping only the one found.
-            var cursor = Table.CreateCursor();
-            cursor.ColumnsToRead = new[] { asked };
-            while (cursor.NextRow() is { } row)
-            {
-                int pointer = cursor.CurrentRowPointer;
-                if (_read.TryGetValue(pointer, out var kept))
-                {
-                    if (Matches(kept)) return kept;
-                }
-                else if ((nullMatchesNull || !row.IsNull(column))
-                      && DataPageWriter.PrimaryKeysEqual(row.TryGetValue(column, out var stored) ? stored : null, value))
-                {
-                    return ReadAt(pointer);
-                }
-            }
-            return null;
-        }
+        /// <summary>The row at <paramref name="pointer"/>, the one a caller's change begins at, or null when no row of the table is there.</summary>
+        internal TrackedRow? At(int pointer) => ReadAt(pointer);
 
         // ── Finding rows by a key ────────────────────────────────────────────
 

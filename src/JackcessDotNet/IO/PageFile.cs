@@ -36,6 +36,12 @@ internal sealed class PageFile : IDisposable
     internal long WriteCount { get; private set; }
 
     /// <summary>
+    /// A number that changes whenever the file's pages may have: when one is written, and when a change is taken
+    /// back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by.
+    /// </summary>
+    internal long ChangeStamp { get; private set; }
+
+    /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written
     /// and the write after them throws <see cref="IOException"/>, as a full disk would. Null (always, outside a
     /// test) for no such failure.
@@ -243,6 +249,7 @@ internal sealed class PageFile : IDisposable
         long requiredLength = offset + _format.PageSize;
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
+        ChangeStamp++;
         if (_stream.Length < requiredLength)
             _stream.SetLength(requiredLength);
 
@@ -323,6 +330,7 @@ internal sealed class PageFile : IDisposable
             _file._stream.SetLength(_length);
             _file._stream.Flush();
             // What was read or noted of the pages since is no longer what the file holds.
+            _file.ChangeStamp++;
             _file._kept.Clear();
             _file.FreedLvalPages.Clear();
             _file.IndexesChecked.Clear();
@@ -336,6 +344,7 @@ internal sealed class PageFile : IDisposable
             throw new ArgumentNullException(nameof(source));
         EnsureWritable();
 
+        ChangeStamp++;
         _kept.Clear();
         IndexesChecked.Clear();
         _stream.Seek(0, SeekOrigin.Begin);

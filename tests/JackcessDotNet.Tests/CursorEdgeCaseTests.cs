@@ -138,7 +138,7 @@ public sealed class CursorEdgeCaseTests : IDisposable
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
-        var c = t.CreateIndexCursor();
+        var c = t.CreateCursor();
         Assert.Null(c.FindRow("Name", "Nobody"));
     }
 
@@ -147,6 +147,10 @@ public sealed class CursorEdgeCaseTests : IDisposable
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
-        Assert.Throws<ArgumentException>(() => t.CreateIndexCursor().FindRowByEntry());
+        var keyed = db.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
+        Assert.Throws<ArgumentException>(() => keyed.CreateIndexCursor().FindRowByEntry());
+
+        // The table with no primary key has no index to make the cursor for.
+        Assert.Throws<InvalidOperationException>(() => t.CreateIndexCursor());
     }
 }
