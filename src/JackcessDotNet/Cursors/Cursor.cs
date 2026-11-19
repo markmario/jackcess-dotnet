@@ -450,6 +450,10 @@ public class Cursor : IEnumerable<Row>
     /// The updated row would break a rule of the table or of a relationship (<see cref="Table.Update"/>). The
     /// row is left as it was.
     /// </exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// A Text or Binary value of the updated row is longer than its column - one given, or one the row holds already
+    /// (<see cref="Table.Update"/>). The row is left as it was.
+    /// </exception>
     /// <exception cref="NotSupportedException">The table's rows cannot be changed (<see cref="Table.Update"/>). Nothing is written.</exception>
     public void UpdateCurrentRow(Row values)
     {
@@ -579,6 +583,9 @@ public class Cursor : IEnumerable<Row>
     {
         // A null is never a match, so a pattern with one matches no row.
         if (pattern.Any(p => RowValues.IsNull(p.Value))) return null;
+        // A double or a float looked for in a Currency column is the value Access takes it to (CurrencyRounding): as
+        // that value an index is searched for it and every row compared with it. One no Currency holds is no row's.
+        if (!AsLookedFor(ref pattern)) return null;
 
         object place      = BeginMoving();
         var    current    = _currentRow;
@@ -636,6 +643,28 @@ public class Cursor : IEnumerable<Row>
         while (Move(forward: true) is { } row)
             if (Matches(row, pattern)) return row.Pointer;
         return null;
+    }
+
+    /// <summary>
+    /// <paramref name="pattern"/> with each double or float asked of a Currency column replaced by the decimal Access
+    /// takes it to - its exact value rounded to four places, half to even (#49) - so that the key an index is searched
+    /// by is made of that, and not of the number as a row would be written with it. False when such a number is one no
+    /// Currency holds: no row has it.
+    /// </summary>
+    private static bool AsLookedFor(ref IReadOnlyList<(Column Column, object? Value)> pattern)
+    {
+        (Column Column, object? Value)[]? taken = null;
+        for (int i = 0; i < pattern.Count; i++)
+        {
+            var (column, value) = pattern[i];
+            if (column.DataType != DataType.Currency || value is not (double or float)) continue;
+            if (!CurrencyRounding.TryUnits(Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture), out long units))
+                return false;
+            taken ??= pattern.ToArray();
+            taken[i] = (column, units / 10_000m);
+        }
+        if (taken is not null) pattern = taken;
+        return true;
     }
 
     private protected static bool Matches(Row row, IReadOnlyList<(Column Column, object? Value)> pattern)

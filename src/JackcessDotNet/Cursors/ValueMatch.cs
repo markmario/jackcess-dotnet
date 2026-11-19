@@ -14,10 +14,24 @@ namespace JackcessDotNet;
 /// among them, a character Access keys by its neighbours - text is equal when it is the same text, character
 /// for character. A text column is looked in for text and nothing else: a number looked for is the text that
 /// writes it, and text is never read as a number.</item>
-/// <item>A number is equal to a number of another type that is the same number (a Long column's 5 for a
-/// caller's 5L; a Currency or a Decimal exactly, as decimals compare); a Double or a Single by its bits, the
-/// caller's taken to the column's type as a row would store it: +0.0 and -0.0 are two keys to Access and to an
-/// index, and so are a Double and the next Double after it. Text is no number.</item>
+/// <item>A number is equal to a number of another type that is exactly the same number (#49): a Byte, Integer,
+/// Long or Large Number column's 5 for a caller's 5L, 5m or 5.0, and for no number that is not that whole number
+/// (5.5, 5.5m, 70000 in an Integer, a double one past a Large Number's); a Decimal exactly, as decimals compare, a
+/// caller's double taken to a decimal as Access takes one (to 15 significant digits). Measured with ACE, its
+/// <c>=</c> answers otherwise in places, and not alike through an index and without one; where its two answers
+/// differ, this is the exact one. In a whole-number column that is its scan's: -0.0 is 0, -2^63 as a double is
+/// a Large Number's <see cref="long.MinValue"/>, and a decimal with a fraction is no whole number (a Large
+/// Number's scan found 0 for every decimal), where ACE's index finds nothing for the first two and rounds the
+/// third (5.5m finds 6, 0.1m 0, -1.23465m -1). A double past 2^53 is the Large Number it is exactly, as ACE's
+/// index has it, where its scan compares the two as doubles.
+/// A Currency is the caller's number taken to its four places: a double or a float by its exact value, half to
+/// even, as ACE's <c>=</c> - through an index and without - and DAO's <c>Seek</c> take one (0.03125 is the row of
+/// 0.0312, and 0.00015, a double just under that half, the row of 0.0001); any other number as a row would store
+/// it, half away from zero (1.23456 is the row of 1.2346, and 1.23465m of 1.2347, where ACE's index rounds a
+/// decimal half to even, #65). A Double or a Single is the caller's number as a row would store it, by its bits,
+/// as ACE's index has it: +0.0 and -0.0 are two keys, where ACE's scan finds both for either, and so are a Double
+/// and the next Double after it. NaN is no number a column holds, where ACE's scan finds every row. Text is no
+/// number.</item>
 /// <item>A Date/Time is the double the row stores, days since 30 December 1899. A number looked for is that
 /// double, matched by its bits (#35). A <see cref="DateTime"/> looked for is first taken to what it reads as once
 /// a row stores it (<see cref="AsStored"/>: to the millisecond), and matches every stored value that reads as
@@ -60,6 +74,17 @@ internal static class ValueMatch
                 case DataType.Guid:
                     return stored is Guid guid
                         && guid == (asked is Guid wanted ? wanted : Guid.Parse(Convert.ToString(asked, CultureInfo.InvariantCulture)!));
+                case DataType.Currency:
+                {
+                    // The caller's number in ten-thousandths, as Access takes it (#49): a double or a float by its exact
+                    // value, half to even, as ACE's index and scan and DAO's Seek take one (Util.CurrencyRounding); any
+                    // other number as the row encoder writes it and an index keys it.
+                    long holds = IndexKeys.MoneyUnits(Convert.ToDecimal(stored, CultureInfo.InvariantCulture));
+                    if (asked is double or float)
+                        return Util.CurrencyRounding.TryUnits(Convert.ToDouble(asked, CultureInfo.InvariantCulture), out long units)
+                            && units == holds;
+                    return IsNumber(asked!) && holds == IndexKeys.MoneyUnits(Convert.ToDecimal(asked, CultureInfo.InvariantCulture));
+                }
             }
             return SameValue(stored, asked!);
         }
@@ -154,11 +179,28 @@ internal static class ValueMatch
         if (!IsNumber(stored) || !IsNumber(asked)) return false;
         return stored switch
         {
-            double d => BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture)),
-            float f  => BitConverter.GetBytes(f).AsSpan().SequenceEqual(BitConverter.GetBytes(Convert.ToSingle(asked, CultureInfo.InvariantCulture))),
-            _        => Equals(stored, asked)
-                        || Convert.ToDecimal(stored, CultureInfo.InvariantCulture) == Convert.ToDecimal(asked, CultureInfo.InvariantCulture),
+            double d  => BitConverter.DoubleToInt64Bits(d) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture)),
+            float f   => BitConverter.GetBytes(f).AsSpan().SequenceEqual(BitConverter.GetBytes(Convert.ToSingle(asked, CultureInfo.InvariantCulture))),
+            // A Decimal: a double or a float asked is taken to a decimal as Access takes it, to the digits its type
+            // holds, on every runtime (Util.AutomationDecimal).
+            decimal m => m == Util.AutomationDecimal.From(asked, CultureInfo.InvariantCulture),
+            // A whole number: a double or a float is it only when it is that whole number exactly. Taken to a decimal
+            // it is cut to 15 significant digits, which made 5.000000000000001 an Integer's 5, and a double one past
+            // a Large Number's that number (#49).
+            _         => asked is double or float
+                             ? IsWhole(Convert.ToDouble(asked, CultureInfo.InvariantCulture), out long whole)
+                               && whole == Convert.ToInt64(stored, CultureInfo.InvariantCulture)
+                             : Convert.ToDecimal(stored, CultureInfo.InvariantCulture) == Convert.ToDecimal(asked, CultureInfo.InvariantCulture),
         };
+    }
+
+    // Whether the number is a whole number a long holds, and which.
+    private static bool IsWhole(double number, out long whole)
+    {
+        whole = 0;
+        if (Math.Floor(number) != number || number < -9223372036854775808.0 || number >= 9223372036854775808.0) return false;
+        whole = (long)number;
+        return true;
     }
 
     private static bool IsNumber(object value)
