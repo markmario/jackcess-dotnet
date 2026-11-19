@@ -158,5 +158,6 @@ public sealed class CodecTests
         public TestCodec(Action onDecode, Action onEncode) { _onDecode = onDecode; _onEncode = onEncode; }
         public byte[] DecodePage(byte[] rawPage, int pageNumber) { _onDecode(); return rawPage; }
         public byte[] EncodePage(byte[] page,    int pageNumber) { _onEncode(); return page; }
+        public string? WriteRefusal => null;
     }
 }

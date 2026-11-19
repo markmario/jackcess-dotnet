@@ -75,6 +75,14 @@ internal sealed class SystemCatalog
     public void EnsureCanRegister(string tableName) => Prepare(tableName);
 
     /// <summary>
+    /// As <see cref="EnsureCanRegister"/>, for the table whose definition is at <paramref name="tdefPage"/> to be
+    /// given the name <paramref name="newName"/>: its name is compared with every other object's. The table is left
+    /// out by what it is - its row of the catalog, whose id is its definition's page - and not by its name, which
+    /// another object's may be equal to without regard to case.
+    /// </summary>
+    public void EnsureCanRename(int tdefPage, string newName) => Prepare(newName, tdefPage);
+
+    /// <summary>
     /// The order the database's text sorts in, which is the order its catalog keeps names in: ACE gives a new
     /// table's Text and Memo columns that order. Access 97's orders have no Jet4 form, and a catalog with no order
     /// is one an earlier version of this library wrote; both are General - Legacy to a new table.
@@ -199,11 +207,15 @@ internal sealed class SystemCatalog
     /// <summary>
     /// As <see cref="FindTable(string, out string?)"/>, with what reads the table's properties - the LvProp of
     /// its row - in <paramref name="readProperties"/>: from the row as this pass read it, so reading them reads
-    /// no page again, and only the pages of a value too long for its row. The scan stops at the table.
+    /// no page again, and only the pages of a value too long for its row. The scan stops at the table: the table of
+    /// exactly that name, and when there is none, a second scan for one without regard to case.
     /// </summary>
     internal int FindTable(string tableName, out string? listedName, out Func<byte[]?>? readProperties)
     {
-        var row = FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable
+        // A name given exactly is its table's, though another's is the same without regard to case: Access keeps
+        // apart names .NET takes as one (ObjectNames).
+        var row = FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable && name == tableName)
+               ?? FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable
                                                  && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase));
         listedName     = row?.Name;
         readProperties = row?.ReadProperties;
@@ -299,7 +311,7 @@ internal sealed class SystemCatalog
 
         if (catalog.Any(r => Value(r, ColType) is short type && type == CatalogTypeRelationship
                           && Value(r, ColName) is string existing
-                          && string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
+                          && ObjectNames.Same(existing, name)))
             throw new InvalidOperationException($"There is already a relationship named '{name}' in this database. Nothing was changed.");
 
         // The ids Access gives objects that have no page count up from int.MinValue: the next is one past the
@@ -389,8 +401,9 @@ internal sealed class SystemCatalog
 
     private static object? Value(Row row, string column) => row.TryGetValue(column, out var value) ? value : null;
 
-    // What registering a table needs, read and checked before anything is written.
-    private (TableDefinition Catalog, int TablesId, byte[]? Owner, TableDefinition? Aces) Prepare(string tableName)
+    // What registering a table needs, read and checked before anything is written; for a table being renamed, the row
+    // whose id is renamedTdef is that table's, and its name is no other object's.
+    private (TableDefinition Catalog, int TablesId, byte[]? Owner, TableDefinition? Aces) Prepare(string tableName, int? renamedTdef = null)
     {
         var catalogDef = BuildCatalogTableDef();
         var catalog    = ReadRows(catalogDef, ColId, ColName, ColType, ColParentId, ColOwner);
@@ -405,7 +418,9 @@ internal sealed class SystemCatalog
         // A table's name is any object's in the Tables container, and any table's: versions of this
         // library before 2.1.1 registered tables with ParentId 0, outside the container.
         if (catalog.Any(r => Value(r, ColName) is string name
-                          && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase)
+                          && ObjectNames.Same(name, tableName)
+                          && !(renamedTdef is int renamed && Value(r, ColId) is int id && id == renamed
+                               && Value(r, ColType) is short renamedType && renamedType == JetFormat.CatalogTypeTable)
                           && (Value(r, ColParentId) is int parent && parent == tablesId
                               || Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable)))
             throw new InvalidOperationException($"An object named '{tableName}' already exists in this database.");
@@ -688,22 +703,28 @@ internal sealed class SystemCatalog
 
     /// <summary>
     /// As <see cref="FindTableTdefPage"/>, with the table's name as the catalog spells it in
-    /// <paramref name="listedName"/> (null when there is no such table).
+    /// <paramref name="listedName"/> (null when there is no such table). The table of exactly that name, when there
+    /// is one; otherwise the first of that name without regard to case.
     /// </summary>
     public int FindTable(string tableName, out string? listedName)
     {
-        int found = -1;
+        int found = -1, exact = -1;
         string? listed = null;
         ForEachTableEntry((name, tdefPage, _) =>
         {
-            if (found < 0 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
+            if (exact < 0 && name == tableName)
+            {
+                exact  = tdefPage;
+                listed = name;
+            }
+            else if (exact < 0 && found < 0 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
             {
                 found  = tdefPage;
                 listed = name;
             }
         });
         listedName = listed;
-        return found;
+        return exact >= 0 ? exact : found;
     }
 
     /// <summary>

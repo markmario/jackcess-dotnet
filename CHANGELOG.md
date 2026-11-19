@@ -144,9 +144,52 @@ changed since 1.2.2.
 - **A table whose definition goes on to a page that is not its own** - one the file has not, one already read,
   or one that is no definition page - is opened, and read by the columns its sound pages name; nothing is
   written to it or changed in it (#37).
-- **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
-  value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
-  has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **An import holds a `long` whole** (#38). A `long` column or property was a Long Integer, and a value past 32
+  bits stopped the import at its row. It is a Large Number in a file of Access 2016's format or later, and a
+  `Decimal(19, 0)` in an older one - an `.mdb`, or an `.accdb` of Access 2007's or 2010's format. **An import does
+  not change a file's format**: a Large Number column makes a file one of Access 2016's format, which Access 2010
+  and 2013 do not open, so the importer makes one only where the file is of that format already. A key on such a
+  column in an older file is a Decimal key, refused before anything is written.
+- **An import holds every value of its source exactly, or refuses before anything is written** (#44).
+  - **Whole or not at all.** Every value is converted to what its column holds before anything is written, and
+    a value no column holds exactly is refused then, with `ArgumentException` naming the column and the row. What
+    is written is written inside one undo scope, so a row the database refuses part-way - a duplicate in a key, a
+    null in a required column - takes back the table, the rows before it and, for `ImportTables`, every table
+    before it: a refused import leaves the file byte for byte as it was. The table and the rows before a refused
+    row stayed. The session that refused it holds nothing it made: a table taken back is not listed or found, and
+    its name and its pages are free - a table made after it on its definition's page is that table, not the one
+    taken back, which refuses whatever is asked of it. `ImportTable<T>` reads every object before it writes; it
+    read them as it inserted.
+  - **Columns that hold every value.** `sbyte` is an Integer (it was a Byte, and a negative value stopped the
+    import), `ushort` a Long Integer (an Integer), `uint` a Large Number in a file of Access 2016's format and a
+    `Decimal(10, 0)` in an older one, `ulong` a `Decimal(20, 0)` (both were Long Integers, and a value past 31
+    bits stopped the import).
+    `decimal` is a Decimal whose scale is the most places a value has and whose precision the digits the values
+    need, 18 at least - refused past 28 - where Currency rounded past four places. A `string` with no length is
+    Text(255) when every value fits and a Memo otherwise, and one with a length longer than a value is a Memo (a
+    longer value stopped the import). A `byte[]` is Binary only where a length is given and every value fits it,
+    and an OLE Object otherwise: it was Binary(50), which took a longer value that ACE could not then read. A
+    `byte[]` the source gives no length - every `DataTable`'s, whose `DataColumn.MaxLength` takes none - is an OLE
+    Object, as Java's importer makes a BLOB one: it holds every value, and any added later.
+  - **A null for a Yes/No column, and a date before 1 January 100, are refused.** They were stored as No, and
+    `DateTime.MinValue` as 30 December 1899. An empty byte array is written as `Table.Insert` writes one: a value
+    of no bytes, as ACE's own INSERT writes it, which ACE's OLE DB and SQL read back as one, and DAO as Null.
+  - **Required, and keys of several columns.** A `DataColumn` with `AllowDBNull = false`, and a property with
+    `[Required]` or of a value type that is not nullable, makes a required column. A `DataTable`'s primary key of
+    several columns is the table's key, as are several `[Key]` properties, in the order of their
+    `[Column(Order = n)]` and then as declared; only a key of one column, or the first `[Key]`, was carried over.
+  - **Adding to a table converts a value exactly or refuses it** (`AppendIfExists`): a value went through
+    `Convert`, which rounded a `double` into an integer column, a `decimal` into Currency, and text in the current
+    culture. Text with an offset is the UTC time it denotes, as a `DateTimeOffset` is, and text without one the
+    time it says, whatever the machine's time zone; a time without a date, `"10:30"`, is on 30 December 1899, as
+    ACE inserts one in a Date/Time or Date/Time Extended column - it was on the day of the import. A `double` or
+    `float` goes to Text as its round-trip form, the same text on every target: .NET Framework's round-trip format
+    does not always read back as the double.
+    Whether a number goes to a numeric column is worked out exactly, so it is the same on every target. Text goes
+    to a numeric column as the number it denotes, only when the column holds exactly that number; NaN, the
+    infinities and a number past the column's range, or too near 0 for it, are refused, whatever the size of the
+    exponent it is written with. Bytes longer than a Binary column are refused as text longer than its column is,
+    with `ColumnValueTooLongException`.
 - **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
   `UPDATE` leaves in a row, which was read as null. Its index key is made of its bytes, as Access makes it (#51).
 - **A new table or relationship has its owner's entry in `MSysACEs`**, with the others its container passes
@@ -154,6 +197,50 @@ changed since 1.2.2.
   database DAO had created, nor drop a relationship it made.
 - **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
   is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
+- **Two columns whose names differ only in case are refused.** `CreateTable` made a table of two columns named
+  `A` and `a`, and a row then kept one value for the two (DAO saw one column); it now refuses them with
+  `ArgumentException` before anything is written, as an import does. A call that made such a table now throws: a
+  change toward refusing, which writes nothing wrong. Names are compared as before, as .NET compares them without
+  regard to case (`StringComparison.OrdinalIgnoreCase`), which is how this library looks them up, for a table,
+  column, index and relationship. That is not yet Access's own rule: measured with DAO, Access also takes as one
+  names that differ in width, in kana or in an accent written as one character or two, which are two here; and it
+  keeps apart some names .NET takes as one - `xµ` and `xμ`, and letters of other scripts that .NET's newer case
+  tables pair - which are one here on .NET, and two on .NET Framework.
+- **`GetTable` and `TryGetTable` find the table of exactly the name asked for**, when there is one, and only then
+  one of that name without regard to case: in a file Access made with tables `xµ` and `xμ`, on .NET, either could
+  be found for the other, and so dropped, renamed or written to in its place. `RenameTable` compares the new name
+  with every other object's, leaving the table out by what it is, not by its name, and changes the relationships
+  that name the table and no other's.
+- **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
+  (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
+  - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with
+    another, an Access 97 or 2000-2003 file that has one throws `InvalidCredentialException`. It opened with any
+    password, or none. An Access 97 file's password is compared, as Jet 3 compares it, in the file's code page:
+    the password given is converted to it as Windows converts text, a character the code page lacks becoming its
+    best fit or a question mark, as the stored one was - Windows' best fit, on every target, where .NET's makes a
+    question mark of eleven characters Windows does not.
+  - **An encoded .mdb opens** (Access's Encrypt Database, DAO's `dbEncrypt`), with no password, as Access opens
+    one, and is read and written: its pages are RC4 under the four bytes its header holds at 0x3E, as
+    Jackcess-encrypt reads them. None opened before: the key was taken from the password, which the encoding does
+    not use.
+  - **An encrypted .accdb opened without a password throws `InvalidCredentialException`**; it was
+    `NotSupportedException`. A file whose catalog does not read, when its header names no protection, is refused
+    as damaged with `NotSupportedException` whatever password is given; with a password it was
+    `InvalidCredentialException`. So is an .accdb whose header describes its encryption in a way that does not
+    read, opened with its password: it threw `FormatException`, `InvalidDataException` or
+    `CryptographicException`, as the damage fell. Its Agile description's sizes - salt, block, key, hash - and its
+    spin count, at most 10,000,000, are checked as the file is opened: a block size of -1 threw
+    `OverflowException` at the first page read, and a spin count of 2^31 - 1 was spun, for hours.
+  - **An .accdb in ECMA Standard Encryption is read and not written**: `IsReadOnly`, and a write is refused with
+    `NotSupportedException` before anything is written, as in an Access 97 file. No Access is known to give an
+    .accdb this encryption (Access 2007 uses RC4 CryptoAPI, and later versions Agile Encryption), and no file of
+    it was found, so what this library wrote to one could not be checked against Access; reading one follows the
+    specification and is checked only against a file made by the tests from it. Its key's 50,000 SHA-1 iterations
+    are worked out once for the file; they were worked out again for every page read or written.
+  - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
+    searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
+    non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
+    "stale integrity hash" this README warned of does not arise.
 
 ### Breaking changes to the public API
 

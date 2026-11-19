@@ -17,8 +17,10 @@ public sealed class DatabaseOpenOptions
     }
 
     /// <summary>
-    /// The password of an encrypted file. Null or empty (the default) for none. A file that is not encrypted is
-    /// opened whatever the password, which is not looked at.
+    /// The password of a protected file: the database password of an .mdb, or the password an .accdb is encrypted
+    /// with. Null or empty (the default) for none. It is compared as Access compares it, exactly, letter case and
+    /// all. A file that has no password - an .mdb whose pages are encoded among them - is opened whatever the
+    /// password, which is not looked at.
     /// </summary>
     public string? Password { get; set; }
 

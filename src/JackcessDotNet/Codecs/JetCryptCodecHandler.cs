@@ -1,95 +1,61 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace JackcessDotNet;
 
 /// <summary>
-/// RC4-based codec for password-protected Jet 4 (.mdb) databases. Implements
-/// the "MSISAM" / Jet-4 encryption scheme as documented in MDBTools and reverse-
-/// engineered notes:
-///
-///   • Page 0 (the database header) stores a 4-byte "encryption indicator"
-///     at offset 0x3E and a 14-byte password verifier at offset 0x42.
-///   • The user's password (UTF-16LE, truncated/padded to 14 bytes) is XOR'd
-///     against the verifier to recover the 14-byte master key.
-///   • For each page N, RC4 is keyed with [master ⊕ page-number] and the
-///     resulting keystream is XOR'd against the page bytes.
-///
+/// The codec of an Access 97 or Access 2000-2003 file (.mdb) whose pages Access encoded: what Access's Encrypt
+/// Database command and DAO's <c>dbEncrypt</c> option make, and what Jackcess-encrypt's <c>JetCryptCodecHandler</c>
+/// reads and writes. Every page but the first is RC4 under the four-byte key the header holds at 0x3E
+/// (<see cref="HeaderMask.EncodingKey"/>), with the page's number XORed into it, least significant byte first. The
+/// first page is the header, which only its mask hides.
 /// <para>
-/// <b>Verification status:</b> the RC4 primitive is verified against the RFC
-/// test vectors in <c>CodecTests</c>. The page-key derivation is implemented
-/// from documentation but has not been tested against a real encrypted Access
-/// file (the project doesn't ship encrypted corpora). It compiles and behaves
-/// deterministically; correctness on a real password-protected database is
-/// best-effort until a test fixture lands.
+/// The key is in the file, so no password is needed to read or write such a file: Access opens one with any
+/// password, or none, when it has no database password. A database password is a different thing, which Access
+/// checks and which changes no page (<see cref="HeaderMask.DatabasePassword"/>). Measured against files DAO 16 and
+/// Jet 4.0 made (tools/protected-fixtures.ps1): the pages decode to what Access reads, and pages encoded here are
+/// read by Access.
 /// </para>
 /// </summary>
 internal sealed class JetCryptCodecHandler : ICodecHandler
 {
-    private const int VerifierOffset       = 0x42;
-    private const int VerifierLength       = 14;
+    private readonly byte[] _encodingKey;
 
-    private readonly byte[] _masterKey;   // 14 bytes
-
-    private JetCryptCodecHandler(byte[] masterKey) => _masterKey = masterKey;
+    private JetCryptCodecHandler(byte[] encodingKey) => _encodingKey = encodingKey;
 
     /// <summary>
-    /// Derives the codec from the database header page and the user-supplied
-    /// password. Returns null when the file isn't password-protected (verifier
-    /// bytes all zero) — callers should fall back to <see cref="NullCodecHandler"/>.
+    /// The codec for a file whose first page is <paramref name="header"/>, as the file holds it; null when the
+    /// file's pages are not encoded (its key is all zero), and the file is read and written as it is.
     /// </summary>
-    public static JetCryptCodecHandler? FromDbHeader(byte[] dbHeader, string? password)
+    public static JetCryptCodecHandler? FromDbHeader(byte[] header)
     {
-        if (dbHeader.Length < VerifierOffset + VerifierLength) return null;
-
-        // Detect "no password": verifier bytes are all zero on unencrypted files.
-        bool allZero = true;
-        for (int i = 0; i < VerifierLength; i++)
-            if (dbHeader[VerifierOffset + i] != 0) { allZero = false; break; }
-        if (allZero) return null;
-
-        byte[] passwordBytes = EncodePassword(password ?? string.Empty);
-        var key = new byte[VerifierLength];
-        for (int i = 0; i < VerifierLength; i++)
-            key[i] = (byte)(dbHeader[VerifierOffset + i] ^ passwordBytes[i]);
-        return new JetCryptCodecHandler(key);
+        byte[] key = HeaderMask.EncodingKey(header);
+        return key.Any(b => b != 0) ? new JetCryptCodecHandler(key) : null;
     }
 
-    public byte[] DecodePage(byte[] rawPage, int pageNumber)
-        => Transform(rawPage, pageNumber);
+    public byte[] DecodePage(byte[] rawPage, int pageNumber) => Transform(rawPage, pageNumber);
 
-    public byte[] EncodePage(byte[] page, int pageNumber)
-        => Transform(page, pageNumber);
+    public byte[] EncodePage(byte[] page, int pageNumber) => Transform(page, pageNumber);
 
-    /// <summary>
-    /// Page 0 (the database header) is partly cleartext (the "Standard Jet DB"
-    /// signature lives there); only pages numbered ≥ 1 are RC4-keyed.
-    /// </summary>
+    /// <summary>An encoded .mdb is written to: Access reads what this library writes to one.</summary>
+    public string? WriteRefusal => null;
+
+    // RC4 is its own inverse: the same keystream decodes a page and encodes it.
     private byte[] Transform(byte[] page, int pageNumber)
     {
         if (pageNumber == 0) return page;
 
-        byte[] perPageKey = BuildPerPageKey(_masterKey, pageNumber);
-        byte[] keystream  = Rc4Keystream(perPageKey, page.Length);
+        byte[] keystream = Rc4Keystream(PageKey(pageNumber), page.Length);
         var result = new byte[page.Length];
         for (int i = 0; i < page.Length; i++)
             result[i] = (byte)(page[i] ^ keystream[i]);
         return result;
     }
 
-    /// <summary>
-    /// Combines the master key with the page number by XOR-ing the page number's
-    /// little-endian bytes against the first four key bytes — the documented
-    /// MSISAM page-key derivation.
-    /// </summary>
-    private static byte[] BuildPerPageKey(byte[] master, int pageNumber)
+    /// <summary>The key of page <paramref name="pageNumber"/>: the file's key with the page's number XORed in, least significant byte first.</summary>
+    private byte[] PageKey(int pageNumber)
     {
-        var k = (byte[])master.Clone();
-        k[0] ^= (byte) (pageNumber        & 0xFF);
-        k[1] ^= (byte)((pageNumber >>  8) & 0xFF);
-        k[2] ^= (byte)((pageNumber >> 16) & 0xFF);
-        k[3] ^= (byte)((pageNumber >> 24) & 0xFF);
-        return k;
+        var key = new byte[HeaderMask.EncodingKeyLength];
+        for (int i = 0; i < key.Length; i++)
+            key[i] = (byte)(_encodingKey[i] ^ (pageNumber >> (8 * i)));
+        return key;
     }
 
     /// <summary>
@@ -119,19 +85,5 @@ internal sealed class JetCryptCodecHandler : ICodecHandler
             output[n] = s[(s[x] + s[y]) & 0xFF];
         }
         return output;
-    }
-
-    /// <summary>
-    /// Encodes the password to the 14-byte block the verifier XOR expects:
-    /// UTF-16LE bytes, truncated or zero-padded to fit. Empty password → all zeros
-    /// (which combined with a non-zero verifier produces the master key itself).
-    /// </summary>
-    private static byte[] EncodePassword(string password)
-    {
-        var buf = new byte[VerifierLength];
-        if (string.IsNullOrEmpty(password)) return buf;
-        byte[] u16 = Encoding.Unicode.GetBytes(password);
-        Array.Copy(u16, 0, buf, 0, Math.Min(u16.Length, VerifierLength));
-        return buf;
     }
 }

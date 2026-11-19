@@ -551,7 +551,9 @@ public sealed class AutoNumberTests : IDisposable
 
         Assert.Throws<ConstraintViolationException>(() => db.ImportTable(People(4, 0, 4)));
 
-        Assert.Empty(db.GetTable("Person").Rows.ToList());
+        // An import is whole or not at all (#44): the table it made is taken back with its rows.
+        Assert.False(db.TryGetTable("Person", out _));
+        Assert.Empty(db.GetTableNames());
     }
 
     // A DataTable's AutoIncrement column where some rows have a number and some have none.
