@@ -62,8 +62,9 @@ changed since 1.2.2.
   wrote, and an entry Access wrote taken out on that judgement is a row Access can then neither find nor update.
   Only with `Database.VerifyIndexes`, and where the row's key is one this library makes as Access does (not a key
   cut at 510 bytes in an index of several columns other than Text and Long), is such an entry the row's wrong one:
-  a row with its key is taken, the entry goes, and the row is entered under its own key. A removal that takes out a leaf's last entry reads the next leaf's first, one page more, for
-  another entry under the key. An index with no such entry costs nothing more to write to.
+  a row with its key is taken, the entry goes, and the row is entered under its own key. A removal that takes out
+  a leaf's last entry reads the next leaf's first, one page more, for another entry under the key. An index with
+  no such entry costs nothing more to write to.
 - **A Date/Time Extended value is keyed by the 42 bytes its row stores, as Access keys it** (#51); this fixes a
   defect on `main`. Access writes a date in more than one form - its `INSERT` the time of day in 100-nanosecond
   units and a count of 7, its SQL `UPDATE` and DAO's `Edit` the time in whole seconds and a count of 0 - and keys
