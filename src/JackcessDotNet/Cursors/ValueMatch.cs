@@ -24,13 +24,14 @@ namespace JackcessDotNet;
 /// Number's scan found 0 for every decimal), where ACE's index finds nothing for the first two and rounds the
 /// third (5.5m finds 6, 0.1m 0, -1.23465m -1). A double past 2^53 is the Large Number it is exactly, as ACE's
 /// index has it, where its scan compares the two as doubles.
-/// A Currency is the caller's number taken to its four places: a double or a float by its exact value, half to
-/// even, as ACE's <c>=</c> - through an index and without - and DAO's <c>Seek</c> take one (0.03125 is the row of
-/// 0.0312, and 0.00015, a double just under that half, the row of 0.0001); any other number as a row would store
-/// it, half away from zero (1.23456 is the row of 1.2346, and 1.23465m of 1.2347, where ACE's index rounds a
-/// decimal half to even, #65). A Double or a Single is the caller's number as a row would store it, by its bits,
+/// A Currency is the caller's number taken to its four places by its exact value, half to even, as a row is written
+/// with it and as ACE's <c>=</c> through an index and DAO's <c>Seek</c> take one (<see cref="Util.CurrencyRounding"/>,
+/// #65): the double 0.03125 is the row of 0.0312, 0.00015, a double just under that half, the row of 0.0001, and
+/// 1.23465m the row of 1.2346, where ACE's scan takes a decimal through a double and finds 1.2347.
+/// A Double or a Single is the caller's number as a row would store it, by its bits,
 /// as ACE's index has it: +0.0 and -0.0 are two keys, where ACE's scan finds both for either, and so are a Double
-/// and the next Double after it. NaN is no number a column holds, where ACE's scan finds every row. Text is no
+/// and the next Double after it. NaN is no number a column holds, where ACE's scan finds every row - in a Currency
+/// column, ACE's <c>=</c> finds the row of the least Currency, which ACE and DAO write for NaN. Text is no
 /// number.</item>
 /// <item>A Date/Time is the double the row stores, days since 30 December 1899. A number looked for is that
 /// double, matched by its bits (#35). A <see cref="DateTime"/> looked for is first taken to what it reads as once
@@ -75,16 +76,11 @@ internal static class ValueMatch
                     return stored is Guid guid
                         && guid == (asked is Guid wanted ? wanted : Guid.Parse(Convert.ToString(asked, CultureInfo.InvariantCulture)!));
                 case DataType.Currency:
-                {
-                    // The caller's number in ten-thousandths, as Access takes it (#49): a double or a float by its exact
-                    // value, half to even, as ACE's index and scan and DAO's Seek take one (Util.CurrencyRounding); any
-                    // other number as the row encoder writes it and an index keys it.
-                    long holds = IndexKeys.MoneyUnits(Convert.ToDecimal(stored, CultureInfo.InvariantCulture));
-                    if (asked is double or float)
-                        return Util.CurrencyRounding.TryUnits(Convert.ToDouble(asked, CultureInfo.InvariantCulture), out long units)
-                            && units == holds;
-                    return IsNumber(asked!) && holds == IndexKeys.MoneyUnits(Convert.ToDecimal(asked, CultureInfo.InvariantCulture));
-                }
+                    // The caller's number in ten-thousandths, as Access takes it to a Currency and as a row is written
+                    // and keyed with it (Util.CurrencyRounding, #49, #65): its exact value, half to even. Text is no
+                    // number, and NaN, an infinity or a number past the range no row's value.
+                    return Util.CurrencyRounding.TryUnits(stored, out long holds)
+                        && Util.CurrencyRounding.TryUnits(asked, out long units) && units == holds;
             }
             return SameValue(stored, asked!);
         }
