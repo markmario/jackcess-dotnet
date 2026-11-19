@@ -302,6 +302,75 @@ public sealed class SchemaRemovalTests : IDisposable
         Assert.Equal(2, table.Rows.Count());
     }
 
+    // A dropped column keeps its number, and a row's null mask has a bit for each number up to 254: a table that
+    // has had 255 columns takes no more, however few it has. Access refuses the next too ("Too many fields
+    // defined"), with the definition's count of columns ever made at 255, until the file is compacted.
+    [Fact]
+    public void A_table_that_has_had_255_columns_takes_no_more_though_most_were_dropped()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("T", new[] { Long("Id"), Long("Keep") }, primaryKey: "Id");
+            table.Insert(new Row { ["Id"] = 1, ["Keep"] = 10 });
+            for (int i = 0; i < 253; i++)
+            {
+                table.AddColumn(i % 2 == 0 ? Long($"X{i}") : Text($"X{i}"));
+                table.DropColumn($"X{i}");
+            }
+            Assert.Equal(255, table.Definition.MaxColumnCount);
+            Assert.Equal(new[] { "Id", "Keep" }, table.Columns.Select(c => c.Name));
+
+            var pages = IndexChecks.AllPages(db);
+            foreach (var column in new[] { Long("Again"), Text("AgainText"), new ColumnDefinition("AgainFlag", DataType.Boolean) })
+            {
+                var refused = Assert.Throws<ArgumentException>(() => table.AddColumn(column));
+                Assert.Contains("has had 255 columns", refused.Message);
+                Assert.Contains("compacted", refused.Message);
+            }
+            IndexChecks.AssertUnchanged(pages, db);
+
+            // It is a table like any other still.
+            table.Insert(new Row { ["Id"] = 2, ["Keep"] = 20 });
+            Assert.Equal(20, table.FindRowByPrimaryKey(2)!["Keep"]);
+        }
+
+        using var reopened = Database.Open(_path);
+        Assert.Equal(255, reopened.GetTable("T").Definition.MaxColumnCount);
+        Assert.Throws<ArgumentException>(() => reopened.GetTable("T").AddColumn(Long("Again")));
+        Assert.Equal(2, reopened.GetTable("T").Rows.Count());
+    }
+
+    // An index takes the lowest number no index of its table has, as Access numbers one: the number of an index
+    // that was dropped is given again, and the index a relationship has on its referenced table is named by it.
+    [Fact]
+    public void An_index_is_given_the_lowest_number_free_which_a_dropped_index_leaves()
+    {
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var table = db.CreateTable("T", new[] { Long("Id"), Long("Keep"), Long("B"), Long("Y") }, primaryKey: "Id");
+        var child = db.CreateTable("C", new[] { Long("Id"), Long("K") }, primaryKey: "Id");
+        Assert.Equal(1, table.AddIndex(new IndexDefinition("ixA", "Keep")).IndexNumber);
+        Assert.Equal(2, table.AddIndex(new IndexDefinition("ixB", "B")).IndexNumber);
+        Assert.Equal(3, table.AddIndex(new IndexDefinition("ixC", "Y")).IndexNumber);
+
+        table.DropIndex("ixA");
+        Assert.Equal(1, table.AddIndex(new IndexDefinition("ixD", "Keep")).IndexNumber);
+        table.DropIndex("ixB");
+        db.CreateRelationship(new RelationshipDefinition("T", "Id", "C", "K") { Name = "TC", HasReferentialIntegrity = true });
+        var referenced = table.Indexes.Single(ix => ix.IsForeignKey);
+        Assert.Equal(2, referenced.IndexNumber);
+        Assert.Equal(".rC", referenced.Name);
+
+        // However many come and go, the numbers stay small.
+        for (int i = 0; i < 100; i++)
+        {
+            table.AddIndex(new IndexDefinition($"ix{i}", "B"));
+            table.DropIndex($"ix{i}");
+        }
+        Assert.Equal(new[] { 0, 1, 2, 3 }, table.Indexes.Select(ix => ix.IndexNumber).OrderBy(n => n));
+        child.Insert(new Row { ["Id"] = 1, ["K"] = null });
+        Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["Id"] = 2, ["K"] = 5 }));
+    }
+
     // ── A relationship ───────────────────────────────────────────────────────
 
     [Fact]

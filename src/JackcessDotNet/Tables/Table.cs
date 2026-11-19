@@ -688,7 +688,9 @@ public sealed class Table
     /// <param name="column">The column to add.</param>
     /// <returns>The table's new column.</returns>
     /// <exception cref="ArgumentException">
-    /// The table already has a column of that name, or 255 columns; or the definition is not one a table can
+    /// The table already has a column of that name, or 255 columns, or has had 255 counting those dropped from
+    /// it (a dropped column keeps its number until the file is compacted in Access, which refuses the next
+    /// column too: "Too many fields defined"); or the definition is not one a table can
     /// have (<see cref="ColumnDefinition"/>). Nothing is changed.
     /// </exception>
     /// <exception cref="NotSupportedException">

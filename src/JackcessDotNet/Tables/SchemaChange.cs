@@ -64,6 +64,14 @@ internal static class SchemaChange
         var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         bool isLong = given.DataType.IsLongValue();
 
+        // A dropped column keeps its number, so a table that has had 255 columns takes no more, however few it
+        // has now: Access refuses the next ("Too many fields defined") until the file is compacted, which numbers
+        // the columns afresh (#37). A column numbered past 254 would be one no row's null mask has a bit for.
+        if (editor.MaxColumnCount >= MaxColumns)
+            throw new ArgumentException(
+                $"Table '{table.Name}' has had {MaxColumns} columns, counting those dropped from it, the most a table has: " +
+                "a dropped column keeps its number until the file is compacted in Access. Nothing was changed.", nameof(given));
+
         // The table's own column, a copy of the caller's: numbered after every column the table has ever had, so
         // that no row written before it has its bit in a null mask, and placed after the values those rows hold.
         var column = given.CopyFor(db.Catalog.TextSortOrder);
@@ -331,8 +339,23 @@ internal static class SchemaChange
         return number;
     }
 
-    /// <summary>The number the next index of a table is given: one past the highest it has.</summary>
-    private static int NextIndexNumber(TdefEditor editor) => editor.SlotNumbers.DefaultIfEmpty(-1).Max() + 1;
+    /// <summary>
+    /// The number the next index of a table is given: the lowest no index of it has, as Access was seen to
+    /// number one - the number of an index that was dropped is given again - so a table's index numbers stay
+    /// below the number of indexes a table has (#37).
+    /// </summary>
+    private static int NextIndexNumber(TdefEditor editor) => LowestFree(editor.SlotNumbers, skip: 0);
+
+    /// <summary>The lowest number not among <paramref name="taken"/>, after <paramref name="skip"/> lower ones that are free too.</summary>
+    private static int LowestFree(IEnumerable<int> taken, int skip)
+    {
+        var used = new HashSet<int>(taken);
+        for (int number = 0; ; number++)
+        {
+            if (used.Contains(number)) continue;
+            if (skip-- == 0) return number;
+        }
+    }
 
     /// <summary>
     /// Where a new index's slot goes among a table's: Access keeps them in the order of their names, as its
@@ -505,9 +528,10 @@ internal static class SchemaChange
                 // Each side's slot names the other's index by its number, so both are settled before either is written.
                 // A table related to itself has both: the foreign key's index takes the next number and the
                 // referenced side's the one after, as DAO numbers them, so it is written first.
-                int secondaryNumber = NextIndexNumber(TdefEditor.Load(file, child.Definition.TdefPageNumber, toName));
+                var childSlots = TdefEditor.Load(file, child.Definition.TdefPageNumber, toName).SlotNumbers;
+                int secondaryNumber = LowestFree(childSlots, skip: 0);
                 int primaryNumber   = sameTable
-                    ? secondaryNumber + 1
+                    ? LowestFree(childSlots, skip: 1)
                     : NextIndexNumber(TdefEditor.Load(file, parent.Definition.TdefPageNumber, fromName));
                 var fromPrimary = new TdefEditor.ForeignKeyReference(
                     TdefEditor.ForeignKeyPrimaryTable, secondaryNumber, child.Definition.TdefPageNumber,
@@ -545,7 +569,7 @@ internal static class SchemaChange
     private static string PrimaryIndexName(TableDefinition table, int numbersTaken)
     {
         var taken = new HashSet<string>(table.Indexes.Select(ix => ix.Name), StringComparer.OrdinalIgnoreCase);
-        int number = table.Indexes.Select(ix => ix.IndexNumber).DefaultIfEmpty(-1).Max() + 1 + numbersTaken;
+        int number = LowestFree(table.Indexes.Select(ix => ix.IndexNumber), skip: numbersTaken);
         for (int n = number; ; n++)
         {
             char letter = n < 26 ? (char)('A' + n) : (char)('a' + (n - 26) % 26);

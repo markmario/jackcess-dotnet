@@ -443,7 +443,9 @@ is the only referee, and what it refuses is refused:
   Memo or OLE column's long values back to the file. The rows are not rewritten - Access does not rewrite them
   either: each keeps the bytes it had for the column, which nothing reads, until the file is compacted. A column
   in an index or in a relationship, with or without referential integrity, is not dropped. Access drops a
-  table's last column; this library refuses to, as it does a complex column.
+  table's last column; this library refuses to, as it does a complex column. A dropped column keeps its number
+  until the file is compacted, so a table that has had 255 columns takes no more, however few it has: Access
+  refuses the next ("Too many fields defined") and so does `AddColumn`, until Access compacts the file.
 - **Dropping a relationship** takes out its rows in `MSysRelationships`, its entry in the catalog and, with
   referential integrity, its index on each table.
 - **Dropping a table** takes its entry out of the catalog and the relationships in which it refers to another
