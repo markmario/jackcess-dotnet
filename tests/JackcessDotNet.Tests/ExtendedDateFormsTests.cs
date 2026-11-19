@@ -358,6 +358,36 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Equal("p3", parentOf.FindFirstRow(children[5])!["Nm"]);
     }
 
+    // A relationship is given referential integrity over rows of one date in two forms only where each child has a
+    // parent with its very bytes, as ACE gives it ("Existing data ... violates referential integrity rules" for a
+    // child in either form beside a parent in the other, measured). V, keyed by K, holds the date as ACE's INSERT and
+    // its UPDATE write it, and U the same two rows once its others are deleted: with both of V's rows the relationship
+    // is made; without V's row in the second form, U's row in that form is an orphan, and it is refused with nothing
+    // changed. Matched by the date read, it was made over the orphan.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_relationship_over_a_date_in_two_forms_has_integrity_only_where_each_child_has_its_parent_s_bytes(bool withoutTheSecondForm)
+    {
+        using var db = Database.Open(Copy(Forms));
+        var (u, v) = (db.GetTable("U"), db.GetTable("V"));
+        var children = Pointers(u);
+        u.DeleteRowAt(children[3]);
+        u.DeleteRowAt(children[4]);
+        if (withoutTheSecondForm) v.DeleteRowAt(Pointers(v)[2]);
+
+        var relationship = new RelationshipDefinition("V", "K", "U", "K") { Name = "VU", HasReferentialIntegrity = true };
+        if (!withoutTheSecondForm)
+        {
+            db.CreateRelationship(relationship);
+            Assert.Contains(db.GetRelationships(), r => r.Name == "VU" && r.HasReferentialIntegrity);
+            return;
+        }
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => db.CreateRelationship(relationship));
+        IndexChecks.AssertUnchanged(before, db);
+    }
+
     // ── Rows changed and deleted ────────────────────────────────────────────
 
     // A row in any form rewritten in another column keeps the entries ACE made of its date, its indexes trusted or
