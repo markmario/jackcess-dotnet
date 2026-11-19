@@ -179,6 +179,7 @@ public sealed class LookupMatchTests : IDisposable
         table.Insert(new Row { ["Id"] = 1, ["I"] = (short)5, ["L"] = 5, ["B"] = 1L << 60, ["C"] = 1.2346m, ["D"] = 1.5m, ["F"] = 0.1, ["S"] = 0.1f });
         table.Insert(new Row { ["Id"] = 2, ["I"] = (short)6, ["L"] = 6, ["B"] = 1234567890123460000L, ["C"] = 1.2345m, ["D"] = 0.1m, ["F"] = -0.0, ["S"] = 16777216f });
         table.Insert(new Row { ["Id"] = 3, ["I"] = (short)7, ["L"] = int.MaxValue, ["B"] = 1234567890123460096L, ["C"] = 562949953421312.5m, ["D"] = 1.2346m, ["F"] = 1.2346, ["S"] = 1.2346f });
+        table.Insert(new Row { ["Id"] = 4, ["I"] = (short)0, ["L"] = 0, ["B"] = long.MinValue });
 
         var asked = new (string Column, object Value, int[] Finds)[]
         {
@@ -187,12 +188,26 @@ public sealed class LookupMatchTests : IDisposable
             ("I", 5.5, Array.Empty<int>()), ("I", 70000, Array.Empty<int>()), ("I", 65541, Array.Empty<int>()),
             ("I", 5.000000000000001, Array.Empty<int>()), ("I", 6.5f, Array.Empty<int>()),
             ("L", 5.0, new[] { 1 }), ("L", 5.5, Array.Empty<int>()), ("L", 2147483647L, new[] { 3 }), ("L", 4294967301L, Array.Empty<int>()),
-            // A Large Number: a double that is the number exactly finds it, past 15 significant digits too.
+            // Where ACE's index and its scan differ (measured), the exact answer, which is the scan's: -0.0 is 0, and a
+            // decimal with a fraction is no whole number - ACE's index finds nothing for -0.0, and rounds 5.5m to 6
+            // and 0.1m to 0. NaN is no number, where ACE's scan finds every row.
+            ("I", -0.0, new[] { 4 }), ("L", -0.0f, new[] { 4 }),
+            ("I", 5.5m, Array.Empty<int>()), ("L", 0.1m, Array.Empty<int>()), ("I", -1.23465m, Array.Empty<int>()),
+            ("I", double.NaN, Array.Empty<int>()), ("L", float.NaN, Array.Empty<int>()),
+            // A Large Number: a double that is the number exactly finds it, past 15 significant digits too, and -2^63,
+            // which ACE's index does not find (its scan does); 2^63 is no Large Number.
             ("B", 1L << 60, new[] { 1 }), ("B", (double)(1L << 60), new[] { 1 }), ("B", 1234567890123460096.0, new[] { 3 }),
             ("B", 1234567890123460000m, new[] { 2 }), ("B", 1234567890123460001m, Array.Empty<int>()),
+            ("B", -9223372036854775808.0, new[] { 4 }), ("B", 9223372036854775808.0, Array.Empty<int>()),
             // A Currency: the number asked taken to the column's four places.
             ("C", 1.2346m, new[] { 1 }), ("C", 1.2346, new[] { 1 }), ("C", 1.23456m, new[] { 1 }), ("C", 1.23456, new[] { 1 }),
             ("C", 1.23455, new[] { 1 }), ("C", 1.23454m, new[] { 2 }), ("C", 1, Array.Empty<int>()), ("C", 562949953421312.5m, new[] { 3 }),
+            // A double of more significant digits than 15 is its exact value, as ACE takes it: through a decimal of 15
+            // digits it was 562949953421313, and found nothing.
+            ("C", 562949953421312.5, new[] { 3 }),
+            // A decimal at a half of the fifth place is taken half away from zero, as a row is written with it: 1.2347,
+            // which no row holds, where ACE's index takes 1.2346 (#65).
+            ("C", 1.23465m, Array.Empty<int>()),
             // A Double and a Single: the number asked as the column stores it, by its bits.
             ("F", 0.1, new[] { 1 }), ("F", 0.1m, new[] { 1 }), ("F", 0.1f, Array.Empty<int>()), ("F", -0.0, new[] { 2 }),
             ("F", 0.0, Array.Empty<int>()), ("F", 1.2346m, new[] { 3 }),

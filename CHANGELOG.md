@@ -76,19 +76,25 @@ changed since 1.2.2.
   earlier version stored longer than its column refuses an update of any column of its row, as a Text value stored
   so already did (and Jackcess's write of a Text value does); the message then says the value is the stored one and
   that giving that column a value that fits lets the update through.
-- **A number looked for is matched as the same number** (#49), as Access's `=` matches it, by a cursor over a
-  table and through an index alike. A `double` or `float` looked for in a Byte, Integer, Long or Large Number column
-  finds a row only when it is that whole number exactly: compared through a `decimal`, which keeps 15 significant
-  digits, 5.000000000000001 found an Integer's 5, and the double 1234567890123460096 found a Large Number's
-  1234567890123460000 by a scan and nothing through the index, where 2^60 as a double did not find 2^60. A
-  Currency is the number looked for taken to its four places, as ACE's `=` (through an index and without) and
-  DAO's `Seek` take it: a `double` or `float` by its exact value, half to even - 0.03125 finds 0.0312, and the
-  double 0.00015, which is just under that half, finds 0.0001, where taken through a `decimal` they found 0.0313
-  and, on .NET Framework and .NET up to 10, 0.0002 - and any other number as a row stores it: 1.23456
-  finds the row of 1.2346, where it found none. A range and `FindClosestRowByEntry` still key a `double` as a row
-  is written with it, which rounds some of these the other way (#65). Text is matched as
-  text, as it was: `"1.0"`, `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose
-  key reads as the same number.
+- **A number looked for is matched as exactly the same number** (#49), by a cursor over a table and through an
+  index alike. A `double` or `float` looked for in a Byte, Integer, Long or Large Number column finds a row only
+  when it is that whole number exactly: compared through a `decimal`, which keeps 15 significant digits,
+  5.000000000000001 found an Integer's 5, and the double 1234567890123460096 found a Large Number's
+  1234567890123460000 by a scan and nothing through the index, where 2^60 as a double did not find 2^60. ACE's
+  `=` does not answer alike through an index and without one; where its answers differ, this library gives the
+  exact one: as ACE's scan, -0.0 finds 0, -2^63 as a double finds a Large Number's `long.MinValue`, and a decimal
+  with a fraction finds nothing, where ACE's index finds nothing for -0.0 and -2^63 and rounds the decimal (5.5m
+  finds 6, 0.1m finds 0, -1.23465m finds -1); as ACE's index, 2^53 as a double does not find a Large Number's
+  2^53 + 1, and a Double's or a Single's +0.0 and -0.0 are two numbers, where ACE's scan compares as doubles and
+  finds both. A Currency is the number looked for taken to its four places: a `double` or `float` by its exact
+  value, half to even, as ACE's `=` (through an index and without) and DAO's `Seek` take it - 0.03125 finds
+  0.0312, and the double 0.00015, which is just under that half, finds 0.0001, where taken through a `decimal`
+  they found 0.0313 and, on .NET Framework and .NET up to 10, 0.0002 - and a `decimal` as a row is written with
+  it, half away from zero: 1.23456 finds the row of 1.2346, where it found none, and 1.23465m the row of 1.2347,
+  where ACE's index takes 1.2346 (#65). A range and `FindClosestRowByEntry` still key a `double` as a row is
+  written with it, which rounds some of these the other way (#65). Text is matched as text, as it was: `"1.0"`,
+  `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose key reads as the same
+  number.
 - **A `double` or `float` written to a Decimal column, or looked for in one, is the decimal Access makes of it, on
   every runtime** (#49): rounded to 15 significant digits, or 7 for a `float`, as OLE Automation rounds it - an `=`
   with the double 0.1, or the single 0.1, finds Access's Decimal 0.1. `Convert.ToDecimal` rounds so on .NET
