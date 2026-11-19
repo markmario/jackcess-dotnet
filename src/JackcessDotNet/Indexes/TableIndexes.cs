@@ -27,6 +27,12 @@ namespace JackcessDotNet;
 /// <see cref="ForeignKeyEnforcer"/> keeps, only once the index has been seen to hold every row
 /// (<see cref="HoldsEveryRow"/>), and a unique index is looked at the same way before a row is compared with it,
 /// the rows it does not hold being compared too (<see cref="EnsureNoDuplicates"/>).
+///
+/// One thing an index says is not taken at its word, since Access cannot use the file it leaves: an entry that
+/// is no row's - one that points at no row, or at a row that does not have its key, as a version of this library
+/// that did not keep the index left them (#36). A unique index's entry is another row's only when that row has
+/// the key; and when an entry is added or taken out under a key such entries are under, they are taken out
+/// (<see cref="TakeOutIfNoRows"/>). An index that is as its rows are has none, and no row is read to find out.
 /// </summary>
 internal sealed class TableIndexes
 {
@@ -228,7 +234,7 @@ internal sealed class TableIndexes
             var notHeld = RowsNotHeldBy(tree);
             foreach (var (_, holder) in StoredUnder(writer, entry))
             {
-                if (holder == replacedRowPointer || !IsLiveRow(holder)) continue;
+                if (holder == replacedRowPointer || !IsOfItsRow(tree, entry.Key, holder)) continue;
                 throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             }
             if (notHeld.AnotherHas(entry.Key, replacedRowPointer))
@@ -349,6 +355,9 @@ internal sealed class TableIndexes
         // Room for every row at once, by the definition's count of them (kept within reason, should it be wrong).
         int rows    = Math.Min(Math.Max(ByteUtil.GetInt(_file.ReadPage(_table.TdefPageNumber), format.TdefOffsetNumRows), 0), 1 << 24);
         var unfound = trees.Select(_ => new Dictionary<int, byte[]>(rows)).ToList();
+        // The rows a tree is not asked about: their columns all null in an index that ignores nulls, or a value no
+        // key is made for. An entry that points at one is left as it is.
+        var unasked = trees.Select(_ => new HashSet<int>()).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
         {
@@ -366,29 +375,32 @@ internal sealed class TableIndexes
                 {
                     var tree   = trees[t];
                     var values = ValuesIn(tree, row, out int nulls);
-                    if (nulls == values.Length && tree.IgnoreNulls) continue;
-
-                    bool keyed = true;
+                    bool keyed = !(nulls == values.Length && tree.IgnoreNulls);
                     for (int i = 0; keyed && i < values.Length; i++)
                         keyed = IndexKeys.CanEncode(tree.Columns[i].Column, values[i]);
                     if (keyed) unfound[t][RowPointer.Pack(pageNumber, r)] = IndexKeys.Encode(tree.Columns, values);
+                    else unasked[t].Add(RowPointer.Pack(pageNumber, r));
                 }
             }
         }
 
-        // ...and each index's entries, from first to last: each takes out the row it is the entry of. A long key
-        // may be there whole, as earlier versions wrote it (StoredUnder); it is the row's when, cut, it is.
+        // ...and each index's entries, from first to last: each is the entry of the row it points at, when that
+        // row has its key, and otherwise no row's. A long key may be there whole, as earlier versions wrote it
+        // (StoredUnder); it is the row's when, cut, it is.
         for (int t = 0; t < trees.Count; t++)
         {
+            var held  = new HashSet<int>();
+            var noRow = new List<(byte[] Key, int RowPointer)>();
             var entries = new IndexWriter(_file, _allocator).EntriesWithPrefix(trees[t].Target.RootPage, Array.Empty<byte>());
             foreach (var (key, pointer) in entries)
             {
-                if (unfound[t].Count == 0) break;
-                if (unfound[t].TryGetValue(pointer, out byte[]? expected)
-                    && (key.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(key) : key).AsSpan().SequenceEqual(expected))
-                    unfound[t].Remove(pointer);
+                if (unfound[t].TryGetValue(pointer, out byte[]? expected) ? KeysMatch(key, expected) : unasked[t].Contains(pointer))
+                    held.Add(pointer);
+                else
+                    noRow.Add((key, pointer));
             }
-            _file.IndexesChecked[Which(trees[t])] = new RowsNotHeld(unfound[t]);
+            foreach (int pointer in held) unfound[t].Remove(pointer);
+            _file.IndexesChecked[Which(trees[t])] = new RowsNotHeld(unfound[t], noRow);
         }
     }
 
@@ -422,8 +434,15 @@ internal sealed class TableIndexes
     {
         if (entries.Count == 0) return;
         writer ??= new IndexWriter(_file, _allocator);
+        TakeOutEntriesSeenToBeNoRows(writer);
         foreach (var entry in entries)
-            writer.Insert(entry.Tree.Target, entry.Key, rowPointer);
+        {
+            // Another entry under the key of a row a unique index compares is not that of a row with the key, or
+            // the row would have been refused: it goes, or Access would not find the row through the index.
+            bool another = writer.Insert(entry.Tree.Target, entry.Key, rowPointer);
+            if (another && entry.Tree.IsUnique && !entry.HasNull)
+                TakeOutEntriesOfNoRow(writer, entry.Tree, entry.Key, rowPointer);
+        }
     }
 
     /// <summary>Takes <paramref name="entries"/> out of their indexes for the row that was at <paramref name="rowPointer"/>.</summary>
@@ -431,6 +450,7 @@ internal sealed class TableIndexes
     {
         if (entries.Count == 0) return;
         var writer = new IndexWriter(_file, _allocator);
+        TakeOutEntriesSeenToBeNoRows(writer);
         foreach (var entry in entries)
         {
             // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
@@ -447,8 +467,135 @@ internal sealed class TableIndexes
                 if (stored.Count == 0) continue;
                 storedKey = stored[0];
             }
-            writer.Remove(entry.Tree.Target, storedKey, rowPointer);
+            bool another = writer.Remove(entry.Tree.Target, storedKey, rowPointer);
+            if (another && entry.Tree.IsUnique && !entry.HasNull)
+                TakeOutEntriesOfNoRow(writer, entry.Tree, storedKey, rowPointer);
         }
+    }
+
+    // ── Entries that are no row's ────────────────────────────────────────────
+
+    /// <summary>
+    /// Takes out of <paramref name="tree"/> the entries under <paramref name="key"/> that are no row's, other than
+    /// the one for <paramref name="rowPointer"/>. Called when an entry was added or taken out under a key that a
+    /// unique index compares and the tree was seen to hold another under it: an index that is as its rows are
+    /// has none, so it costs such an index nothing.
+    /// </summary>
+    private void TakeOutEntriesOfNoRow(IndexWriter writer, Tree tree, byte[] key, int rowPointer)
+    {
+        foreach (int pointer in writer.RowPointersForKey(tree.Target.RootPage, key).ToList())
+            if (pointer != rowPointer) TakeOutIfNoRows(writer, tree, key, pointer);
+    }
+
+    /// <summary>
+    /// With <see cref="Database.VerifyIndexes"/>, takes out the entries each index of the table was seen to hold
+    /// that are no row's (<see cref="RowsNotHeld.TakeEntriesOfNoRow"/>), before the table's indexes are next
+    /// changed: Access fails a query that comes to one.
+    /// </summary>
+    private void TakeOutEntriesSeenToBeNoRows(IndexWriter writer)
+    {
+        if (!_file.VerifyIndexes) return;
+        foreach (var tree in Trees)
+        {
+            if (!_file.IndexesChecked.TryGetValue(Which(tree), out var seen)) continue;
+            foreach (var (key, pointer) in seen.TakeEntriesOfNoRow())
+                TakeOutIfNoRows(writer, tree, key, pointer);
+        }
+    }
+
+    /// <summary>
+    /// Takes the entry (<paramref name="key"/>, <paramref name="pointer"/>) out of <paramref name="tree"/> when it
+    /// is no row's: it points at no row, or at a row that does not have that key. Access follows such an entry:
+    /// it fails a query that comes to the first kind ("Not a valid bookmark"), and answers one for the key with
+    /// the row of the second. A row found under a key it does not have is entered under its own, where it is not
+    /// already and where that makes no second row under a key a unique index compares, so that Access finds it
+    /// by the values it has.
+    /// </summary>
+    private void TakeOutIfNoRows(IndexWriter writer, Tree tree, byte[] key, int pointer)
+    {
+        var row = RowAt(tree, pointer);
+        if (row.IsRow && (row.Key is null || KeysMatch(key, row.Key))) return;
+
+        writer.Remove(tree.Target, key, pointer);
+        if (!row.IsRow || !row.HasEntry) return;
+
+        // The row's own key. Under it already, the row is held; under it with a row of that key, in an index that
+        // compares them, the row is a duplicate the index cannot hold.
+        var under = writer.RowPointersForKey(tree.Target.RootPage, row.Key!).ToList();
+        if (!under.Contains(pointer))
+        {
+            if (tree.IsUnique && !row.HasNull)
+            {
+                foreach (int other in under)
+                {
+                    if (IsLiveRow(other)) return;
+                    writer.Remove(tree.Target, row.Key!, other);
+                }
+            }
+            writer.Insert(tree.Target, row.Key!, pointer);
+        }
+        if (_file.IndexesChecked.TryGetValue(Which(tree), out var notHeld)) notHeld.Forget(pointer);
+    }
+
+    /// <summary>Whether the entry (<paramref name="key"/>, <paramref name="pointer"/>) of <paramref name="tree"/> points at a row that has that key.</summary>
+    private bool IsOfItsRow(Tree tree, byte[] key, int pointer)
+    {
+        var row = RowAt(tree, pointer);
+        return row.IsRow && (row.Key is null || KeysMatch(key, row.Key));
+    }
+
+    // A key as an entry holds it and a row's key, which is cut: a whole key an earlier version wrote is the row's
+    // when, cut, it is.
+    private static bool KeysMatch(byte[] stored, byte[] rowsKey)
+        => (stored.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(stored) : stored).AsSpan().SequenceEqual(rowsKey);
+
+    /// <summary>What an entry of a tree points at.</summary>
+    private readonly struct Pointee
+    {
+        internal Pointee(bool isRow, byte[]? key, bool hasNull, bool hasEntry)
+        {
+            IsRow    = isRow;
+            Key      = key;
+            HasNull  = hasNull;
+            HasEntry = hasEntry;
+        }
+
+        /// <summary>False when no row of the table is there.</summary>
+        internal bool    IsRow    { get; }
+
+        /// <summary>The key of the row's values in the tree; null when one of them is a value no key is made for.</summary>
+        internal byte[]? Key      { get; }
+        internal bool    HasNull  { get; }
+
+        /// <summary>False for a row the tree holds no entry for: its columns all null in an index that ignores nulls.</summary>
+        internal bool    HasEntry { get; }
+    }
+
+    private RowDecoder? _keyDecoder;
+
+    /// <summary>
+    /// The row at <paramref name="rowPointer"/>, as <paramref name="tree"/> would key it. An entry whose row is
+    /// gone, or was written again in the same place with other values, is one a version of this library that did
+    /// not keep the index left behind.
+    /// </summary>
+    private Pointee RowAt(Tree tree, int rowPointer)
+    {
+        if (!IsLiveRow(rowPointer)) return default;
+        byte[] page = _file.ReadPage(RowPointer.Page(rowPointer));
+        if (DataRows.Read(_file, page, RowPointer.Row(rowPointer)) is not { } rowBytes) return default;
+
+        _keyDecoder ??= new RowDecoder(_file.Format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
+        var row = new Row();
+        foreach (var column in tree.Columns)
+            if (_keyDecoder.DecodeForKey(rowBytes, column.Column) is { } value)
+                row[column.Column.Name] = value;
+
+        var values = ValuesIn(tree, row, out int nulls);
+        for (int i = 0; i < values.Length; i++)
+            if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i]))
+                return new Pointee(isRow: true, key: null, hasNull: nulls > 0, hasEntry: true);
+        return new Pointee(isRow: true, IndexKeys.Encode(tree.Columns, values), hasNull: nulls > 0,
+                           hasEntry: !(nulls == values.Length && tree.IgnoreNulls));
     }
 
     // A value as a refusal shows it: whole when short, its beginning when long.
@@ -474,8 +621,8 @@ internal sealed class TableIndexes
 
     private static string Describe(Tree tree) => tree.IsPrimaryKey ? "primary key" : $"index {tree.Name}";
 
-    // An entry whose row is gone - one a version of this library that did not keep the index left behind - is
-    // no other row's.
+    // Whether a row of this table is at a pointer: an entry whose row is gone - one a version of this library
+    // that did not keep the index left behind - is no row's.
     private bool IsLiveRow(int rowPointer)
     {
         int pageNumber = RowPointer.Page(rowPointer);

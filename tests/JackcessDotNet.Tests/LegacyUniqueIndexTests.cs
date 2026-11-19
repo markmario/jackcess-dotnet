@@ -140,22 +140,32 @@ public sealed class LegacyUniqueIndexTests : IDisposable
     }
 
     /// <summary>
-    /// What an index says is there is still believed, as before. Codes 200 is an entry that points where a row
-    /// was, and an entry whose row has gone is no row's: the code is taken, once. Renamed 2 is an entry that
-    /// points at a row, the one that is now 7: a second row under that value is refused, as ACE refuses it in
-    /// this file - no row has the value, but the key would hold two entries for it and lead to the wrong one.
+    /// An entry is believed when it is a row's: when the row it points at has its key. Codes 200 is an entry that
+    /// points where a row was, and Renamed 2 one that points at the row that is now 7: no row has either value,
+    /// so each is taken, once (#36). The entry that was no row's goes when the new row's is added, and the row
+    /// that is 7 is entered under 7 - so the index leads to the new row, as ACE was seen to need, and to no other.
     /// </summary>
     [Fact]
-    public void a_value_a_row_had_before_the_earlier_release_changed_it_is_taken_only_when_its_entry_points_at_no_row()
+    public void a_value_a_row_had_before_the_earlier_release_changed_it_is_taken_and_the_entry_that_was_left_goes()
     {
         using (var db = OpenVerifying())
             db.GetTable("Codes").Insert(new Row { ["Id"] = 4, ["Code"] = 200, ["Name"] = "c4" });
 
         Assert.Equal(new[] { "1 has 100", "2 has 250", "3 has 300", "4 has 200" }, Codes());
+        Assert.Equal(new[] { "4" }, InTheIndex("Codes", "CodeUnique", 200));
         RefusedAsADuplicate(db => db.GetTable("Codes").Insert(new Row { ["Id"] = 5, ["Code"] = 200, ["Name"] = "c5" }));
 
-        RefusedAsADuplicate(db => db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "r2 again" }));
-        Assert.Equal(new[] { "1 r1", "7 r2" }, Renamed());
+        using (var db = OpenVerifying())
+            db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "r2 again" });
+
+        Assert.Equal(new[] { "1 r1", "7 r2", "2 r2 again" }, Renamed());
+        Assert.Equal(new[] { "2" }, InTheIndex("Renamed", "PrimaryKey", 2));
+        Assert.Equal(new[] { "7" }, InTheIndex("Renamed", "PrimaryKey", 7));
+        RefusedAsADuplicate(db => db.GetTable("Renamed").Insert(new Row { ["Id"] = 2, ["Name"] = "a third" }));
+        RefusedAsADuplicate(db => db.GetTable("Renamed").Insert(new Row { ["Id"] = 7, ["Name"] = "a third" }));
+
+        using var read = Database.Open(_path);
+        IndexChecks.AssertEveryIndexHoldsTheRows(read, "Renamed", expectedRows: 3);
     }
 
     [Fact]

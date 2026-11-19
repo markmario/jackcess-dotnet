@@ -194,9 +194,11 @@ internal sealed class IndexWriter
 
     /// <summary>
     /// Adds the entry (<paramref name="key"/>, <paramref name="rowPointer"/>), splitting
-    /// pages up the tree as they fill.
+    /// pages up the tree as they fill. Returns whether the tree holds another entry under <paramref name="key"/>,
+    /// as the pages read on the way down show it, with no page read to find out: the entry before the new one
+    /// and the entry after it.
     /// </summary>
-    internal void Insert(Target target, byte[] key, int rowPointer)
+    internal bool Insert(Target target, byte[] key, int rowPointer)
     {
         var entry = new Entry(key, rowPointer, 0);
         var path  = new List<(IndexPage Node, int Slot)>();   // Slot -1: the node's tail
@@ -209,9 +211,34 @@ internal sealed class IndexWriter
             path.Add((page, slot));
             page = ReadFor(target, slot >= 0 ? page.Entries[slot].SubPage : page.Tail);
         }
-        InsertSorted(page.Entries, entry);
+        int at = FirstAtLeast(page.Entries, entry);
+        if (at < 0) at = page.Entries.Count;
+        bool another = HasNeighbourUnder(key, page.Entries, at - 1, at, path);
+        page.Entries.Insert(at, entry);
         page.Level = 0;
         WriteUp(path, path.Count, page, target);
+        return another;
+    }
+
+    /// <summary>
+    /// Whether the entry at <paramref name="before"/> or at <paramref name="after"/> in a leaf's
+    /// <paramref name="entries"/> has <paramref name="key"/>. Entries are in key order, so another entry under a
+    /// key is beside it. The entry before a leaf's first is the last under the leaf before, which the nearest node
+    /// above with a child before the one gone down holds a copy of; nothing is after a leaf's last that is not
+    /// greater than the entry its parent has for it.
+    /// </summary>
+    private static bool HasNeighbourUnder(byte[] key, List<Entry> entries, int before, int after, List<(IndexPage Node, int Slot)> path)
+    {
+        if (after < entries.Count && CompareBytes(entries[after].Key, key) == 0) return true;
+        if (before >= 0) return CompareBytes(entries[before].Key, key) == 0;
+
+        for (int depth = path.Count - 1; depth >= 0; depth--)
+        {
+            var (node, slot) = path[depth];
+            if (slot > 0) return CompareBytes(node.Entries[slot - 1].Key, key) == 0;
+            if (slot < 0 && node.Entries.Count > 0) return CompareBytes(node.Entries[^1].Key, key) == 0;
+        }
+        return false;
     }
 
     /// <summary>
@@ -263,8 +290,10 @@ internal sealed class IndexWriter
     /// Jackcess do: a page left empty leaves the tree and its level's chain (a tail leaving its node, the node's
     /// last entry's child becomes the tail), an entry copying the last entry under a page follows it when that
     /// changes, and a root left with one child gives way to it. An entry the tree does not hold is no change.
+    /// Returns whether the tree holds another entry under <paramref name="key"/> beside the one taken out, as
+    /// <see cref="Insert"/> does; false when it held no such entry.
     /// </summary>
-    internal void Remove(Target target, byte[] key, int rowPointer)
+    internal bool Remove(Target target, byte[] key, int rowPointer)
     {
         var entry = new Entry(key, rowPointer, 0);
         var path  = new List<(IndexPage Node, int Slot)>();   // Slot -1: the node's tail
@@ -278,7 +307,8 @@ internal sealed class IndexWriter
             page = ReadFor(target, slot >= 0 ? page.Entries[slot].SubPage : page.Tail);
         }
         int at = page.Entries.FindIndex(e => Compare(e, entry) == 0);
-        if (at < 0) return;
+        if (at < 0) return false;
+        bool another = HasNeighbourUnder(key, page.Entries, at - 1, at + 1, path);
         page.Entries.RemoveAt(at);
         page.Level = 0;
 
@@ -316,7 +346,7 @@ internal sealed class IndexWriter
         if (depth == 0 && !child.IsLeaf && child.Entries.Count == 0)
         {
             CollapseRoot(child, target);
-            return;
+            return another;
         }
         WriteUp(path, depth, child, target);
 
@@ -333,6 +363,7 @@ internal sealed class IndexWriter
                 break;
             }
         }
+        return another;
     }
 
     /// <summary>
@@ -784,12 +815,6 @@ internal sealed class IndexWriter
             else hi = mid;
         }
         return lo < entries.Count ? lo : -1;
-    }
-
-    private static void InsertSorted(List<Entry> entries, Entry x)
-    {
-        int at = FirstAtLeast(entries, x);
-        entries.Insert(at < 0 ? entries.Count : at, x);
     }
 
     private static int CompareBytes(byte[] a, byte[] b)

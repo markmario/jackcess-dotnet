@@ -314,14 +314,29 @@ in Access since.** Compacting rebuilds the indexes, and the option is then needl
   the table's rows while it is read.
 - **Nothing is read** for a table with no unique index, for a row with a null in its unique index's columns (it
   is no row's duplicate), or to fill a table made in the same session: it is looked at when it is empty.
-- **What it does not catch.** An entry is still believed for what it points at: the value a row had before its
-  primary key was changed is refused as a duplicate, though no row has it. And a row added under a value whose
-  only entry points at a row long gone is added beside that entry, where Access does not find it through the
-  index until the file is compacted
-  ([qcatco/exportmdb.interop#79](https://github.com/qcatco/exportmdb.interop/issues/79)). Nothing here rebuilds
-  an index: `DBEngine.CompactDatabase` does.
+- **Every entry seen to be no row's is taken out** when the table's indexes are next changed, whatever the key
+  (below). A row with no entry at all is not given one: nothing here rebuilds an index, and
+  `DBEngine.CompactDatabase` does.
 
-An entry whose row has gone does no harm either way: each row found is read and compared.
+**Entries that are no row's** ([#36](https://github.com/markmario/jackcess-dotnet/issues/36)). Those versions also
+left entries behind: one that points where a row was, and one under the value a row had before its primary key
+was changed, pointing at the row under the value it has. Access follows both. Measured with ACE on such a file:
+a query that comes to the first fails with "Not a valid bookmark" - for the key, and for any range that passes
+it - and goes on failing when the row that has the key has an entry beside it; a query for the second's key is
+answered with the row that no longer has it, and that row is not found under the value it has. With or without
+`VerifyIndexes`:
+
+- a unique index's entry is believed only when the row it points at has its key, so a value no row has is
+  taken, where Access with the same file refuses it;
+- when an entry is added or taken out under a key a unique index compares, and the tree holds another under that
+  key, the ones that are no row's are taken out, and a row found under a key it does not have is entered under
+  its own - unless another row is already there, which a unique index cannot hold beside it. Access then finds
+  the rows through the index. An index that is as its rows are has no such entry, and nothing is read to look
+  for one: the pages an insert reads are the ones it read before.
+
+An index that is not unique is not looked at this way without `VerifyIndexes` - its entries under one key are
+its rows' - and an entry whose row has gone does no harm to this library either way: each row found is read and
+compared.
 
 `tests/JackcessDotNet.Tests/Assets/engine-3ad3aed-rows-in-access-tables.mdb` is a database Access made and an
 earlier release then wrote to, made by `tools/legacy-incomplete-indexes.ps1`. `engine-3ad3aed-rows-in-unique-indexes.mdb`

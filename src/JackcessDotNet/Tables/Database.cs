@@ -187,11 +187,15 @@ public sealed class Database : IDisposable
     /// columns, and a table filled in the session that made it cost nothing.
     /// </para>
     /// <para>
-    /// <b>What it does not catch:</b> an entry is still believed for what it points at. A value a row had before
-    /// one of those versions changed its primary key is refused as a duplicate, though no row has it; and a row
-    /// added under a value whose only entry points at a row long gone is added beside that entry, where Access
-    /// does not find it through the index until the file is compacted (qcatco/exportmdb.interop#79). Nothing
-    /// here rebuilds an index.
+    /// <b>Entries that are no row's:</b> those versions also left entries behind - one that points where a row
+    /// was, and one under the value a row had before its primary key was changed, which points at the row under
+    /// the value it has. Access follows both: it fails a query that comes to the first ("Not a valid bookmark")
+    /// and answers one for the second's key with that row. With or without this option, a unique index's entry
+    /// is believed only when the row it points at has its key, so a value no row has is taken; and when an entry
+    /// is added or taken out under a key that has such entries, they are taken out, and a row found under a key
+    /// it does not have is entered under its own where no other row is (#36). With the option, every entry an
+    /// index was seen to hold that is no row's is taken out when the table's indexes are next changed, whatever
+    /// the key. A row with no entry at all is not given one: compacting the file in Access rebuilds its indexes.
     /// </para>
     /// </summary>
     public bool VerifyIndexes

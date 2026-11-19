@@ -24,6 +24,16 @@ changed since 1.2.2.
   `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` and the build checks it. A broken rule of the database
   has its own exception, and `TryGetTable` was added.
 
+- **Entries that are no row's are taken out** (#36). A version of this library that did not keep every index
+  left an entry where a row had been, and an entry under the value a row had before its primary key was changed.
+  ACE fails a query that comes to the first ("Not a valid bookmark") and answers one for the second's key with
+  the wrong row, whether or not the right row has an entry beside it. A unique index's entry is now believed
+  only when the row it points at has its key: a row with a value no row has is taken, where it was refused as a
+  duplicate with "another row holds" that value. When an entry is added or taken out under a key that has such
+  entries they are taken out, and a row found under a key it does not have is entered under its own; with
+  `Database.VerifyIndexes`, every entry an index was seen to hold that is no row's goes when the table is next
+  changed. An index with no such entry costs nothing more to write to.
+
 ### Breaking changes to the public API
 
 Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds
