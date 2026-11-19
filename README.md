@@ -659,8 +659,9 @@ An import holds every value of its source exactly, or refuses before anything is
   invariant text (a `double` or `float` in its round-trip form - the fewest digits that read back as it, written
   as .NET writes them, the same text on every target - and a date in ISO 8601) when that fits; bytes to a Binary column
   that holds that many. A Yes/No column takes no null, which Access would read as No, and no number.
-- **An empty byte array is refused**, for a table made and for one that is there: DAO - and so Access's own forms -
-  reads a binary value of no bytes as Null.
+- **An empty byte array is written as `Table.Insert` writes one**, for a table made and for one that is there: a
+  value of no bytes, as ACE's own INSERT writes it, which ACE reads back as one and DAO shows as Null (see
+  [Rows and long values](#rows-and-long-values-what-to-know)).
 - **Two columns whose names Access takes as one are refused** - `A` and `a` of a case-sensitive `DataTable`, a
   property and a `[Column("a")]` - for a table made, which would have one column of the name, and for one that is
   there, whose column would keep one of their values.
@@ -983,7 +984,8 @@ have been deleted - and a row Access moved to another page is read where its poi
   is written that way.
 - **An empty byte array is a value of no bytes** in a Binary or OLE Object column: written as ACE's OLE DB writes
   one, and read back as `byte[0]`, as ACE's OLE DB and SQL read it (`IS NULL` is false, `LenB` is 0). DAO - and so
-  Access's own forms - reads it as Null, and DAO writes an empty array as Null. An import refuses one.
+  Access's own forms - reads it as Null, and DAO writes an empty array as Null. An import writes one as an insert
+  does.
 - **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a
   delete are each refused with `NotSupportedException`.
 - **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is

@@ -143,10 +143,9 @@ changed since 1.2.2.
     Text(255) when every value fits and a Memo otherwise, and one with a length longer than a value is a Memo (a
     longer value stopped the import). A `byte[]` is Binary only where a length is given and every value fits it,
     and an OLE Object otherwise: it was Binary(50), which took a longer value.
-  - **A null for a Yes/No column, a date before 1 January 100, and an empty byte array are refused.** They were
-    stored as No, `DateTime.MinValue` as 30 December 1899, and a value of no bytes, which DAO - and so Access's
-    own forms - reads as Null. `Table.Insert` still writes an empty array as ACE's OLE DB does, and reads it back
-    as ACE's OLE DB and SQL do: a value of no bytes.
+  - **A null for a Yes/No column, and a date before 1 January 100, are refused.** They were stored as No, and
+    `DateTime.MinValue` as 30 December 1899. An empty byte array is written as `Table.Insert` writes one: a value
+    of no bytes, as ACE's own INSERT writes it, which ACE's OLE DB and SQL read back as one, and DAO as Null.
   - **Required, and keys of several columns.** A `DataColumn` with `AllowDBNull = false`, and a property with
     `[Required]` or of a value type that is not nullable, makes a required column. A `DataTable`'s primary key of
     several columns is the table's key, as are several `[Key]` properties, in the order of their
