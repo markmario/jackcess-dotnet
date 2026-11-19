@@ -8,8 +8,10 @@
 # request yet is run by hand (workflow_dispatch).
 #
 # The jobs run side by side, each on a runner of its own: one builds every
-# target, and one for each framework builds that framework alone and runs the
-# tests on it. One after another on one runner they took 13 minutes.
+# target, and the test jobs each build one framework alone and run a share of
+# its tests - four shares on .NET Framework, whose run takes some nine minutes,
+# and two on .NET (scripts/Invoke-TestShard.ps1). One after another on one
+# runner they took 13 minutes, and one job to a framework ten.
 name: ci
 
 on:
@@ -131,36 +133,33 @@ jobs:
   # reference that assembly whatever its own framework: on net10.0 it is loaded
   # as an application on .NET 8 or 9 loads it, and on net48 as one on .NET
   # Framework 4.7.2 does.
+  #
+  # Each framework's test classes are split between its shards: every shard
+  # lists the same tests and splits them alike, balanced by how long each class
+  # took on CI, so the shards of a framework run every class once between them,
+  # and each fails unless it ran every test of its own classes.
   frameworks:
-    name: test (${{ matrix.name }})
+    name: test (${{ matrix.name }}, ${{ matrix.shard }} of ${{ matrix.shards }})
     runs-on: windows-latest
     strategy:
-      # Every framework runs to the end, so one run reports every failure.
+      # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
       matrix:
         include:
-          - name: net10.0
-            id: net10.0
-            framework: net10.0
-            sdks: "10.0.x\n11.0.x"
-          - name: net11.0
-            id: net11.0
-            framework: net11.0
-            sdks: 11.0.x
-          - name: net48
-            id: net48
-            framework: net48
-            sdks: 11.0.x
-          - name: netstandard2.0 on net10.0
-            id: netstandard2.0-net10.0
-            framework: net10.0
-            properties: -p:NetStandardAsset=true
-            sdks: "10.0.x\n11.0.x"
-          - name: netstandard2.0 on net48
-            id: netstandard2.0-net48
-            framework: net48
-            properties: -p:NetStandardAsset=true
-            sdks: 11.0.x
+          - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 1, shards: 2 }
+          - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 2, shards: 2 }
+          - { name: net11.0, id: net11.0, framework: net11.0, sdks: 11.0.x, shard: 1, shards: 2 }
+          - { name: net11.0, id: net11.0, framework: net11.0, sdks: 11.0.x, shard: 2, shards: 2 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 1, shards: 4 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 2, shards: 4 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 3, shards: 4 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 4, shards: 4 }
+          - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 1, shards: 2 }
+          - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 2, shards: 2 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 1, shards: 4 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 2, shards: 4 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 3, shards: 4 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 4, shards: 4 }
     steps:
       - uses: actions/checkout@v7
 
@@ -171,8 +170,8 @@ jobs:
         with:
           dotnet-version: ${{ matrix.sdks }}
 
-      # As in the build job. A cache to a job: the netstandard2.0 jobs restore
-      # packages the others do not.
+      # As in the build job. A cache to a framework, shared by its shards: the
+      # netstandard2.0 jobs restore packages the others do not.
       - uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
@@ -183,15 +182,17 @@ jobs:
       - name: Build
         run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework ${{ matrix.framework }} ${{ matrix.properties }}
 
-      # A report to a job, named for it, since every job would write the same name.
+      # This shard's classes, in one process. A report to a job, named for it,
+      # since every job would write the same name.
       - name: Test
-        run: dotnet test --project tests/JackcessDotNet.Tests --configuration Release --no-build --framework ${{ matrix.framework }} ${{ matrix.properties }} --report-xunit-trx --report-xunit-trx-filename test-results-${{ matrix.id }}.trx
+        shell: pwsh
+        run: ./scripts/Invoke-TestShard.ps1 -Framework ${{ matrix.framework }} -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Properties '${{ matrix.properties }}' -TrxName test-results-${{ matrix.id }}-${{ matrix.shard }}.trx
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.id }}
+          name: test-results-${{ matrix.id }}-${{ matrix.shard }}
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
 
