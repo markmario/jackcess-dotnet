@@ -155,12 +155,14 @@ internal sealed class LvalWriter
     }
 
     /// <summary>
-    /// The least room a page has for Access to list it in the column's free-space map, as far as ACE showed: it
-    /// lists a page left with 264 bytes or more and none left with 258 or fewer (260 and 262 were not seen). A page
-    /// with less is neither listed nor noted here: what a session knows of a column's pages is then what the map
-    /// says, so a value goes to the same page whether the file was written in one session or in several.
+    /// The least room a page has for Access to list it in the column's free-space map: ACE lists a page left with
+    /// 258 bytes or more and none left with 257 or fewer, whatever is on it - two values, three or thirty, in an
+    /// Access 2000 file and an Access 2007 one (#35). One value alone never leaves 258 to 263: ACE keeps a value
+    /// of more than 3,816 bytes as a chain, on a page of its own that it does not list. A page with less is
+    /// neither listed nor noted here: what a session knows of a column's pages is then what the map says, so a
+    /// value goes to the same page whether the file was written in one session or in several.
     /// </summary>
-    internal const int MinListedFreeSpace = 264;
+    internal const int MinListedFreeSpace = 258;
 
     /// <summary>A page with room for a row of <paramref name="needed"/> bytes among other one-chunk values.</summary>
     private int PageOfSingleChunks(int needed)

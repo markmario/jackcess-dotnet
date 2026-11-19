@@ -276,6 +276,9 @@ internal sealed class PageFile : IDisposable
 
     private UndoScope? _undo;
 
+    /// <summary>Whether a change is being kept for undoing (<see cref="BeginUndo"/>): one that begins inside it is part of it.</summary>
+    internal bool IsUndoing => _undo is not null;
+
     // Buffers of a page's size, for the images of pages an undo scope keeps: used again from one scope to the next,
     // so that a change of a row - each its own scope - allocates none.
     private readonly Stack<byte[]> _spareImages = new();

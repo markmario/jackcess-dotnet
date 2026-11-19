@@ -9,10 +9,11 @@ namespace JackcessDotNet;
 /// <list type="bullet">
 /// <item>Text is equal as its column's sort order has it, which is what Access's <c>=</c> and a unique index go
 /// by (measured in General - Legacy and General: 'abc' is 'ABC', 'a' is 'a ' with a space after it, 'ss' is
-/// 'ß'; 'e' is not 'é', and '7' is not '007'): two values are equal when their index keys are. Where no key is
-/// made - a sort order this library does not write, a character Access keys by its neighbours - text is equal
-/// when it is the same text, character for character. A text column is looked in for text and nothing else: a
-/// number looked for is the text that writes it, and text is never read as a number.</item>
+/// 'ß'; 'e' is not 'é', and '7' is not '007'): two values are equal when their index keys are, in the orders
+/// whose keys this library writes. Where no key is made - a sort order this library does not write, Access 97's
+/// among them, a character Access keys by its neighbours - text is equal when it is the same text, character
+/// for character. A text column is looked in for text and nothing else: a number looked for is the text that
+/// writes it, and text is never read as a number.</item>
 /// <item>A number is equal to a number of another type that is the same number (a Long column's 5 for a
 /// caller's 5L; a Currency or a Decimal exactly, as decimals compare); a Double or a Single by its bits, the
 /// caller's taken to the column's type as a row would store it: +0.0 and -0.0 are two keys to Access and to an
@@ -60,10 +61,15 @@ internal static class ValueMatch
         }
     }
 
-    /// <summary>Whether two values of a text column are equal as the column's sort order has it; as the same text where no key is made.</summary>
+    /// <summary>
+    /// Whether two values of a text column are equal as the column's sort order has it; as the same text where no
+    /// key is made, and in Access 97's order, whose keys are made to search its files' indexes but whose equality
+    /// was not measured, and whose key leaves some characters out altogether (a line break among them).
+    /// </summary>
     private static bool SameText(Column column, string stored, string asked)
     {
-        if (TextIndexCodes.For(column.SortOrder) is { } codes && codes.CanEncode(stored) && codes.CanEncode(asked))
+        if (!column.SortOrder.IsAccess97General
+            && TextIndexCodes.For(column.SortOrder) is { } codes && codes.CanEncode(stored) && codes.CanEncode(asked))
             return codes.Encode(stored, ascending: true).AsSpan().SequenceEqual(codes.Encode(asked, ascending: true));
         return string.Equals(stored, asked, StringComparison.Ordinal);
     }

@@ -5,15 +5,18 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// Makes the bytes Access keeps for a text value in an index entry, in one of the sort orders whose keys this
-/// library writes: <see cref="GeneralLegacy"/> (Access 2000 to 2007) and <see cref="General"/> (Access 2010 and
-/// later). The two differ only in the codes each character has; the layout of a key is the same.
+/// library makes: <see cref="GeneralLegacy"/> (Access 2000 to 2007), <see cref="General"/> (Access 2010 and
+/// later) and <see cref="Access97"/> (Access 97's General order, in a file that is only read). The first two
+/// differ only in the codes each character has; the layout of a key is the same. Access 97's keys have a layout
+/// of their own (<see cref="EncodeAccess97"/>).
 ///
-/// The codes are Jackcess's (<c>GeneralLegacyIndexCodes</c> and <c>GeneralIndexCodes</c>), one line per character
-/// in embedded resources: U+0000..U+00FF in one file, read at once, and U+0100..U+FFFF less the surrogates in
-/// another, read on first use. A code in those files drops its leading zero ("C" is 0x0C). Where Access writes a
-/// key those codes do not give, Access is followed: the golden files of ACE's own keys in the tests say where.
+/// The codes are Jackcess's (<c>GeneralLegacyIndexCodes</c>, <c>GeneralIndexCodes</c> and
+/// <c>General97IndexCodes</c>), one line per character in embedded resources: U+0000..U+00FF in one file, read
+/// at once, and U+0100..U+FFFF less the surrogates in another, read on first use. A code in those files drops
+/// its leading zero ("C" is 0x0C). Where Access writes a key those codes do not give, Access is followed: the
+/// golden files of ACE's own keys in the tests say where.
 ///
-/// A key's layout:
+/// A General or General - Legacy key's layout:
 ///   [inline bytes per char]
 ///   END_TEXT (0x01)
 ///   [extra/international bytes section, if any]
@@ -82,9 +85,25 @@ internal sealed class TextIndexCodes
         contextDependent: "\u3005\u3031\u3032\u3033\u3034\u3035\u303B\u309D\u309E\u30A0\u30FC\u30FD\u30FE\uA015\uFF70"
                         + "\u06D6\u06D7\uFD24\uFD6F");
 
+    /// <summary>
+    /// Access 97's General order (sort order 1033 in a Jet3 file). Access 97 keeps text in the Windows code page
+    /// 1252, one byte a character, and its codes are of those 256 bytes: a character beyond U+00FF has the codes
+    /// of its byte when the code page has it (€ is 0x80, Š 0x8A), and no key when it has not - no value of such
+    /// a file holds it.
+    /// </summary>
+    public static TextIndexCodes Access97 { get; } = new("index_codes_gen_97.txt", "index_mappings_ext_gen_97.txt");
+
+    private static readonly CharCodes NotInCodePage = new() { IsNotInCodePage = true };
+
     private readonly CharCodes[] _basicCodes;
     private readonly Lazy<CharCodes[]> _extCodes;
     private readonly bool _isGeneral;
+    private readonly bool _isAccess97;
+
+    // Access 97: the byte of each character from FirstMappedChar on that the code page has; 0 for one it has not.
+    private readonly byte[] _mappedBytes = Array.Empty<byte>();
+    private const int FirstMappedChar = 338;    // Œ
+    private const int LastMappedChar  = 8482;   // ™
 
     /// <param name="basicResource">The codes of U+0000..U+00FF.</param>
     /// <param name="extResource">The codes of U+0100..U+FFFF less the surrogates.</param>
@@ -147,25 +166,71 @@ internal sealed class TextIndexCodes
         }
     }
 
+    /// <summary>Access 97's codes: those of the 256 bytes of code page 1252, and the bytes of the characters beyond U+00FF it has.</summary>
+    /// <param name="codesResource">The codes of the bytes 0x00..0xFF.</param>
+    /// <param name="mappingsResource">A line for each character beyond U+00FF that the code page has: its code point and its byte.</param>
+    private TextIndexCodes(string codesResource, string mappingsResource)
+    {
+        _isAccess97 = true;
+        _basicCodes = LoadCodes(codesResource, FirstExtChar);
+
+        // A letter that can have an accent ('G' in the codes) takes a place among the accents when it has none.
+        // So does each such letter in a character keyed as two: ACE 12 writes two places for Œ (o and e), Æ and
+        // ß, where Jackcess, which takes them for plain characters, writes none.
+        var accentable = new HashSet<byte>(_basicCodes.Where(c => c is { Inline.Length: 1, IsSimple: false, Extra: null }).Select(c => c.Inline![0]));
+        foreach (var c in _basicCodes)
+            c.Places = c.Inline is null || c.Extra is not null ? 0 : c.Inline.Count(accentable.Contains);
+        _extCodes   = new Lazy<CharCodes[]>(() => Array.Empty<CharCodes>());
+        _mappedBytes = new byte[LastMappedChar - FirstMappedChar + 1];
+
+        string resourcePath = $"JackcessDotNet.Resources.{mappingsResource}";
+        using var stream = typeof(TextIndexCodes).Assembly.GetManifestResourceStream(resourcePath)
+            ?? throw new InvalidOperationException($"Missing embedded resource '{resourcePath}'.");
+        using var reader = new StreamReader(stream, Encoding.ASCII);
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.Trim().Length == 0) continue;
+            string[] parts = line.Split(',');
+            int from = int.Parse(parts[0], CultureInfo.InvariantCulture);
+            _mappedBytes[from - FirstMappedChar] = byte.Parse(parts[1], CultureInfo.InvariantCulture);
+        }
+    }
+
     /// <summary>
-    /// The codes of the order a column sorts in, or null when this library does not write that order's keys.
+    /// The codes of the order a column sorts in, or null when this library does not make that order's keys. A
+    /// locale's order whose keys are those of General - Legacy has its codes (<see cref="SortOrder.KeysAsGeneralLegacy"/>).
     /// </summary>
     public static TextIndexCodes? For(SortOrder order)
-        => order.IsGeneralLegacy ? GeneralLegacy
+        => order.KeysAsGeneralLegacy ? GeneralLegacy
          : order.IsGeneral ? General
+         : order.IsAccess97General ? Access97
          : null;
 
     /// <summary>
-    /// False for a value with a character Access keys by the characters around it (ー, 々 and the like), whose key
-    /// <see cref="Encode"/> therefore refuses to make.
+    /// False for a value whose key <see cref="Encode"/> refuses to make: one with a character Access keys by the
+    /// characters around it (ー, 々 and the like) or, in Access 97's order, with a character code page 1252 has
+    /// not.
     /// </summary>
-    public bool CanEncode(string value) => !ToIndexCharSequence(value).Any(c => CodesOf(c).IsContextDependent);
+    public bool CanEncode(string value) => !ToIndexCharSequence(value).Any(c => CodesOf(c) is { IsContextDependent: true } or { IsNotInCodePage: true });
+
+    /// <summary>Why <see cref="CanEncode"/> is false for <paramref name="value"/>, to follow "No index key is made for ".</summary>
+    public string WhyNot(string value)
+    {
+        foreach (char c in ToIndexCharSequence(value))
+        {
+            var codes = CodesOf(c);
+            if (codes.IsContextDependent) return $"a value with U+{(int)c:X4}: Access keys that character by the ones around it";
+            if (codes.IsNotInCodePage) return $"a value with U+{(int)c:X4}: Access 97 keeps text in code page 1252, which has no such character";
+        }
+        return "this value";
+    }
 
     /// <summary>The key of <paramref name="value"/>, without the flag byte an index entry starts each column with.</summary>
     /// <exception cref="NotSupportedException">The value is one <see cref="CanEncode"/> is false for.</exception>
     public byte[] Encode(string value, bool ascending)
     {
         string str = ToIndexCharSequence(value);
+        if (_isAccess97) return EncodeAccess97(str, ascending);
 
         var key = new List<byte>(str.Length * 2 + 8);
         ExtraCodes? extraCodes = null;
@@ -178,8 +243,7 @@ internal sealed class TextIndexCodes
         {
             var codes = CodesOf(c);
             if (codes.IsContextDependent)
-                throw new NotSupportedException(
-                    $"No index key is made for a value with U+{(int)c:X4}: Access keys that character by the ones around it.");
+                throw new NotSupportedException($"No index key is made for {WhyNot(str)}.");
 
             int curCharOffset = charOffset;
             int curUnprintableOffset = unprintableOffset;
@@ -243,6 +307,53 @@ internal sealed class TextIndexCodes
         return key.ToArray();
     }
 
+    private const byte Access97ExtraBounds = 0x00;
+
+    /// <summary>
+    /// An Access 97 key (Jackcess's <c>General97IndexCodes</c>, and ACE 12's keys where they differ): the inline
+    /// bytes of each character, and then either one zero byte or, when a character has an accent, the accents as
+    /// half bytes - a zero, then for each accented character a placeholder (2) for every letter since the last
+    /// that could have had an accent and had none (<see cref="CharCodes.Places"/>), and its own code; a zero
+    /// ends them, and the last byte is filled out with another. A descending key is the same bytes flipped.
+    /// </summary>
+    private byte[] EncodeAccess97(string str, bool ascending)
+    {
+        var key = new List<byte>(str.Length + 4);
+        List<byte>? accents = null;
+        int lettersSince = 0;
+
+        foreach (char c in str)
+        {
+            var codes = CodesOf(c);
+            if (codes.IsNotInCodePage)
+                throw new NotSupportedException($"No index key is made for {WhyNot(str)}.");
+
+            if (codes.Inline is not null) key.AddRange(codes.Inline);
+            if (codes.Extra is null)
+            {
+                lettersSince += codes.Places;
+                continue;
+            }
+            accents ??= new List<byte> { Access97ExtraBounds };
+            accents.AddRange(Enumerable.Repeat(InternationalExtraPlaceholder, lettersSince));
+            accents.Add(codes.Extra[0]);
+            lettersSince = 0;
+        }
+
+        if (accents is null) key.Add(EndExtraText);
+        else
+        {
+            accents.Add(Access97ExtraBounds);
+            for (int i = 0; i < accents.Count; i += 2)
+                key.Add((byte)(accents[i] << 4 | (i + 1 < accents.Count ? accents[i + 1] & 0x0F : 0)));
+        }
+
+        if (!ascending)
+            for (int i = 0; i < key.Count; i++)
+                key[i] = (byte)~key[i];
+        return key.ToArray();
+    }
+
     private static string ToIndexCharSequence(string? value)
     {
         string str = value ?? string.Empty;
@@ -256,7 +367,21 @@ internal sealed class TextIndexCodes
 
     private CharCodes CodesOf(char c)
     {
-        if (c < FirstExtChar) return _basicCodes[c];
+        if (c < FirstExtChar)
+        {
+            // Code page 1252 gives the bytes 0x80..0x9F to characters beyond U+00FF, all but five it has no
+            // character for: those five are read as the control characters of their number, and the other
+            // control characters U+0080..U+009F are in no value of an Access 97 file.
+            if (_isAccess97 && (int)c is >= 0x80 and <= 0x9F and not (0x81 or 0x8D or 0x8F or 0x90 or 0x9D))
+                return NotInCodePage;
+            return _basicCodes[c];
+        }
+
+        if (_isAccess97)
+        {
+            byte mapped = c is >= (char)FirstMappedChar and <= (char)LastMappedChar ? _mappedBytes[c - FirstMappedChar] : (byte)0;
+            return mapped == 0 ? NotInCodePage : _basicCodes[mapped];
+        }
 
         // The extended file leaves the surrogates out: they have no line of their own.
         if (c >= FirstHighSurrogate && c <= LastLowSurrogate)
@@ -308,9 +433,13 @@ internal sealed class TextIndexCodes
         /// <summary>A character Access keys by the characters around it, so that no codes of its own make its key.</summary>
         public bool IsContextDependent { get; init; }
 
+        /// <summary>In Access 97's order, a character code page 1252 has not: no value of an Access 97 file holds it.</summary>
+        public bool IsNotInCodePage { get; init; }
+
         /// <summary>
         /// The places the character takes among the extra codes: one, except for a character Access sorts as two or
-        /// three letters (Æ as AE, ß as ss, ﬃ as ffi), which takes one per letter.
+        /// three letters (Æ as AE, ß as ss, ﬃ as ffi), which takes one per letter. In Access 97's order, the
+        /// places it takes among the accents when it has none: one for each of its letters that can have one.
         /// </summary>
         public int Places { get; set; } = 1;
 

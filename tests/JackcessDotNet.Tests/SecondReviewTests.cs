@@ -341,7 +341,7 @@ public sealed class SecondReviewTests : IDisposable
         {
             var table = db.CreateTable("Coded", new[] { Text("Code", 10), Long("N") }, primaryKey: "Code");
             table.Insert(new Row { ["Code"] = "a", ["N"] = 1 });
-            SetSortOrder(db.File, TdefOf(db.File, "Coded"), column: 0, new byte[] { 0x19, 0x04, 0x00, 0x00 });   // 1049
+            SetSortOrder(db.File, TdefOf(db.File, "Coded"), column: 0, new byte[] { 0x1F, 0x04, 0x00, 0x00 });   // 1055, Turkish
         }
         using (var db = Database.Open(path))
         {

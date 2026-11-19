@@ -24,8 +24,8 @@ internal static class IndexKeys
                 or DataType.Int64 or DataType.DateTimeExtended;
 
     /// <summary>
-    /// True when <see cref="Encode"/> writes the keys Access writes for <paramref name="column"/>: a type it
-    /// encodes and, for text, a column that sorts in an order whose keys it writes (<see cref="TextIndexCodes.For"/>).
+    /// True when <see cref="Encode"/> makes the keys Access writes for <paramref name="column"/>: a type it
+    /// encodes and, for text, a column that sorts in an order whose keys it makes (<see cref="TextIndexCodes.For"/>).
     /// </summary>
     public static bool CanEncode(Column column)
         => CanEncode(column.DataType)
@@ -34,7 +34,8 @@ internal static class IndexKeys
     /// <summary>
     /// True when <see cref="Encode"/> writes the key Access writes for <paramref name="value"/> in
     /// <paramref name="column"/>: a column it writes keys for and, for text, a value with no character Access keys
-    /// by the characters around it (<see cref="TextIndexCodes.CanEncode"/>).
+    /// by the characters around it and, in an Access 97 file, none its code page has not
+    /// (<see cref="TextIndexCodes.CanEncode"/>).
     /// </summary>
     public static bool CanEncode(Column column, object? value)
         => CanEncode(column)
@@ -45,11 +46,14 @@ internal static class IndexKeys
     public static string WhyNot(Column column)
         => !CanEncode(column.DataType)
             ? $"{column.Name} is a {column.DataType} column, whose keys this library does not write"
-            : $"{column.Name} sorts in {column.SortOrder}, and this library writes text keys only in {SortOrder.GeneralLegacy} and {SortOrder.General}";
+            : $"{column.Name} sorts in {column.SortOrder}, and this library makes text keys only in {SortOrder.GeneralLegacy}, " +
+              $"the orders whose keys are the same, {SortOrder.General} and {SortOrder.Access97General}";
 
-    /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are written.</summary>
+    /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are made.</summary>
     public static string WhyNot(Column column, object? value)
-        => $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
+        => TextIndexCodes.For(column.SortOrder) == TextIndexCodes.Access97
+            ? $"{column.Name}'s value '{value}' has a character that Access 97's code page 1252 has not, and this library makes no key for it"
+            : $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
 
     /// <summary>
     /// The key of an entry whose columns hold <paramref name="values"/>, in the index's column order. Refuses a
@@ -68,11 +72,30 @@ internal static class IndexKeys
 
     /// <summary>
     /// True when the key of <paramref name="values"/> is longer than an entry holds, so that <see cref="Encode"/>
-    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it, or under
-    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it.
+    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it; under
+    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it; or under the key
+    /// cut with the digest versions from the cut until #56 wrote (<see cref="TruncateAsEarlierVersions"/>).
     /// </summary>
     public static bool IsCut(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
         => EncodeWhole(columns, values).Length > MaxKeyLength;
+
+    /// <summary>
+    /// True when the key <see cref="Encode"/> makes of <paramref name="values"/> is the key Access writes for them,
+    /// as far as it has been measured against ACE: the keys of every type this library writes, but for a Date/Time
+    /// Extended column, which Access keys by the bytes it stored, in either of two forms, where this library keys
+    /// the date it reads as the first form (#51); and for a key cut at <see cref="MaxKeyLength"/> in an index of
+    /// several columns, only where those columns are Text and Long, the shapes the cut was measured in (#56). An
+    /// entry is judged by such a key alone: anywhere else, what an index holds for a row is believed, and the row is
+    /// not looked for through the index.
+    /// </summary>
+    public static bool MatchesAccess(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
+    {
+        foreach (var column in columns)
+            if (column.Column.DataType == DataType.DateTimeExtended) return false;
+        return columns.Count == 1
+            || columns.All(c => c.Column.DataType is DataType.Text or DataType.Int32)
+            || !IsCut(columns, values);
+    }
 
     /// <summary>The key of <paramref name="values"/> whole, however long: what <see cref="Truncate"/> cuts.</summary>
     internal static byte[] EncodeWhole(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
@@ -99,44 +122,74 @@ internal static class IndexKeys
     /// <see cref="Encode"/> makes, so that a search of the index that misses means there is no such row: every
     /// value is one a key is made for (<see cref="CanEncode(Column, object?)"/>), and the key is no longer than an
     /// entry holds. Access cuts a longer key and ends it in a digest, and so does <see cref="Encode"/>, but
-    /// Jackcess and versions of this library before the digest wrote such a key whole, where a search by the cut
-    /// key does not find it. A caller scans the table for values this is false for.
+    /// Jackcess and versions of this library before the digest wrote such a key whole, and versions after it a key
+    /// of several columns with another digest, where a search by the cut key does not find it. An Access 97 file's
+    /// entry holds half as much (<see cref="Access97MaxKeyLength"/>),
+    /// and how it ends a longer key is not made here. A caller scans the table for values this is false for.
     /// </summary>
     public static bool CanSearch(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
     {
         if (values.Count != columns.Count) return false;
         for (int i = 0; i < columns.Count; i++)
             if (!CanEncode(columns[i].Column, values[i])) return false;
-        return EncodeWhole(columns, values).Length <= MaxKeyLength;
+        bool access97 = columns.Any(c => c.Column.DataType is DataType.Text or DataType.Memo && c.Column.SortOrder.IsAccess97);
+        return EncodeWhole(columns, values).Length <= (access97 ? Access97MaxKeyLength : MaxKeyLength);
     }
 
     /// <summary>
     /// A key as an entry holds it: whole up to <see cref="MaxKeyLength"/> bytes, and a longer one cut to that
-    /// length, its last two bytes a digest of what was cut off (all of it but the last byte), as Access writes a
-    /// long text key. The digest is CRC-16 with the polynomial 0x8005, its register kept in the order the entry
-    /// holds it.
+    /// length, its last two bytes a digest of every byte cut off, as Access writes a long key of one column or of
+    /// several (#56): the remainder of those bytes, read as one number from the first, divided by the CRC-16
+    /// polynomial 0x8005, its low byte first.
     /// </summary>
     public static byte[] Truncate(byte[] key)
     {
         if (key.Length <= MaxKeyLength) return key;
 
+        // Each byte cut off comes in at the bottom of the remainder, and the byte that goes out at the top is
+        // divided out (Reduction): the last two bytes are in the remainder as they are.
         const int kept = MaxKeyLength - 2;
-        int digest = 0;
-        for (int i = kept; i < key.Length - 1; i++)
-            digest = (digest >> 8) ^ DigestTable[digest & 0xFF] ^ key[i];
+        int remainder = 0;
+        for (int i = kept; i < key.Length; i++)
+            remainder = (remainder << 8 & 0xFFFF | key[i]) ^ Reduction[remainder >> 8];
 
         byte[] truncated = key.Slice(0, MaxKeyLength);
-        truncated[kept] = (byte)(digest >> 8);
-        truncated[kept + 1] = (byte)digest;
+        truncated[kept] = (byte)remainder;
+        truncated[kept + 1] = (byte)(remainder >> 8);
+        return truncated;
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> cut as versions of this library from when it cut keys until #56 cut it, and as
+    /// Jackcess cuts it: their digest left the last byte cut off out. That byte is 0 in every key that ends in
+    /// text, where the two digests are the same; it is not in a key of several columns that ends in a number, a
+    /// date or the like after text that filled the entry, which a file such a version wrote holds under this key
+    /// (<see cref="TableIndexes.StoredUnder"/>). Leaving the byte out gives the digest of the same bytes with that
+    /// one 0, so this key of one value is Access's key of another - with the same text, (A, 1)'s is (A, 0)'s - and
+    /// an entry under it can be that other value's own.
+    /// </summary>
+    internal static byte[] TruncateAsEarlierVersions(byte[] key)
+    {
+        byte[] truncated = Truncate(key);
+        // The remainder holds the last byte as it is, in its low byte.
+        if (key.Length > MaxKeyLength) truncated[MaxKeyLength - 2] ^= key[key.Length - 1];
         return truncated;
     }
 
     /// <summary>The most bytes an index entry's key has.</summary>
     internal const int MaxKeyLength = 510;
 
-    private static readonly ushort[] DigestTable = BuildDigestTable();
+    /// <summary>
+    /// The most bytes an entry's key has in an Access 97 file: ACE 12 keys 255 of "x" there in 255 bytes, the
+    /// last two not the key's own.
+    /// </summary>
+    internal const int Access97MaxKeyLength = 255;
 
-    private static ushort[] BuildDigestTable()
+    // What a byte that goes out at the top of the remainder leaves in it: the byte times x^16, divided by the
+    // polynomial (x^16 + x^15 + x^2 + 1).
+    private static readonly ushort[] Reduction = BuildReductionTable();
+
+    private static ushort[] BuildReductionTable()
     {
         var table = new ushort[256];
         for (int i = 0; i < table.Length; i++)
@@ -144,7 +197,7 @@ internal static class IndexKeys
             int register = i << 8;
             for (int bit = 0; bit < 8; bit++)
                 register = (register << 1 & 0xFFFF) ^ ((register & 0x8000) != 0 ? 0x8005 : 0);
-            table[i] = (ushort)((register & 0xFF) << 8 | register >> 8);
+            table[i] = (ushort)register;
         }
         return table;
     }

@@ -12,21 +12,46 @@ namespace JackcessDotNet;
 internal sealed class RowsNotHeld
 {
     /// <summary>No rows: what an index that is taken at its word lacks (<see cref="Database.VerifyIndexes"/> off).</summary>
-    internal static readonly RowsNotHeld None = new(new Dictionary<int, byte[]>());
+    internal static readonly RowsNotHeld None = new(new Dictionary<int, byte[]>(), new List<(byte[] Key, int RowPointer)>());
 
     private readonly Dictionary<int, byte[]> _keys;
     // How many of the rows have each key: what a duplicate is looked for by.
     private readonly Dictionary<byte[], int> _rowsWith = new(ForeignKeyEnforcer.KeyComparer.Instance);
 
+    private List<(byte[] Key, int RowPointer)> _entriesOfNoRow;
+
     /// <param name="keys">The key each row should be under, by the row's pointer.</param>
-    internal RowsNotHeld(Dictionary<int, byte[]> keys)
+    /// <param name="entriesOfNoRow">
+    /// The entries the index was seen to hold that are no row's: each points at no row, or at a row that does not
+    /// have its key.
+    /// </param>
+    internal RowsNotHeld(Dictionary<int, byte[]> keys, List<(byte[] Key, int RowPointer)> entriesOfNoRow)
     {
         _keys = keys;
+        _entriesOfNoRow = entriesOfNoRow;
         foreach (byte[] key in keys.Values)
             _rowsWith[key] = _rowsWith.TryGetValue(key, out int rows) ? rows + 1 : 1;
     }
 
     internal int Count => _keys.Count;
+
+    /// <summary>
+    /// The entries the index was seen to hold that are no row's, handed over once, to whoever takes them out of
+    /// the index: none after that.
+    /// </summary>
+    internal List<(byte[] Key, int RowPointer)> TakeEntriesOfNoRow()
+    {
+        var entries = _entriesOfNoRow;
+        if (entries.Count > 0) _entriesOfNoRow = new List<(byte[] Key, int RowPointer)>();
+        return entries;
+    }
+
+    /// <summary>The entries <see cref="TakeEntriesOfNoRow"/> handed over to a change that was taken back: the index holds them again.</summary>
+    internal void PutBackEntriesOfNoRow(List<(byte[] Key, int RowPointer)> entries)
+    {
+        if (_entriesOfNoRow.Count == 0) _entriesOfNoRow = entries;
+        else _entriesOfNoRow.AddRange(entries);
+    }
 
     /// <summary>Whether one of the rows, other than the one at <paramref name="rowPointer"/>, has <paramref name="key"/>.</summary>
     internal bool AnotherHas(byte[] key, int? rowPointer)

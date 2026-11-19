@@ -374,7 +374,7 @@ public sealed class EngineReviewTests : IDisposable
 
     // ── A key that cannot be kept ──────────────────────────────────────────
 
-    // A text key in an order the engine does not write (here 1049, Access's Russian order): it cannot write the key's
+    // A text key in an order the engine does not write (here 1055, Access's Turkish order): it cannot write the key's
     // entries, so it changes nothing.
     [Fact]
     public void A_table_whose_key_the_engine_cannot_write_is_left_as_it_was()
@@ -390,11 +390,11 @@ public sealed class EngineReviewTests : IDisposable
             foreach (var code in new[] { "a", "b", "c" })
                 table.Insert(new Row { ["Code"] = code, ["N"] = 1 });
 
-            // The key column now says sort order 1049.
+            // The key column now says sort order 1055.
             int tdef = TdefOf(db.File, "Coded");
             byte[] page = db.File.ReadPage(tdef);
             int columnDefs = 63 + ByteUtil.GetInt(page, 51) * 12;
-            page[columnDefs + 0 * 25 + 11] = 0x19;
+            page[columnDefs + 0 * 25 + 11] = 0x1F;
             db.File.WritePage(tdef, page);
         }
 

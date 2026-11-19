@@ -17,7 +17,7 @@ namespace JackcessDotNet;
 /// </para>
 /// <para>
 /// A row is looked for by the key Access keeps for its values, where this library makes that key: for every
-/// type it writes index entries for, and for text in the sort orders General - Legacy and General. A value it
+/// type it writes index entries for, and for text in the sort orders whose keys it makes. A value it
 /// makes no key for - text in another sort order, a character Access keys by the characters around it, a key
 /// longer than an entry holds - is still found by <see cref="FindRowByEntry"/> and
 /// <see cref="Cursor.FindRow(string, object?)"/>, which then go through the index's rows comparing each; a range
@@ -711,7 +711,7 @@ public sealed class IndexCursor : Cursor
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// No key is made for the values: the index is on a column whose keys this library does not make (a
-    /// Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and General),
+    /// Decimal, Binary, OLE or Complex column, or text in a sort order whose keys it does not make),
     /// a value has a character Access keys by the characters around it, or the key is longer than an entry
     /// holds. The cursor is left where it was.
     /// </exception>

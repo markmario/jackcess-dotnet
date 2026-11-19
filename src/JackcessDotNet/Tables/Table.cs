@@ -1191,8 +1191,8 @@ public sealed class Table
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The file is an Access 97 one; the index is on a column whose keys this library does not write as Access
-    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order other than General - Legacy and
-    /// General), or a row holds a value no key is made for. Nothing is changed.
+    /// does (a Decimal, Binary, OLE or Complex column, or text in a sort order whose keys it does not make),
+    /// or a row holds a value no key is made for. Nothing is changed.
     /// </exception>
     public Index AddIndex(IndexDefinition index)
     {
