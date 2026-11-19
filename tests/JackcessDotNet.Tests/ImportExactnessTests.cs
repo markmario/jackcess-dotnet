@@ -384,6 +384,31 @@ public sealed class ImportExactnessTests : IDisposable
         [Key] public int Line { get; set; }
     }
 
+    [Fact]
+    public void A_key_on_a_Decimal_column_is_refused_before_anything_is_written()
+    {
+        // A decimal is a Decimal column, and so is a uint in an .mdb: this library writes no index keys for one.
+        Database.Create(_path).Dispose();
+        RefusedAndUnchanged<NotSupportedException>(_path, db => db.ImportTable(new[] { new DecimalKeyed { Price = 1.5m } }));
+        RefusedAndUnchanged<NotSupportedException>(_path, db => db.ImportTable(new[] { new UIntKeyed { Id = 1 } }));
+
+        // In an .accdb a uint is a Large Number, whose keys are written.
+        using (var db = Database.Create(_accdb, FileFormat.Access2010))
+            db.ImportTable(new[] { new UIntKeyed { Id = uint.MaxValue } });
+        using var reopen = Database.Open(_accdb);
+        Assert.NotNull(reopen.GetTable("UIntKeyed").FindRowByPrimaryKey((long)uint.MaxValue));
+    }
+
+    private sealed class DecimalKeyed
+    {
+        [Key] public decimal Price { get; set; }
+    }
+
+    private sealed class UIntKeyed
+    {
+        [Key] public uint Id { get; set; }
+    }
+
     // ── Whole or not at all ──────────────────────────────────────────────────
 
     [Fact]
@@ -470,7 +495,8 @@ public sealed class ImportExactnessTests : IDisposable
         new object[] { "L", typeof(object), 7, true },
         new object[] { "S", typeof(double), 0.5, 0.1 },
         new object[] { "S", typeof(int), 16_777_216, 16_777_217 },
-        new object[] { "D", typeof(decimal), 0.1m, 0.12345678901234567m },
+        // 0.1 is the shortest text of the double it reads as; no double's is 19 digits.
+        new object[] { "D", typeof(decimal), 0.1m, 0.1234567890123456789m },
         new object[] { "C", typeof(decimal), 1.2345m, 1.23456m },
         new object[] { "C", typeof(double), 0.25, 1.0 / 3 },
         new object[] { "N", typeof(decimal), 1234.56m, 1.234m },

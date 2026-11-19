@@ -310,25 +310,36 @@ internal static class TypeMapper
         _        => null,
     };
 
-    // A whole double of a long's range is that long; another, the decimal of its fifteen digits, when that is it.
+    // A double as the decimal of its shortest text that reads back as it - its round-trip form, as text, not the
+    // runtime's conversion, which keeps 15 digits on one framework and more on another - when a decimal holds that
+    // text; a whole double of a long's range is that long. Null for NaN, the infinities and what no decimal holds.
     private static decimal? RoundTripDecimal(double value)
     {
         if (double.IsNaN(value) || double.IsInfinity(value)) return null;
         if (Math.Floor(value) == value && Math.Abs(value) < 9.2e18) return (long)value;
         if (Math.Abs(value) >= 7.9e28) return null;
-        decimal asDecimal = (decimal)value;
-        return (double)asDecimal == value ? asDecimal : null;
+        string text = value.ToString("R", Invariant);
+        if (double.Parse(text, NumberStyles.Float, Invariant) != value) text = value.ToString("G17", Invariant);
+        if (!decimal.TryParse(text, NumberStyles.Float, Invariant, out decimal parsed)) return null;
+        // A decimal keeps 28 places: a double smaller than that reads as some other number, or as 0.
+        return double.Parse(parsed.ToString(Invariant), NumberStyles.Float, Invariant) == value ? parsed : null;
     }
 
-    // A whole float of a long's range is that long; another, the decimal of its seven digits, when that is it.
+    // A float as the decimal of its shortest text that reads back as it, as for a double.
     private static decimal? RoundTripDecimal(float value)
     {
         if (float.IsNaN(value) || float.IsInfinity(value)) return null;
         if (Math.Floor(value) == value && Math.Abs(value) < 9.2e18f) return (long)value;
         if (Math.Abs(value) >= 7.9e28f) return null;
-        decimal asDecimal = (decimal)value;
-        return (float)asDecimal == value ? asDecimal : null;
+        string text = value.ToString("R", Invariant);
+        if (float.Parse(text, NumberStyles.Float, Invariant) != value) text = value.ToString("G9", Invariant);
+        if (!decimal.TryParse(text, NumberStyles.Float, Invariant, out decimal parsed)) return null;
+        return float.Parse(parsed.ToString(Invariant), NumberStyles.Float, Invariant) == value ? parsed : null;
     }
+
+    // The double, and the float, nearest a decimal: read from its text, as RoundTripDecimal writes one.
+    private static double DoubleNearest(decimal value) => double.Parse(value.ToString(Invariant), NumberStyles.Float, Invariant);
+    private static float SingleNearest(decimal value) => float.Parse(value.ToString(Invariant), NumberStyles.Float, Invariant);
 
     // The number a value is, for a column that takes numbers: refused with why when it is none.
     private static decimal NumberOf(object value, string what)
@@ -370,7 +381,7 @@ internal static class TypeMapper
                 return SingleOf(parsed);   // NaN, Infinity and what is past a decimal's range
         }
         decimal number = NumberOf(value, "a Single column");
-        float asSingle = (float)number;
+        float asSingle = SingleNearest(number);
         if (RoundTripDecimal(asSingle) == number) return asSingle;
         throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {asSingle.ToString("R", Invariant)}");
     }
@@ -386,7 +397,7 @@ internal static class TypeMapper
                 return parsed;   // NaN, Infinity and what is past a decimal's range
         }
         decimal number = NumberOf(value, "a Double column");
-        double asDouble = (double)number;
+        double asDouble = DoubleNearest(number);
         if (RoundTripDecimal(asDouble) == number) return asDouble;
         throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {asDouble.ToString("R", Invariant)}");
     }
