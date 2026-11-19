@@ -312,11 +312,53 @@ public sealed class ImportConversionTests : IDisposable
     [InlineData("2026-11-19 10:00", "2026-11-19T10:00:00")]
     [InlineData("2026-11-19T10:00:00", "2026-11-19T10:00:00")]
     [InlineData("11/19/2026", "2026-11-19T00:00:00")]
+    // A time without a date is on 30 December 1899, the day Access gives one; it was on the day of the import.
+    [InlineData("10:30", "1899-12-30T10:30:00")]
+    [InlineData("22:15:30.5", "1899-12-30T22:15:30.5")]
+    [InlineData("10:30 PM", "1899-12-30T22:30:00")]
+    [InlineData("00:00", "1899-12-30T00:00:00")]
+    [InlineData("10:30Z", "1899-12-30T10:30:00")]
+    [InlineData("01:00+05:00", "1899-12-29T20:00:00")]
+    [InlineData("23:00-05:00", "1899-12-31T04:00:00")]
     public void Text_appended_to_a_Date_Time_column_is_the_same_time_in_every_time_zone(string text, string expected)
     {
         foreach (double hours in new[] { 11.0, -7.5, 0.0 })
             using (LocalTimeZone.Set(TimeSpan.FromHours(hours)))
                 Assert.Equal(DateTime.Parse(expected, Invariant), Appended("When", text));
+    }
+
+    // ACE 16 inserts a time without a date, '10:30', in a Date/Time column and in a Date/Time Extended one alike, as 30
+    // December 1899 10:30 (measured: the engine reads both so); an append writes it so, in every time zone.
+    [Theory]
+    [InlineData("10:30", "1899-12-30T10:30:00")]
+    [InlineData("22:15", "1899-12-30T22:15:00")]
+    [InlineData("2026-11-19 10:30", "2026-11-19T10:30:00")]
+    public void Time_only_text_is_on_30_December_1899_in_either_date_column_in_every_time_zone(string text, string expected)
+    {
+        foreach (double hours in new[] { 13.0, -9.5 })
+            using (LocalTimeZone.Set(TimeSpan.FromHours(hours)))
+            {
+                if (File.Exists(_path)) File.Delete(_path);
+                using (var db = Database.Create(_path, FileFormat.Access2016))
+                {
+                    db.CreateTable("T", new[]
+                    {
+                        new ColumnDefinition("Id", DataType.Int32),
+                        new ColumnDefinition("D", DataType.DateTime),
+                        new ColumnDefinition("X", DataType.DateTimeExtended),
+                    }, "Id");
+                    var source = new DataTable("T");
+                    source.Columns.Add("Id", typeof(int));
+                    source.Columns.Add("D", typeof(string));
+                    source.Columns.Add("X", typeof(string));
+                    source.Rows.Add(1, text, text);
+                    db.ImportTable(source, new ImportOptions { AppendIfExists = true });
+                }
+                using var reopen = Database.Open(_path);
+                var row = reopen.GetTable("T").FindRowByPrimaryKey(1)!;
+                Assert.Equal(DateTime.Parse(expected, Invariant), row["D"]);
+                Assert.Equal(DateTime.Parse(expected, Invariant), row["X"]);
+            }
     }
 }
 

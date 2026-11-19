@@ -153,8 +153,10 @@ changed since 1.2.2.
   - **Adding to a table converts a value exactly or refuses it** (`AppendIfExists`): a value went through
     `Convert`, which rounded a `double` into an integer column, a `decimal` into Currency, and text in the current
     culture. Text with an offset is the UTC time it denotes, as a `DateTimeOffset` is, and text without one the
-    time it says, whatever the machine's time zone. A `double` or `float` goes to Text as its round-trip form,
-    the same text on every target: .NET Framework's round-trip format does not always read back as the double.
+    time it says, whatever the machine's time zone; a time without a date, `"10:30"`, is on 30 December 1899, as
+    ACE inserts one in a Date/Time or Date/Time Extended column - it was on the day of the import. A `double` or
+    `float` goes to Text as its round-trip form, the same text on every target: .NET Framework's round-trip format
+    does not always read back as the double.
     Whether a number goes to a numeric column is worked out exactly, so it is the same on every target. Text goes
     to a numeric column as the number it denotes, only when the column holds exactly that number; NaN, the
     infinities and a number past the column's range, or too near 0 for it, are refused, whatever the size of the

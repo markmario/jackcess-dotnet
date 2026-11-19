@@ -426,6 +426,10 @@ internal static class TypeMapper
     // The first date a Date/Time column holds: an OLE Automation date starts at 1 January 100.
     private static readonly DateTime FirstDateTime = new(100, 1, 1);
 
+    // The day Access gives a time without a date, in a Date/Time column and a Date/Time Extended one alike (measured:
+    // ACE 16 inserts '10:30' in either as 30 December 1899 10:30): the day an OLE Automation date counts from.
+    private static readonly DateTime TimeOnlyDay = new(1899, 12, 30);
+
     private static DateTime DateTimeOf(object value, bool extended)
     {
         DateTime date = value switch
@@ -433,13 +437,25 @@ internal static class TypeMapper
             DateTime d       => d,
             DateTimeOffset o => o.UtcDateTime,
             // Text with an offset is the UTC time it denotes, as a DateTimeOffset is; text without one is the time it
-            // says. Neither depends on the machine's time zone.
-            string s when DateTimeOffset.TryParse(s, Invariant, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed) => parsed.UtcDateTime,
+            // says. Neither depends on the machine's time zone. A time without a date is on the day Access gives one,
+            // not on the day it is imported - "10:30" is 30 December 1899 10:30 - its offset, if it has one, taken from it.
+            string s when DateTimeOffset.TryParse(s, Invariant, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed)
+                => IsTimeOnly(s) ? TimeOnlyDay + parsed.DateTime.TimeOfDay - parsed.Offset : parsed.UtcDateTime,
             _ => throw NotOfType(value, $"a {(extended ? "Date/Time Extended" : "Date/Time")} column takes dates"),
         };
         if (!extended && date < FirstDateTime)
             throw new NotHeldException($"{Describe(date)} is before 1 January 100, the first date a Date/Time column holds");
         return date;
+    }
+
+    // Whether text is a time with no date: .NET reads one as on the day it is read, and as on 1 January 1 when told
+    // not to take the day; text with a date reads the same either way.
+    private static bool IsTimeOnly(string text)
+    {
+        const DateTimeStyles utc = DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal;
+        return DateTime.TryParse(text, Invariant, utc | DateTimeStyles.NoCurrentDateDefault, out DateTime withoutToday)
+            && DateTime.TryParse(text, Invariant, utc, out DateTime withToday)
+            && withoutToday != withToday;
     }
 
     private static Guid GuidOf(object value) => value switch

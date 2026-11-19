@@ -663,7 +663,8 @@ An import holds every value of its source exactly, or refuses before anything is
   a number would be - exactly: `"1e-30"` goes to a Double column and is refused by a Currency one, and NaN, the
   infinities and a number past the column's range are refused; text to a Yes/No,
   Date/Time or GUID column when it reads as one in the invariant culture (text with an offset to a Date/Time
-  column is the UTC time it denotes, and text without one the time it says, whatever the machine's time zone);
+  column is the UTC time it denotes, and text without one the time it says, whatever the machine's time zone; a
+  time without a date, `"10:30"`, is on 30 December 1899, as Access gives one);
   any of these to Text or Memo as its
   invariant text (a `double` or `float` in its round-trip form - the fewest digits that read back as it, written
   as .NET writes them, the same text on every target - and a date in ISO 8601) when that fits; bytes to a Binary column
