@@ -377,32 +377,22 @@ public static class DatabaseImporter
     /// <summary>
     /// Writes the tables an import has worked out: each table made, or found, and its rows inserted, inside one undo
     /// scope. When anything fails - a row the database refuses, a disk that fills - what was written is taken back,
-    /// and a table made is forgotten: the file is as it was.
+    /// and a table made is forgotten with it (<see cref="Database.ForgetTakenBack"/>, which the scope runs): the file
+    /// is as it was, and the session holds nothing the import made.
     /// </summary>
     private static IReadOnlyList<Table> Write(Database db, IReadOnlyList<TablePlan> plans)
     {
         var tables = new List<Table>(plans.Count);
         if (plans.Count == 0) return tables;
 
-        var made = new List<Table>();
         using var undo = db.File.BeginUndo();
-        try
+        foreach (var plan in plans)
         {
-            foreach (var plan in plans)
-            {
-                var table = plan.Existing ?? db.CreateTableOf(plan.Name, plan.Columns!, plan.PrimaryKey);
-                if (plan.Existing is null) made.Add(table);
-                InsertRows(table, plan.Rows, plan.KeepIdentity);
-                tables.Add(table);
-            }
-            undo.Commit();
+            var table = plan.Existing ?? db.CreateTableOf(plan.Name, plan.Columns!, plan.PrimaryKey);
+            InsertRows(table, plan.Rows, plan.KeepIdentity);
+            tables.Add(table);
         }
-        catch
-        {
-            undo.Dispose();
-            foreach (var table in made) db.ForgetTakenBack(table);
-            throw;
-        }
+        undo.Commit();
         return tables;
     }
 

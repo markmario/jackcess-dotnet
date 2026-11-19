@@ -133,7 +133,10 @@ changed since 1.2.2.
     is written is written inside one undo scope, so a row the database refuses part-way - a duplicate in a key, a
     null in a required column - takes back the table, the rows before it and, for `ImportTables`, every table
     before it: a refused import leaves the file byte for byte as it was. The table and the rows before a refused
-    row stayed. `ImportTable<T>` reads every object before it writes; it read them as it inserted.
+    row stayed. The session that refused it holds nothing it made: a table taken back is not listed or found, and
+    its name and its pages are free - a table made after it on its definition's page is that table, not the one
+    taken back, which refuses whatever is asked of it. `ImportTable<T>` reads every object before it writes; it
+    read them as it inserted.
   - **Columns that hold every value.** `sbyte` is an Integer (it was a Byte, and a negative value stopped the
     import), `ushort` a Long Integer (an Integer), `uint` a Large Number in a file of Access 2016's format and a
     `Decimal(10, 0)` in an older one, `ulong` a `Decimal(20, 0)` (both were Long Integers, and a value past 31

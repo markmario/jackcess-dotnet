@@ -570,6 +570,75 @@ public sealed class ImportExactnessTests : IDisposable
         }
     }
 
+    // A table an import made and then took back is gone from the session as from the file: it is not listed or found,
+    // the session holds nothing the import made, and its name and definition's page are free - a table made after it
+    // is given that page and is that table, and an import of its name makes it again.
+    [Fact]
+    public void A_table_an_import_made_and_took_back_is_gone_from_the_session_that_made_it()
+    {
+        using (var created = Database.Create(_path))
+            created.CreateTable("Kept", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id").Insert(new Row { ["Id"] = 1 });
+        var table = TableOf("Name", typeof(string), "a", "b", "c");
+        table.Rows[2]["Id"] = 1;   // a duplicate in the primary key, in the last row
+
+        using (var db = Database.Open(_path))
+        {
+            Assert.Throws<ConstraintViolationException>(() => db.ImportTable(table, new ImportOptions { PrimaryKey = new[] { "Id" } }));
+            Assert.Equal(new[] { "Kept" }, db.GetTableNames());
+            Assert.Throws<ArgumentException>(() => db.GetTable("T"));
+            Assert.False(db.TryGetTable("T", out _));
+            // Every table the session holds is one the file has, found as itself.
+            Assert.All(db.HeldTables, held =>
+            {
+                Assert.NotEqual("T", held.Name);
+                Assert.True(db.TryGetTable(held.Name, out var found) && ReferenceEquals(found, held), held.Name);
+            });
+
+            // A table made now is given the definition page the import's had, the file being as it was, and is itself.
+            var other = db.CreateTable("Other", new[] { new ColumnDefinition("Key", DataType.Text) { MaxLength = 10 }, new ColumnDefinition("N", DataType.Int32) }, "Key");
+            other.Insert(new Row { ["Key"] = "k", ["N"] = 7 });
+            Assert.Same(other, db.GetTable("Other"));
+            Assert.Equal(new[] { "Key", "N" }, db.GetTable("Other").Columns.Select(c => c.Name));
+
+            // The name is free: an import of it makes the table.
+            table.Rows[2]["Id"] = 3;
+            db.ImportTable(table, new ImportOptions { PrimaryKey = new[] { "Id" } });
+            Assert.Equal(new object?[] { "a", "b", "c" }, ValuesOf(db, "T", "Name"));
+        }
+
+        using var reopen = Database.Open(_path);
+        Assert.Equal(new[] { "Kept", "Other", "T" }, reopen.GetTableNames().OrderBy(n => n));
+        Assert.Equal(7, reopen.GetTable("Other").FindRowByPrimaryKey("k")!["N"]);
+        Assert.Equal(new object?[] { "a", "b", "c" }, ValuesOf(reopen, "T", "Name"));
+        IndexChecks.AssertEveryIndexHoldsTheRows(reopen, "MSysObjects");
+    }
+
+    // A table made inside a change kept for undoing, and taken back with it, is forgotten: the object is refused, the
+    // next table made is given its definition's page, and that table, not it, is found there.
+    [Fact]
+    public void A_table_taken_back_with_its_change_is_refused_and_its_page_is_another_tables()
+    {
+        using var db = Database.Create(_path);
+        Table takenBack;
+        int page;
+        using (db.File.BeginUndo())
+        {
+            takenBack = db.CreateTableOf("Gone", new[] { new ColumnDefinition("Id", DataType.Int32).ToColumn("columns") }, new[] { "Id" });
+            page = takenBack.Definition.TdefPageNumber;
+            Assert.Same(takenBack, db.GetTable("Gone"));
+        }
+
+        Assert.Throws<InvalidOperationException>(() => takenBack.Insert(new Row { ["Id"] = 1 }));
+        Assert.DoesNotContain(takenBack, db.HeldTables);
+        Assert.False(db.TryGetTable("Gone", out _));
+
+        var next = db.CreateTable("Next", new[] { new ColumnDefinition("Name", DataType.Text) { MaxLength = 10 } });
+        Assert.Equal(page, next.Definition.TdefPageNumber);
+        next.Insert(new Row { ["Name"] = "n" });
+        Assert.Same(next, db.GetTable("Next"));
+        Assert.Equal("n", db.GetTable("Next").Rows.Single()["Name"]);
+    }
+
     [Fact]
     public void A_DataSet_is_imported_whole_or_not_at_all()
     {

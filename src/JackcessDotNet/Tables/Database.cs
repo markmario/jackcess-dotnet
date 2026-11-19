@@ -709,7 +709,7 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Forgets <paramref name="table"/>, which this session made and an undo scope then took back with everything
     /// else it wrote: the file no longer has it, and the object is marked dropped, so that anything still holding it
-    /// is refused rather than reading pages that are gone.
+    /// is refused rather than reading pages that are gone, or another table's.
     /// </summary>
     internal void ForgetTakenBack(Table table)
     {
@@ -718,6 +718,9 @@ public sealed class Database : IDisposable
             _tables.Remove(page);
         table.MarkDropped();
     }
+
+    /// <summary>The tables this session holds, each by its definition's page. For tests.</summary>
+    internal IReadOnlyCollection<Table> HeldTables => _tables.Values;
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
                                   IReadOnlyList<string>? pkColumns,
@@ -840,6 +843,10 @@ public sealed class Database : IDisposable
         propertyMaps.Written(propertyNames);
         var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
         _tables[tdefPage] = table;
+        // Made inside a change being kept for undoing - an import's - the table is forgotten when the change is taken
+        // back, with the pages it was written to: a table made after may be given its definition's page, and must not
+        // be found as this one.
+        _file.Journal(() => ForgetTakenBack(table));
         return table;
     }
 
