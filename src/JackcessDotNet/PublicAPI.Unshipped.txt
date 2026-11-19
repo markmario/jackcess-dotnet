@@ -77,6 +77,8 @@ JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
 JackcessDotNet.Database.FileFormat.get -> JackcessDotNet.FileFormat
+JackcessDotNet.Database.DropRelationship(string! name) -> void
+JackcessDotNet.Database.DropTable(string! name) -> void
 JackcessDotNet.Database.GetRelationships() -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Relationship!>!
 JackcessDotNet.Database.GetSystemTableNames() -> System.Collections.Generic.IReadOnlyList<string!>!
 JackcessDotNet.Database.GetTable(string! name) -> JackcessDotNet.Table!
@@ -87,6 +89,7 @@ static JackcessDotNet.Database.Open(string! path, JackcessDotNet.DatabaseOpenOpt
 JackcessDotNet.Database.Path.get -> string!
 JackcessDotNet.Database.ShareLongValuePages.get -> bool
 JackcessDotNet.Database.ShareLongValuePages.set -> void
+JackcessDotNet.Database.RenameTable(string! name, string! newName) -> void
 JackcessDotNet.Database.TryGetTable(string! name, out JackcessDotNet.Table? table) -> bool
 JackcessDotNet.Database.VerifyIndexes.get -> bool
 JackcessDotNet.Database.VerifyIndexes.set -> void
@@ -247,6 +250,8 @@ JackcessDotNet.Table.CreateCursor() -> JackcessDotNet.Cursor!
 JackcessDotNet.Table.CreateIndexCursor() -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.CreateIndexCursor(string! indexName) -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.DeleteRow(string! columnName, object! value) -> void
+JackcessDotNet.Table.DropColumn(string! name) -> void
+JackcessDotNet.Table.DropIndex(string! name) -> void
 JackcessDotNet.Table.FindRowByPrimaryKey(params object?[]! primaryKey) -> JackcessDotNet.Row?
 JackcessDotNet.Table.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
 JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void
@@ -254,6 +259,8 @@ JackcessDotNet.Table.InsertRefusal.get -> string?
 JackcessDotNet.Table.LastAutoNumber.get -> int
 JackcessDotNet.Table.Name.get -> string!
 JackcessDotNet.Table.Properties.get -> JackcessDotNet.PropertyMap!
+JackcessDotNet.Table.RenameColumn(string! name, string! newName) -> void
+JackcessDotNet.Table.RenameIndex(string! name, string! newName) -> void
 JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.Table.UpdateByPrimaryKey(object! primaryKeyValue, JackcessDotNet.Row! newValues) -> void

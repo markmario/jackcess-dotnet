@@ -52,13 +52,28 @@ public sealed class Table
             .ToArray();
         _readAtVersion = version;
         _writability   = null;
+        // The properties are read again when next asked for: a column that is dropped or renamed takes its own with it.
+        _propertiesCache = null;
+        _noProperties    = null;
         // Each column reads its properties through its table.
         foreach (var column in definition.Columns) column.Owner = this;
     }
 
+    // Set when the table has been dropped (Database.DropTable): there is nothing of it left to read.
+    private bool _dropped;
+
+    /// <summary>Marks the table as dropped: everything asked of it from then on is refused.</summary>
+    internal void MarkDropped() => _dropped = true;
+
+    /// <summary>Reads the definition again under the name the table has been given (Database.RenameTable).</summary>
+    internal void Renamed(string name)
+        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
+
     // Reads the definition again when it has been changed since it was read.
     private void Refresh()
     {
+        if (_dropped)
+            throw new InvalidOperationException($"Table '{_readDefinition.Name}' has been dropped from the database.");
         int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
         if (version != _readAtVersion)
             Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber), version);
@@ -157,9 +172,11 @@ public sealed class Table
     {
         get
         {
+            // The definition first: when it has changed, what was read of the properties before is let go.
+            int tdefPage = _definition.TdefPageNumber;
             if (_propertiesCache is not null) return _propertiesCache;
             var catalog = new SystemCatalog(_file);
-            byte[]? bytes = catalog.GetPropertyBytesForObject(_definition.TdefPageNumber);
+            byte[]? bytes = catalog.GetPropertyBytesForObject(tdefPage);
             _propertiesCache = PropertyMapReader.Read(bytes, _file.Format);
             return _propertiesCache;
         }
@@ -720,6 +737,120 @@ public sealed class Table
         if (index is null) throw new ArgumentNullException(nameof(index));
         SchemaChange.AddIndex(Owner(), _file, _definition, index);
         return Indexes.First(ix => string.Equals(ix.Name, index.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Drops the column named <paramref name="name"/>, whatever the case of its letters, as Access's <c>ALTER
+    /// TABLE ... DROP COLUMN</c> does. The column leaves the table's definition, with the properties Access keeps
+    /// for it; a Memo or OLE column's long values are given back to the file. The rows are not rewritten: each
+    /// keeps the bytes it had for the column, which nothing reads any more, and the other columns keep their
+    /// places in a row - what Access does too. Compacting the file in Access writes the rows without them.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. This
+    /// <see cref="Table"/>, and any other open on the same table, is without the column from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name of the column to drop.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The table has no column of that name. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The column is part of an index or of a relationship, with referential integrity or without, as Access
+    /// refuses it: drop that first (<see cref="DropIndex"/>, <see cref="Database.DropRelationship"/>). Nothing is
+    /// changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the column is the table's only one, or a complex one (attachments or several
+    /// values). Nothing is changed.
+    /// </exception>
+    public void DropColumn(string name)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        SchemaRemoval.DropColumn(Owner(), _file, _definition, name);
+    }
+
+    /// <summary>
+    /// Drops the index named <paramref name="name"/>, whatever the case of its letters, as Access's <c>DROP
+    /// INDEX</c> does: a primary key is dropped by its index's name. The index leaves the table's definition and
+    /// the pages of its tree are given back to the file, unless another index of the table shares the tree.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. This
+    /// <see cref="Table"/>, and any other open on the same table, no longer keeps the index.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name of the index to drop.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The table has no index of that name. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The index is one a relationship keeps (<see cref="Index.IsForeignKey"/>), or the unique index or primary
+    /// key a relationship with referential integrity refers to the table's rows by, as Access refuses it: drop
+    /// the relationship first (<see cref="Database.DropRelationship"/>). Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one. Nothing is changed.</exception>
+    public void DropIndex(string name)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        SchemaRemoval.DropIndex(Owner(), _file, _definition, name);
+    }
+
+    /// <summary>
+    /// Gives the column named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>Field.Name</c> does: in the table's definition, in every
+    /// relationship the column is part of, and in the properties Access keeps for the column. The rows are not
+    /// touched, nor the table's indexes, which know a column by its number. A saved query that names the column
+    /// goes on naming it as it was, as it does when Access's engine renames one.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the column's only in the case of its letters is taken; the name the column has changes
+    /// nothing. This <see cref="Table"/>, and any other open on the same table, has the column under its new
+    /// name from then on.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the column has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table has no column named <paramref name="name"/>; or <paramref name="newName"/> is another column's
+    /// name, or one Access does not allow: empty, more than 64 characters, with a period, an exclamation mark, a
+    /// grave accent, a square bracket or a control character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one, or the column is a complex one (attachments or several values). Nothing is
+    /// changed.
+    /// </exception>
+    public void RenameColumn(string name, string newName)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        SchemaRename.RenameColumn(Owner(), _file, _definition, name, newName);
+    }
+
+    /// <summary>
+    /// Gives the index named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>Index.Name</c> does. A primary key is renamed like any other
+    /// index. The index's tree is not touched.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the index's only in the case of its letters is taken; the name the index has changes nothing.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the index has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The table has no index named <paramref name="name"/>; or <paramref name="newName"/> is another index's
+    /// name, or one Access does not allow: empty, more than 64 characters, with a period, an exclamation mark, a
+    /// grave accent, a square bracket or a control character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The index is one a relationship keeps (<see cref="Index.IsForeignKey"/>): its name is the relationship's,
+    /// or one Access made for it. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is an Access 97 one. Nothing is changed.</exception>
+    public void RenameIndex(string name, string newName)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        SchemaRename.RenameIndex(Owner(), _file, _definition, name, newName);
     }
 
     private Database Owner()

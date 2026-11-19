@@ -23,7 +23,7 @@ namespace JackcessDotNet;
 /// </summary>
 internal static class SchemaChange
 {
-    private const int MaxNameLength = 64;
+    internal const int MaxNameLength = 64;
     private const int MaxColumns    = 255;
 
     // ── A column ─────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ internal static class SchemaChange
     /// catalog sorts text, so the slot goes before the first whose name sorts after its own. (Jackcess puts a new
     /// one last.) A name no key is made for is placed by its letters, without regard to case.
     /// </summary>
-    private static int SlotPosition(IReadOnlyList<string> names, string name, SortOrder order)
+    internal static int SlotPosition(IReadOnlyList<string> names, string name, SortOrder order)
     {
         var codes = TextIndexCodes.For(order);
         byte[]? KeyOf(string text)
@@ -363,7 +363,7 @@ internal static class SchemaChange
 
     // ── A relationship ───────────────────────────────────────────────────────
 
-    private const int NoReferentialIntegrityFlag = 0x00000002;
+    internal const int NoReferentialIntegrityFlag = 0x00000002;
     private const int OneToOneFlag               = 0x00000001;
     private const int CascadeUpdatesFlag         = 0x00000100;
     private const int CascadeDeletesFlag         = 0x00001000;
@@ -371,7 +371,7 @@ internal static class SchemaChange
     private const int LeftOuterJoinFlag          = 0x01000000;
     private const int RightOuterJoinFlag         = 0x02000000;
 
-    private const string RelationshipsTable = "MSysRelationships";
+    internal const string RelationshipsTable = "MSysRelationships";
 
     internal static Relationship CreateRelationship(Database db, PageFile file, RelationshipDefinition definition)
     {
@@ -559,7 +559,7 @@ internal static class SchemaChange
     /// Access makes itself for a referenced table's index - .rB, .rC... - from being anyone else's: given ".rB"
     /// for a relationship of a table to itself, this library once wrote two indexes of that name into the table.
     /// </summary>
-    private static void EnsureValidName(string name, string ofWhat, string parameter)
+    internal static void EnsureValidName(string name, string ofWhat, string parameter)
     {
         if (name.Length > 0 && name[0] != ' ' && !name.Any(c => c is '.' or '!' or '`' or '[' or ']' || char.IsControl(c))) return;
         throw new ArgumentException(
@@ -592,7 +592,7 @@ internal static class SchemaChange
     /// its end, or it names an index column or block it has not - since what would be written back is only what
     /// was read.
     /// </summary>
-    private static void EnsureReadWhole(TableDefinition table)
+    internal static void EnsureReadWhole(TableDefinition table)
     {
         if (table.HasUnreadColumns || table.HasUnreadIndexes)
             throw new NotSupportedException(
@@ -608,7 +608,7 @@ internal static class SchemaChange
     /// After a change is written: every <see cref="Table"/> open on the table reads its definition again, and the
     /// relationships are read again by whatever keeps them.
     /// </summary>
-    private static void Changed(Database db, PageFile file, int tdefPage)
+    internal static void Changed(Database db, PageFile file, int tdefPage)
     {
         file.DefinitionChanged(tdefPage);
         db.SchemaChanged();

@@ -24,10 +24,10 @@ public sealed class MultiPageDefinitionTests : IDisposable
     private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
 
     /// <summary>A column name long enough that thirty of them fill a page: 60 characters.</summary>
-    private static string LongName(int n) => $"Column_{n:D3}_" + new string((char)('a' + n % 26), 49);
+    internal static string LongName(int n) => $"Column_{n:D3}_" + new string((char)('a' + n % 26), 49);
 
     /// <summary>The pages a table's definition is on, from its first: read from the file's own bytes.</summary>
-    private static List<int> PagesOf(Database db, string table)
+    internal static List<int> PagesOf(Database db, string table)
     {
         var pages = new List<int> { db.GetTable(table).Definition.TdefPageNumber };
         while (ByteUtil.GetInt(db.File.ReadPage(pages[^1]), 4) is var next && next != 0)
@@ -40,7 +40,7 @@ public sealed class MultiPageDefinitionTests : IDisposable
     /// first page counted whole and the others without their eight bytes, a full page's free space 0 and the
     /// last page's what is left of it less eight, and 0xFFFF where the length says the definition ends.
     /// </summary>
-    private static void AssertLaidOutAsAccessDoes(Database db, string table)
+    internal static void AssertLaidOutAsAccessDoes(Database db, string table)
     {
         var file  = db.File;
         int size  = file.Format.PageSize;

@@ -1075,6 +1075,99 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
+    /// Drops the relationship named <paramref name="name"/>, whatever the case of its letters, as DAO's
+    /// <c>Relations.Delete</c> and Access's Relationships window do: its rows in <c>MSysRelationships</c>, its
+    /// entry in the catalog and the permissions on it and, when it has referential integrity, the index Access
+    /// keeps for it on each of its tables. An index that was built for it goes with its pages; one that shared
+    /// another index's tree leaves that index as it was. The tables' rows are not touched.
+    /// <para>
+    /// Everything is found before anything is written, and what is written is taken back if writing it fails: a
+    /// refused change leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The relationship's name (<see cref="Relationship.Name"/>).</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The database has no relationship of that name. Nothing is changed.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one, or a system table that holds the relationship has an index whose keys this
+    /// library does not write. Nothing is changed.
+    /// </exception>
+    public void DropRelationship(string name)
+    {
+        ThrowIfDisposed();
+        SchemaRemoval.DropRelationship(this, _file, name ?? throw new ArgumentNullException(nameof(name)));
+    }
+
+    /// <summary>
+    /// Drops the table named <paramref name="name"/>, whatever the case of its letters, with its rows, as
+    /// Access's <c>DROP TABLE</c> does: its entry in the catalog and the permissions on it go, the relationships
+    /// in which it refers to another table - or to itself - go with it, and every page it has is given back to
+    /// the file, for Access to use again. A <see cref="Table"/> got for it before is of no further use: whatever
+    /// is asked of it throws <see cref="InvalidOperationException"/>.
+    /// <para>
+    /// Everything is found before anything is written, and what is written is taken back if writing it fails: a
+    /// refused change leaves the file byte for byte as it was.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The table's name.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
+    /// <exception cref="ArgumentException">The database has no table of that name, or the name is empty. Nothing is changed.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Another table refers to the table in a relationship, as Access refuses it: drop the relationship first
+    /// (<see cref="DropRelationship"/>). Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table, or has a complex column (attachments or several
+    /// values); or a system table that lists it has an index whose keys this library does not write. Nothing is
+    /// changed.
+    /// </exception>
+    public void DropTable(string name)
+    {
+        ThrowIfDisposed();
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        int tdefPage = SchemaRemoval.DropTable(this, _file, name);
+        if (_tables.TryGetValue(tdefPage, out var dropped))
+        {
+            dropped.MarkDropped();
+            _tables.Remove(tdefPage);
+        }
+    }
+
+    /// <summary>
+    /// Gives the table named <paramref name="name"/>, whatever the case of its letters, the name
+    /// <paramref name="newName"/>, as DAO's <c>TableDef.Name</c> does: in the catalog, and in every relationship
+    /// the table is part of. The table's rows, columns and indexes are not touched. A saved query that names the
+    /// table goes on naming it as it was, as it does when Access's engine renames one. A <see cref="Table"/> got
+    /// for the table before has the new name (<see cref="Table.Name"/>) from then on.
+    /// <para>
+    /// The change is whole or not at all: a refused one leaves the file byte for byte as it was. A name that
+    /// differs from the table's only in the case of its letters is taken; the name the table has changes nothing.
+    /// </para>
+    /// </summary>
+    /// <param name="name">The name the table has.</param>
+    /// <param name="newName">The name to give it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> or <paramref name="newName"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The database has no table named <paramref name="name"/>, or the name is empty; or
+    /// <paramref name="newName"/> is the name of another table or query, or one Access does not allow: empty,
+    /// more than 64 characters, with a period, an exclamation mark, a grave accent, a square bracket or a control
+    /// character in it, or a space at its start. Nothing is changed.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one; the table is a system table; or the catalog has an index whose keys this
+    /// library does not write, for the name or at all. Nothing is changed.
+    /// </exception>
+    public void RenameTable(string name, string newName)
+    {
+        ThrowIfDisposed();
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (newName is null) throw new ArgumentNullException(nameof(newName));
+        int tdefPage = SchemaRename.RenameTable(this, _file, name, newName);
+        if (_tables.TryGetValue(tdefPage, out var renamed) && renamed.Name != newName)
+            renamed.Renamed(newName);
+    }
+
+    /// <summary>
     /// Closes the file. Everything written is in the file already: nothing is held back until now. A second call
     /// does nothing.
     /// </summary>

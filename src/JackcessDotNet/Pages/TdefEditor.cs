@@ -66,6 +66,41 @@ internal sealed class TdefEditor
     /// <summary>How many index slots the definition has.</summary>
     internal int SlotCount => _slotCount;
 
+    /// <summary>
+    /// What the slot at <paramref name="position"/> says of itself beside its name, number and block: its type (0
+    /// an ordinary index, 1 a primary key, 2 a relationship's), and for a relationship's which side of it the
+    /// table is (<see cref="ForeignKeyPrimaryTable"/>, <see cref="ForeignKeySecondaryTable"/>), the number of the
+    /// other side's index and the page of the other table's definition.
+    /// </summary>
+    internal (byte IndexType, byte Side, int OtherIndexNumber, int OtherTablePage) SlotReference(int position)
+    {
+        if (position < 0 || position >= _slotCount) throw new ArgumentOutOfRangeException(nameof(position));
+        int p = _slots + position * _format.SizeIndexInfoBlock + _format.SkipBeforeIndexSlot;
+        return (_page[p + 19], _page[p + 8], ByteUtil.GetInt(_page, p + 9), ByteUtil.GetInt(_page, p + 13));
+    }
+
+    /// <summary>The usage map that lists the pages of the tree of block <paramref name="number"/>, and the tree's root page.</summary>
+    internal (int UmapPage, int UmapRow, int RootPage) BlockPages(int number)
+    {
+        if (number < 0 || number >= _indexCount) throw new ArgumentOutOfRangeException(nameof(number));
+        int p = _blocks + number * _format.SizeIndexColumnBlock + _format.SkipBeforeIndex + IndexDefinition.MaxColumns * 3;
+        return (ByteUtil.Get3ByteInt(_page, p + 1), _page[p], ByteUtil.GetInt(_page, p + 4));
+    }
+
+    /// <summary>The numbers of the columns block <paramref name="number"/> is on, in key order.</summary>
+    internal IReadOnlyList<int> BlockColumns(int number)
+    {
+        if (number < 0 || number >= _indexCount) throw new ArgumentOutOfRangeException(nameof(number));
+        int p = _blocks + number * _format.SizeIndexColumnBlock + _format.SkipBeforeIndex;
+        var columns = new List<int>();
+        for (int c = 0; c < IndexDefinition.MaxColumns; c++)
+        {
+            int column = ByteUtil.GetUShort(_page, p + c * 3);
+            if (column != 0xFFFF) columns.Add(column);
+        }
+        return columns;
+    }
+
     /// <summary>The names of the index slots, in the order the definition lists them.</summary>
     internal IReadOnlyList<string> SlotNames { get; private set; } = Array.Empty<string>();
 
@@ -452,12 +487,25 @@ internal sealed class TdefEditor
         Parse();
     }
 
-    /// <summary>The slot at <paramref name="position"/>, as its bytes are: to be put back at another place.</summary>
-    internal byte[] SlotBytes(int position)
+    /// <summary>
+    /// Takes the slot at <paramref name="position"/> out and puts it back, as its bytes are, at
+    /// <paramref name="newPosition"/> among the slots that are left, under <paramref name="name"/>: Access keeps a
+    /// table's slots in the order of their names, so a renamed index's slot moves to where its new name sorts.
+    /// </summary>
+    internal void MoveIndexSlot(int position, int newPosition, string name)
     {
+        if (position < 0 || position >= _slotCount) throw new ArgumentOutOfRangeException(nameof(position));
+        if (newPosition < 0 || newPosition >= _slotCount) throw new ArgumentOutOfRangeException(nameof(newPosition));
         var slot = new byte[_format.SizeIndexInfoBlock];
         Array.Copy(_page, _slots + position * _format.SizeIndexInfoBlock, slot, 0, slot.Length);
-        return slot;
+        RemoveIndexSlot(position);
+
+        int nameAt = _slotNames;
+        for (int i = 0; i < newPosition; i++) ReadName(ref nameAt);
+        Insert(_slots + newPosition * _format.SizeIndexInfoBlock, slot);
+        Insert(nameAt + slot.Length, NameBytes(name));
+        ByteUtil.PutInt(_page, _format.TdefOffsetNumIndexSlots, _slotCount + 1);
+        Parse();
     }
 
     /// <summary>The definition as changed: its bytes, whole, with its length in bytes 8-11.</summary>
