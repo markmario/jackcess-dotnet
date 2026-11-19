@@ -630,15 +630,15 @@ public static class DatabaseImporter
 
     private static string ColumnNameOf(PropertyInfo property) => property.GetCustomAttribute<ColumnAttribute>()?.Name ?? property.Name;
 
-    // Two columns whose names Access takes as one - "A" and "a" of a case-sensitive DataTable - would be one column of
-    // the table: refused before anything is written, as CreateTable refuses them.
+    // Two columns whose names are one without regard to case - "A" and "a" of a case-sensitive DataTable - would be one
+    // column of the table: refused before anything is written, as CreateTable refuses them (ObjectNames).
     private static void EnsureNamesApart(IReadOnlyList<Column> columns, string source, string paramName)
     {
         for (int i = 1; i < columns.Count; i++)
             for (int j = 0; j < i; j++)
                 if (ObjectNames.Same(columns[j].Name, columns[i].Name))
                     throw new ArgumentException(
-                        $"{source} has two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names Access takes as one: " +
+                        $"{source} has two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names are one without regard to case: " +
                         "a table has one column of a name. Nothing was imported.", paramName);
     }
 

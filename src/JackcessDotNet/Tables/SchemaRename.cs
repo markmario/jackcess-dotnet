@@ -34,7 +34,7 @@ internal static class SchemaRename
             ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "a column", nameof(newName));
         if (table.Columns.FirstOrDefault(c => c != column && ObjectNames.Same(c.Name, newName)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has a column named '{taken.Name}', which Access takes as the name '{newName}'. Nothing was changed.", nameof(newName));
+            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken.Name, newName)}. Nothing was changed.", nameof(newName));
         if (column.DataType == DataType.Complex)
             throw new NotSupportedException(
                 $"Column '{column.Name}' of '{table.Name}' is a complex one (attachments or several values), whose values are " +
@@ -85,7 +85,7 @@ internal static class SchemaRename
             ?? throw new ArgumentException($"Table '{table.Name}' has no index named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "an index", nameof(newName));
         if (table.Indexes.FirstOrDefault(ix => ix != index && ObjectNames.Same(ix.Name, newName)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has an index named '{taken.Name}', which Access takes as the name '{newName}'. Nothing was changed.", nameof(newName));
+            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken.Name, newName)}. Nothing was changed.", nameof(newName));
         if (index.IsForeignKey)
             throw new InvalidOperationException(
                 $"Index '{index.Name}' of '{table.Name}' is kept for a relationship, and has the name Access gave it for that. Nothing was changed.");

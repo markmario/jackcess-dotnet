@@ -662,8 +662,9 @@ public sealed class Database : IDisposable
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
     /// (<see cref="ColumnDefinition"/>), the primary key or an index names a column that is not among them, the
-    /// primary key names more columns than a key has, two indexes have one name, or an index definition is a
-    /// primary key (<see cref="IndexDefinition.IsPrimaryKey"/>). Nothing is created.
+    /// primary key names more columns than a key has, two columns or two indexes have one name - names equal
+    /// without regard to case are one - or an index definition is a primary key
+    /// (<see cref="IndexDefinition.IsPrimaryKey"/>). Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
@@ -731,7 +732,7 @@ public sealed class Database : IDisposable
             for (int j = 0; j < i; j++)
                 if (ObjectNames.Same(columns[j].Name, columns[i].Name))
                     throw new ArgumentException(
-                        $"Table '{name}' is given two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names Access takes as one. Nothing was created.",
+                        $"Table '{name}' is given two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names are one without regard to case. Nothing was created.",
                         nameof(columns));
         _file.EnsureWritable();
 
@@ -931,7 +932,7 @@ public sealed class Database : IDisposable
                     $"Index '{index.Name}' is a primary key: a table is created with its primary key by naming the key's columns, " +
                     "not by an index definition.", nameof(secondary));
             if (planned.FirstOrDefault(p => ObjectNames.Same(p.Name, index.Name)) is { } taken)
-                throw new ArgumentException($"Table '{table}' is given two indexes, '{taken.Name}' and '{index.Name}', whose names Access takes as one.", nameof(secondary));
+                throw new ArgumentException($"Table '{table}' is given two indexes, '{taken.Name}' and '{index.Name}', whose names are one without regard to case.", nameof(secondary));
             foreach (string descending in index.DescendingColumns)
                 if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
                     throw new ArgumentException(

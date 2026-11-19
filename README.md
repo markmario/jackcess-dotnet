@@ -477,14 +477,16 @@ index slots.
   exclamation mark, a grave accent, a square bracket or a control character in it, or a space at its start. So
   nothing can take the name Access gives a referenced table's index (`.rB`, `.rC`...). A relationship given no
   name is named for its two tables; when their names make no valid name, one has to be given.
-- **A name Access takes as one another object has is taken.** A table, or a column, index or relationship, is
-  refused a name another of its kind has as Access compares names, measured with DAO: not telling apart case, in
-  any script; the width of the Halfwidth and Fullwidth Forms; hiragana and katakana; an accent written as one
-  character or as two; and ß, æ, œ, þ, ĳ or a Latin ligature and the letters they are written for. Names that
-  differ in an accent (`e`, `é`), in the dotted and dotless i's, or in spaces are two names. `CreateTable` is
-  refused two columns of one name so (`ArgumentException`, before anything is written): it made both, and a row
-  then kept one value for the two. The comparison is the same on every target; Access's own differs from it in
-  a few characters measured (it takes `x⁵` and `x5` as one).
+- **A name another object of its kind has is taken, without regard to case.** A table, or a column, index or
+  relationship, is refused a name another of its kind has, the two compared as .NET compares them without regard
+  to case (`StringComparison.OrdinalIgnoreCase`) - the comparison this library looks names up with, so that no
+  two objects are taken for each other. `CreateTable` is refused two columns of one name so (`ArgumentException`,
+  before anything is written): it made both, and a row then kept one value for the two. The comparison throws for
+  no name: one already in a file - a noncharacter in it, say - stands in the way only of a new name equal to it.
+  This is not yet Access's own rule. Measured with DAO, Access also takes as one names that differ in width, in
+  kana, or in an accent written as one character or as two, which are two names here. And it keeps apart names
+  .NET takes as one without regard to case - `xµ` and `xμ` (the micro sign and the Greek mu), and letters of
+  other scripts that .NET's newer case tables pair - which are one name here on .NET, and two on .NET Framework.
 - **A table related to itself** has both of the relationship's indexes: the foreign key's is numbered first and
   the referenced side's after it, and named by that number, as DAO writes them.
 - **One to one.** A relationship whose columns are unique on both sides is marked one to one, as Access's
@@ -662,9 +664,9 @@ An import holds every value of its source exactly, or refuses before anything is
 - **An empty byte array is written as `Table.Insert` writes one**, for a table made and for one that is there: a
   value of no bytes, as ACE's own INSERT writes it, which ACE reads back as one and DAO shows as Null (see
   [Rows and long values](#rows-and-long-values-what-to-know)).
-- **Two columns whose names Access takes as one are refused** - `A` and `a` of a case-sensitive `DataTable`, a
-  property and a `[Column("a")]` - for a table made, which would have one column of the name, and for one that is
-  there, whose column would keep one of their values.
+- **Two columns whose names are one without regard to case are refused** - `A` and `a` of a case-sensitive
+  `DataTable`, a property and a `[Column("a")]` - for a table made, which would have one column of the name, and
+  for one that is there, whose column would keep one of their values.
 - An `IEnumerable<T>` is read whole, every object, before anything is written.
 
 POCO mapping respects `[Key]`, `[Column("X")]`, `[Column(Order = n)]`, `[MaxLength]`, `[Required]`, `[NotMapped]`
