@@ -147,9 +147,11 @@ internal sealed class JetFormat
     private static readonly bool _encodingsRegistered = InitEncodings();
     private static bool InitEncodings()
     {
-#if !NETFRAMEWORK && !NETSTANDARD2_0
-        // .NET Framework has legacy code pages (cp1252 etc.) in-box; the
-        // CodePages provider package is only needed on .NET (Core).
+#if !NETFRAMEWORK
+        // .NET Framework has legacy code pages (cp1252 etc.) in-box; .NET does not, and
+        // has them from this provider. The netstandard2.0 assembly registers it too: it
+        // is the one a .NET 8 or 9 application loads, and without the provider no
+        // database opens there. On .NET Framework the provider adds nothing and is harmless.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 #endif
         return true;

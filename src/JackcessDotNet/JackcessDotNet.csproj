@@ -89,6 +89,10 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net48' OR '$(TargetFramework)' == 'netstandard2.0'">
     <Reference Include="System.ComponentModel.DataAnnotations" Condition="'$(TargetFramework)' == 'net48'" />
     <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <!-- The legacy code pages (cp1252 etc.). .NET Framework has them in-box, and .NET 10 and 11 have
+         this provider in the framework itself, so only the netstandard2.0 assembly needs the package:
+         it is the one a .NET 8 or 9 application loads (see JetFormat.InitEncodings). -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
     <PackageReference Include="System.Memory" Version="4.6.0" />
     <PackageReference Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <!-- Source-generates language-support polyfills (Index/Range, required
