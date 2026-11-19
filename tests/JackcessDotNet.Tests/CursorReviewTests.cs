@@ -199,4 +199,81 @@ public sealed class CursorReviewTests : IDisposable
         Assert.Equal(20, join.FindFirstRow(row)?["Id"]);
         Assert.Equal(new[] { 20 }, join.FindRows(row).Select(r => (int)r["Id"]!));
     }
+
+    // ── Row operations that fail part-way ────────────────────────────────────
+
+    private static string Wide(int id, int length) => new((char)(0x3A9 + id % 20), length);
+
+    [Fact]
+    public void A_delete_that_fails_while_it_is_written_is_taken_back()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 }, new ColumnDefinition("C", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("Notes", DataType.Memo),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByA", "A") });
+        for (int i = 1; i <= 30; i++) table.Insert(new Row { ["Id"] = i, ["A"] = Wide(i, 100), ["Notes"] = new string('n', 5000) });
+        // A row whose values are on another page than its slot.
+        var grown = table.FindRowByPrimaryKey(3)!;
+        grown["A"] = Wide(3, 255); grown["B"] = Wide(4, 255); grown["C"] = Wide(5, 255);
+        table.Update(grown);
+        Assert.Equal(JetFormat.OverflowRowFlag, ByteUtil.GetUShort(db.File.ReadPage(grown.Id!.Value.PageNumber),
+            db.File.Format.OffsetDataRowTable + grown.Id.Value.RowNumber * JetFormat.SizeRowEntry) & 0xC000);
+        var before = IndexChecks.AllPages(db);
+
+        bool deleted = false;
+        for (int writes = 0; writes < 200 && !deleted; writes++)
+        {
+            db.File.WritesBeforeFailure = writes;
+            var thrown = Record.Exception(() => table.Delete(table.FindRowByPrimaryKey(3)!));
+            db.File.WritesBeforeFailure = null;
+            if (thrown is null) { deleted = true; break; }
+            Assert.IsType<IOException>(thrown);
+            IndexChecks.AssertUnchanged(before, db);
+        }
+        Assert.True(deleted);
+        Assert.Null(table.FindRowByPrimaryKey(3));
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 29);
+    }
+
+    [Fact]
+    public void An_insert_that_fails_while_it_is_written_is_taken_back()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true }, new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("Notes", DataType.Memo),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByA", "A") });
+        for (int i = 1; i <= 14; i++) table.Insert(new Row { ["A"] = Wide(i, 255) });
+        var before = IndexChecks.AllPages(db);
+        int last = table.LastAutoNumber;
+
+        // The row's long value, its page, the definition and two indexes: a failure at each write leaves the file,
+        // the counter and the row as they were.
+        bool inserted = false;
+        for (int writes = 0; writes < 200 && !inserted; writes++)
+        {
+            var row = new Row { ["A"] = Wide(99, 255), ["Notes"] = new string('n', 9000) };
+            db.File.WritesBeforeFailure = writes;
+            var thrown = Record.Exception(() => table.Insert(row));
+            db.File.WritesBeforeFailure = null;
+            if (thrown is null)
+            {
+                inserted = true;
+                Assert.Equal(last + 1, row["Id"]);
+                Assert.True(writes > 4, $"{writes} writes");
+                break;
+            }
+            Assert.IsType<IOException>(thrown);
+            IndexChecks.AssertUnchanged(before, db);
+            Assert.False(row.ContainsKey("Id"));
+            Assert.Equal(last, table.LastAutoNumber);
+        }
+        Assert.True(inserted);
+        Assert.Equal(9000, ((string)table.FindRowByPrimaryKey(last + 1)!["Notes"]!).Length);
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 15);
+    }
 }

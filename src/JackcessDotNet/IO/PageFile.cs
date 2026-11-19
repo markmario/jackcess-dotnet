@@ -279,6 +279,12 @@ internal sealed class PageFile : IDisposable
         return _undo = new UndoScope(this);
     }
 
+    /// <summary>
+    /// As <see cref="BeginUndo"/>, for a change that is made on its own or as part of a larger one: null, with
+    /// nothing begun, when a scope is open already, which then takes the change back with the rest of its own.
+    /// </summary>
+    internal UndoScope? BeginUndoUnlessOpen() => _undo is null ? BeginUndo() : null;
+
     /// <summary>The pages a change has written over, as they were, until it is committed or disposed.</summary>
     internal sealed class UndoScope : IDisposable
     {

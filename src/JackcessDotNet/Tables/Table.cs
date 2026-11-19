@@ -425,8 +425,13 @@ public sealed class Table
     /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values
     /// afterwards: a Long column gets one more than <see cref="LastAutoNumber"/>, a Guid column a new GUID. A
     /// value the row already holds for such a column is ignored and replaced, unless
-    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own. An insert that fails before the row is
-    /// written leaves the counter and <paramref name="row"/> as they were, so the number is not lost.
+    /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own.
+    /// </para>
+    /// <para>
+    /// The row's bytes, its long values, the page it may add to the table, the definition's row count and counter
+    /// and the row's index entries are written together or not at all: an insert that fails, even while it is
+    /// being written, leaves the file, the counter and <paramref name="row"/> as they were, so the number is not
+    /// lost.
     /// </para>
     /// </summary>
     /// <exception cref="ConstraintViolationException">
@@ -447,13 +452,13 @@ public sealed class Table
         EnsureTakesRows();
 
         var given = AutoNumberValuesIn(row);
-        int? lastAutoNumber;
-        int  rowPtr;
-        IReadOnlyList<TableIndexes.Entry> entries;
-        IndexWriter? looked;
+
+        // What is written is taken back if writing fails - with the rest of a larger change when the insert is
+        // part of one (InsertRange, a relationship's catalog rows).
+        using var undo = _file.BeginUndoUnlessOpen();
         try
         {
-            lastAutoNumber = FillAutoNumbers(row);
+            int? lastAutoNumber = FillAutoNumbers(row);
 
             // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
             // bool it stands for - read once, for the row's bytes and its index entries alike.
@@ -462,15 +467,21 @@ public sealed class Table
             _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
             // Everything an index can refuse the row for, before any of it is written.
-            entries = _indexes.EntriesFor(written, enforce: true);
-            looked  = _indexes.EnsureNoDuplicates(entries, forEntry: true);
+            var entries = _indexes.EntriesFor(written, enforce: true);
+            var looked  = _indexes.EnsureNoDuplicates(entries, forEntry: true);
 
-            rowPtr = _dataWriter.InsertRow(_definition, written);
+            int rowPtr = _dataWriter.InsertRow(_definition, written);
+
+            // The counter and the row count go to the definition together, once the row is on its page and before
+            // its index entries: a row in the file is always one the counter has passed.
+            _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
+            _indexes.Add(entries, rowPtr, looked);
+            undo?.Commit();
         }
         catch when (given is not null)
         {
-            // The row was not written: it goes back to the caller as it came. The counter was never moved - it
-            // is written with the row count, below - so the next insert is given this row's number.
+            // Nothing of the row stays in the file: it goes back to the caller as it came. The counter is written
+            // with the row count, so it has not moved, and the next insert is given this row's number.
             foreach (var (name, had, value) in given)
             {
                 if (had) row[name] = value;
@@ -478,11 +489,6 @@ public sealed class Table
             }
             throw;
         }
-
-        // The counter and the row count go to the definition together, once the row is on its page and before its
-        // index entries: a row in the file is always one the counter has passed, whatever becomes of the entries.
-        _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
-        _indexes.Add(entries, rowPtr, looked);
     }
 
     /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
@@ -820,13 +826,13 @@ public sealed class Table
         // The row, the pages its long values go to and its index entries change together or not at all: what
         // is written is taken back if writing fails. The counter is raised once the row is on its page and
         // before its index entries, as an insert's is.
-        using var undo = _file.BeginUndo();
+        using var undo = _file.BeginUndoUnlessOpen();
         var entries = new EntryMove(this, refuseDuplicates: true);
         newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, newValues, entries.BeforeChange);
         if (highestGiven is { } given)
             _dataWriter.RaiseLastAutoNumber(_definition.TdefPageNumber, given);
         entries.Follow(rowPtr, newRowPtr);
-        undo.Commit();
+        undo?.Commit();
         return newRowPtr;
     }
 
@@ -839,9 +845,17 @@ public sealed class Table
         _file.EnsureWritable();
         _indexes.EnsureCanBeKept();
         if (_owningDb?.ForeignKeysFor(this) is { } foreignKeys)
+        {
             foreignKeys.Delete(this, rowPtr);
-        else
-            DeleteRowAt(rowPtr);
+            return;
+        }
+
+        // The row's slot, the place its values were moved to, its long values' pages, the definition's count and
+        // its index entries change together or not at all: what is written is taken back if writing fails - with
+        // the rest of a larger change when the delete is part of one.
+        using var undo = _file.BeginUndoUnlessOpen();
+        DeleteRowAt(rowPtr);
+        undo?.Commit();
     }
 
     /// <summary>The row at <paramref name="rowPtr"/> as a cursor reads it, every column or those of <paramref name="columns"/>; null when no row is there.</summary>
