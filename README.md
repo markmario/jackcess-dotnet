@@ -168,6 +168,10 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   giving again the rows it passed but not the row it is on; a savepoint keeps what the cursor had given, kept up
   as rows move. A cursor is told of a change once it is in the file for good, and holds a few stretches of its
   index however many rows it moves.
+- **A scan in a table's own order gives the rows the table had when it began** - `Table.Rows`, and a cursor from
+  when it lists the table's pages, which it does again each time it is put before the first row or after the last.
+  A row inserted while it goes is not given, whichever page the row goes to: a new one, or one where a delete or an
+  update left room, which can be a page the scan has still to come to. A row deleted while it goes is passed.
 - **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
   was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
   column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes
@@ -246,10 +250,13 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
   whose keys it does not make (below), a character Access keys by its neighbours, or a key longer than an entry
   holds (below). `FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
+- **Room a delete or an update leaves is used again where Access uses it** (#58; see
+  [Rows and long values](#rows-and-long-values-what-to-know)). A deleted row's bytes leave its page and the rows
+  after them close up; its slot stays, marked deleted: a `Row`, a cursor or a savepoint that read the row finds no
+  row there, and an update or a delete through it is refused with `InvalidOperationException`, however the page is
+  used again.
 - **Not there:** column matchers of a caller's own (Jackcess's `ColumnMatcher`); a null is not found by
-  looking for null, where Jackcess finds one; and the room an emptied overflow slot or a deleted row leaves on a
-  page is not used again, so a row updated back and forth past its page's room makes the file grow until Access
-  compacts it (#58).
+  looking for null, where Jackcess finds one.
 
 ## Opening password-protected files
 
@@ -850,8 +857,13 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Four target frameworks:** `net10.0`, `net11.0`, `net48` and `netstandard2.0`, each of them tested.
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
   Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
-- **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
-  also stay in insertion order. A page holds at most 255 rows.
+- **Rows go where Access puts them, and finding room costs no more as a table grows.** A row goes to the
+  lowest page the table's free-space map lists with room for it, as in Access - in a table only inserted into, as
+  an export is, its last page, so rows stay in insertion order - and room a delete or an update frees is used
+  again as Access uses it (#58): after a delete, or an update that moves a row's values to another page and back,
+  a row can go to an earlier page. A listed page tried without room for the row leaves the map, so a run of
+  inserts tries at most as many pages as it has inserts and the map lists pages, at any size of table; one insert
+  can try every listed page, when none has room for it, as Access's can (below). A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
 - **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),
@@ -1146,6 +1158,45 @@ have been deleted - and a row Access moved to another page is read where its poi
 - **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the
   first bit alone; they stay deleted for this library and for Access, which reads, edits and compacts such a
   table as any other.
+- **Where a row goes, and the room a delete or an update leaves, are Access's** (#58), as measured with DAO 16 and
+  ACE 16 in `.mdb` and `.accdb` files, on tables Access made and tables this library made, in one session or many.
+  ExportMdb.Interop's suite has Access place the same rows and compares every page's room and slots, and the map:
+  - A new row - and the values of a row an update makes too long for its page - goes to the lowest page the
+    table's free-space map lists (the second usage map of its definition). A listed page without room for the row
+    and its slot, or with 255 rows, leaves the map and the next is tried: a page leaves the map so, never because a
+    row filled it. With none, the row goes to a new page, which the map lists only when it has room, the row on it,
+    for another row of the same size: a page a row of more than half a page began is not listed, so the next row,
+    however small, goes to another page - a new one when no other is listed - in Access as here.
+  - A delete takes the row's bytes off its page - the rows after them close up - and leaves its slot, marked
+    deleted and empty; a new row takes a slot of its own, not a deleted row's. The page is listed when, before the
+    delete, it had no room for the row it lost and a slot, whatever room the delete leaves it (to the byte, for rows
+    of 101 to 401 bytes). A page a delete leaves with no row stays the table's.
+  - An update that fits where the row is lists nothing. A row that comes home lists the page its values leave by the
+    same rule as a delete; values that move on to another page do not list the page they leave.
+  - Access gives back to the file a page an update leaves with no row - out of the table's maps - and takes it again
+    for the next page it needs, its slots begun again from the first: a row updated back and forth past its page's
+    room adds a page to Access's file at most when each change is a session of its own (one in 3,000 such cycles,
+    measured). In one session Access did not take such pages back: its file grew by about three pages in four cycles
+    (26 to 774 pages in 1,000), its table keeping its 4. This library adds every page at the end of the file and takes
+    none back from it, so it keeps such a page for the table, begun again and listed: the next row, or values moved,
+    go to it. Every slot on such a page was a deleted one - values moved there and gone again, or a row deleted with
+    its index entries. A row deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint,
+    so until the session ends the page keeps that row's slot, deleted, with the slots before it, and is begun again
+    after them: a slot number is used again only where nothing names it, and what read a deleted row finds no row in
+    its slot. So the file grows by a page at most from one session to the next, and in one session while no row is
+    deleted from that page; rows inserted and deleted on it in one session fill it with kept slots, up to 255, and the
+    table then takes a new page. Over 3,000 such cycles in one session, each also inserting and deleting a small row
+    on that page, this library's file went from 64 to 76 pages, and Access's from 64 to 8,931, its table keeping its 4
+    pages (from 64 to 2,804 without the small row).
+  - Finding a page reads the pages tried and no other: the map is read once a session, and kept. A page tried
+    without room for the row leaves the map, as in Access, so each listed page is tried once while it is listed: a
+    run of inserts tries at most as many pages as it has inserts and the map lists pages, a few pages read for each,
+    however large the table. One insert tries every listed page when none has room for it - a row larger than the
+    room any delete left - and takes each off the map, about three pages read and one written for each (2,000 pages
+    listed, a row of 1,039 bytes: 3,012 read, 1,008 written), so that the inserts after it try none of them again.
+  - Where Access does not use room, this library does not either: a page with 255 slots takes no more rows, however
+    many of them are deleted ones; a row that shrinks where it is, or whose values move to another page, lists no
+    page. Compacting the file in Access gives all of it back.
 - **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
   has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
   replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
@@ -1156,8 +1207,10 @@ have been deleted - and a row Access moved to another page is read where its poi
 - **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
   looks at no page that cannot take the value, however many the column has. A page is listed in the column's
   free-space map while it has 258 bytes or more free, which is where ACE lists one (it lists none with 257 or
-  fewer), and only once a value is on it. The first long value written to a column in a session
-  reads the pages its map lists, once.
+  fewer), and only once a value is on it. The first long value written to a column in a session, of one chunk or
+  a chain, reads the pages its map lists, once: a chain's chunks go to pages emptied in an earlier session too (#58).
+  A value made longer and shorter again and again adds a page to its file at most, as in Access; when each change
+  was a session of its own, every chain a session wrote first went to new pages.
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
 versions of the engine.

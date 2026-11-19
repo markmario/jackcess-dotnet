@@ -1088,6 +1088,7 @@ public sealed class Database : IDisposable
             UmapPageNumber = info.OwnedPagesUmapPage,
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
+            FreeSpaceUmapPage = info.FreeSpaceUmapPage,
             Indexes        = info.Indexes,
             HasUnreadIndexes = info.HasUnreadIndexes || isBroken,
             MaxColumnCount    = info.MaxColumnCount,

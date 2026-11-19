@@ -273,8 +273,8 @@ public sealed class Table
     /// The rows are read as they are enumerated, a page at a time, so a table of any size can be gone through
     /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
     /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
-    /// are those of the pages as they were listed, and of each page as it was when it was reached: take the
-    /// list first.
+    /// are those of the pages as they were listed, and of each page as it was when it was reached, without a row
+    /// inserted since the enumeration began, whichever page it went to: take the list first.
     /// </para>
     /// </summary>
     public IEnumerable<Row> Rows
@@ -291,25 +291,35 @@ public sealed class Table
             byte[] umapPage  = _file.ReadPage(definition.UmapPageNumber);
             var    ownedList = UsageMap.GetOwnedPages(umapPage, definition.OwnedPagesRow, format, _file);
 
-            // Each page is read once, and its rows given from that reading.
-            foreach (int pageNum in ownedList)
+            // Each page is read once, and its rows given from that reading - those it held when the pages were listed:
+            // a row inserted since is not given, whichever page it goes to (TableScan).
+            var scan = _file.TableScans.Begin(definition.TdefPageNumber);
+            scan.Restart(ownedList);
+            try
             {
-                byte[] dp       = _file.ReadPage(pageNum);
-                int    rowCount = ByteUtil.GetShort(dp, format.OffsetDataNumRows);
-
-                for (int r = 0; r < rowCount; r++)
+                foreach (int pageNum in ownedList)
                 {
-                    // Deleted rows are passed; an overflow row is read where its pointer leads.
-                    if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+                    byte[] dp       = _file.ReadPage(pageNum);
+                    int    rowCount = scan.Slots(pageNum, ByteUtil.GetShort(dp, format.OffsetDataNumRows));
 
-                    // Every column has its entry, in the table's order: null for a column with no value.
-                    var row = new Row(definition.Columns.Count);
-                    foreach (var col in definition.Columns)
-                        row[col.Name] = decoder.Decode(rowBytes, col);
-                    // (A row past the 256th of its page has no address: Jet names a row on its page with one byte.)
-                    if (r <= 0xFF) row.ReadFrom(this, RowPointer.Pack(pageNum, r));
-                    yield return row;
+                    for (int r = 0; r < rowCount; r++)
+                    {
+                        // Deleted rows are passed; an overflow row is read where its pointer leads.
+                        if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
+
+                        // Every column has its entry, in the table's order: null for a column with no value.
+                        var row = new Row(definition.Columns.Count);
+                        foreach (var col in definition.Columns)
+                            row[col.Name] = decoder.Decode(rowBytes, col);
+                        // (A row past the 256th of its page has no address: Jet names a row on its page with one byte.)
+                        if (r <= 0xFF) row.ReadFrom(this, RowPointer.Pack(pageNum, r));
+                        yield return row;
+                    }
                 }
+            }
+            finally
+            {
+                _file.TableScans.End(definition.TdefPageNumber, scan);
             }
         }
     }

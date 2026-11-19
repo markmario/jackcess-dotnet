@@ -66,6 +66,19 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal FreedLvalPages FreedLvalPages { get; } = new FreedLvalPages();
 
+    private ListedDataPages? _listedDataPages;
+
+    /// <summary>The pages each table's free-space map lists, as this session has read and written them: where a row goes.</summary>
+    internal ListedDataPages ListedDataPages => _listedDataPages ??= new ListedDataPages(this);
+
+    private DeletedRowSlots? _deletedRowSlots;
+
+    /// <summary>The slots of the rows deleted in this session, which a page begun again keeps (<see cref="DataPageWriter"/>).</summary>
+    internal DeletedRowSlots DeletedRowSlots => _deletedRowSlots ??= new DeletedRowSlots(this);
+
+    /// <summary>The scans of tables in their own order going on in this session, told of the rows each table gains.</summary>
+    internal TableScans TableScans { get; } = new TableScans();
+
     /// <summary>
     /// The indexes looked at in this session (<see cref="VerifyIndexes"/>), by the table's definition page and the
     /// index's block in it, each with the rows of its table it does not hold - none, for an index that holds
@@ -540,6 +553,7 @@ internal sealed class PageFile : IDisposable
         ChangeStamp++;
         _kept.Clear();
         IndexesChecked.Clear();
+        _listedDataPages = null;
         _stream.SetLength(0);
         var page = new byte[_format.PageSize];
         for (int pageNumber = 0; ; pageNumber++)

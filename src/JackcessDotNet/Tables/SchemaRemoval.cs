@@ -351,6 +351,7 @@ internal static class SchemaRemoval
         }
         foreach (int page in affected) Dropped(db, file, page);
         file.FreedLvalPages.Clear();
+        file.ListedDataPages.Clear();
         file.IndexesChecked.Clear();
         db.SchemaChanged();
         return tdefPage;

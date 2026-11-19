@@ -43,6 +43,19 @@ internal sealed class TableDefinition
     /// <summary>Row index inside the umap page that holds the free-space bitmap.</summary>
     public int FreeSpaceRow     { get; set; }
 
+    private int? _freeSpaceUmapPage;
+
+    /// <summary>
+    /// The page of the table's free-space map, the data pages where a row goes first (<see cref="ListedDataPages"/>):
+    /// what the definition names - 0 when it names none - which Access puts on the page of the owned-pages map, as this
+    /// library does for a table it creates. <see cref="UmapPageNumber"/> until set.
+    /// </summary>
+    internal int FreeSpaceUmapPage
+    {
+        get => _freeSpaceUmapPage ?? UmapPageNumber;
+        set => _freeSpaceUmapPage = value;
+    }
+
     // ── Primary-key index (optional) ─────────────────────────────────────────
     /// <summary>Page number of the primary key index's root page (0 if no primary key index).</summary>
     public int     PrimaryKeyIndexPage   { get; set; }

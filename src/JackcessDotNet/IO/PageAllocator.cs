@@ -29,18 +29,24 @@ internal sealed class PageAllocator
     /// </summary>
     public int AllocateDataPage(int tdefPageNumber)
     {
-        var format     = _file.Format;
         int pageNumber = AllocatePage();
-        var page       = new byte[format.PageSize];
+        _file.WritePage(pageNumber, NewDataPage(_file.Format, tdefPageNumber));
+        return pageNumber;
+    }
 
+    /// <summary>
+    /// A data page of the table whose definition is on <paramref name="tdefPageNumber"/>, with no rows: the page
+    /// <see cref="AllocateDataPage"/> adds, as Access begins one.
+    /// </summary>
+    internal static byte[] NewDataPage(JetFormat format, int tdefPageNumber)
+    {
+        var page = new byte[format.PageSize];
         page[0] = JetFormat.PageTypeData;
         page[1] = 0x01;
         ByteUtil.PutShort(page, JetFormat.OffsetDataFreeSpace, (short)format.DataPageInitialFreeSpace);
         ByteUtil.PutInt  (page, JetFormat.OffsetDataTdefPage,  tdefPageNumber);
         // numRows = 0 (already zero), at format.OffsetDataNumRows (Jet3=8, Jet4=12)
-
-        _file.WritePage(pageNumber, page);
-        return pageNumber;
+        return page;
     }
 
     /// <summary>
