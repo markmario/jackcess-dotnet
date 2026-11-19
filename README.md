@@ -200,7 +200,9 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     decimal through a double, and finds 1.2347 for it. Text is no number to an equality, as in every number
     column, and a range takes it as a write does. NaN, an infinity or a number past the range is no Currency: it
     finds no row, and a range or `FindClosestRowByEntry` refuses it with `ArgumentException`, as ACE's refuses a
-    number past the range.
+    number past the range. A row an earlier version wrote holds that version's rounding, and some such rows are
+    found by the value they hold and not by the number they were written from (see
+    [Rows and long values](#rows-and-long-values-what-to-know)).
   - *A Double or a Single* is the caller's number as the column stores it, by its bits, as ACE's index has it:
     +0.0 and -0.0 are two numbers, where ACE's scan finds both for either. *A Decimal* is the same number
     exactly, a caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7 significant
@@ -848,8 +850,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
 - **A Currency is the number Access makes of a caller's**: its exact value to four places, half to even, for a
-  row, its keys and every lookup, on every runtime. The engine took a `double` through a `decimal` of 15
-  significant digits and rounded half away from zero, so a row was not found by the number it was written with.
+  row, its keys and every lookup, on every runtime. The engine rounded half away from zero, after taking a `double`
+  through a `decimal` of 15 significant digits and a `float` through one of 7 on .NET Framework and .NET up to 10,
+  so a row was not found by the number it was written with. A file it wrote keeps those values: see
+  [Rows and long values](#rows-and-long-values-what-to-know).
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
@@ -1075,6 +1079,19 @@ have been deleted - and a row Access moved to another page is read where its poi
   NaN, an infinity and a number past -922,337,203,685,477.5808 to 922,337,203,685,477.5807 are refused with
   `OverflowException`; Access refuses the last two ("Overflow"), and writes NaN as the least Currency, which this
   library does not.
+
+  **A file an earlier version wrote holds that version's rounding.** 1.2.2, and this library until #65, rounded a
+  Currency half away from zero, after `Convert.ToDecimal`, which on .NET Framework and .NET up to 10 keeps 15
+  significant digits of a `double` and 7 of a `float`. The values are consistent with one another and with Access,
+  and nothing needs mending, but some rows are no longer found by the number they were written from: a lookup, a
+  range, `FindClosestRowByEntry`, a relationship's check and a unique index all take the number as Access does now,
+  and come to the neighbouring row or to none. The numbers that differ: a `decimal` at a half of the fifth place
+  (1.23465m was written as 1.2347 and is now 1.2346); a `double` or `float` that is an exact binary half of the
+  fifth place, such as 0.03125 (written as 0.0313, now 0.0312); and on .NET Framework and .NET up to 10, a `double`
+  whose 15-digit form is such a half (0.00015, written as 0.0002, now 0.0001) and a `float` of more than 7
+  significant digits (98765432f, written as 98765430). So `FindRowByPrimaryKey(1.23465m)` in such a file finds the
+  row of 1.2346, a `Delete` of it deletes that row, and a child given 0.03125 has no parent written from 0.03125.
+  **Find such rows by the value stored - as a row reads it back - and not by the number they were written from.**
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
 - **An empty byte array is a value of no bytes** in a Binary or OLE Object column: written as ACE's OLE DB writes

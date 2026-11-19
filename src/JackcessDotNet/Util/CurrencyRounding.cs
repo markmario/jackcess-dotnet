@@ -11,10 +11,10 @@ namespace JackcessDotNet.Util;
 /// dynaset and on a table, an index's <c>=</c>, <c>BETWEEN</c>, <c>&gt;=</c>, <c>&gt;</c>, <c>&lt;=</c> and
 /// <c>&lt;</c>, and DAO's <c>Seek</c>. The double 0.03125, an exact half, is 0.0312, and 0.09375 is 0.0938; 0.00015,
 /// a double just under the half it is written as, is 0.0001; 562949953421312.5, of more significant digits than 15,
-/// is itself; the decimal 1.23465 is 1.2346, and 0.00015 is 0.0002. Taken through a decimal of 15 significant digits
-/// first - what <c>Convert.ToDecimal</c> does on .NET Framework and .NET up to 10, where .NET 11 converts exactly - or
-/// rounded half away from zero, some of these came out the other way. Nothing here is converted, so every runtime
-/// takes a number alike.
+/// is itself; the float 98765432 is itself; the decimal 1.23465 is 1.2346, and 0.00015 is 0.0002. Taken through a
+/// decimal first - of 15 significant digits for a double and 7 for a float, as <c>Convert.ToDecimal</c> takes them on
+/// .NET Framework and .NET up to 10, where .NET 11 converts exactly - or rounded half away from zero, some of these
+/// came out the other way (98765432f as 98765430). Nothing here is converted, so every runtime takes a number alike.
 /// <para>
 /// Where Access does otherwise this does not follow it. ACE's scan, with no index to answer, takes a decimal through
 /// a double - 1.23465 is 1.2347 there and 0.00015 is 0.0001 - and so does not find the row its own <c>INSERT</c> wrote
