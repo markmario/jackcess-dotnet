@@ -913,6 +913,12 @@ have been deleted - and a row Access moved to another page is read where its poi
   not of its type, or a row too large leaves the file byte for byte as it was. A failure of the file itself (the
   disk, the stream) while a change is being written is taken back too: an insert, an update, a delete, a table
   created, or a change to a table's definition or properties leaves the file byte for byte as it was.
+- **A value longer than its column is refused** before anything of its row is written, with
+  `ColumnValueTooLongException`, as Access refuses it ("The field is too small to accept the amount of data you
+  attempted to add"): text with more characters than a Text column's length, and a `byte[]` with more bytes than a
+  Binary column's, whether the definition keeps the column among the variable-length values (SQL's `VARBINARY`,
+  DAO's `dbBinary`, what this library makes) or the fixed-length ones (SQL's `BINARY`, filled with zeros to its
+  length).
 - **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
   millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
 - **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**

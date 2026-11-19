@@ -451,6 +451,10 @@ public sealed class Table
     /// lost.
     /// </para>
     /// </summary>
+    /// <exception cref="ColumnValueTooLongException">
+    /// A Text or Binary value is longer than its column, as Access refuses one. Nothing of the row is written, and
+    /// the counter and <paramref name="row"/> are as they were.
+    /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
     /// index, or has a null in a column of the primary key or of an index that requires its values; or it has no
@@ -585,8 +589,8 @@ public sealed class Table
 
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
-    /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text value longer than its
-    /// column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
+    /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
+    /// its column,<see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
     /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
@@ -722,7 +726,7 @@ public sealed class Table
     /// Only the columns assigned are checked against those two properties, as Access checks an update. The row
     /// is left as it was.
     /// </exception>
-    /// <exception cref="ColumnValueTooLongException">A Text value is longer than its column. The row is left as it was.</exception>
+    /// <exception cref="ColumnValueTooLongException">A Text or Binary value is longer than its column. The row is left as it was.</exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
     /// 97 file, which is only read. Nothing is written.

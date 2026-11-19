@@ -62,6 +62,13 @@ changed since 1.2.2.
   now taken back if writing fails: the file is byte for byte as it was, and the table is not there.
   **`Database.Create` leaves no file when writing the new one fails**: it is closed and deleted. It was left at the
   path, part of a database, and held open.
+- **A Binary value longer than its column is refused** (#45), before anything of its row is written, with
+  `ColumnValueTooLongException`, as a Text value is: for a column kept among the variable-length values (what this
+  library and DAO's `dbBinary` make, SQL's `VARBINARY`), which took the value whole, and for one kept among the
+  fixed-length ones (SQL's `BINARY`). Access refuses one byte over its length in both, through ACE and through
+  DAO, on an insert and an update, in an `.mdb` and in `.accdb` files of Access 2007's and 2010's formats ("The
+  field is too small to accept the amount of data you attempted to add"). The exception's `MaxLength` and `Length`
+  are in bytes for a Binary column, as `Column.MaxLength` is.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
@@ -251,6 +258,9 @@ changes with them.
 - **`Database.FindDecimalsBeyondPrecision()` and `Table.FindDecimalsBeyondPrecision()` are
   `DecimalByteOrder.Find(database)` and `DecimalByteOrder.Find(table)`,** in the namespace
   `JackcessDotNet.Diagnostics`, where `DecimalBeyondPrecision` is too.
+- **A Binary value longer than its column throws `ColumnValueTooLongException`** (#45). 1.2.2 wrote it whole;
+  since then a column kept among the fixed-length values threw `ArgumentOutOfRangeException` for one. Both are
+  `ArgumentException`s: code that caught `ArgumentOutOfRangeException` for it catches `ColumnValueTooLongException`.
 
 ### Added
 

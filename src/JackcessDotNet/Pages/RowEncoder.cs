@@ -367,10 +367,10 @@ internal sealed class RowEncoder
     // ── Long-value helpers ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Throws when a Text value is longer than its column allows, as Access does, before anything of the row is
-    /// written. Written whole, ACE reads such a value cut to the column's length and a typed reader refuses the table.
-    /// A Text column's length is in bytes, two to a character. An update calls it before it deletes the row it
-    /// replaces.
+    /// Throws when a Text or Binary value is longer than its column allows, as Access does, before anything of the
+    /// row is written. Written whole, ACE reads such a text cut to the column's length and a typed reader refuses the
+    /// table. A Text column's length is in bytes, two to a character; a Binary column's in bytes. An update calls it
+    /// before it deletes the row it replaces.
     /// </summary>
     internal void Validate(Row row)
     {
@@ -378,12 +378,14 @@ internal sealed class RowEncoder
         {
             if (!row.TryGetValue(col.Name, out var value) || RowValues.IsNull(value)) continue;
 
-            // A Decimal with more digits than its column holds, and Binary longer than a column of one length.
+            // A Decimal with more digits than its column holds.
             if (col.DataType == DataType.Decimal)
                 NumericCodec.Encode(Convert.ToDecimal(value), col.Precision, col.Scale, col.Name);
-            if (col.DataType == DataType.Binary && !col.IsVariableLength && value is byte[] binary && binary.Length > col.LengthInBytes)
-                throw new ArgumentOutOfRangeException(nameof(row), binary.Length,
-                    $"The Binary column '{col.Name}' holds {col.LengthInBytes} bytes; {binary.Length} were given.");
+            // Binary longer than its column, whichever area the definition keeps it in: Access refuses one byte over
+            // its length, through ACE and DAO, in an .mdb and an .accdb, kept among the variable-length values
+            // (VARBINARY, DAO's dbBinary) or the fixed-length ones (BINARY, dbFixedField) (#45).
+            if (col.DataType == DataType.Binary && col.LengthInBytes > 0 && value is byte[] binary && binary.Length > col.LengthInBytes)
+                throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length);
             if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
             int maxChars = col.LengthInBytes / 2;

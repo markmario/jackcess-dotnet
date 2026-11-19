@@ -1,8 +1,10 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// A value longer than its column allows, refused before anything of its row is written - as Access refuses one.
-/// Its own type, so a caller can tell it from any other argument error and say which record held the value.
+/// A value longer than its column allows - text with more characters than a Text column's length, or a
+/// <c>byte[]</c> with more bytes than a Binary column's - refused before anything of its row is written, as Access
+/// refuses one. Its own type, so a caller can tell it from any other argument error and say which record held the
+/// value.
 /// </summary>
 public sealed class ColumnValueTooLongException : ArgumentException
 {
@@ -24,9 +26,24 @@ public sealed class ColumnValueTooLongException : ArgumentException
     /// <summary>The column's name.</summary>
     public string ColumnName { get; }
 
-    /// <summary>The most characters the column holds.</summary>
+    /// <summary>
+    /// The most the column holds, in its type's units (<see cref="Column.MaxLength"/>): characters for a Text column,
+    /// bytes for a Binary one.
+    /// </summary>
     public int MaxLength { get; }
 
-    /// <summary>The characters the value has.</summary>
+    /// <summary>The value's length, in the same units as <see cref="MaxLength"/>.</summary>
     public int Length { get; }
+
+    /// <summary>
+    /// The exception for a value of <paramref name="length"/> units given to a column of <paramref name="type"/>
+    /// that holds <paramref name="maxLength"/>: bytes for a Binary column, characters for a Text one.
+    /// </summary>
+    internal ColumnValueTooLongException(string columnName, DataType type, int maxLength, int length)
+        : base($"Column '{columnName}' holds at most {maxLength} {(type == DataType.Binary ? "bytes" : "characters")}; the value has {length}.")
+    {
+        ColumnName = columnName;
+        MaxLength = maxLength;
+        Length = length;
+    }
 }
