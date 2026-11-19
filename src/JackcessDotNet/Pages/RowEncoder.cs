@@ -324,9 +324,8 @@ internal sealed class RowEncoder
                 Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : ((DateTime)value).ToOADate());
                 return;
             case DataType.Currency:
-                decimal dec = Convert.ToDecimal(value);
-                long scaled = (long)Math.Round(dec * 10000m, 0, MidpointRounding.AwayFromZero);
-                Util.ByteUtil.PutLong(buffer, offset, scaled);
+                // Ten-thousandths, the caller's number taken to them as Access takes it (Util.CurrencyRounding, #65).
+                Util.ByteUtil.PutLong(buffer, offset, Util.CurrencyRounding.Units(value));
                 return;
             case DataType.Guid:
                 var guidBytes = (value is Guid guid ? guid : Guid.Parse(Convert.ToString(value)!)).ToByteArray();

@@ -33,10 +33,14 @@ internal static class RowValues
 
     /// <summary>
     /// <paramref name="row"/> as it will be written to a table of <paramref name="columns"/>: no
-    /// <see cref="DBNull"/> (a column without a value has none), and a Yes/No column's value as the
-    /// <see cref="bool"/> it stands for. The row itself when it is already so; otherwise a copy - the caller's
-    /// row is not changed.
+    /// <see cref="DBNull"/> (a column without a value has none), a Yes/No column's value as the
+    /// <see cref="bool"/> it stands for, and a Currency column's as the <see cref="decimal"/> the row stores
+    /// (<see cref="AsCurrency"/>). The row itself when it is already so; otherwise a copy - the caller's row is not
+    /// changed.
     /// </summary>
+    /// <exception cref="ArgumentException">A Currency column's value is of a kind no number is made of.</exception>
+    /// <exception cref="FormatException">A Currency column's value is text that does not read as a number.</exception>
+    /// <exception cref="OverflowException">A Currency column's value is a number no Currency holds.</exception>
     public static Row AsWritten(Row row, IReadOnlyList<Column> columns)
     {
         Row? written = null;
@@ -45,11 +49,55 @@ internal static class RowValues
             if (!row.TryGetValue(column.Name, out var value)) continue;
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
+                : column.DataType == DataType.Currency && value is not null ? AsCurrency(column, value)
                 : value;
             if (ReferenceEquals(normal, value)) continue;
             written ??= new Row(row);
             written[column.Name] = normal;
         }
         return written ?? row;
+    }
+
+    /// <summary>
+    /// <paramref name="value"/>, given for the Currency column <paramref name="column"/>, as the row stores it: the
+    /// number taken to four places as Access takes it - its exact value, half to even (<see cref="Util.CurrencyRounding"/>,
+    /// #65) - as a <see cref="decimal"/>. A value that is not one of .NET's numbers is first taken for the number every
+    /// number column takes it for (<see cref="Util.CurrencyRounding.NumberOf"/>: text read in the current culture, a
+    /// <see cref="bool"/> as 1 or 0). A decimal that is the stored value already is returned as it is. Refused, before
+    /// anything is written, when it makes no number, or a number no Currency holds: NaN, an infinity, or one past the
+    /// range once taken to four places.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="value"/> is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a <see cref="char"/>.
+    /// </exception>
+    /// <exception cref="FormatException"><paramref name="value"/> is text that does not read as a number.</exception>
+    /// <exception cref="OverflowException"><paramref name="value"/> is a number no Currency holds.</exception>
+    public static object AsCurrency(Column column, object value)
+    {
+        object number = value;
+        if (!Util.CurrencyRounding.IsNumber(value))
+        {
+            try { number = Util.CurrencyRounding.NumberOf(value); }
+            catch (InvalidCastException e)
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' is a Currency, which holds a number, and {Util.CurrencyRounding.NotANumber(value)}. Nothing was written.", e);
+            }
+            catch (FormatException e)
+            {
+                throw new FormatException(
+                    $"Column '{column.Name}' is a Currency, which holds a number, and {Util.CurrencyRounding.NotANumber(value)}. Nothing was written.", e);
+            }
+            catch (OverflowException e)
+            {
+                throw new OverflowException(
+                    $"Column '{column.Name}' is a Currency, and '{value}' is a number past what a decimal holds. Nothing was written.", e);
+            }
+        }
+        if (!Util.CurrencyRounding.TryUnits(number, out long units))
+            throw new OverflowException(
+                $"Column '{column.Name}' is a Currency, and {Util.CurrencyRounding.NotHeld(number)}. Nothing was written.");
+        decimal stored = Util.CurrencyRounding.ToDecimal(units);
+        return value is decimal given && given == stored ? value : stored;
     }
 }

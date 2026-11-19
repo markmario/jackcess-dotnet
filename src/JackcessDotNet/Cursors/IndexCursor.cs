@@ -711,12 +711,19 @@ public sealed class IndexCursor : Cursor
     /// the columns after the date only within one number. With rows (1 January 2021, 1) stored as
     /// 44196.999999994 and (1 January 2021, 0) stored as 44197, the row after (1 January 2021, -1) is the first.
     /// </para>
+    /// <para>
+    /// A number for a Currency column is first taken to its four places as a row written with it stores it - its
+    /// exact value, half to even - as Access's <c>&gt;=</c> through an index takes it (measured): the closest row to
+    /// the double 0.00015 is a row of 0.0001. Text and a <see cref="bool"/> are taken as a write takes them, for the
+    /// number every number column takes them for.
+    /// </para>
     /// </summary>
     /// <param name="entryValues">The values to look for, in the order of the index's columns.</param>
     /// <returns>The row, which is then <see cref="Cursor.Current"/>, or null when there is none at or after the values.</returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="entryValues"/> is null, has no values, has more values than the index has columns, or has
-    /// a value that is not one its column holds.
+    /// a value that is not one its column holds: for a Currency column, text that does not read as a number, a value
+    /// of a kind no number is made of, NaN, an infinity, or a number past the column's range once taken to four places.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// No key is made for the values: the index is on a column whose keys this library does not make (a
@@ -1152,6 +1159,14 @@ public sealed class IndexCursor : Cursor
 /// it, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them (measured):
 /// a row Access stored in its other form, the time of day in whole seconds, is where its bytes are, which is not
 /// always where its date is.
+/// </para>
+/// <para>
+/// A number for a Currency column is first taken to the column's four places as a row written with it stores it -
+/// its exact value, half to even - and rows are put against that, as Access's <c>BETWEEN</c>, <c>&gt;=</c>,
+/// <c>&gt;</c>, <c>&lt;=</c> and <c>&lt;</c> through an index put them (measured): a range from the double 0.03125
+/// begins with the rows of 0.0312, and one after the double 0.09375 with the rows after 0.0938. Text and a
+/// <see cref="bool"/> are taken as a write takes them, for the number every number column takes them for; NaN, an
+/// infinity or a number past the column's range is not one a Currency holds.
 /// </para>
 /// </summary>
 public sealed class IndexRange
