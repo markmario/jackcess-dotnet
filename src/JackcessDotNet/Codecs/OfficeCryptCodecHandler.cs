@@ -18,15 +18,18 @@ namespace JackcessDotNet;
 ///   </item>
 ///   <item>
 ///     <b>ECMA Standard Encryption</b> (Office 2007, vMajor∈{2,3,4}, vMinor=2)
-///     — MS-OFFCRYPTO §2.3.4.5–9. SHA-1 over 50 000 iterations, AES in ECB mode
-///     for page crypto, key size declared in the EncryptionHeader struct; and the
-///     "non-standard" form of it Jackcess-encrypt reads, with no iterations.
+///     — MS-OFFCRYPTO §2.3.4.5–9. SHA-1 over 50 000 iterations, worked out once for
+///     the file, AES in ECB mode for page crypto, key size declared in the
+///     EncryptionHeader struct; and the "non-standard" form of it Jackcess-encrypt
+///     reads, with no iterations. No Access is known to give an .accdb ECMA Standard
+///     Encryption, and no file of it was found: such a file is read, as the
+///     specification says, and not written (<see cref="WriteRefusal"/>).
 ///   </item>
 ///   <item><b>RC4 CryptoAPI Encryption</b> (Access 2007's own) — MS-OFFCRYPTO §2.3.5.</item>
 /// </list>
 ///
 /// Every page but the first is decrypted as it is read and encrypted as it is written, so a file opened with its
-/// password is read and written like any other.
+/// password is read and written like any other - but for one in ECMA Standard Encryption, which is only read.
 /// </summary>
 internal sealed class OfficeCryptCodecHandler : ICodecHandler
 {
@@ -51,21 +54,35 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
     private readonly Func<byte[], int, byte[]> _decryptPage;
     private readonly Func<byte[], int, byte[]> _encryptPage;
     private readonly string _schemeDescription;
+    private readonly Func<int>? _hashesWorkedOut;
 
     private OfficeCryptCodecHandler(
         byte[] encodingKey,
         Func<byte[], int, byte[]> decryptPage,
         Func<byte[], int, byte[]> encryptPage,
-        string schemeDescription)
+        string schemeDescription,
+        string? writeRefusal = null,
+        Func<int>? hashesWorkedOut = null)
     {
         _encodingKey       = encodingKey;
         _decryptPage       = decryptPage;
         _encryptPage       = encryptPage;
         _schemeDescription = schemeDescription;
+        WriteRefusal       = writeRefusal;
+        _hashesWorkedOut   = hashesWorkedOut;
     }
 
     /// <summary>Short label for the active scheme — useful in error messages.</summary>
     public string Scheme => _schemeDescription;
+
+    /// <inheritdoc/>
+    public string? WriteRefusal { get; }
+
+    /// <summary>
+    /// For ECMA Standard Encryption, and the non-standard AES: how many times the hash every page's key starts from
+    /// has been worked out - its 50,000 iterations, in ECMA Standard - which is once a file. For tests.
+    /// </summary>
+    internal int HashesWorkedOut => _hashesWorkedOut?.Invoke() ?? 0;
 
     /// <summary>
     /// Inspects <paramref name="headerPage"/> (page 0 of the database) and, if
@@ -440,11 +457,16 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
             if (!engine.VerifyPassword(pwdBytes))
                 throw new InvalidCredentialException(
                     "Incorrect password for ECMA Standard-encrypted .accdb (Office 2007).");
+            // No Access is known to give an .accdb this encryption, and no file of it was found: what this library
+            // would write to one could not be checked against Access, so it is read only.
             return new OfficeCryptCodecHandler(
                 encodingKey,
                 (page, pageNumber) => engine.DecryptPage(pwdBytes, encodingKey, page, pageNumber),
                 (page, pageNumber) => engine.EncryptPage(pwdBytes, encodingKey, page, pageNumber),
-                $"ECMA Standard Encryption (Office 2007, AES-{info.KeySizeBits})");
+                $"ECMA Standard Encryption (Office 2007, AES-{info.KeySizeBits})",
+                writeRefusal: "An .accdb in ECMA Standard Encryption is read and not written by this library: no file of it " +
+                              "was found to check what it would write against Access.",
+                hashesWorkedOut: () => engine.HashesWorkedOut);
         }
 
         return BuildRc4OrNonStandard(headerPage, p, infoEnd, encodingKey, pwdBytes);
@@ -491,7 +513,8 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                 encodingKey,
                 (page, pageNumber) => engine.DecryptPage(pwdBytes, encodingKey, page, pageNumber),
                 (page, pageNumber) => engine.EncryptPage(pwdBytes, encodingKey, page, pageNumber),
-                $"Non-Standard AES Encryption (compat mode 0, AES-{info.KeySizeBits})");
+                $"Non-Standard AES Encryption (compat mode 0, AES-{info.KeySizeBits})",
+                hashesWorkedOut: () => engine.HashesWorkedOut);
         }
         catch (Exception fallbackEx) when (fallbackEx is not InvalidCredentialException)
         {
@@ -635,7 +658,10 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         private const int DefaultIterations = 50_000;
         private readonly StandardEncryptionInfo _info;
         private readonly int _iterations;
-        private byte[]? _baseHashCache;
+        private byte[]? _hashed;
+
+        /// <summary>How many times <see cref="Hashed"/> has worked the hash out: once, for the engine's password.</summary>
+        internal int HashesWorkedOut { get; private set; }
 
         public StandardEngine(StandardEncryptionInfo info, int iterations = DefaultIterations)
         {
@@ -674,16 +700,14 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
         }
 
         /// <summary>
-        /// Derives the per-block AES key (MS-OFFCRYPTO 2.3.4.7). The base hash
-        /// (SHA1(salt || password)) is cached so the 50 000-iteration loop only
-        /// runs once per password — without this, every page decode would re-run
-        /// the spin loop.
+        /// SHA1(salt || password) hashed over again, 50,000 times in ECMA Standard Encryption (MS-OFFCRYPTO 2.3.4.7):
+        /// what every block's key starts from, the same for every page of the file, so it is worked out once - the
+        /// password is the engine's, which only a codec built for it uses.
         /// </summary>
-        private byte[] ComputeEncryptionKey(byte[] password, byte[] blockBytes)
+        private byte[] Hashed(byte[] password)
         {
-            byte[] baseHash = _baseHashCache ??= HashBytes("SHA1", _info.Salt, password);
-
-            byte[] iterHash = baseHash;
+            if (_hashed is not null) return _hashed;
+            byte[] hash = HashBytes("SHA1", _info.Salt, password);
             byte[] indexBuf = new byte[4];
             for (int i = 0; i < _iterations; i++)
             {
@@ -691,10 +715,19 @@ internal sealed class OfficeCryptCodecHandler : ICodecHandler
                 indexBuf[1] = (byte)((i >> 8)  & 0xFF);
                 indexBuf[2] = (byte)((i >> 16) & 0xFF);
                 indexBuf[3] = (byte)((i >> 24) & 0xFF);
-                iterHash = HashBytes("SHA1", indexBuf, iterHash);
+                hash = HashBytes("SHA1", indexBuf, hash);
             }
+            HashesWorkedOut++;
+            return _hashed = hash;
+        }
 
-            byte[] finalHash = HashBytes("SHA1", iterHash, blockBytes);
+        /// <summary>
+        /// Derives the per-block AES key (MS-OFFCRYPTO 2.3.4.7): the hash of <see cref="Hashed"/> and the block, a
+        /// page's - the encoding key with its number XORed in - or the verifier's, 0.
+        /// </summary>
+        private byte[] ComputeEncryptionKey(byte[] password, byte[] blockBytes)
+        {
+            byte[] finalHash = HashBytes("SHA1", Hashed(password), blockBytes);
 
             // Expand finalHash → 2 × hashLen by XOR-padding twice (2.3.4.7).
             byte[] x1 = HashBytes("SHA1", GenXBytes(finalHash, 0x36), Array.Empty<byte>());

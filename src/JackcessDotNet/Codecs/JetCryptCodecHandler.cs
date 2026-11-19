@@ -34,6 +34,9 @@ internal sealed class JetCryptCodecHandler : ICodecHandler
 
     public byte[] EncodePage(byte[] page, int pageNumber) => Transform(page, pageNumber);
 
+    /// <summary>An encoded .mdb is written to: Access reads what this library writes to one.</summary>
+    public string? WriteRefusal => null;
+
     // RC4 is its own inverse: the same keystream decodes a page and encodes it.
     private byte[] Transform(byte[] page, int pageNumber)
     {

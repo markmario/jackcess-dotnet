@@ -316,7 +316,9 @@ public sealed class Database : IDisposable
     ///   <item>A file that is not protected is opened as it is, and the password is not looked at.</item>
     /// </list>
     /// <para>
-    /// An Access 97 file is opened for reading only, whatever the options say (<see cref="IsReadOnly"/>).
+    /// An Access 97 file is opened for reading only, whatever the options say (<see cref="IsReadOnly"/>), and so is
+    /// an .accdb in ECMA Standard Encryption: no Access is known to make one, and no file of it was found to check
+    /// what this library would write to one against Access.
     /// </para>
     /// </summary>
     /// <exception cref="InvalidCredentialException">

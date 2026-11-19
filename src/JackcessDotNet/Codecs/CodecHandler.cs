@@ -19,6 +19,12 @@ internal interface ICodecHandler
 
     /// <summary>Inverse of <see cref="DecodePage"/>: returns the bytes to write to disk.</summary>
     byte[] EncodePage(byte[] page, int pageNumber);
+
+    /// <summary>
+    /// Why nothing is written to a file this codec protects, or null when it is written to: the file is then read
+    /// only (<see cref="PageFile.EnsureWritable"/>).
+    /// </summary>
+    string? WriteRefusal { get; }
 }
 
 /// <summary>Identity codec used for unencrypted .mdb / .accdb files.</summary>
@@ -27,4 +33,5 @@ internal sealed class NullCodecHandler : ICodecHandler
     public static readonly NullCodecHandler Instance = new();
     public byte[] DecodePage(byte[] rawPage, int pageNumber) => rawPage;
     public byte[] EncodePage(byte[] page,    int pageNumber) => page;
+    public string? WriteRefusal => null;
 }

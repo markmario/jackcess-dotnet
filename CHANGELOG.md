@@ -189,6 +189,12 @@ changed since 1.2.2.
     `NotSupportedException`. A file whose catalog does not read, when its header names no protection, is refused
     as damaged with `NotSupportedException` whatever password is given; with a password it was
     `InvalidCredentialException`.
+  - **An .accdb in ECMA Standard Encryption is read and not written**: `IsReadOnly`, and a write is refused with
+    `NotSupportedException` before anything is written, as in an Access 97 file. No Access is known to give an
+    .accdb this encryption (Access 2007 uses RC4 CryptoAPI, and later versions Agile Encryption), and no file of
+    it was found, so what this library wrote to one could not be checked against Access; reading one follows the
+    specification and is checked only against a file made by the tests from it. Its key's 50,000 SHA-1 iterations
+    are worked out once for the file; they were worked out again for every page read or written.
   - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
     searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
     non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the

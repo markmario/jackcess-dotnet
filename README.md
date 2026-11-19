@@ -228,7 +228,7 @@ compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
 | An Access 97 .mdb with a database password, or encoded | as an Access 2000-2003 one | ❌ read-only, as every Access 97 file |
 | An .accdb with a password: Agile Encryption, which Access 2010 and later make, and ACE 16 for either .accdb format | with that password and no other | ✅ each page is decrypted as it is read and encrypted as it is written |
 | An .accdb in RC4 CryptoAPI (Access 2007's), or the non-standard AES Jackcess-encrypt reads | with that password and no other | ✅ the same; refereed with jackcess-encrypt's files of them, as ACE 16 makes neither |
-| An .accdb in ECMA Standard Encryption | with that password and no other | ✅ the same; no file of this kind was found to test against: its pages are written by the code the non-standard AES's are |
+| An .accdb in ECMA Standard Encryption | with that password and no other; read as the specification says, which is unverified: no Access is known to make such a file, and none was found | ❌ read-only (`NotSupportedException` before anything is written): what this library would write could not be checked against Access |
 | An .accdb encrypted by an extensible (external) provider | ❌ `NotSupportedException` | |
 
 - A file with a password opened with another, or with none, throws `InvalidCredentialException` before anything
@@ -736,7 +736,8 @@ Integer otherwise, which does not hold every value).
 | Encoded `.mdb` (Access's Encrypt Database, Jet RC4) | ✅ Read + write (Access 97: read), no password needed |
 | Password-protected `.accdb` (Agile Encryption, Access 2010+) | ✅ Read + write |
 | Password-protected `.accdb` (RC4 CryptoAPI, Access 2007) | ✅ Read + write |
-| Password-protected `.accdb` (ECMA Standard Encryption; Non-Standard AES, compat mode 0) | ✅ Read + write |
+| Password-protected `.accdb` (Non-Standard AES, compat mode 0) | ✅ Read + write |
+| Password-protected `.accdb` (ECMA Standard Encryption) | ✅ Read, unverified against a file Access made (none found); ❌ write |
 | Password-protected `.accdb` (Extensible Encryption) | ❌ External CSP — non-portable |
 | Multi-column primary keys                         | ✅      |
 | Foreign-key enforcement, with cascades (on by default) | ✅ |
