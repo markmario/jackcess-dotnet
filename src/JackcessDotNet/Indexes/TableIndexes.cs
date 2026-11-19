@@ -388,7 +388,7 @@ internal sealed class TableIndexes
                     && (key.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(key) : key).AsSpan().SequenceEqual(expected))
                     unfound[t].Remove(pointer);
             }
-            _file.IndexesChecked[Which(trees[t])] = new RowsNotHeld(unfound[t]);
+            _file.NoteIndexChecked(Which(trees[t]), new RowsNotHeld(unfound[t]));
         }
     }
 
@@ -434,7 +434,8 @@ internal sealed class TableIndexes
         foreach (var entry in entries)
         {
             // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
-            if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld)) notHeld.Forget(rowPointer);
+            if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld) && notHeld.Forget(rowPointer) is { } key)
+                _file.Journal(() => notHeld.PutBack(rowPointer, key));
 
             // The entry goes under the key it is stored under: for a key that was cut, the cut key or the whole
             // one (StoredUnder), whichever holds this row. A row with no entry at all - one an earlier version of

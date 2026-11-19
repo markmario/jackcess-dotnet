@@ -223,6 +223,7 @@ internal sealed class PageFile : IDisposable
         {
             page = ReadPage(pageNumber);
             _kept[pageNumber] = page;
+            Journal(() => _kept.Remove(pageNumber));
         }
         return (byte[])page.Clone();
     }
@@ -256,8 +257,11 @@ internal sealed class PageFile : IDisposable
         _stream.Seek(offset, SeekOrigin.Begin);
         _stream.Write(encoded, 0, encoded.Length);
         _stream.Flush();
-        if (_kept.ContainsKey(pageNumber))
+        if (_kept.TryGetValue(pageNumber, out var was))
+        {
             _kept[pageNumber] = (byte[])data.Clone();
+            Journal(() => _kept[pageNumber] = was);
+        }
     }
 
     // ── Undo ──────────────────────────────────────────────────────────────────
@@ -276,7 +280,32 @@ internal sealed class PageFile : IDisposable
         EnsureWritable();
         if (_undo is not null)
             throw new InvalidOperationException("A change to this file is already being kept for undoing; another cannot begin inside it.");
-        return _undo = new UndoScope(this);
+        _undo = new UndoScope(this);
+        FreedLvalPages.Journal = Journal;
+        return _undo;
+    }
+
+    /// <summary>
+    /// While a change is being kept for undoing, notes <paramref name="undo"/>, which takes back a change made to
+    /// what this file keeps in memory of its pages (<see cref="FreedLvalPages"/>, <see cref="IndexesChecked"/>, the
+    /// pages <see cref="ReadKeptPage"/> keeps): a change taken back runs them, the last first, so that what was
+    /// known before it began is known again. Nothing is noted otherwise.
+    /// </summary>
+    internal void Journal(Action undo) => _undo?.Remember(undo);
+
+    /// <summary>Notes, in <see cref="IndexesChecked"/>, the rows an index that was looked at does not hold.</summary>
+    internal void NoteIndexChecked((int TdefPage, int Index) index, RowsNotHeld rows)
+    {
+        if (_undo is not null)
+        {
+            bool had = IndexesChecked.TryGetValue(index, out var was);
+            Journal(() =>
+            {
+                if (had) IndexesChecked[index] = was!;
+                else IndexesChecked.Remove(index);
+            });
+        }
+        IndexesChecked[index] = rows;
     }
 
     /// <summary>
@@ -296,14 +325,19 @@ internal sealed class PageFile : IDisposable
         else _undo.AfterCommit(action);
     }
 
-    /// <summary>The pages a change has written over, as they were, until it is committed or disposed.</summary>
+    /// <summary>
+    /// The pages a change has written over, as they were, and what it changed of what the file keeps in memory,
+    /// until it is committed or disposed.
+    /// </summary>
     internal sealed class UndoScope : IDisposable
     {
         private readonly PageFile _file;
         private readonly Dictionary<int, byte[]> _before = new();
         private readonly long _length;
         private bool _done;
+        private bool _wrote;
         private List<Action>? _afterCommit;
+        private List<Action>? _journal;
 
         internal UndoScope(PageFile file)
         {
@@ -314,11 +348,13 @@ internal sealed class PageFile : IDisposable
         /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
         internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);
 
+        /// <summary>Notes what takes back a change to what the file keeps in memory (<see cref="Journal"/>).</summary>
+        internal void Remember(Action undo) => (_journal ??= new List<Action>()).Add(undo);
+
         /// <summary>Keeps the change: nothing is taken back when the scope is disposed.</summary>
         public void Commit()
         {
-            _done = true;
-            _file._undo = null;
+            End();
             if (_afterCommit is { } actions)
             {
                 _afterCommit = null;
@@ -326,9 +362,17 @@ internal sealed class PageFile : IDisposable
             }
         }
 
+        private void End()
+        {
+            _done = true;
+            _file._undo = null;
+            _file.FreedLvalPages.Journal = null;
+        }
+
         // The page's bytes as the file holds them (before any codec), the first time it is written in this scope.
         internal void Keep(int pageNumber, long offset)
         {
+            _wrote = true;
             if (offset >= _length || _before.ContainsKey(pageNumber)) return;
             var raw = new byte[_file._format.PageSize];
             _file._stream.Seek(offset, SeekOrigin.Begin);
@@ -342,13 +386,18 @@ internal sealed class PageFile : IDisposable
             _before[pageNumber] = raw;
         }
 
-        /// <summary>Takes back everything written since the scope began, unless it was committed.</summary>
+        /// <summary>
+        /// Takes back everything written since the scope began, unless it was committed: the pages, and what the
+        /// file keeps in memory of them, which is then what it was when the scope began. A scope that wrote nothing
+        /// changes nothing: what was learnt of the file while it was open is still true.
+        /// </summary>
         public void Dispose()
         {
             if (_done) return;
-            _done = true;
-            _file._undo = null;
+            End();
             _afterCommit = null;
+            if (!_wrote) return;
+
             foreach (var (pageNumber, raw) in _before)
             {
                 _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
@@ -356,11 +405,11 @@ internal sealed class PageFile : IDisposable
             }
             _file._stream.SetLength(_length);
             _file._stream.Flush();
-            // What was read or noted of the pages since is no longer what the file holds.
+            // What was read of the pages since is no longer what the file holds; what was noted of them is taken
+            // back, the last first.
             _file.ChangeStamp++;
-            _file._kept.Clear();
-            _file.FreedLvalPages.Clear();
-            _file.IndexesChecked.Clear();
+            if (_journal is { } journal)
+                for (int i = journal.Count - 1; i >= 0; i--) journal[i]();
         }
     }
 

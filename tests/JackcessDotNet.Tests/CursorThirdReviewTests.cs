@@ -73,6 +73,70 @@ public sealed class CursorThirdReviewTests : IDisposable
         Assert.Equal(2, refused["Id"]);
     }
 
+    // ── What a change taken back leaves of what the session knows ────────────
+
+    [Fact]
+    public void A_change_refused_or_taken_back_leaves_what_the_session_knows_of_the_file_as_it_was()
+    {
+        using (var db = Database.Create(_path))
+        {
+            var table = db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32), new ColumnDefinition("M", DataType.Memo),
+            }, new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") { IsUnique = true } });
+            table.InsertRange(Enumerable.Range(1, 5000).Select(i => new Row { ["Id"] = i, ["K"] = i, ["M"] = i % 10 == 0 ? new string('m', 2000) : null }));
+        }
+
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            // Long values freed in this session: their room is noted for the next ones (FreedLvalPages).
+            for (int i = 10; i <= 1000; i += 10) table.Delete(table.FindRowByPrimaryKey(i)!);
+
+            int next = 100_000;
+            double ReadsPerInsert(Action? before)
+            {
+                long reads = 0;
+                for (int i = 0; i < 20; i++)
+                {
+                    before?.Invoke();
+                    long at = db.File.ReadCount;
+                    table.Insert(new Row { ["Id"] = next, ["K"] = next, ["M"] = new string('n', 1900) });
+                    reads += db.File.ReadCount - at;
+                    next++;
+                }
+                return reads / 20.0;
+            }
+
+            double plain = ReadsPerInsert(null);
+            var refused = new Dictionary<string, double>
+            {
+                // Refused before anything is written: nothing of what the session knows changes.
+                ["insert"] = ReadsPerInsert(() => Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 1, ["K"] = 2 }))),
+                ["update"] = ReadsPerInsert(() =>
+                {
+                    var row = table.FindRowByPrimaryKey(2)!;
+                    row["K"] = 3;
+                    Assert.Throws<ConstraintViolationException>(() => table.Update(row));
+                }),
+                // Taken back after it wrote: the file is as it was, and so is what the session knows of it.
+                ["delete"] = ReadsPerInsert(() =>
+                {
+                    var before = IndexChecks.AllPages(db);
+                    db.File.WritesBeforeFailure = 2;
+                    Assert.Throws<IOException>(() => table.Delete(table.FindRowByPrimaryKey(1010)!));
+                    db.File.WritesBeforeFailure = null;
+                    IndexChecks.AssertUnchanged(before, db);
+                }),
+            };
+            foreach (var (what, reads) in refused)
+                Assert.True(reads <= plain * 1.5 + 4, $"after a refused {what}, {reads:F1} pages read for each insert of a Memo; {plain:F1} without");
+
+            Assert.NotNull(table.FindRowByPrimaryKey(1010));
+            IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 5000 - 100 + 4 * 20);
+        }
+    }
+
     // ── When a cursor is told ────────────────────────────────────────────────
 
     [Fact]

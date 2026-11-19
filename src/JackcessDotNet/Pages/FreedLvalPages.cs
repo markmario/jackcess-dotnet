@@ -25,6 +25,15 @@ internal sealed class FreedLvalPages
         public readonly SortedDictionary<int, int> RoomOf = new();              // page -> room, lowest page first
         public readonly SortedSet<(int Room, int Page)> ByRoom = new();         // the same, least room first
         public readonly HashSet<int> Listed = new();                            // pages known to be in the free-space map
+
+        public Pages Copy()
+        {
+            var copy = new Pages();
+            foreach (var room in RoomOf) copy.RoomOf.Add(room.Key, room.Value);
+            copy.ByRoom.UnionWith(ByRoom);
+            copy.Listed.UnionWith(Listed);
+            return copy;
+        }
     }
 
     private readonly Dictionary<(int MapPage, int MapRow), Pages> _byColumn = new();
@@ -34,10 +43,22 @@ internal sealed class FreedLvalPages
     internal long CandidatesVisited { get; set; }
 
     /// <summary>
+    /// While a change to the file is being kept for undoing (<see cref="PageFile.BeginUndo"/>), where each note
+    /// made is given what takes it back: a change taken back takes back what it noted, and leaves what was noted
+    /// before it. Null otherwise.
+    /// </summary>
+    internal Action<Action>? Journal { get; set; }
+
+    /// <summary>
     /// True the first time it is asked for the column whose owned-pages map is at (<paramref name="mapPage"/>,
     /// <paramref name="mapRow"/>) - when its free-space map is to be looked at - and false after.
     /// </summary>
-    public bool FirstLookFor(int mapPage, int mapRow) => _looked.Add((mapPage, mapRow));
+    public bool FirstLookFor(int mapPage, int mapRow)
+    {
+        if (!_looked.Add((mapPage, mapRow))) return false;
+        Journal?.Invoke(() => _looked.Remove((mapPage, mapRow)));
+        return true;
+    }
 
     /// <summary>
     /// Notes that <paramref name="page"/>, listed by the owned-pages map at (<paramref name="mapPage"/>,
@@ -46,6 +67,17 @@ internal sealed class FreedLvalPages
     /// </summary>
     public void Set(int mapPage, int mapRow, int page, int freeSpace)
     {
+        if (Journal is { } journal)
+        {
+            int? had = TryGetRoom(mapPage, mapRow, page, out int room) ? room : null;
+            journal(() => Put(mapPage, mapRow, page, had));
+        }
+        Put(mapPage, mapRow, page, freeSpace >= MinUsefulFreeSpace ? freeSpace : null);
+    }
+
+    // Notes the room of a page, or forgets the page: unjournaled.
+    private void Put(int mapPage, int mapRow, int page, int? room)
+    {
         var column = (mapPage, mapRow);
         _byColumn.TryGetValue(column, out var pages);
         if (pages is not null && pages.RoomOf.TryGetValue(page, out int had))
@@ -53,17 +85,29 @@ internal sealed class FreedLvalPages
             pages.ByRoom.Remove((had, page));
             pages.RoomOf.Remove(page);
         }
-        if (freeSpace >= MinUsefulFreeSpace)
+        if (room is { } free)
         {
             if (pages is null) _byColumn[column] = pages = new Pages();
-            pages.RoomOf[page] = freeSpace;
-            pages.ByRoom.Add((freeSpace, page));
+            pages.RoomOf[page] = free;
+            pages.ByRoom.Add((free, page));
         }
     }
 
     /// <summary>Forgets everything noted: the file was put back as it was before the notes were made.</summary>
     public void Clear()
     {
+        if (Journal is { } journal && (_byColumn.Count > 0 || _looked.Count > 0))
+        {
+            var byColumn = _byColumn.ToDictionary(column => column.Key, column => column.Value.Copy());
+            var looked   = new HashSet<(int, int)>(_looked);
+            journal(() =>
+            {
+                _byColumn.Clear();
+                foreach (var column in byColumn) _byColumn.Add(column.Key, column.Value);
+                _looked.Clear();
+                _looked.UnionWith(looked);
+            });
+        }
         _byColumn.Clear();
         _looked.Clear();
     }
@@ -129,6 +173,14 @@ internal sealed class FreedLvalPages
 
     /// <summary>Records that <paramref name="page"/> is, or is no longer, in the column's free-space map.</summary>
     public void SetListed(int mapPage, int mapRow, int page, bool listed)
+    {
+        if (Journal is { } journal && IsListed(mapPage, mapRow, page) != listed)
+            journal(() => PutListed(mapPage, mapRow, page, !listed));
+        PutListed(mapPage, mapRow, page, listed);
+    }
+
+    // Records whether a page is in the column's free-space map: unjournaled.
+    private void PutListed(int mapPage, int mapRow, int page, bool listed)
     {
         if (!_byColumn.TryGetValue((mapPage, mapRow), out var pages))
         {
