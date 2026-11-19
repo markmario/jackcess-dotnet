@@ -685,8 +685,8 @@ value of its type, or of the values the source has (#44):
 | `byte` | `Byte` | |
 | `sbyte` / `short` | `Int16` (Integer) | both come back as `short`: Access's Byte is 0 to 255 |
 | `ushort` / `int` | `Int32` (Long Integer) | both come back as `int`: Access's Integer is signed |
-| `uint` | `Int64` (Large Number) in an `.accdb`, `Decimal(10, 0)` in an `.mdb` | comes back as `long`, or `decimal` |
-| `long` | `Int64` | Large Number: an `.accdb` only; in an `.mdb` the table is refused before it is made |
+| `uint` | `Int64` (Large Number) in a file of Access 2016's format or later, `Decimal(10, 0)` in an older one | comes back as `long`, or `decimal` |
+| `long` | `Int64` (Large Number) in a file of Access 2016's format or later, `Decimal(19, 0)` in an older one | comes back as `long`, or `decimal` |
 | `ulong` | `Decimal(20, 0)` | past a Large Number's range; comes back as `decimal` |
 | `float` / `double` | `Single` / `Double` | every bit, NaN and the infinities included |
 | `decimal` | `Decimal(p, s)` | `s` the most places after the point a value has, `p` the digits the values need and 18 at least; refused when they need more than 28 |
@@ -700,8 +700,14 @@ value of its type, or of the values the source has (#44):
 | `Nullable<T>` | as `T` | |
 | `enum` | its underlying type | comes back as the enum on read |
 
-A `decimal` key, a `uint` key in an `.mdb` and a `ulong` key are refused before the table is made, with
-`NotSupportedException`: they are Decimal columns, whose index keys this library does not write.
+A `decimal` key, a `ulong` key, and a `long` or `uint` key in a file before Access 2016's format, are refused
+before the table is made, with `NotSupportedException`: they are Decimal columns, whose index keys this library
+does not write. A `long` or `uint` key is a Large Number in a file created as `FileFormat.Access2016` or later.
+
+**An import does not change a file's format.** A Large Number column makes a file of an older format one of
+Access 2016's, which Access 2010 and 2013 do not open; the importer makes one only where the file is of that
+format already. Java Jackcess likewise makes a Large Number only in a format that has it (its `BIGINT` is a Long
+Integer otherwise, which does not hold every value).
 
 ## Status
 
@@ -797,9 +803,9 @@ Limits to know about:
 - `Database.Create` with `Jet16` or `Jet17` makes the Access 2010 file with the later version in its header,
   which is all Access itself changes; Access's compact puts the version back to 2010's while no table has
   such a column.
-- An import (`DatabaseImporter`) makes a `long` column or property a Large Number, so a table with one is
-  imported into an `.accdb` and refused in an `.mdb`, before the table is made; a `uint` is a Large Number in an
-  `.accdb` and a `Decimal(10, 0)` in an `.mdb`.
+- An import (`DatabaseImporter`) does not change a file's format: a `long` or `uint` column or property is a
+  Large Number in a file of Access 2016's format or later - one created as `FileFormat.Access2016`, or given such
+  a column before - and a `Decimal(19, 0)` or `Decimal(10, 0)` in an older one, an `.mdb` included.
 
 ## Text index keys: sort orders and limits
 

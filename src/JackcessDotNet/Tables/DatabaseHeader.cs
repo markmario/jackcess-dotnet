@@ -66,6 +66,12 @@ internal sealed class DatabaseHeader
     }
 
     /// <summary>
+    /// Whether the file is one of Access 2016's format or a later one, as its header says now: one that has the Large
+    /// Number, which a file of an older format is given only by a table with such a column.
+    /// </summary>
+    internal static bool HasLargeNumber(PageFile file) => file.ReadKeptPage(0)[OffsetVersion] >= Version2016;
+
+    /// <summary>
     /// Makes the file one of at least <paramref name="version"/>, as Access does when a table is given a column
     /// an older format lacks: the header's version byte becomes <paramref name="version"/> and the byte after it
     /// zero. A file already of that version or a later one is left as it is.

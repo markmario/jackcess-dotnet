@@ -36,7 +36,7 @@ internal static class TypeMapper
     }
 
     /// <summary>Whether a column can be made for values of <paramref name="clrType"/>.</summary>
-    public static bool IsMappable(Type clrType) => MapClrType(clrType, JetFormat.Jet4) is not null;
+    public static bool IsMappable(Type clrType) => MapClrType(clrType, largeNumber: false) is not null;
 
     /// <summary>
     /// The type of the column a value of <paramref name="clrType"/> is imported into, before the values are looked
@@ -45,17 +45,22 @@ internal static class TypeMapper
     /// <list type="bullet">
     ///   <item><see cref="sbyte"/> is an Integer (<see cref="DataType.Int16"/>), Access's Byte being 0 to 255;
     ///   <see cref="ushort"/> a Long Integer (<see cref="DataType.Int32"/>), Access's Integer being signed.</item>
-    ///   <item><see cref="uint"/> is a Large Number in an .accdb and a Decimal of 10 digits in an .mdb, which has no
-    ///   Large Number; <see cref="long"/> is a Large Number, which an .mdb refuses
-    ///   (<see cref="Database.FormatVersionFor"/>); <see cref="ulong"/> is a Decimal of 20 digits, past what a Large
-    ///   Number holds.</item>
+    ///   <item><see cref="uint"/> and <see cref="long"/> are Large Numbers in a file of Access 2016's format or a later
+    ///   one (<paramref name="largeNumber"/>), and Decimals of 10 and 19 digits in a file of an older format: a Large
+    ///   Number column would raise the file to Access 2016's format (<see cref="Database.FormatVersionFor"/>), which
+    ///   Access 2010 and 2013 do not open, and an import does not change a file's format. Java Jackcess, likewise,
+    ///   makes a Large Number only in a format that has it (<c>DataType.fromSQLType</c>), and a Long Integer
+    ///   otherwise, which does not hold every value. <see cref="ulong"/> is a Decimal of 20 digits, past what a
+    ///   Large Number holds.</item>
     ///   <item><see cref="decimal"/> is a Decimal, whose precision and scale the values give (Currency keeps four
     ///   places after the point, and would round the rest).</item>
     ///   <item><c>byte[]</c> is an OLE Object unless a length that every value fits is known
     ///   (<see cref="ColumnFor"/>).</item>
     /// </list>
     /// </summary>
-    public static DataType? MapClrType(Type clrType, JetFormat format)
+    /// <param name="clrType">The CLR type of the source's column or property.</param>
+    /// <param name="largeNumber">Whether the file is of Access 2016's format or a later one, which has the Large Number.</param>
+    public static DataType? MapClrType(Type clrType, bool largeNumber)
     {
         if (clrType is null) return null;
         Type t = ImportedType(clrType);
@@ -66,8 +71,8 @@ internal static class TypeMapper
         if (t == typeof(short))          return DataType.Int16;
         if (t == typeof(ushort))         return DataType.Int32;
         if (t == typeof(int))            return DataType.Int32;
-        if (t == typeof(uint))           return HasLargeNumber(format) ? DataType.Int64 : DataType.Decimal;
-        if (t == typeof(long))           return DataType.Int64;
+        if (t == typeof(uint))           return largeNumber ? DataType.Int64 : DataType.Decimal;
+        if (t == typeof(long))           return largeNumber ? DataType.Int64 : DataType.Decimal;
         if (t == typeof(ulong))          return DataType.Decimal;
         if (t == typeof(float))          return DataType.Single;
         if (t == typeof(double))         return DataType.Double;
@@ -80,9 +85,6 @@ internal static class TypeMapper
         if (t == typeof(byte[]))         return DataType.OleObject;
         return null;
     }
-
-    // An .accdb has the Large Number; an .mdb (Access 97, Access 2000-2003) has not.
-    private static bool HasLargeNumber(JetFormat format) => format.Version is not (FileFormat.Access97 or FileFormat.Access2000);
 
     /// <summary>
     /// The column a table is made with for a source column or property of <paramref name="clrType"/> whose values
@@ -105,14 +107,14 @@ internal static class TypeMapper
     /// <param name="autoNumber">Whether the column is an AutoNumber: an <see cref="int"/> the source numbers.</param>
     /// <param name="required">Whether the source takes no null in the column.</param>
     /// <param name="values">The values the column is to hold.</param>
-    /// <param name="format">The format of the file the table is made in.</param>
+    /// <param name="largeNumber">Whether the file is of Access 2016's format or a later one, which has the Large Number.</param>
     /// <exception cref="NotHeldException">
     /// The column is a Decimal and its values need more digits than a Decimal column holds.
     /// </exception>
     public static Column? ColumnFor(string name, Type clrType, int? maxLength, bool autoNumber, bool required,
-                                    IReadOnlyCollection<object?> values, JetFormat format)
+                                    IReadOnlyCollection<object?> values, bool largeNumber)
     {
-        var mapped = MapClrType(clrType, format);
+        var mapped = MapClrType(clrType, largeNumber);
         if (mapped is not { } dataType) return null;
         Type t = ImportedType(clrType);
         int? declared = maxLength is > 0 ? maxLength : null;
@@ -140,6 +142,7 @@ internal static class TypeMapper
             case DataType.Decimal:
             {
                 var (precision, scale) = t == typeof(uint) ? (10, 0)
+                                       : t == typeof(long) ? (19, 0)
                                        : t == typeof(ulong) ? (20, 0)
                                        : DecimalShapeOf(values.OfType<decimal>());
                 definition = new ColumnDefinition(name, DataType.Decimal) { Precision = (byte)precision, Scale = (byte)scale };

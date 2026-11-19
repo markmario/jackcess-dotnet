@@ -21,10 +21,10 @@ namespace JackcessDotNet;
 /// <see cref="bool"/> is <see cref="DataType.Boolean"/> (Yes/No), which holds no null, so a null is refused;
 /// <see cref="byte"/> is <see cref="DataType.Byte"/>; <see cref="sbyte"/> and <see cref="short"/> are
 /// <see cref="DataType.Int16"/> (Integer), Access's Byte being 0 to 255; <see cref="ushort"/> and <see cref="int"/>
-/// are <see cref="DataType.Int32"/> (Long Integer); <see cref="uint"/> is <see cref="DataType.Int64"/> (Large Number)
-/// in an .accdb and a <see cref="DataType.Decimal"/> of 10 digits in an .mdb, which has no Large Number;
-/// <see cref="long"/> is <see cref="DataType.Int64"/>, and in an .mdb a table with one is refused, with
-/// <see cref="NotSupportedException"/>; <see cref="ulong"/> is a <see cref="DataType.Decimal"/> of 20 digits, past a
+/// are <see cref="DataType.Int32"/> (Long Integer); <see cref="uint"/> and <see cref="long"/> are
+/// <see cref="DataType.Int64"/> (Large Number) in a file of Access 2016's format or a later one, and
+/// <see cref="DataType.Decimal"/>s of 10 and 19 digits in a file of an older format - an .mdb, or an .accdb of Access
+/// 2007's or 2010's - which has no Large Number; <see cref="ulong"/> is a <see cref="DataType.Decimal"/> of 20 digits, past a
 /// Large Number's range; <see cref="float"/> is <see cref="DataType.Single"/>; <see cref="double"/> is
 /// <see cref="DataType.Double"/>; <see cref="decimal"/> is a <see cref="DataType.Decimal"/> whose scale is the most
 /// places after the point a value has and whose precision is the digits the values need, 18 at least (Currency
@@ -35,6 +35,12 @@ namespace JackcessDotNet;
 /// <see cref="DataType.Memo"/> otherwise. A <c>byte[]</c> is <see cref="DataType.Binary"/> of the source's maximum
 /// length when it has one of 255 bytes or fewer and every value fits it, and <see cref="DataType.OleObject"/>
 /// otherwise. A nullable type is its underlying type, and an enum its underlying integer type.
+/// </para>
+/// <para>
+/// An import does not change the file's format. A Large Number column makes a file of an older format one of Access
+/// 2016's (<see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/>), which Access 2010
+/// and 2013 do not open; the importer makes one only in a file of that format already - one created as
+/// <see cref="FileFormat.Access2016"/> or later, or given such a column before.
 /// </para>
 /// <para>
 /// A column takes no null - Access's Required property - when the source says so: a <see cref="DataColumn"/> whose
@@ -132,9 +138,9 @@ public static class DatabaseImporter
     /// to refer to. Nothing is imported.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The database is an Access 97 file, which is only read; it is an .mdb and the source has a
-    /// <see cref="long"/> column or property, which only an .accdb holds (a Large Number); or the primary key is on a
-    /// column whose index keys this library does not write (a Decimal, a Memo, an OLE Object). Nothing is imported.
+    /// The database is an Access 97 file, which is only read; or the primary key is on a column whose index keys this
+    /// library does not write (a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
+    /// <see cref="long"/> or a <see cref="uint"/> - a Memo, an OLE Object). Nothing is imported.
     /// </exception>
     public static Table ImportTable(this Database database, DataTable table, ImportOptions options)
     {
@@ -318,9 +324,9 @@ public static class DatabaseImporter
     /// to refer to. Nothing is imported.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The database is an Access 97 file, which is only read; it is an .mdb and the objects have a
-    /// <see cref="long"/> property, which only an .accdb holds (a Large Number); or the primary key is on a column
-    /// whose index keys this library does not write (a Decimal, a Memo, an OLE Object). Nothing is imported.
+    /// The database is an Access 97 file, which is only read; or the primary key is on a column whose index keys this
+    /// library does not write (a Decimal - a <see cref="decimal"/>, and in a file before Access 2016's format a
+    /// <see cref="long"/> or a <see cref="uint"/> - a Memo, an OLE Object). Nothing is imported.
     /// </exception>
     public static Table ImportTable<T>(this Database database, IEnumerable<T> items, ImportOptions options)
     {
@@ -440,8 +446,9 @@ public static class DatabaseImporter
         }
 
         // The columns, each worked out from its source column and the values it holds. Unmappable columns are
-        // either dropped or, when FallbackUnmappableToString is set, stored as Memo via ToString().
-        var format  = db.File.Format;
+        // either dropped or, when FallbackUnmappableToString is set, stored as Memo via ToString(). A Large Number only
+        // in a file of a format that has it: an import does not change a file's format.
+        bool largeNumber = DatabaseHeader.HasLargeNumber(db.File);
         var columns = new List<Column>(table.Columns.Count);
         var sources = new List<(DataColumn Source, bool AsText)>(table.Columns.Count);
         foreach (DataColumn dc in table.Columns)
@@ -449,7 +456,7 @@ public static class DatabaseImporter
             var values = sourceRows.Select(r => Cell(r.Row, dc)).ToList();
             bool isAuto = dc.AutoIncrement && dc.DataType == typeof(int);
             var col = Mapped(() => TypeMapper.ColumnFor(dc.ColumnName, dc.DataType, dc.MaxLength > 0 ? dc.MaxLength : null, isAuto,
-                                                       required: !dc.AllowDBNull, values, format),
+                                                       required: !dc.AllowDBNull, values, largeNumber),
                              $"'{table.TableName}'.{dc.ColumnName}", paramName);
             bool asText = false;
             if (col is null)
@@ -471,6 +478,7 @@ public static class DatabaseImporter
         // The key is read here, for a table that is made: rows added to a table that is there take no key, and the
         // option is not looked at for them.
         var pk = PrimaryKeyOf(options) ?? (table.PrimaryKey.Length > 0 ? table.PrimaryKey.Select(c => c.ColumnName).ToList() : null);
+        EnsureKeysWritten(columns, pk, $"DataTable '{table.TableName}'");
 
         // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the new
         // table takes them as given, and its counter ends at the highest: rows added later, here or in Access, are
@@ -547,7 +555,8 @@ public static class DatabaseImporter
             return new TablePlan(existing.Name, existing, columns: null, primaryKey: null, appended, options.KeepIdentity);
         }
 
-        var format  = db.File.Format;
+        // A Large Number only in a file of a format that has it: an import does not change a file's format.
+        bool largeNumber = DatabaseHeader.HasLargeNumber(db.File);
         var columns = new List<Column>();
         var cells   = new List<(object?[] Values, bool AsText)>();
         var keys    = new List<(string Name, int Order, int Position)>();
@@ -567,7 +576,7 @@ public static class DatabaseImporter
             if (TypeMapper.IsMappable(p.PropertyType))
             {
                 values = ValuesOf(p);
-                col = Mapped(() => TypeMapper.ColumnFor(colName, p.PropertyType, maxLen, isAuto, required, values, format),
+                col = Mapped(() => TypeMapper.ColumnFor(colName, p.PropertyType, maxLen, isAuto, required, values, largeNumber),
                              $"'{typeof(T).Name}'.{p.Name}", paramName)!;
             }
             else
@@ -594,6 +603,7 @@ public static class DatabaseImporter
         // then the others, in the order they are declared.
         var pk = PrimaryKeyOf(options)
                  ?? (keys.Count == 0 ? null : keys.OrderBy(k => k.Order >= 0 ? k.Order : int.MaxValue).ThenBy(k => k.Position).Select(k => k.Name).ToList());
+        EnsureKeysWritten(columns, pk, $"Type '{typeof(T).Name}'");
 
         // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
         // number - is numbered by the table.
@@ -625,6 +635,20 @@ public static class DatabaseImporter
                     throw new ArgumentException(
                         $"{source} has two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names Access takes as one: " +
                         "a table has one column of a name. Nothing was imported.", paramName);
+    }
+
+    // A key on a Decimal column is refused before anything is written, as CreateTable refuses one: this library writes
+    // no Decimal index keys. A long and a uint are Decimals in a file before Access 2016's format, and Large Numbers,
+    // which a key can be on, in one of it.
+    private static void EnsureKeysWritten(IReadOnlyList<Column> columns, IReadOnlyList<string>? key, string source)
+    {
+        if (key is null) return;
+        foreach (string name in key)
+            if (columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is { DataType: DataType.Decimal } column)
+                throw new NotSupportedException(
+                    $"{source} has its key on '{column.Name}', a Decimal column, whose index keys this library does not write. " +
+                    "A long or a uint is a Decimal in a file before Access 2016's format, which has no Large Number, and a Large " +
+                    "Number, which a key can be on, in a file of FileFormat.Access2016 or later. Nothing was imported.");
     }
 
     // Two of the source's columns that both go to one column of a table that is there would leave it one of their

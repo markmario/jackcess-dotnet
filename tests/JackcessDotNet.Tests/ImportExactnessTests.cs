@@ -75,22 +75,43 @@ public sealed class ImportExactnessTests : IDisposable
         public sbyte S { get; set; }
     }
 
-    [Fact]
-    public void A_uint_is_a_Large_Number_in_an_accdb_and_a_Decimal_of_10_digits_in_an_mdb()
+    // A Large Number is in a file of Access 2016's format or later, and an import does not change a file's format: a
+    // uint and a long are Large Numbers in such a file, and Decimals of 10 and 19 digits in any other - an .mdb, or an
+    // .accdb of Access 2007's or 2010's format, which Access 2010 and 2013 open.
+    [Theory]
+    [InlineData(FileFormat.Access2000, false)]
+    [InlineData(FileFormat.Access2007, false)]
+    [InlineData(FileFormat.Access2010, false)]
+    [InlineData(FileFormat.Access2016, true)]
+    public void A_uint_and_a_long_are_Large_Numbers_only_in_a_file_of_Access_2016s_format(FileFormat format, bool largeNumber)
     {
-        var table = TableOf("V", typeof(uint), uint.MaxValue, 2_147_483_648u, 0u);
-        using (var db = Database.Create(_accdb, FileFormat.Access2010)) db.ImportTable(table);
-        using (var db = Database.Create(_path)) db.ImportTable(table);
+        string path = format == FileFormat.Access2000 ? _path : _accdb;
+        var source = TableOf("U", typeof(uint), uint.MaxValue, 2_147_483_648u, 0u);
+        source.Columns.Add("L", typeof(long));
+        source.Rows[0]["L"] = long.MaxValue;
+        source.Rows[1]["L"] = long.MinValue;
+        source.Rows[2]["L"] = 0L;
+        Database.Create(path, format).Dispose();
+        byte version = File.ReadAllBytes(path)[0x14];
+        using (var db = Database.Open(path)) db.ImportTable(source);
 
-        using (var accdb = Database.Open(_accdb))
+        Assert.Equal(version, File.ReadAllBytes(path)[0x14]);
+        using var reopen = Database.Open(path);
+        var u = ColumnNamed(reopen.GetTable("T"), "U");
+        var l = ColumnNamed(reopen.GetTable("T"), "L");
+        if (largeNumber)
         {
-            Assert.Equal(DataType.Int64, ColumnNamed(accdb.GetTable("T"), "V").DataType);
-            Assert.Equal(new object?[] { 4_294_967_295L, 2_147_483_648L, 0L }, ValuesOf(accdb, "T", "V"));
+            Assert.Equal((DataType.Int64, DataType.Int64), (u.DataType, l.DataType));
+            Assert.Equal(new object?[] { 4_294_967_295L, 2_147_483_648L, 0L }, ValuesOf(reopen, "T", "U"));
+            Assert.Equal(new object?[] { long.MaxValue, long.MinValue, 0L }, ValuesOf(reopen, "T", "L"));
         }
-        using var mdb = Database.Open(_path);
-        var column = ColumnNamed(mdb.GetTable("T"), "V");
-        Assert.Equal((DataType.Decimal, (byte)10, (byte)0), (column.DataType, column.Precision, column.Scale));
-        Assert.Equal(new object?[] { 4_294_967_295m, 2_147_483_648m, 0m }, ValuesOf(mdb, "T", "V"));
+        else
+        {
+            Assert.Equal((DataType.Decimal, (byte)10, (byte)0), (u.DataType, u.Precision, u.Scale));
+            Assert.Equal((DataType.Decimal, (byte)19, (byte)0), (l.DataType, l.Precision, l.Scale));
+            Assert.Equal(new object?[] { 4_294_967_295m, 2_147_483_648m, 0m }, ValuesOf(reopen, "T", "U"));
+            Assert.Equal(new object?[] { (decimal)long.MaxValue, (decimal)long.MinValue, 0m }, ValuesOf(reopen, "T", "L"));
+        }
     }
 
     [Fact]
@@ -436,16 +457,33 @@ public sealed class ImportExactnessTests : IDisposable
     [Fact]
     public void A_key_on_a_Decimal_column_is_refused_before_anything_is_written()
     {
-        // A decimal is a Decimal column, and so is a uint in an .mdb: this library writes no index keys for one.
+        // A decimal is a Decimal column, and so are a uint and a long in a file before Access 2016's format: this
+        // library writes no index keys for one, and the refusal says where a Large Number is.
         Database.Create(_path).Dispose();
         RefusedAndUnchanged<NotSupportedException>(_path, db => db.ImportTable(new[] { new DecimalKeyed { Price = 1.5m } }));
-        RefusedAndUnchanged<NotSupportedException>(_path, db => db.ImportTable(new[] { new UIntKeyed { Id = 1 } }));
+        Database.Create(_accdb, FileFormat.Access2010).Dispose();
+        foreach (string path in new[] { _path, _accdb })
+        {
+            var refused = RefusedAndUnchanged<NotSupportedException>(path, db => db.ImportTable(new[] { new UIntKeyed { Id = 1 } }));
+            Assert.Contains("Access2016", refused.Message);
+            RefusedAndUnchanged<NotSupportedException>(path, db => db.ImportTable(new[] { new LongKeyed { Id = 1 } }));
+        }
 
-        // In an .accdb a uint is a Large Number, whose keys are written.
-        using (var db = Database.Create(_accdb, FileFormat.Access2010))
+        // In a file of Access 2016's format they are Large Numbers, whose keys are written.
+        File.Delete(_accdb);
+        using (var db = Database.Create(_accdb, FileFormat.Access2016))
+        {
             db.ImportTable(new[] { new UIntKeyed { Id = uint.MaxValue } });
+            db.ImportTable(new[] { new LongKeyed { Id = long.MinValue } });
+        }
         using var reopen = Database.Open(_accdb);
         Assert.NotNull(reopen.GetTable("UIntKeyed").FindRowByPrimaryKey((long)uint.MaxValue));
+        Assert.NotNull(reopen.GetTable("LongKeyed").FindRowByPrimaryKey(long.MinValue));
+    }
+
+    private sealed class LongKeyed
+    {
+        [Key] public long Id { get; set; }
     }
 
     private sealed class DecimalKeyed

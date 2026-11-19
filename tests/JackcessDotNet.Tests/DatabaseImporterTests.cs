@@ -21,14 +21,15 @@ public sealed class DatabaseImporterTests : IDisposable
 
     // ── TypeMapper unit-level checks ─────────────────────────────────────────
 
-    // The column a CLR type makes before its values are looked at (#44): a decimal is a Decimal, which keeps the
-    // places Currency would round; a byte[] of no known length an OLE Object, which takes any length.
+    // The column a CLR type makes before its values are looked at (#44), in a file before Access 2016's format: a
+    // decimal is a Decimal, which keeps the places Currency would round, and so is a long, there being no Large
+    // Number; a byte[] of no known length an OLE Object, which takes any length.
     [Theory]
     [InlineData(typeof(bool),           DataType.Boolean)]
     [InlineData(typeof(byte),           DataType.Byte)]
     [InlineData(typeof(short),          DataType.Int16)]
     [InlineData(typeof(int),            DataType.Int32)]
-    [InlineData(typeof(long),           DataType.Int64)]
+    [InlineData(typeof(long),           DataType.Decimal)]
     [InlineData(typeof(float),          DataType.Single)]
     [InlineData(typeof(double),         DataType.Double)]
     [InlineData(typeof(decimal),        DataType.Decimal)]
@@ -39,31 +40,31 @@ public sealed class DatabaseImporterTests : IDisposable
     [InlineData(typeof(byte[]),         DataType.OleObject)]
     public void TypeMapper_MapsPrimitivesAndNullables(Type clr, DataType expected)
     {
-        Assert.Equal(expected, TypeMapper.MapClrType(clr, JetFormat.Jet4));
+        Assert.Equal(expected, TypeMapper.MapClrType(clr, largeNumber: false));
         // Nullable<T> wrapper should resolve to the same Jet type.
         if (clr.IsValueType)
         {
             var nullable = typeof(Nullable<>).MakeGenericType(clr);
-            Assert.Equal(expected, TypeMapper.MapClrType(nullable, JetFormat.Jet4));
+            Assert.Equal(expected, TypeMapper.MapClrType(nullable, largeNumber: false));
         }
     }
 
     [Fact]
     public void TypeMapper_Enum_UnwrapsToUnderlyingType()
     {
-        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum), JetFormat.Jet4));
-        Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum), JetFormat.Jet4));
+        Assert.Equal(DataType.Int32,  TypeMapper.MapClrType(typeof(IntBackedEnum), largeNumber: false));
+        Assert.Equal(DataType.Byte,  TypeMapper.MapClrType(typeof(ByteBackedEnum), largeNumber: false));
     }
 
     [Fact]
     public void TypeMapper_UnmappableType_ReturnsNull()
     {
-        Assert.Null(TypeMapper.MapClrType(typeof(System.IO.Stream), JetFormat.Jet4));
+        Assert.Null(TypeMapper.MapClrType(typeof(System.IO.Stream), largeNumber: false));
         Assert.False(TypeMapper.IsMappable(typeof(System.IO.Stream)));
     }
 
     private static Column? ColumnOf(Type type, int? maxLength, params object?[] values)
-        => TypeMapper.ColumnFor("C", type, maxLength, autoNumber: false, required: false, values, JetFormat.Jet4);
+        => TypeMapper.ColumnFor("C", type, maxLength, autoNumber: false, required: false, values, largeNumber: false);
 
     [Fact]
     public void TypeMapper_PromotesLongText_ToMemo()
@@ -560,24 +561,26 @@ public sealed class DatabaseImporterTests : IDisposable
     // ── TypeMapper: wider primitive coverage ─────────────────────────────────
 
     // Each to a column that holds every value of its type (#44): an sbyte is negative where a Byte is not, a
-    // ushort past what an Integer holds, a uint past a Long Integer - a Large Number in an .accdb, a Decimal of 10
-    // digits in an .mdb, which has none - and a ulong past a Large Number.
+    // ushort past what an Integer holds, a uint past a Long Integer and a long past a Long Integer - Large Numbers in
+    // a file of Access 2016's format, and Decimals in a file of an older one, which has none - and a ulong past a
+    // Large Number.
     [Theory]
     [InlineData(typeof(sbyte),    DataType.Int16,   DataType.Int16)]
     [InlineData(typeof(ushort),   DataType.Int32,   DataType.Int32)]
     [InlineData(typeof(uint),     DataType.Decimal, DataType.Int64)]
+    [InlineData(typeof(long),     DataType.Decimal, DataType.Int64)]
     [InlineData(typeof(ulong),    DataType.Decimal, DataType.Decimal)]
     [InlineData(typeof(char),     DataType.Text,    DataType.Text)]
-    public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType inAnMdb, DataType inAnAccdb)
+    public void TypeMapper_Maps_LessCommonPrimitives(Type clr, DataType withoutLargeNumber, DataType withLargeNumber)
     {
-        Assert.Equal(inAnMdb,   TypeMapper.MapClrType(clr, JetFormat.Jet4));
-        Assert.Equal(inAnAccdb, TypeMapper.MapClrType(clr, JetFormat.Jet14));
+        Assert.Equal(withoutLargeNumber, TypeMapper.MapClrType(clr, largeNumber: false));
+        Assert.Equal(withLargeNumber,    TypeMapper.MapClrType(clr, largeNumber: true));
     }
 
-    // A long is a Large Number, which an .accdb has: its values come back whole. (It was a Long Integer, and a
-    // value past 32 bits stopped the import at its row: #38, #44.)
+    // A long is a Large Number in a file of Access 2016's format: its values come back whole. (It was a Long Integer,
+    // and a value past 32 bits stopped the import at its row: #38, #44.)
     [Fact]
-    public void A_long_is_imported_into_an_accdb_as_a_Large_Number()
+    public void A_long_is_imported_into_a_file_of_Access_2016s_format_as_a_Large_Number()
     {
         var dt = new DataTable("L");
         dt.Columns.Add("Id", typeof(int));
@@ -586,7 +589,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(2, long.MaxValue);
         dt.Rows.Add(3, long.MinValue);
         dt.Rows.Add(4, DBNull.Value);
-        using (var db = Database.Create(_path, FileFormat.Access2010))
+        using (var db = Database.Create(_path, FileFormat.Access2016))
         {
             db.ImportTable(dt);
             db.ImportTable(new[] { new WithLong { Id = 5, V = 5_000_000_000L } }, new ImportOptions { TableName = "Objects" });
@@ -600,26 +603,30 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Equal(5_000_000_000L, reopen.GetTable("Objects").ReadRows<WithLong>().Single().V);
     }
 
-    // An .mdb has no Large Number: the table is refused before it is made, and nothing of the file changes.
-    [Fact]
-    public void A_long_is_refused_in_an_mdb_before_the_table_is_made()
+    // A file of an older format has no Large Number, and an import does not change a file's format: a long is a
+    // Decimal of 19 digits there, which holds every long, in an .mdb as in an .accdb of Access 2007's or 2010's format.
+    [Theory]
+    [InlineData(FileFormat.Access2000)]
+    [InlineData(FileFormat.Access2010)]
+    public void A_long_is_a_Decimal_of_19_digits_in_a_file_before_Access_2016s_format(FileFormat format)
     {
         var dt = new DataTable("L");
         dt.Columns.Add("Id", typeof(int));
         dt.Columns.Add("V",  typeof(long));
-        dt.Rows.Add(1, 1L);
-        Database.Create(_path, FileFormat.Access2000).Dispose();
-        byte[] before = File.ReadAllBytes(_path);
-
-        using (var db = Database.Open(_path))
+        dt.Rows.Add(1, long.MaxValue);
+        dt.Rows.Add(2, long.MinValue);
+        using (var db = Database.Create(_path, format))
         {
-            var refused = Assert.Throws<NotSupportedException>(() => db.ImportTable(dt));
-            Assert.Contains("'V'", refused.Message);
-            Assert.Contains(".accdb", refused.Message);
-            Assert.Throws<NotSupportedException>(() => db.ImportTable(new[] { new WithLong { Id = 1, V = 1 } }, new ImportOptions { TableName = "Objects" }));
-            Assert.Empty(db.GetTableNames());
+            db.ImportTable(dt);
+            db.ImportTable(new[] { new WithLong { Id = 5, V = 5_000_000_000L } }, new ImportOptions { TableName = "Objects" });
         }
-        Assert.Equal(before, File.ReadAllBytes(_path));
+
+        using var reopen = Database.Open(_path);
+        Assert.Equal(format, reopen.FileFormat);
+        var column = reopen.GetTable("L").Columns.Single(c => c.Name == "V");
+        Assert.Equal((DataType.Decimal, (byte)19, (byte)0), (column.DataType, column.Precision, column.Scale));
+        Assert.Equal(new object?[] { (decimal)long.MaxValue, (decimal)long.MinValue }, reopen.GetTable("L").Rows.Select(r => r["V"]));
+        Assert.Equal(5_000_000_000m, reopen.GetTable("Objects").Rows.Single()["V"]);
     }
 
     private sealed class WithLong

@@ -121,9 +121,12 @@ changed since 1.2.2.
 - **A table whose definition goes on to a page that is not its own** - one the file has not, one already read,
   or one that is no definition page - is opened, and read by the columns its sound pages name; nothing is
   written to it or changed in it (#37).
-- **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
-  value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
-  has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **An import holds a `long` whole** (#38). A `long` column or property was a Long Integer, and a value past 32
+  bits stopped the import at its row. It is a Large Number in a file of Access 2016's format or later, and a
+  `Decimal(19, 0)` in an older one - an `.mdb`, or an `.accdb` of Access 2007's or 2010's format. **An import does
+  not change a file's format**: a Large Number column makes a file one of Access 2016's format, which Access 2010
+  and 2013 do not open, so the importer makes one only where the file is of that format already. A key on such a
+  column in an older file is a Decimal key, refused before anything is written.
 - **An import holds every value of its source exactly, or refuses before anything is written** (#44).
   - **Whole or not at all.** Every value is converted to what its column holds before anything is written, and
     a value no column holds exactly is refused then, with `ArgumentException` naming the column and the row. What
@@ -132,8 +135,9 @@ changed since 1.2.2.
     before it: a refused import leaves the file byte for byte as it was. The table and the rows before a refused
     row stayed. `ImportTable<T>` reads every object before it writes; it read them as it inserted.
   - **Columns that hold every value.** `sbyte` is an Integer (it was a Byte, and a negative value stopped the
-    import), `ushort` a Long Integer (an Integer), `uint` a Large Number in an `.accdb` and a `Decimal(10, 0)` in
-    an `.mdb`, `ulong` a `Decimal(20, 0)` (both were Long Integers, and a value past 31 bits stopped the import).
+    import), `ushort` a Long Integer (an Integer), `uint` a Large Number in a file of Access 2016's format and a
+    `Decimal(10, 0)` in an older one, `ulong` a `Decimal(20, 0)` (both were Long Integers, and a value past 31
+    bits stopped the import).
     `decimal` is a Decimal whose scale is the most places a value has and whose precision the digits the values
     need, 18 at least - refused past 28 - where Currency rounded past four places. A `string` with no length is
     Text(255) when every value fits and a Memo otherwise, and one with a length longer than a value is a Memo (a
