@@ -794,10 +794,12 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Four target frameworks:** `net10.0`, `net11.0`, `net48` and `netstandard2.0`, each of them tested.
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
   Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB.
-- **Rows go where Access puts them, and inserts cost the same however large the table.** A row goes to the
+- **Rows go where Access puts them, and finding room costs no more as a table grows.** A row goes to the
   lowest page the table's free-space map lists with room for it, as in Access - in a table nothing was deleted
   from, its last page, so rows stay in insertion order - and room a delete or an update frees is used again as
-  Access uses it (#58). A page holds at most 255 rows.
+  Access uses it (#58). A listed page tried without room for the row leaves the map, so a run of inserts tries at
+  most as many pages as it has inserts and the map lists pages, at any size of table; one insert can try every
+  listed page, when none has room for it, as Access's can (below). A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values.
 - **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),
@@ -1075,7 +1077,12 @@ have been deleted - and a row Access moved to another page is read where its poi
     deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint, so the page keeps that
     row's slot, deleted, with the slots before it, and is begun again after them: a slot number is used again only
     where nothing names it, and what read a deleted row finds no row in its slot.
-  - Finding a page reads the pages tried and no other: the map is read once a session, and kept.
+  - Finding a page reads the pages tried and no other: the map is read once a session, and kept. A page tried
+    without room for the row leaves the map, as in Access, so each listed page is tried once while it is listed: a
+    run of inserts tries at most as many pages as it has inserts and the map lists pages, a few pages read for each,
+    however large the table. One insert tries every listed page when none has room for it - a row larger than the
+    room any delete left - and takes each off the map, about three pages read and one written for each (2,000 pages
+    listed, a row of 1,039 bytes: 3,012 read, 1,008 written), so that the inserts after it try none of them again.
   - Where Access does not use room, this library does not either: a page with 255 slots takes no more rows, however
     many of them are deleted ones; a row that shrinks where it is, or whose values move to another page, lists no
     page. Compacting the file in Access gives all of it back.

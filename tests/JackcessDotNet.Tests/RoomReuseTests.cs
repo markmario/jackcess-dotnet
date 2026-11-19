@@ -731,6 +731,78 @@ public sealed class RoomReuseTests : IDisposable
             $"an insert read {middle.Reads} pages into a table with 1,700 pages listed and {small.Reads} into one with 30");
     }
 
+    /// <summary>
+    /// A page the map lists is tried at most once while it is listed - one without room for the row leaves the map - so
+    /// a run of inserts tries at most as many pages as it has inserts and the map has listed pages, at any size of
+    /// table: each insert costs a few pages read, taken over the run. One insert can try every listed page: a row
+    /// larger than any room the deletes left, which takes each of them off the map, as Access does.
+    /// </summary>
+    [Theory]
+    [InlineData(300)]     // an inline free-space map
+    [InlineData(2_000)]   // a reference map
+    public void A_run_of_inserts_tries_each_listed_page_once_and_one_insert_can_try_them_all(int pages)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"room_cost_{Guid.NewGuid():N}.mdb");
+        Row Of(int id, int a, int b = 0) => new Row { ["Id"] = id, ["A"] = Greek(a), ["B"] = Greek(b) };
+        try
+        {
+            using (var db = Database.Create(path))
+            {
+                // No index, so that what is counted is finding a page and writing the row there.
+                var table = db.CreateTable("P", new[]
+                {
+                    new ColumnDefinition("Id", DataType.Int32),
+                    new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+                    new ColumnDefinition("B", DataType.Text) { MaxLength = 255 },
+                });
+                table.InsertRange(Enumerable.Range(1, 9 * pages).Select(id => Of(id, 200)));
+            }
+            using (var db = Database.Open(path))
+            {
+                // A row deleted from every page, each of which then has room for one: all of them listed.
+                var table = db.GetTable("P");
+                foreach (var row in table.Rows.Where(r => (int)r["Id"]! % 9 == 1).ToList()) table.Delete(row);
+            }
+            using (var db = Database.Open(path))
+            {
+                var table = db.GetTable("P");
+                Assert.Equal(pages, Listed(db, table).Count);
+                int id = 9 * pages;
+                (long Reads, long Writes) Run(int inserts, int a, int b = 0)
+                {
+                    long reads = db.File.ReadCount, writes = db.File.WriteCount;
+                    for (int i = 0; i < inserts; i++) table.Insert(Of(++id, a, b));
+                    return (db.File.ReadCount - reads, db.File.WriteCount - writes);
+                }
+
+                // Half the listed pages take a row each: an insert tries the page the one before it filled, which
+                // leaves the map, and the next.
+                var first = Run(pages / 2, 200);
+                // A row of 1,039 bytes, larger than the room any page listed has: it tries every one still listed,
+                // takes each off the map, and goes to a new page.
+                var worst = Run(1, 255, 255);
+                Assert.Single(Listed(db, table));
+                // The rows after it go to that page and the pages after it: none tries a page it tried before.
+                var rest = Run(pages / 2, 200);
+
+                // The worst case: every page still listed read, and its bit in the map - two pages for an inline map,
+                // three for a reference map (300 pages: 308 read, 158 written; 2,000: 3,012 and 1,008).
+                Assert.InRange(worst.Reads, pages / 2, 3 * (pages / 2) + 20);
+                Assert.InRange(worst.Writes, pages / 2, pages / 2 + 10);
+                // Every other insert a few pages, as many at 2,000 pages listed as at 300 (five and six; three or four).
+                Assert.InRange(first.Reads, pages / 2, 7L * (pages / 2));
+                Assert.InRange(rest.Reads, pages / 2, 7L * (pages / 2));
+                // And the run as a whole: a few pages for each insert and each page listed.
+                long inserts = 2 * (pages / 2) + 1;
+                Assert.InRange(first.Reads + worst.Reads + rest.Reads, inserts, 4 * (inserts + pages));
+            }
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     // ── Kept for undoing ─────────────────────────────────────────────────────
 
     [Fact]

@@ -144,8 +144,10 @@ internal sealed class DataPageWriter
     /// rows as a page can, leaves the map, and the next is tried; a page leaves the map so and no other way, not
     /// because a row filled it. With none, a new page, which the map lists only when it has room, the row on it, for
     /// another row of its size. The map is kept in memory for the session (<see cref="ListedDataPages"/>), so finding
-    /// the page reads the pages tried and nothing else, however large the table: in a table nothing has been deleted
-    /// from, the last page, so rows stay in the order they were inserted.
+    /// the page reads the pages tried and nothing else: in a table nothing has been deleted from, the last page, so
+    /// rows stay in the order they were inserted. A listed page leaves the map the first time a row does not fit there,
+    /// so each is passed over once while it is listed: a run of inserts tries at most as many pages as it has inserts
+    /// and the map lists, however large the table, and one insert tries every listed page when none has room for it.
     /// </summary>
     private int FindOrAllocateDataPage(TableDefinition tableDef, int rowDataSize, JetFormat format)
     {
