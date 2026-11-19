@@ -192,13 +192,14 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     nothing for -0.0 and -2^63 and rounds the decimal to a whole number (5.5m finds 6, 0.1m finds 0, -1.23465m
     finds -1). As ACE's index does, a double finds only the Large Number it is exactly - 2^53 does not find
     2^53 + 1 - where ACE's scan compares the two as doubles.
-  - *A Currency* is the caller's number taken to its four places: a `double` or `float` by its exact value, half
-    to even, as ACE's `=` (through an index and without) and DAO's `Seek` take one - 0.03125 finds 0.0312, and
-    the double 0.00015, which is just under that half, finds 0.0001 - and a `decimal` or a whole number as this
-    library writes it, half away from zero: 1.23456 finds 1.2346, and 1.23465m finds 1.2347, where ACE's index
-    rounds a decimal half to even and its scan takes it through a double (#65). A range of an index cursor, and
-    `FindClosestRowByEntry`, still key a `double` as a row is written with it, which rounds some of these the
-    other way (#65).
+  - *A Currency* is the caller's number taken to its four places as a row written with it stores it - its exact
+    value, half to even, as Access takes one ([#65](https://github.com/markmario/jackcess-dotnet/issues/65)) - by
+    an equality, in a range and for `FindClosestRowByEntry` alike, as ACE's `=`, `BETWEEN`, `>=`, `>`, `<=` and
+    `<` through an index and DAO's `Seek` take it: the double 0.03125 finds 0.0312, the double 0.00015, which is
+    just under that half, finds 0.0001, and 1.23465m finds 1.2346. ACE's scan, with no index to answer, takes a
+    decimal through a double, and finds 1.2347 for it. Text is not a number, and NaN, an infinity or a number past
+    the range is no Currency: they find no row, and a range or `FindClosestRowByEntry` refuses them with
+    `ArgumentException`, as ACE's refuses a number past the range.
   - *A Double or a Single* is the caller's number as the column stores it, by its bits, as ACE's index has it:
     +0.0 and -0.0 are two numbers, where ACE's scan finds both for either. *A Decimal* is the same number
     exactly, a caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7 significant
@@ -717,8 +718,10 @@ An import holds every value of its source exactly, or refuses before anything is
   equal in those are a duplicate, as Access takes them (measured with DAO).
 - **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
   holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` to a Decimal
-  or Currency column as the number it is when the column holds that, and otherwise as the number its round-trip
-  form denotes; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
+  column as the number it is when the column holds that, and otherwise as the number its round-trip form denotes;
+  a `double` or `float` to a Currency column as the Currency Access makes of it - its exact value to four places,
+  half to even - when that reads back as the number given, which it does when the number's round-trip form has
+  four places or fewer; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
   it as its round-trip form); text to a numeric column as the number it denotes in the invariant culture, held as
   a number would be - exactly: `"1e-30"` goes to a Double column and is refused by a Currency one, and NaN, the
   infinities and a number past the column's range are refused; text to a Yes/No,
@@ -843,6 +846,9 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   on by default).
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included.
+- **A Currency is the number Access makes of a caller's**: its exact value to four places, half to even, for a
+  row, its keys and every lookup, on every runtime. The engine took a `double` through a `decimal` of 15
+  significant digits and rounded half away from zero, so a row was not found by the number it was written with.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
@@ -1057,6 +1063,14 @@ have been deleted - and a row Access moved to another page is read where its poi
   "Conversion failed because the Decimal data value overflowed the type specified" - and a query that sorts its
   rows, or writes the value back, is refused: "The decimal field's precision is too small to accept the numeric
   you attempted to add."
+- **A Currency is the caller's number taken to four places as Access takes one** - its exact value, half to even -
+  wherever one is made: a row, its index keys, a relationship's check, a property, an import
+  ([#65](https://github.com/markmario/jackcess-dotnet/issues/65)). Measured with ACE 16 and DAO, which write alike
+  through every path tried: the double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written
+  as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346. A value that is not a number is
+  refused with `ArgumentException`, text among them: Access reads text by the machine's locale. NaN, an infinity
+  and a number past -922,337,203,685,477.5808 to 922,337,203,685,477.5807 are refused with `OverflowException`;
+  Access refuses the last two ("Overflow"), and writes NaN as the least Currency, which this library does not.
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
 - **An empty byte array is a value of no bytes** in a Binary or OLE Object column: written as ACE's OLE DB writes
