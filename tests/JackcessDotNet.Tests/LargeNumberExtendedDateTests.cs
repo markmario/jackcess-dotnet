@@ -117,6 +117,27 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         Assert.Equal(new DateTime(2020, 1, 2, 3, 4, 5).AddTicks(1234567), ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
     }
 
+    // Access's other form (#38): a count of 0, the time of day in whole seconds. It is what ACE's SQL UPDATE left in
+    // a file it made - SET K = '2020-01-02 03:04:05.1234568', and SET K = another Date/Time Extended column, both
+    // wrote 0000000000000737425:0000000000000011045:0 - and DAO read it back as 03:04:05.0000000. It was read as null.
+    [Theory]
+    [InlineData("0000000000000737425:0000000000000011045:0\0", 2020, 1, 2, 3, 4, 5)]   // as Access's UPDATE wrote it
+    [InlineData("0000000000000737425:0000000000000000000:0\0", 2020, 1, 2, 0, 0, 0)]
+    [InlineData("0000000000000737425:0000000000000086399:0\0", 2020, 1, 2, 23, 59, 59)]
+    [InlineData("0000000000000000000:0000000000000000000:0\0", 1, 1, 1, 0, 0, 0)]
+    public void A_date_Access_wrote_in_whole_seconds_is_read_as_that_date(string stored, int year, int month, int day, int hour, int minute, int second)
+    {
+        Assert.Equal(ExtendedDateTimeCodec.Size, stored.Length);
+        Assert.Equal(new DateTime(year, month, day, hour, minute, second), ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
+    }
+
+    [Theory]
+    [InlineData("0000000000000737425:0000000000000086400:0\0")]   // a time of day a day long, in seconds
+    [InlineData("0000000000000737425:0000000110451234567:0\0")]   // a time in ticks under a count of 0
+    [InlineData("0000000000003652059:0000000000000000000:0\0")]   // the day after the last
+    public void Bytes_in_whole_seconds_that_are_no_date_are_read_as_null(string stored)
+        => Assert.Null(ExtendedDateTimeCodec.Decode(Encoding.ASCII.GetBytes(stored), 0));
+
     [Fact]
     public void Their_keys_are_the_ones_Access_writes()
     {
