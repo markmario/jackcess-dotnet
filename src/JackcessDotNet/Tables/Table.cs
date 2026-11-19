@@ -690,6 +690,10 @@ public sealed class Table
     /// INDEX</c> and Jackcess's <c>IndexBuilder.addToTable</c> do. From then on it is kept on every insert, update
     /// and delete, like the table's other indexes, and a unique one refuses a duplicate. An index on the columns,
     /// in the order and with the flags, of one the table already has shares that index's tree, as in Access.
+    /// An index that is a primary key (<see cref="IndexDefinition.IsPrimaryKey"/>) gives a table that has none
+    /// its primary key, as Access's <c>ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY</c> and Jackcess's
+    /// <c>IndexBuilder.withPrimaryKey</c> do: <see cref="FindRowByPrimaryKey"/> and
+    /// <see cref="UpdateByPrimaryKey"/> then find rows by it, and a relationship can refer to it.
     /// <para>
     /// The rows are read and every key made before anything is written, and what is written is taken back if
     /// writing it fails: a refused index leaves the file byte for byte as it was. This <see cref="Table"/>, and
@@ -698,12 +702,12 @@ public sealed class Table
     /// </summary>
     /// <returns>The table's new index.</returns>
     /// <exception cref="ArgumentException">
-    /// The table already has an index of that name, or 32 indexes; or the index sorts descending a column that
-    /// is not one of its own.
+    /// The table already has an index of that name, or 32 indexes; the index sorts descending a column that
+    /// is not one of its own; or it is a primary key and the table has one, or it is to ignore nulls.
     /// </exception>
     /// <exception cref="ConstraintViolationException">
-    /// Two rows of the table have the same values in a unique index, or a row has a null in an index that
-    /// requires its values. Nothing is changed.
+    /// Two rows of the table have the same values in a unique index or a primary key, or a row has a null in a
+    /// primary key or an index that requires its values. Nothing is changed.
     /// </exception>
     /// <exception cref="InvalidOperationException">A column the index names is not in the table. Nothing is changed.</exception>
     /// <exception cref="NotSupportedException">

@@ -33,6 +33,12 @@ internal sealed class TdefEditor
     /// <summary>A slot's index type: an ordinary index, a primary key, or one side of a relationship.</summary>
     internal const byte IndexTypeForeignKey = 2;
 
+    /// <summary>
+    /// The two cascade bytes of a slot that is no relationship's, as Access writes them: 4 in each, in every
+    /// such slot of the tables it makes (#37). A relationship's slot has its cascades there.
+    /// </summary>
+    internal const byte NoRelationshipCascade = 4;
+
     /// <summary>A slot's "other table" type: this table is the relationship's primary (referenced) table.</summary>
     internal const byte ForeignKeyPrimaryTable = 1;
     /// <summary>A slot's "other table" type: this table is the relationship's secondary (referring) table.</summary>
@@ -331,6 +337,9 @@ internal sealed class TdefEditor
         else
         {
             ByteUtil.PutInt(slot, p + 9, -1);   // no other index
+            // What Access writes in the two cascade bytes of an index that is no relationship's.
+            slot[p + 17] = NoRelationshipCascade;
+            slot[p + 18] = NoRelationshipCascade;
         }
         slot[p + 19] = indexType;
 

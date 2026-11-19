@@ -656,8 +656,9 @@ public sealed class Database : IDisposable
     /// <param name="indexes">The table's other indexes.</param>
     /// <exception cref="ArgumentException">
     /// The name is empty, there are no columns, a column's definition is not one a table can have
-    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, or two indexes
-    /// have one name. Nothing is created.
+    /// (<see cref="ColumnDefinition"/>), the primary key names a column that is not among them, two indexes
+    /// have one name, or an index definition is a primary key (<see cref="IndexDefinition.IsPrimaryKey"/>).
+    /// Nothing is created.
     /// </exception>
     /// <exception cref="NotSupportedException">
     ///   An index is on a column whose keys this library does not write as Access does: a Decimal, Binary, OLE
@@ -896,6 +897,10 @@ public sealed class Database : IDisposable
         foreach (var index in secondary)
         {
             if (index is null) throw new ArgumentException("An index definition must not be null.", nameof(secondary));
+            if (index.IsPrimaryKey)
+                throw new ArgumentException(
+                    $"Index '{index.Name}' is a primary key: a table is created with its primary key by naming the key's columns, " +
+                    "not by an index definition.", nameof(secondary));
             if (planned.Any(p => string.Equals(p.Name, index.Name, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException($"Table '{table}' is given two indexes named '{index.Name}'.", nameof(secondary));
             foreach (string descending in index.DescendingColumns)

@@ -163,6 +163,8 @@ JackcessDotNet.IndexDefinition.DescendingColumns.get -> System.Collections.Gener
 JackcessDotNet.IndexDefinition.IgnoreNulls.get -> bool
 JackcessDotNet.IndexDefinition.IgnoreNulls.set -> void
 JackcessDotNet.IndexDefinition.IndexDefinition(string! name, params string![]! columns) -> void
+JackcessDotNet.IndexDefinition.IsPrimaryKey.get -> bool
+JackcessDotNet.IndexDefinition.IsPrimaryKey.set -> void
 JackcessDotNet.IndexDefinition.IsRequired.get -> bool
 JackcessDotNet.IndexDefinition.IsRequired.set -> void
 JackcessDotNet.IndexDefinition.IsUnique.get -> bool

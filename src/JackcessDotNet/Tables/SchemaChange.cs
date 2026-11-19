@@ -128,13 +128,27 @@ internal static class SchemaChange
         if (index.IgnoreNulls) flags |= TableDefinition.IgnoreNullsIndexFlag;
         if (index.IsRequired)  flags |= TableDefinition.RequiredIndexFlag;
 
+        byte indexType = 0;
+        if (index.IsPrimaryKey)
+        {
+            // A primary key is unique and requires its values, whatever else is asked of it: Access writes its
+            // block with both flags (0x89) and its slot as type 1, where it writes the table's other indexes' as 0.
+            if (index.IgnoreNulls)
+                throw new ArgumentException($"Primary key '{index.Name}' cannot ignore nulls: a primary key takes none.", nameof(index));
+            if (table.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey) is { } key)
+                throw new ArgumentException(
+                    $"Table '{table.Name}' already has a primary key, '{key.Name}': a table has one. Nothing was changed.", nameof(index));
+            flags     = TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag | TableDefinition.RequiredIndexFlag;
+            indexType = TableDefinition.PrimaryKeyIndexType;
+        }
+
         var columns = index.Columns.Select(name => new IndexColumn(
             ColumnOf(table, name, $"Index '{index.Name}'"),
             index.DescendingColumns.Contains(name, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList();
 
         // An index like one the table has - the same columns, each sorted the same way, and the same flags -
         // shares its tree, as Jackcess shares it.
-        var planned = Plan(file, table, index.Name, columns, flags, indexType: 0, shares: existing => existing.Flags == flags);
+        var planned = Plan(file, table, index.Name, columns, flags, indexType, shares: existing => existing.Flags == flags);
 
         using (var undo = file.BeginUndo())
         {
