@@ -283,6 +283,9 @@ And the other way about, with Access - or another `Database` - there first:
 - `DatabaseInUseException` is an `IOException`, with the HResult of a sharing violation (0x80070020) - what Windows
   gives for a file in use - so code that waits for a file someone holds for a moment goes on waiting. Nothing of the
   file is changed.
+- The sharing is Windows', where Access runs, on a local disk and on a network share alike. Elsewhere .NET keeps to a
+  file's sharing only by advisory locks, which do not keep every second writer out - and on iOS and tvOS by none - so
+  there a second `Database` opened to be written is not sure to be refused: keep to one writer there.
 - A database opened `ReadOnly` is held by a handle that cannot write, and every change - a row inserted, updated or
   deleted, a table or column made, dropped or renamed, a property saved, an import - is refused with
   `NotSupportedException` before anything happens (`Database.IsReadOnly`). A file marked read-only opens this way.
