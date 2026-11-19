@@ -263,6 +263,12 @@ internal sealed class TableIndexes
                 if (holder == replacedRowPointer || !IsDuplicateOf(entry, stored, holder)) continue;
                 throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             }
+            // A row an earlier version entered under the key of the date it read (EarlierVersionsEntriesOf) is a
+            // duplicate when it holds these very bytes: the rows under those keys are read to see.
+            foreach (var earlier in EarlierVersionsEntriesOf(entry))
+                foreach (var (_, holder) in StoredUnder(writer, earlier))
+                    if (holder != replacedRowPointer && HoldsKey(tree, holder, entry.Key))
+                        throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             if (notHeld.AnotherHas(entry.Key, replacedRowPointer))
                 throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
         }
@@ -323,13 +329,19 @@ internal sealed class TableIndexes
     /// The row pointers <paramref name="entry"/>'s index holds under its key - the rows a unique index compares it
     /// with - or null when the index does not hold every row (<see cref="HoldsEveryRow"/>), or the key is one this
     /// library may not make as Access does (<see cref="IndexKeys.MatchesAccess"/>): the caller then reads the table.
+    /// A row an earlier version entered under the key of the date it read (<see cref="EarlierVersionsEntriesOf"/>)
+    /// is among them, and so is any other row under such a key: as every row given, it is the caller's to read and
+    /// compare.
     /// </summary>
     internal IEnumerable<int>? RowPointersFor(Entry entry)
-        => HoldsEveryRow(entry.Tree) && IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)
-            ? StoredUnder(new IndexWriter(_file, _allocator), entry)
-                .Where(stored => !IsEarlierOnly(entry, stored.Key) || HoldsKey(entry.Tree, stored.RowPointer, entry.Key))
-                .Select(stored => stored.RowPointer)
-            : null;
+    {
+        if (!HoldsEveryRow(entry.Tree) || !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)) return null;
+        var writer = new IndexWriter(_file, _allocator);
+        return StoredUnder(writer, entry)
+            .Where(stored => !IsEarlierOnly(entry, stored.Key) || HoldsKey(entry.Tree, stored.RowPointer, entry.Key))
+            .Concat(EarlierVersionsEntriesOf(entry).SelectMany(earlier => StoredUnder(writer, earlier)))
+            .Select(stored => stored.RowPointer);
+    }
 
     // ── Whether an index holds every row ─────────────────────────────────────
 
@@ -535,31 +547,39 @@ internal sealed class TableIndexes
     }
 
     /// <summary>
-    /// Takes out of <paramref name="entry"/>'s tree the entry a version of this library before #51 made for the row at
-    /// <paramref name="rowPointer"/>, when the row has a Date/Time Extended value in another form than the first and
-    /// its entry is not under the key of its bytes. Those versions keyed the date they read, in the first form: from
-    /// 2930d3f they read Access's second form as no value, and from db6f93b as its date
-    /// (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>). An index or a primary key they added over such a
-    /// row, and a row they rewrote, is under that key (tools/earlier-extended-date-keys.ps1). Each key is looked under
-    /// once, one way down the tree, and only this row's entry is taken out: the key of a date in the first form is
-    /// also the key of a row that has the date in that form. Returns whether an entry was taken out.
+    /// The entries a version of this library before #51 made for a row with <paramref name="entry"/>'s values, where
+    /// they are not under <paramref name="entry"/>'s key: those of a row with a Date/Time Extended value in another
+    /// form than the first. Those versions keyed the date they read, in the first form: from 2930d3f they read Access's
+    /// second form as no value, and from db6f93b as its date (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>).
+    /// An index or a primary key they added over such a row, and a row they rewrote, is under that key
+    /// (tools/earlier-extended-date-keys.ps1). None for values in the first form, which they keyed as this library
+    /// does, and at most two: each is looked under once, one way down the tree. The key of a date in the first form is
+    /// also the key of a row that has the date in that form, and the key of no value a row's that has none: a row
+    /// found under one is another row's but where it holds the very values looked for.
     /// </summary>
-    private static bool RemoveAsEarlierVersionsKeyedIt(IndexWriter writer, Entry entry, int rowPointer)
+    internal static IEnumerable<Entry> EarlierVersionsEntriesOf(Entry entry)
     {
-        if (!entry.Values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm)) return false;
-
         var looked = new List<byte[]> { entry.Key };
-        foreach (bool secondFormAsDate in new[] { true, false })
+        foreach (var values in StoredExtendedDate.AsEarlierVersionsRead(entry.Values))
         {
-            var values = entry.Values
-                .Select(value => value is StoredExtendedDate stored && !stored.IsFirstForm ? stored.DateAsEarlierVersionsRead(secondFormAsDate) : value)
-                .ToArray();
             if (entry.Tree.IgnoreNulls && values.All(value => value is null)) continue;
 
             var earlier = EntryOf(entry.Tree, values, values.Any(value => value is null));
             if (looked.Any(key => key.AsSpan().SequenceEqual(earlier.Key))) continue;
             looked.Add(earlier.Key);
+            yield return earlier;
+        }
+    }
 
+    /// <summary>
+    /// Takes out of <paramref name="entry"/>'s tree the entry an earlier version made for the row at
+    /// <paramref name="rowPointer"/> (<see cref="EarlierVersionsEntriesOf"/>), when its entry is not under the key of
+    /// its bytes. Only this row's entry is taken out. Returns whether one was.
+    /// </summary>
+    private static bool RemoveAsEarlierVersionsKeyedIt(IndexWriter writer, Entry entry, int rowPointer)
+    {
+        foreach (var earlier in EarlierVersionsEntriesOf(entry))
+        {
             if (!earlier.IsCut)
             {
                 writer.Remove(entry.Tree.Target, earlier.Key, rowPointer, out bool removed);

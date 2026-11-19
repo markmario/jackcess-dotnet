@@ -566,25 +566,40 @@ public sealed class ExtendedDateFormsTests : IDisposable
         Assert.Equal(3, IndexChecks.AssertEveryIndexHoldsTheRows(db, "U", expectedRows: 4));
     }
 
+    /// <summary>
+    /// A copy of <paramref name="asset"/>, a file an earlier version changed, with T's rows other than 1 and 2 deleted
+    /// and T made V's child on K - V holds the date in both forms, each row a parent with its child's bytes - with
+    /// referential integrity, its updates cascading when <paramref name="cascade"/> is set.
+    /// </summary>
+    private Database EarlierVersionsChildOfV(string asset, bool cascade)
+    {
+        var db = Database.Open(Copy(asset));
+        var t = db.GetTable("T");
+        var rows = Pointers(t);
+        foreach (int id in rows.Keys.Where(id => id > 2)) t.DeleteRowAt(rows[id]);
+        db.CreateRelationship(new RelationshipDefinition("V", "K", "T", "K") { Name = "VT", HasReferentialIntegrity = true, CascadeUpdates = cascade });
+        Assert.Equal(4, Audit(db, "T").Wrong.Count);   // row 2, in each index on K
+        return db;
+    }
+
     // T in the files earlier versions changed: its row 2, its date in the second form, is under the key of the date as
     // that version read it in each of T's four indexes on K - at 913240c, which moved the row, under the key of no value,
-    // the entries ACE made left pointing where it was. With T's rows other than 1 and 2 deleted, T is made V's child on
-    // K - V holds the date in both forms, each row a parent with its child's bytes - its updates cascading. V's row 2
-    // given another date takes T's row 2 with it, and each of T's indexes holds each row once, under its own key, and no
-    // entry pointing at no row but those 913240c left. Verified, the relationship's search of T read the table - T's
-    // index on K does not hold row 2 under its key - and the update took the row's wrong entry out and entered it under
-    // its new date: the update's own entry is that one, where the review of #66 found the row twice.
+    // the entries ACE made left pointing where it was. Made V's child, its updates cascading, T's row 2 follows V's row 2
+    // to another date, and each of T's indexes holds each row once, under its own key, and no entry pointing at no row
+    // but those 913240c left. Trusting the index, the relationship found the row under the key that version made, where
+    // it is looked for as well as under the key of its bytes: looked for there alone, it was not found, and kept the
+    // date its parent no longer has. Verified, the relationship's search read the table - the index on K does not hold
+    // row 2 under its key - and the update took the row's wrong entry out and entered it under its new date: the
+    // update's own entry is that one, where the review of #66 found the row twice.
     [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb", false)]
     [InlineData("engine-913240c-extended-date-keys.accdb", true)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", false)]
     [InlineData("engine-c89bfe4-extended-date-keys.accdb", true)]
     public void A_new_date_cascades_to_a_child_an_earlier_version_keyed_by_its_date_and_leaves_it_entered_once(string asset, bool verify)
     {
-        using var db = Database.Open(Copy(asset));
+        using var db = EarlierVersionsChildOfV(asset, cascade: true);
         var (v, t) = (db.GetTable("V"), db.GetTable("T"));
-        var rows = Pointers(t);
-        foreach (int id in rows.Keys.Where(id => id > 2)) t.DeleteRowAt(rows[id]);
-        db.CreateRelationship(new RelationshipDefinition("V", "K", "T", "K") { Name = "VT", HasReferentialIntegrity = true, CascadeUpdates = true });
-        Assert.Equal(4, Audit(db, "T").Wrong.Count);   // row 2, in each index on K
         var ofNoRowBefore = Audit(db, "T").OfNoRow;
 
         db.EnforceForeignKeys = true;
@@ -598,6 +613,79 @@ public sealed class ExtendedDateFormsTests : IDisposable
         var (wrong, ofNoRow) = Audit(db, "T");
         Assert.Empty(wrong);
         Assert.Subset(ofNoRowBefore.ToHashSet(), ofNoRow.ToHashSet());
+    }
+
+    // The same child, its relationship's deletes not cascading: V's row 2, the parent of T's row 2, is not deleted from
+    // under it, its indexes trusted or verified, and nothing changes. Trusting the index and looking for the child under
+    // the key of its bytes alone, the delete was taken and T's row 2 left without a parent.
+    [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb", false)]
+    [InlineData("engine-913240c-extended-date-keys.accdb", true)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", false)]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb", true)]
+    public void A_parent_is_not_deleted_from_under_a_child_an_earlier_version_keyed_by_its_date(string asset, bool verify)
+    {
+        using var db = EarlierVersionsChildOfV(asset, cascade: false);
+        db.EnforceForeignKeys = true;
+        db.VerifyIndexes = verify;
+        var parent = db.GetTable("V").CreateCursor();
+        Assert.NotNull(parent.FindRow("Id", 2));
+
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => parent.DeleteCurrentRow());
+        IndexChecks.AssertUnchanged(before, db);
+    }
+
+    // A Joiner from V to T joins V's row 2 to T's row 2, whose entry in T's index on K is under the key an earlier
+    // version made of its date - the first form's at c89bfe4, no value's at 913240c - and V's row 1 to T's row 1 alone,
+    // whose bytes it has. Looked for under the key of its bytes alone, T's row 2 was joined to nothing.
+    [Theory]
+    [InlineData("engine-913240c-extended-date-keys.accdb")]
+    [InlineData("engine-c89bfe4-extended-date-keys.accdb")]
+    public void A_joiner_joins_a_row_to_one_an_earlier_version_keyed_by_its_date(string asset)
+    {
+        using var db = Database.Open(Copy(asset));
+        var (v, t) = (db.GetTable("V"), db.GetTable("T"));
+        var childrenOf = new Joiner(v, new[] { "K" }, t, new[] { "K" });
+        var parents = v.Rows.ToDictionary(r => (int)r["Id"]!);
+        Assert.Equal(new[] { 1 }, IdsOf(childrenOf.FindRows(parents[1])));
+        Assert.Equal(new[] { 2 }, IdsOf(childrenOf.FindRows(parents[2])));
+    }
+
+    // A unique index compares a row with the rows an earlier version entered under the key of the date it read. In U,
+    // row 2 is under the key of no value in KU, as 913240c entered it, and row 3 is given row 2's bytes and the entry of
+    // them - as ACE's UPDATE gives them, looking under that key alone. Row 3, rewritten, is a duplicate of row 2, which
+    // holds its very bytes, and is refused with nothing changed, its indexes trusted or verified. Trusting KU and looking
+    // under the key of its bytes alone, it was taken.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_row_with_the_bytes_of_one_an_earlier_version_keyed_by_its_date_is_its_duplicate_in_a_unique_index(bool verify)
+    {
+        using var db = Database.Open(Copy(Forms));
+        var u = db.GetTable("U");
+        var ku = u.Indexes.Single(ix => ix.Name == "KU");
+        var target = IndexWriter.Target.For(u.Definition.TdefPageNumber, ku);
+        var writer = new IndexWriter(db.File, new PageAllocator(db.File));
+        var rows = Pointers(u);
+        byte[] second = Encoding.ASCII.GetBytes(Stored[2]), spaceDay = Encoding.ASCII.GetBytes(Stored[3]);
+        writer.Remove(target, KeyOfBytes(second), rows[2], out bool found);
+        Assert.True(found);
+        writer.Insert(target, IndexKeys.Encode(ku.Columns, new object?[] { null }), rows[2]);
+        byte[] page = db.File.ReadPage(RowPointer.Page(rows[3]));
+        int at = Enumerable.Range(0, page.Length - spaceDay.Length).Single(i => page.AsSpan(i, spaceDay.Length).SequenceEqual(spaceDay));
+        second.CopyTo(page, at);
+        db.File.WritePage(RowPointer.Page(rows[3]), page);
+        writer.Remove(target, KeyOfBytes(spaceDay), rows[3], out found);
+        Assert.True(found);
+        writer.Insert(target, KeyOfBytes(second), rows[3]);
+
+        db.VerifyIndexes = verify;
+        var cursor = u.CreateCursor();
+        Assert.NotNull(cursor.FindRow("Id", 3));
+        var before = IndexChecks.AllPages(db);
+        Assert.Throws<ConstraintViolationException>(() => cursor.UpdateCurrentRow(new Row { ["UForm"] = "second too" }));
+        IndexChecks.AssertUnchanged(before, db);
     }
 
     // ── What it costs ───────────────────────────────────────────────────────

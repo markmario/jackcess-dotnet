@@ -53,6 +53,21 @@ internal sealed class StoredExtendedDate : IEquatable<StoredExtendedDate>
     internal DateTime? DateAsEarlierVersionsRead(bool secondFormAsDate)
         => secondFormAsDate || _bytes[ExtendedDateTimeCodec.CountAt] == (byte)'7' ? Date : null;
 
+    /// <summary>
+    /// <paramref name="values"/> - a row's, for an index's columns - as the versions of this library that keyed the
+    /// date they read read them (<see cref="DateAsEarlierVersionsRead"/>): each value in another form than the first
+    /// as its date, as from db6f93b, and then as from 2930d3f. None when every value is in the first form, which those
+    /// versions keyed as this library does. Such a version entered a row under the key of one of them.
+    /// </summary>
+    internal static IEnumerable<object?[]> AsEarlierVersionsRead(IReadOnlyList<object?> values)
+    {
+        if (!values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm)) yield break;
+        foreach (bool secondFormAsDate in new[] { true, false })
+            yield return values
+                .Select(value => value is StoredExtendedDate stored && !stored.IsFirstForm ? stored.DateAsEarlierVersionsRead(secondFormAsDate) : value)
+                .ToArray();
+    }
+
     /// <inheritdoc/>
     public bool Equals(StoredExtendedDate? other) => other is not null && _bytes.AsSpan().SequenceEqual(other._bytes);
 

@@ -92,6 +92,10 @@ changed since 1.2.2.
   where 86 were read, every leaf of the index. An entry a version of this library since 2930d3f made for a row in
   another form - when it added the index or rewrote the row - is under the key of its date in the first form, or of
   no value, and is looked for there, one way down the tree each, when the row has none under the key of its bytes.
+  A relationship's search for such a row, a unique index's for its duplicate and a `Joiner`'s by its bytes look
+  under those keys as well, each row found there read and compared by its bytes: looked for under the key of its
+  bytes alone, the child of a parent being deleted was missed, trusting the index - the parent was deleted from
+  under it, and a new date did not cascade to it - where `main` found it under the key it had made.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the

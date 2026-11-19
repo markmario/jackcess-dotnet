@@ -969,7 +969,16 @@ public sealed class IndexCursor : Cursor
     /// looked for, so the part runs from the least of them to the greatest, under the key of the columns before
     /// it - and, for a time on 30 December 1899, which a number and its negative both read as, there are two. Nor
     /// is one looked for in a Date/Time Extended column: Access keys a value by its bytes, and writes a date in two
-    /// forms (<see cref="ExtendedDateTimeCodec.FormsOf"/>), so there is a part for each form's key.
+    /// forms (<see cref="ExtendedDateTimeCodec.FormsOf"/>), so there is a part for each form's key. The first form's
+    /// is also the key versions of this library from db6f93b made of a row in either form. Those from 2930d3f made the
+    /// key of no value of a row in the second form, which is not looked under for a date: that part holds every row
+    /// with no value, and each would be read for every date looked for.
+    /// </para>
+    /// <para>
+    /// Bytes of a Date/Time Extended value in another form than the first, as a row stores them - a <see cref="Joiner"/>
+    /// looks for a row's - are looked for under their key and under each key those versions made of such bytes
+    /// (<see cref="StoredExtendedDate.AsEarlierVersionsRead"/>), a part each, where the rows are matched by their
+    /// bytes: the rows of no value are read only for bytes in such a form.
     /// </para>
     /// </summary>
     private List<(byte[] From, byte[]? Before)>? PartsFor(IReadOnlyList<(Column Column, object? Value)> pattern)
@@ -1001,13 +1010,17 @@ public sealed class IndexCursor : Cursor
         var parts = new List<(byte[] From, byte[]? Before)>();
         try
         {
+            byte[]? KeyOf(object?[] given)
+            {
+                if (!IndexKeys.CanSearch(columns, given)) return null;
+                byte[] key = IndexKeys.EncodeWhole(columns, given);
+                return key.Length <= LongestKeyOf(columns.Count) ? key : null;
+            }
             byte[]? Key(object? last)
             {
                 var given = values.ToArray();
                 given[given.Length - 1] = last;
-                if (!IndexKeys.CanSearch(columns, given)) return null;
-                byte[] key = IndexKeys.EncodeWhole(columns, given);
-                return key.Length <= LongestKeyOf(columns.Count) ? key : null;
+                return KeyOf(given);
             }
 
             if (extended is { } when)
@@ -1026,6 +1039,13 @@ public sealed class IndexCursor : Cursor
             {
                 if (Key(values[values.Count - 1]) is not { } key) return null;
                 parts.Add((key, IndexEntryWalker.AfterAllBeginningWith(key)));
+                // Bytes of a Date/Time Extended value in another form than the first - a row's, as a Joiner looks
+                // for it - are also under the keys earlier versions made of the date they read, each a part of its
+                // own, where the rows are matched by their bytes (TableIndexes.EarlierVersionsEntriesOf).
+                foreach (var earlier in StoredExtendedDate.AsEarlierVersionsRead(values))
+                    if (KeyOf(earlier) is { } other && !parts.Any(part => IndexEntryWalker.CompareKeys(part.From, other) == 0))
+                        parts.Add((other, IndexEntryWalker.AfterAllBeginningWith(other)));
+                parts.Sort((x, y) => IndexEntryWalker.CompareKeys(x.From, y.From));
                 return parts;
             }
 

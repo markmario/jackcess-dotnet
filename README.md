@@ -378,8 +378,13 @@ answered with the row that no longer has it, and that row is not found under the
   such a version added the index or rewrote the row: under the key of the date it read, in the first form, or of no
   value - for Access's second form, before db6f93b. When the row is deleted or its date rewritten and it has no
   entry under the key of its bytes, the entry is looked for under each of those keys, one way down the tree each,
-  and taken out when it points at the row. With `VerifyIndexes`, in an index it looks at (a unique index, or a
-  relationship's), such an entry is the row's wrong one, and is moved to the key of the row's bytes.
+  and taken out when it points at the row. A relationship's search for such a row, a unique index's for its
+  duplicate, and a `Joiner`'s by its bytes look under those keys too, and read each row found there, which is the
+  row looked for only when it has the very bytes: the rows with the date in the first form, or with no value, are
+  read for a value in another form alone. A `DateTime` looked for through an index is looked for under the first
+  form's key, which is one of them, and not under the key of no value: every row with no value would be read for
+  every date. With `VerifyIndexes`, in an index it looks at (a unique index, or a relationship's), such an entry is
+  the row's wrong one, and is moved to the key of the row's bytes.
 
 An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
 insert reads are the ones it read before. An index that is not unique is not looked at this way without
