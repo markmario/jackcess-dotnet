@@ -334,22 +334,40 @@ And the other way about, with Access - or another `Database` - there first:
   one that no one holds as it is; one left by a process that was killed is taken over by the next user. Access with a
   database open shared holds the file open for writing, so the file's own sharing tells a writer Access is there.
 
-**What a `ReadOnly` database reads while another program writes** is the file as it is when each page is read, by the
-columns and indexes a table had when it was first got: rows Access has written to the file by then. Access does not
-write a change to the file as it commits it. Measured with ACE and DAO, in both formats: a row just inserted reached
-the file about half a second later - Access writes what it has committed once it has been idle for half a second - but
-not always; in 2 of 12 runs of 300 inserts on a connection kept open, the last row was still not in the file 15
-seconds later, and reached it with the next inserts. So a reading can miss the last rows Access committed for as long
-as Access keeps them; once Access has closed the file, everything it committed is in it. Measured too: while ACE
-inserted 272,000 rows, updating and deleting some as it went (each statement its own transaction, and in transactions
-of 200), a `ReadOnly` database read the table 3,921 times, in an .mdb and an .accdb. No reading failed or had a row
-twice or a value of another row's; four of 2.2 million lookups through the primary key missed a row the reading had
-found a moment before, which ACE may have deleted between the two; the readings followed ACE's commits, a whole
-transaction at a time when ACE committed 200 statements at a time; and once ACE had closed, the same open database
-read every row. That is what was seen, not a promise: nothing keeps a reading from meeting another program's change
-part-way, and such a reading can miss rows, find one that has gone, or fail. For a reading that agrees with itself,
-open the file when no other program has it open for writing. (Access reading with `Mode=Read` while this library
-wrote 1.4 million rows found nothing amiss either, in 282 readings.)
+**What a `ReadOnly` database reads while another program writes** is the file as it is at each move of a cursor, and at
+each row of `Table.Rows`, by the columns and indexes a table had when it was first got: the pages a move needs are read
+again, as the other program may have written to them since the last. Access does not write a change to the file as it
+commits it. Measured with ACE and DAO, in both formats: a row just inserted reached the file about half a second
+later - Access writes what it has committed once it has been idle for half a second - but not always; in 2 of 12 runs
+of 300 inserts on a connection kept open, the last row was still not in the file 15 seconds later, and reached it with
+the next inserts. So a reading can miss the last rows Access committed for as long as Access keeps them; once Access
+has closed the file, everything it committed is in it.
+
+This library takes none of Access's locks, so nothing keeps such a reading from meeting another program's change
+part-way, or from seeing at one move what was changed after the last. **What a reading beside a writer can do:** miss
+rows - ones the writer adds or moves behind a cursor, and ones Access has not yet written to the file; give a row
+twice - one the writer moves ahead of a cursor after the cursor has given it; give a Memo or OLE value that is not the
+row's own - another row's, or part of one - where the writer gives the place of the row's value to another between the
+reading of the row and the reading of its value; and fail: a value that is not where its row says, its place deleted
+or too short for it, is refused with `InvalidDataException`, and the reading can be made again. **What it cannot do:**
+change the file, or keep the writer from anything - its handle cannot write; give a row as an earlier move read it;
+or give a value read from a place that has been deleted or is too short for it. **A reading that agrees with
+itself** - every row once, each with its own values - needs no writer while it is made: read the file when no other
+program has it open for writing. A database opened to be written keeps every writer out while it is open.
+
+Reading again at each move costs a `ReadOnly` database time that one opened to be written - the only writer of its
+file, which keeps a page from one move to the next - does not spend. A walk of 50,000 rows, 5,000 of them with a
+300-character Memo, best of five, opened to be written and opened `ReadOnly`: an index cursor 79 ms and 1,176 ms
+(5,549 pages read and 155,167: an index's root, its leaf and a data page at each move), a table cursor 72 ms and 215
+ms (5,383 and 55,383), `Table.Rows` 28 ms and 168 ms (5,383 and 55,001).
+
+Measured too, on the reading as it is now: while ACE inserted 145,000 rows, updating and deleting some as it went
+(each statement its own transaction, and in transactions of 200), a `ReadOnly` database read the table 1,483 times,
+in an .mdb and an .accdb. No reading failed or had a row twice or a value of another row's; two of 517,000 lookups
+through the primary key missed a row the reading had found a moment before, which ACE may have deleted between the
+two; a reading made while ACE was writing a transaction of 200 to the file saw part of it; and once ACE had closed,
+the same open database read every row. That is what was seen, not a promise. (Access reading with `Mode=Read` while
+this library wrote 2.1 million rows found nothing amiss either, in 521 readings.)
 
 Java Jackcess takes no lock, says that a file must not be written by two programs at once, and opens one read-only when
 asked (`DatabaseBuilder.withReadOnly`); it also opens a file it cannot write to read-only without being asked, which
@@ -955,7 +973,9 @@ Limits to know about:
 - One writer at a time. This library takes none of Access's locks, so a file it has open to be written is kept from
   every other writer - Access says it is "already in use" - and it does not open a file another program or `Database`
   has open for writing (`DatabaseInUseException`). Readers - Access read-only, a `Database` opened `ReadOnly` - share
-  it with a writer. See [Sharing a file with Access](#sharing-a-file-with-access).
+  it with a writer, and a reading made while the writer writes can miss rows, give a row twice or with a value of
+  another row's, or fail; one that agrees with itself needs no writer while it is made. See
+  [Sharing a file with Access](#sharing-a-file-with-access).
 - A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
   before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
   the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as

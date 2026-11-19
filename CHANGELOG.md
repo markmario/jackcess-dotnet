@@ -314,6 +314,12 @@ changed since 1.2.2.
   meanwhile, even to read. Opened again with `Database.Open`, it is shared with readers.
 - **An Access 97 file opens while Access has it open** (#62). It is only read, and is opened as one opened
   `ReadOnly` is; it was refused, as a file to be written is.
+- **A Memo or OLE value that is not where its row's reference says is refused** (#62), with `InvalidDataException`
+  saying what does not fit: a page the file does not have or that holds no values, a row its page does not have or
+  has deleted, a place shorter than the value, a chain of pieces that ends before it. It was read from whatever the
+  place held - a deleted value's bytes, or a shorter value made up with zeros - and two such references were refused
+  with `InvalidOperationException`. A reading beside a writer meets one when the writer changes a row between the
+  reading of the row and of its value; so does a reading of a damaged file.
 
 ### Breaking changes to the public API
 
@@ -459,8 +465,12 @@ changes with them.
   read, by a handle that cannot write, and every change is refused with `NotSupportedException` before anything
   happens (`Database.IsReadOnly`). It opens beside Access, or a `Database`, writing to the file, as Access's own
   read-only open does; only a program holding the file exclusively keeps it out. A file marked read-only opens this
-  way. What it reads while another program writes is the file as each page is read: the README says what was
-  measured and what is not promised.
+  way. What it reads while another program writes is the file as it is at each move of a cursor, and at each row of
+  `Table.Rows`: it keeps no page from one move to the next, as the file can change between them, so a walk of a table
+  reads a page or more at every row - ten to thirty times the pages one opened to be written reads, which keeps the
+  page it is on. Such a reading can miss rows, give a row twice or with a Memo or OLE value of another row's, or
+  fail; it cannot change the file or get in the writer's way, and a reading that agrees with itself needs no writer
+  while it is made. The README has what was measured.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.

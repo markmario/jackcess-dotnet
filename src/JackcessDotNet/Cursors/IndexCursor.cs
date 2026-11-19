@@ -39,8 +39,9 @@ namespace JackcessDotNet;
 /// </para>
 /// <para>
 /// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
-/// anything else: another cursor, <see cref="Table.Update"/>. A row whose key in the index changes moves in the
-/// cursor's order, and the cursor is told. Going one way, the cursor gives each row once: a row it has come to
+/// anything else of the same <see cref="Database"/>: another cursor, <see cref="Table.Update"/>. A row whose key in
+/// the index changes moves in the cursor's order, and the cursor is told. Going one way, the cursor gives each row
+/// once - when the rows are changed through its own database, and by no other program: a row it has come to
 /// is passed if an update has moved its entry ahead of the cursor, and a row it has not come to yet is given when
 /// the cursor comes to its entry, wherever updates have moved that entry in the meantime. A search comes to the
 /// rows it looks at, as a move comes to the row it gives. An entry the cursor goes past without looking at it is
@@ -51,6 +52,14 @@ namespace JackcessDotNet;
 /// way it gives again the rows it has passed, as any cursor does, but not the row it is on. Put before the first
 /// row or after the last, or on the row a lookup finds, it begins again from there. A savepoint keeps what the
 /// cursor had come to, and is told of rows that move as the cursor is.
+/// </para>
+/// <para>
+/// Another program writing to the file - beside a database opened only to be read
+/// (<see cref="DatabaseOpenOptions.ReadOnly"/>) - does not tell the cursor what it changes. Each move finds its place
+/// in the index as the file has it then, so the cursor goes on in the index's order, but a row that program moves
+/// ahead of the cursor after the cursor has given it is given again, and one it moves behind the cursor before the
+/// cursor has come to it is not given at all; <see cref="DatabaseOpenOptions.ReadOnly"/> says what else such a
+/// reading can do.
 /// </para>
 /// <para>
 /// What a cursor holds of the rows it has come to is the stretches of the index it has gone over, and the rows

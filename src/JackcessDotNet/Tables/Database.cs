@@ -25,7 +25,9 @@ namespace JackcessDotNet;
 /// opens exclusively: while it is open no other program or <see cref="Database"/> opens the file for writing -
 /// Access says it is "already in use" - and it is not opened while one has. Programs that only read - Access with
 /// a database open read-only, a <see cref="Database"/> opened with <see cref="DatabaseOpenOptions.ReadOnly"/> -
-/// can have the file open beside it, and read what has been written so far. A database made by
+/// can have the file open beside it, and read it as it is written: such a reading can miss rows, give a row twice or
+/// with a value of another row's, or fail, and one that agrees with itself needs no writer while it is made
+/// (<see cref="DatabaseOpenOptions.ReadOnly"/> says what it can and cannot give). A database made by
 /// <see cref="Create(string)"/> is shared with no one, readers included, until it is disposed, as DAO holds a
 /// database it creates. Access's lock file (.ldb, .laccdb) is neither made nor read, as Access makes none for a
 /// database it opens exclusively.

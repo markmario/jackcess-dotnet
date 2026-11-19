@@ -18,7 +18,10 @@ namespace JackcessDotNet;
 /// the <see cref="Database"/> it reads, it is for one thread at a time.
 /// <para>
 /// It lists the table's pages when it is created, and again each time it is put before the first row or after
-/// the last: rows on pages the table gains in between are not visited.
+/// the last: rows on pages the table gains in between are not visited. Over a database opened only to be read
+/// (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to, it reads the pages a move
+/// needs at that move, keeping none from one move to the next; <see cref="DatabaseOpenOptions.ReadOnly"/> says what
+/// a reading beside a writer can and cannot give.
 /// </para>
 /// </summary>
 public class Cursor : IEnumerable<Row>

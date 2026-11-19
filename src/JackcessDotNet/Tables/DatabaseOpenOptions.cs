@@ -46,15 +46,28 @@ public sealed class DatabaseOpenOptions
     /// open for writing; only one that holds it exclusively keeps it out (<see cref="DatabaseInUseException"/>).
     /// </para>
     /// <para>
-    /// What such a database reads is the file as it is when each page is read: rows another program has written to the
-    /// file by then are read, and a table's columns and indexes are as they were when the table was first got from the
-    /// database. Access writes a change it has committed once it has been idle for half a second, and can keep the
-    /// last until it next changes something or closes the database, so the last rows Access committed may not be
-    /// read while Access has the file open; once it has closed it, every one is. This library takes none of Access's
-    /// locks, so nothing keeps it
-    /// from reading a table part-way through another program's change of several pages: a reading made while the
-    /// file is being written to can miss rows, or read one that has since gone, and can fail. For a reading that
-    /// agrees with itself, open the file when no other program has it open for writing.
+    /// What such a database reads is the file as it is at each move of a cursor, and at each row of
+    /// <see cref="Table.Rows"/>: the pages a move needs are read from the file again, and nothing read at one move is
+    /// taken for what the file holds at the next, as another program may have written to it in between. A table's
+    /// columns and indexes are as they were when the table was first got from the database. Access writes a change it
+    /// has committed once it has been idle for half a second, and can keep the last until it next changes something or
+    /// closes the database, so the last rows Access committed may not be read while Access has the file open; once it
+    /// has closed it, every one is.
+    /// </para>
+    /// <para>
+    /// This library takes none of Access's locks, so nothing keeps a reading from meeting another program's change
+    /// part-way, or from seeing at one move what that program changed after the last. A reading made while the file is
+    /// being written to can miss rows - ones the writer adds or moves behind a cursor, and ones it has not yet written
+    /// to the file - and can give a row twice: one the writer moves ahead of a cursor after the cursor has given it. It
+    /// can give a Memo or OLE value that is not the row's own - another row's, or part of one - where the writer gives
+    /// the place of the row's value to another between the reading of the row and the reading of its value. And it can
+    /// fail: a value that is not where its row says - its place deleted, or holding fewer bytes than the value has - is
+    /// refused with <see cref="System.IO.InvalidDataException"/>, and the reading can be made again. What a reading
+    /// cannot do is change the file or get in the writer's way: its handle cannot write, and the writer neither waits
+    /// for it nor is kept from anything. Nor does it give a row as an earlier move read it, or a value read from a place
+    /// that has been deleted or is too short for it. A reading that agrees with itself - every row once, each with its
+    /// own values - needs no writer while it is made: read the file when no other program has it open for writing. A
+    /// database opened to be written keeps every writer out while it is open.
     /// </para>
     /// </summary>
     public bool ReadOnly { get; set; }
