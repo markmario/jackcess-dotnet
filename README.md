@@ -930,7 +930,11 @@ have been deleted - and a row Access moved to another page is read where its poi
   DAO's `dbBinary`, what this library makes) or the fixed-length ones (SQL's `BINARY`, filled with zeros to its
   length).
 - **An update leaves the stored bytes of every column it does not name.** A Date/Time Access wrote finer than a
-  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column.
+  millisecond, or outside what `DateTime` holds, is not rounded or lost by an update of another column. Each of
+  those values is still held to its column's length, as the row is written whole: a Text or Binary value stored
+  longer than its column - an earlier version of this library could write one - refuses an update of the row with
+  `ColumnValueTooLongException`, naming that column and saying the value is the stored one, until the update
+  gives that column a value that fits.
 - **An overflow pointer that leads outside the file, or to a row its page does not have, is a damaged file**
   (`InvalidDataException` naming the page), not a missing row.
 - **A deleted row is marked as Access marks one** (both flag bits). Rows deleted by earlier releases carry the

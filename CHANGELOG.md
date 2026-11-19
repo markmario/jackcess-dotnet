@@ -68,7 +68,10 @@ changed since 1.2.2.
   fixed-length ones (SQL's `BINARY`). Access refuses one byte over its length in both, through ACE and through
   DAO, on an insert and an update, in an `.mdb` and in `.accdb` files of Access 2007's and 2010's formats ("The
   field is too small to accept the amount of data you attempted to add"). The exception's `MaxLength` and `Length`
-  are in bytes for a Binary column, as `Column.MaxLength` is.
+  are in bytes for a Binary column, as `Column.MaxLength` is. An update writes the row whole, so a Binary value an
+  earlier version stored longer than its column refuses an update of any column of its row, as a Text value stored
+  so already did (and Jackcess's write of a Text value does); the message then says the value is the stored one and
+  that giving that column a value that fits lets the update through.
 - **A number looked for is matched as the same number** (#49), as Access's `=` matches it, by a cursor over a
   table and through an index alike. A `double` or `float` looked for in a Byte, Integer, Long or Large Number column
   finds a row only when it is that whole number exactly: compared through a `decimal`, which keeps 15 significant

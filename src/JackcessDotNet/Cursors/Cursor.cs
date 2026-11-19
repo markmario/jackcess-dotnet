@@ -450,6 +450,10 @@ public class Cursor : IEnumerable<Row>
     /// The updated row would break a rule of the table or of a relationship (<see cref="Table.Update"/>). The
     /// row is left as it was.
     /// </exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// A Text or Binary value of the updated row is longer than its column - one given, or one the row holds already
+    /// (<see cref="Table.Update"/>). The row is left as it was.
+    /// </exception>
     /// <exception cref="NotSupportedException">The table's rows cannot be changed (<see cref="Table.Update"/>). Nothing is written.</exception>
     public void UpdateCurrentRow(Row values)
     {

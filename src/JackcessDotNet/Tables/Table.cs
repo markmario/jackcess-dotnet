@@ -726,7 +726,12 @@ public sealed class Table
     /// Only the columns assigned are checked against those two properties, as Access checks an update. The row
     /// is left as it was.
     /// </exception>
-    /// <exception cref="ColumnValueTooLongException">A Text or Binary value is longer than its column. The row is left as it was.</exception>
+    /// <exception cref="ColumnValueTooLongException">
+    /// A Text or Binary value is longer than its column: one the update gives, or one the row holds already in a
+    /// column the update does not name, which an earlier version of this library could write - the row is written
+    /// whole, so it is not rewritten with such a value until that column is given one that fits. The row is left as
+    /// it was.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
     /// 97 file, which is only read. Nothing is written.

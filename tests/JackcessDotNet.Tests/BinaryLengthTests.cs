@@ -25,6 +25,96 @@ public sealed class BinaryLengthTests : IDisposable
 
     private static byte[] Bytes(int length) => Enumerable.Range(1, length).Select(i => (byte)i).ToArray();
 
+    /// <summary>
+    /// Gives <paramref name="column"/> of <paramref name="table"/> a length of <paramref name="bytes"/> on its
+    /// definition's page, as an earlier version's file can have it: rows written before then hold values longer than
+    /// the column.
+    /// </summary>
+    private static void SetColumnLength(string path, string table, string column, short bytes)
+    {
+        using var db = Database.Open(path);
+        var definition = db.GetTable(table).Definition;
+        int ordinal = definition.Columns.First(c => c.Name == column).Ordinal;
+        var format = db.File.Format;
+        byte[] page = db.File.ReadPage(definition.TdefPageNumber);
+        int indexes = Util.ByteUtil.GetInt(page, format.TdefOffsetNumIndexes);
+        int columns = Util.ByteUtil.GetShort(page, format.TdefOffsetNumCols);
+        int first = format.SizeTdefHeader + indexes * format.SizeIndexDefinition;
+        for (int i = 0; i < columns; i++)
+        {
+            int at = first + i * format.SizeColumnHeader;
+            if (Util.ByteUtil.GetShort(page, at + format.OffsetColumnNumber) != ordinal) continue;
+            Util.ByteUtil.PutShort(page, at + format.OffsetColumnLength, bytes);
+            db.File.WritePage(definition.TdefPageNumber, page);
+            return;
+        }
+        throw new InvalidOperationException($"No block for column {column} on page {definition.TdefPageNumber}.");
+    }
+
+    [Theory]
+    [InlineData(FileFormat.Access2000)]
+    [InlineData(FileFormat.Access2010)]
+    public void An_update_of_a_row_that_holds_a_value_longer_than_its_column_names_that_value_as_the_stored_one(FileFormat format)
+    {
+        _file = _path + (format == FileFormat.Access2000 ? ".mdb" : ".accdb");
+        using (var db = Database.Create(_file, format))
+        {
+            var created = db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("B", DataType.Binary) { MaxLength = 20 },
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 }, new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 },
+            }, "Id");
+            created.Insert(new Row { ["Id"] = 1, ["B"] = Bytes(15), ["Name"] = "one", ["Code"] = new string('c', 15) });
+            created.Insert(new Row { ["Id"] = 2, ["B"] = Bytes(5), ["Name"] = "two", ["Code"] = "c" });
+        }
+        // The columns as an earlier version's file can have them, shorter than the values row 1 holds.
+        SetColumnLength(_file, "T", "B", 10);
+        SetColumnLength(_file, "T", "Code", 20);   // ten characters
+
+        using var after = Database.Open(_file);
+        var table = after.GetTable("T");
+        Assert.Equal(new[] { 10, 10 }, new[] { table.Columns[1].MaxLength, table.Columns[3].MaxLength });
+        var pages = IndexChecks.AllPages(after);
+
+        // An update of another column is refused, by the stored value: the row is written whole.
+        var row = table.FindRowByPrimaryKey(1)!;
+        row["Name"] = "changed";
+        var binary = Assert.Throws<ColumnValueTooLongException>(() => table.Update(row));
+        Assert.Equal(("B", 10, 15), (binary.ColumnName, binary.MaxLength, binary.Length));
+        Assert.Equal("The row's stored value in column 'B' is 15 bytes, longer than the 10 the column holds, so the row is not " +
+                     "rewritten with it: give column 'B' a value that fits, in this update or on its own.", binary.Message);
+        var cursor = table.CreateCursor();
+        cursor.FindRow("Id", 1);
+        Assert.Equal("B", Assert.Throws<ColumnValueTooLongException>(() => cursor.UpdateCurrentRow(new Row { ["Name"] = "changed" })).ColumnName);
+
+        // With B given a value that fits, the stored Code is the one, in characters.
+        row = table.FindRowByPrimaryKey(1)!;
+        row["Name"] = "changed";
+        row["B"] = Bytes(10);
+        var text = Assert.Throws<ColumnValueTooLongException>(() => table.Update(row));
+        Assert.Equal(("Code", 10, 15), (text.ColumnName, text.MaxLength, text.Length));
+        Assert.Equal("The row's stored value in column 'Code' is 15 characters, longer than the 10 the column holds, so the row is " +
+                     "not rewritten with it: give column 'Code' a value that fits, in this update or on its own.", text.Message);
+        IndexChecks.AssertUnchanged(pages, after);
+
+        // A value given that is too long is the caller's, and is said so; with both given values that fit, the update goes through.
+        row = table.FindRowByPrimaryKey(1)!;
+        row["B"] = Bytes(11);
+        Assert.Equal("Column 'B' holds at most 10 bytes; the value has 11.", Assert.Throws<ColumnValueTooLongException>(() => table.Update(row)).Message);
+        row = table.FindRowByPrimaryKey(1)!;
+        row["Name"] = "changed";
+        row["B"] = Bytes(10);
+        row["Code"] = "short";
+        table.Update(row);
+        Assert.Equal(("changed", "short"), ((string)table.FindRowByPrimaryKey(1)!["Name"]!, (string)table.FindRowByPrimaryKey(1)!["Code"]!));
+
+        // A row whose values fit is updated as any is.
+        var two = table.FindRowByPrimaryKey(2)!;
+        two["Name"] = "second";
+        table.Update(two);
+        Assert.Equal(Bytes(5), table.FindRowByPrimaryKey(2)!["B"]);
+    }
+
     [Theory]
     [InlineData(FileFormat.Access2000)]
     [InlineData(FileFormat.Access2010)]

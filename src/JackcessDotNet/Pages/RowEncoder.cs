@@ -107,7 +107,7 @@ internal sealed class RowEncoder
         if (row is null)
             throw new ArgumentNullException(nameof(row));
         EnsureWritable();
-        Validate(row);
+        Validate(row, keptVariableValues, keptFixedValues);
 
         int maxRowSize = _format.MaxRowSize;
         var buffer = new byte[maxRowSize];
@@ -373,11 +373,21 @@ internal sealed class RowEncoder
     /// table. A Text column's length is in bytes, two to a character; a Binary column's in bytes. An update calls it
     /// before it deletes the row it replaces.
     /// </summary>
-    internal void Validate(Row row)
+    internal void Validate(Row row) => Validate(row, null, null);
+
+    /// <summary>
+    /// As <see cref="Validate(Row)"/>, for an update: the values of the columns in <paramref name="keptVariableValues"/>
+    /// and <paramref name="keptFixedValues"/> are the row's own, which the update does not name. Such a value is held
+    /// to its column too - the row is written whole - and one an earlier version of this library wrote longer than
+    /// its column is refused with a message that says it is the stored value, and that giving that column a value
+    /// that fits lets the update through.
+    /// </summary>
+    private void Validate(Row row, IReadOnlyDictionary<Column, byte[]>? keptVariableValues, IReadOnlyDictionary<Column, byte[]>? keptFixedValues)
     {
         foreach (var col in _columns)
         {
             if (!row.TryGetValue(col.Name, out var value) || RowValues.IsNull(value)) continue;
+            bool stored = keptVariableValues?.ContainsKey(col) == true || keptFixedValues?.ContainsKey(col) == true;
 
             // A Decimal with more digits than its column holds.
             if (col.DataType == DataType.Decimal)
@@ -386,13 +396,15 @@ internal sealed class RowEncoder
             // its length, through ACE and DAO, in an .mdb and an .accdb, kept among the variable-length values
             // (VARBINARY, DAO's dbBinary) or the fixed-length ones (BINARY, dbFixedField) (#45).
             if (col.DataType == DataType.Binary && col.LengthInBytes > 0 && value is byte[] binary && binary.Length > col.LengthInBytes)
-                throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length);
+                throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length, stored);
             if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
             int maxChars = col.LengthInBytes / 2;
             string text = Convert.ToString(value) ?? string.Empty;
             if (text.Length > maxChars)
-                throw new ColumnValueTooLongException(col.Name, maxChars, text.Length);
+                throw stored
+                    ? new ColumnValueTooLongException(col.Name, DataType.Text, maxChars, text.Length, stored: true)
+                    : new ColumnValueTooLongException(col.Name, maxChars, text.Length);
         }
     }
 
