@@ -128,8 +128,8 @@ changes with them.
   move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A row it went
   past without looking at it - outside its range, left out by a range's date, looked past by
   `FindClosestRowByEntry` - is given once an update moves it ahead of the cursor. A savepoint keeps what the
-  cursor had come to, as rows move. A cursor is told of a change once it is in the file for good: a batch taken
-  back tells it nothing.
+  cursor had come to, as rows move. What a cursor holds of that stays a few stretches of its index however many
+  rows it moves, and is told only once a change is in the file for good: a batch taken back tells it nothing.
 - **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
   that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` - taken first to
   what it reads as once stored, to the millisecond, so that `DateTime.Now` finds the row written with it - finds

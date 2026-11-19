@@ -349,6 +349,13 @@ internal sealed class PageFile : IDisposable
     }
 
     /// <summary>
+    /// Whether what <see cref="WhenKept"/> runs now is one of several things a change committed together runs: the
+    /// rows of a batch, or of a cascade. Each runs once the whole change is in the file, so what one finds there is
+    /// what the others left too.
+    /// </summary>
+    internal bool KeptTogether { get; private set; }
+
+    /// <summary>
     /// The pages a change has written over, as they were, and what it changed of what the file keeps in memory,
     /// until it is committed or disposed.
     /// <para>
@@ -392,7 +399,15 @@ internal sealed class PageFile : IDisposable
             if (_afterCommit is { } actions)
             {
                 _afterCommit = null;
-                foreach (var action in actions) action();
+                _file.KeptTogether = actions.Count > 1;
+                try
+                {
+                    foreach (var action in actions) action();
+                }
+                finally
+                {
+                    _file.KeptTogether = false;
+                }
             }
         }
 

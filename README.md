@@ -166,7 +166,8 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   row it has not given is given when the cursor comes to its entry, wherever it has been meanwhile - a row
   outside its range, or one it looked past, among them. A cursor that turns back begins again from where it is,
   giving again the rows it passed but not the row it is on; a savepoint keeps what the cursor had given, kept up
-  as rows move. A cursor is told of a change once it is in the file for good.
+  as rows move. A cursor is told of a change once it is in the file for good, and holds a few stretches of its
+  index however many rows it moves.
 - **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
   was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
   column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes

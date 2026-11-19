@@ -285,6 +285,106 @@ public sealed class CursorThirdReviewTests : IDisposable
         Assert.Equal(new[] { 1, 3, 4 }, rest);
     }
 
+    // ── What a pass holds ────────────────────────────────────────────────────
+
+    [Fact]
+    public void A_pass_through_a_table_it_changes_holds_no_more_than_a_short_one()
+    {
+        const int rows = 100_000;
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32), new ColumnDefinition("N", DataType.Int32),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+        table.InsertRange(Enumerable.Range(1, rows).Select(i => new Row { ["Id"] = i, ["K"] = i * 4, ["N"] = 0 }));
+
+        // One cursor goes through every row, moving each in turn ahead of itself past every row, behind itself
+        // before every row, or changing it where it is; another stays on its first row meanwhile.
+        var cursor = table.CreateIndexCursor("ByK");
+        var idle   = table.CreateIndexCursor("ByK");
+        Assert.True(idle.MoveNext());
+        int given = 0, most = 0, mostIdle = 0;
+        while (cursor.MoveNext())
+        {
+            given++;
+            int id = IdOf(cursor), k = (int)cursor.Current!["K"]!;
+            cursor.UpdateCurrentRow((id % 3) switch
+            {
+                0 => new Row { ["K"] = k + 10_000_000 },
+                1 => new Row { ["K"] = k - 10_000_000 },
+                _ => new Row { ["N"] = 1 },
+            });
+            if (given % 500 == 0)
+            {
+                most     = Math.Max(most, cursor.PassSize);
+                mostIdle = Math.Max(mostIdle, idle.PassSize);
+            }
+        }
+
+        Assert.Equal(rows, given);
+        Assert.True(most <= 4, $"the cursor's pass held {most}");
+        Assert.True(mostIdle <= 4, $"the idle cursor's pass held {mostIdle}");
+        Assert.True(cursor.PassSize <= 2, $"the cursor's pass holds {cursor.PassSize} at its end");
+    }
+
+    [Fact]
+    public void A_loop_of_searches_that_change_what_they_find_costs_the_same_a_search_however_long_it_runs()
+    {
+        // The review's loop: every even key in turn looked for from where the last search left the cursor - each
+        // search jumping past the odd row before it, which it does not look at - and the row found moved behind
+        // every row. The pass knows the row it found, wherever it goes, without holding more for each search.
+        (double Compared, int Held) PerSearch(int rows)
+        {
+            if (File.Exists(_path)) File.Delete(_path);
+            using var db = Database.Create(_path);
+            var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32) },
+                new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+            table.InsertRange(Enumerable.Range(1, 2 * rows).Select(i => new Row { ["Id"] = i, ["K"] = i }));
+            var cursor = table.CreateIndexCursor("ByK");
+            long before = cursor.PlacesCompared;
+            int most = 0;
+            for (int k = 2; k <= 2 * rows; k += 2)
+            {
+                Assert.Equal(k, (int)cursor.FindNextRow("K", k)!["Id"]!);
+                cursor.UpdateCurrentRow(new Row { ["K"] = -k });
+                most = Math.Max(most, cursor.PassSize);
+            }
+            // Turned back, the cursor begins a new pass: the odd row before the last row found is the first it gives.
+            Assert.True(cursor.MovePrevious());
+            Assert.Equal(2 * rows - 1, IdOf(cursor));
+            return ((double)(cursor.PlacesCompared - before) / rows, most);
+        }
+
+        var (few, fewHeld) = PerSearch(1_000);
+        var (many, manyHeld) = PerSearch(8_000);
+        Assert.True(many <= few * 1.5 + 8, $"{few:F1} places compared a search among 1,000 rows, {many:F1} among 8,000");
+        Assert.True(fewHeld <= 4 && manyHeld <= 4, $"the pass held {fewHeld} and {manyHeld}");
+    }
+
+    [Fact]
+    public void Cursors_let_go_of_are_dropped_by_the_next_change_not_kept_till_another_is_made()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32) },
+            new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+        table.InsertRange(Enumerable.Range(1, 100).Select(i => new Row { ["Id"] = i, ["K"] = i }));
+        var kept = table.CreateIndexCursor("ByK");
+        MakeAndLetGo(table, 5_000);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        table.Insert(new Row { ["Id"] = 101, ["K"] = 101 });
+        Assert.Equal(1, table.CursorsWatched);
+        Assert.Equal(1, kept.TimesTold);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void MakeAndLetGo(Table table, int count)
+    {
+        for (int i = 0; i < count; i++) table.CreateIndexCursor("ByK").FindRowByEntry(i % 100 + 1);
+    }
+
     // ── A cursor's update of a row it read ───────────────────────────────────
 
     [Fact]

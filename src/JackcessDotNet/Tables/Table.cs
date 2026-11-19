@@ -787,6 +787,9 @@ public sealed class Table
     private readonly List<WeakReference<IndexCursor>> _indexCursors = new();
     private int _lookAgainAt = 32;
 
+    /// <summary>How many cursors over the table's indexes the table holds a reference to: for tests.</summary>
+    internal int CursorsWatched => _indexCursors.Count;
+
     internal void Watch(IndexCursor cursor)
     {
         if (_indexCursors.Count >= _lookAgainAt)
@@ -800,13 +803,37 @@ public sealed class Table
     /// <summary>
     /// Tells every cursor over the index tree numbered <paramref name="tree"/> that the entry of the row at
     /// <paramref name="rowPointer"/> was at <paramref name="oldKey"/> and is at <paramref name="newKey"/>, either
-    /// null for no entry. Told once the change is in the file for good.
+    /// null for no entry. Told once the change is in the file for good: alone, or as one of the rows of a larger
+    /// change (<see cref="PageFile.KeptTogether"/>), whose other rows' entries are where it left them too.
     /// </summary>
     private void TellCursors(int tree, int rowPointer, byte[]? oldKey, byte[]? newKey)
     {
-        foreach (var held in _indexCursors)
-            if (held.TryGetTarget(out var cursor))
-                cursor.EntryMoved(tree, rowPointer, oldKey, newKey);
+        bool alone = !_file.KeptTogether;
+        foreach (var cursor in LiveCursors())
+            cursor.EntryMoved(tree, rowPointer, oldKey, newKey, alone);
+    }
+
+    /// <summary>Tells every cursor over the table's indexes that the row at <paramref name="rowPointer"/> has been deleted.</summary>
+    private void TellCursorsDeleted(int rowPointer)
+    {
+        foreach (var cursor in LiveCursors())
+            cursor.RowDeleted(rowPointer);
+    }
+
+    // The cursors still held: those let go of are dropped from the list as it is gone through, so that a change
+    // after many cursors were made and let go of tells only those there are.
+    private List<IndexCursor> LiveCursors()
+    {
+        var live = new List<IndexCursor>(_indexCursors.Count);
+        int held = 0;
+        for (int i = 0; i < _indexCursors.Count; i++)
+        {
+            if (!_indexCursors[i].TryGetTarget(out var cursor)) continue;
+            _indexCursors[held++] = _indexCursors[i];
+            live.Add(cursor);
+        }
+        _indexCursors.RemoveRange(held, _indexCursors.Count - held);
+        return live;
     }
 
     /// <summary>What says that the row a caller named by its place is not there.</summary>
@@ -1047,6 +1074,9 @@ public sealed class Table
 
         // Its index entries go with it: Access counts and finds rows through them.
         _indexes.Remove(_indexes.EntriesFor(values, enforce: false), rowPtr);
+
+        // A cursor over an index holds nothing of a row it can no longer come to, once the delete is in for good.
+        if (_indexCursors.Count > 0) _file.WhenKept(() => TellCursorsDeleted(rowPtr));
     }
 
     /// <summary>
