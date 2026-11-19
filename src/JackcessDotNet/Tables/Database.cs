@@ -20,8 +20,13 @@ namespace JackcessDotNet;
 /// </code>
 /// <para>
 /// A <see cref="Database"/>, and everything got from it - its tables, their cursors and rows - is for one thread
-/// at a time. A file has one writer: a database does not see what another handle on the file writes while it
-/// is open.
+/// at a time. A file has one writer. This library takes none of the locks Access takes on a database it shares
+/// with other users, so a database opened to be written has the file to itself for writing, as Access has one it
+/// opens exclusively: while it is open no other program or <see cref="Database"/> opens the file for writing -
+/// Access says it is "already in use" - and it is not opened while one has. Programs that only read - Access with
+/// a database open read-only, a <see cref="Database"/> opened with <see cref="DatabaseOpenOptions.ReadOnly"/> -
+/// can have the file open beside it, and read what has been written so far. Access's lock file (.ldb, .laccdb) is
+/// neither made nor read, as Access makes none for a database it opens exclusively.
 /// </para>
 /// <para>
 /// <see cref="Dispose"/> closes the file. After it, <see cref="Path"/>, <see cref="FileFormat"/> and
@@ -257,6 +262,10 @@ public sealed class Database : IDisposable
     /// none is asked for; <see cref="Create(string, FileFormat)"/> makes another. A file already at
     /// <paramref name="path"/> is replaced.
     /// </summary>
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file at <paramref name="path"/> open - Access,
+    /// while the database is open in it, read-only or not. It is not replaced, and is as it was.
+    /// </exception>
     /// <param name="path">The path of the file to create.</param>
     /// <returns>The new database, open. The caller disposes it.</returns>
     public static Database Create(string path) => Create(path, FileFormat.Access2000);
@@ -274,6 +283,11 @@ public sealed class Database : IDisposable
     /// there; in the later formats they sort in General.
     /// </para>
     /// </summary>
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file at <paramref name="path"/> open - Access,
+    /// while the database is open in it, read-only or not. It is not replaced, and is as it was. The new database is
+    /// kept from every other writer while it is open, as an opened one is (see <see cref="Database"/>).
+    /// </exception>
     /// <param name="path">The path of the file to create.</param>
     /// <param name="format">The format of the file to create.</param>
     /// <returns>The new database, open. The caller disposes it.</returns>
@@ -299,6 +313,12 @@ public sealed class Database : IDisposable
     /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), the format to read a file as when its
     /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), and whether it is only to be read
     /// (<see cref="DatabaseOpenOptions.ReadOnly"/>). With none set this is <see cref="Open(string)"/>.
+    /// <para>
+    /// Opened to be written, the file is refused while another program or <see cref="Database"/> has it open for
+    /// writing - Access, while the database is open in it - and kept from every other writer while it is open (see
+    /// <see cref="Database"/>). Opened only to be read, it opens beside a writer, and only a program holding it
+    /// exclusively keeps it out.
+    /// </para>
     /// <para>
     /// A file is protected as its header says, and a password is checked as Access checks it: exactly, letter
     /// case and all.
@@ -340,10 +360,10 @@ public sealed class Database : IDisposable
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
-    /// <exception cref="IOException">
-    /// The file is open for writing in another process - Access holding it - or in another <see cref="Database"/>,
-    /// whatever the options. This library takes no lock on a file, so a second writer is refused rather than let in;
-    /// nothing of the file is changed.
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
+    /// open for writing, or not shared for writing, when the file is to be written - whatever the other options say;
+    /// open exclusively - Access holding it so - when it is only to be read. Nothing of the file is changed.
     /// </exception>
     public static Database Open(string path, DatabaseOpenOptions options)
     {
@@ -390,11 +410,18 @@ public sealed class Database : IDisposable
     {
         Span<byte> head = stackalloc byte[0x15];
         int read;
-        // Shared for reading only: a file another process or Database has open for writing - Access holding it, or
-        // this library - is refused here, with IOException. This library takes no lock on a file, so two writers
-        // would each overwrite what the other wrote.
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        // Shared for reading and writing: the header is read whoever else has the file open, so that a file opened
+        // only to be read - by the caller's choice, or an Access 97 file - opens while Access has it open. Whether a
+        // file opened to be written is let in is decided when it is opened, by how it is shared (PageFile, #62).
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             read = fs.Read(head);
+        }
+        catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
+        {
+            throw PageFile.InUse(path, FileMode.Open, FileAccess.Read, e);
+        }
 
         if (read == head.Length && (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB")))
             return (JetFormat.ForVersionCode(head[0x14]), true);
@@ -488,18 +515,25 @@ public sealed class Database : IDisposable
     /// encoded and that has no database password opens without one, as Access opens it; a file with a password
     /// is opened with <see cref="Open(string, DatabaseOpenOptions)"/>, which describes what is protected how.
     /// <para>
+    /// The file is opened to be written: it is refused while another program or <see cref="Database"/> has it open
+    /// for writing - Access, while the database is open in it - and kept from every other writer while it is open
+    /// (see <see cref="Database"/>). <see cref="Open(string, DatabaseOpenOptions)"/> with
+    /// <see cref="DatabaseOpenOptions.ReadOnly"/> opens it only to be read, beside a writer.
+    /// </para>
+    /// <para>
     /// An Access 97 file is opened for reading only, as Jackcess opens one (<see cref="IsReadOnly"/>): its tables
     /// and rows are read, and every change to it - a row inserted, updated or deleted, a table created or
-    /// imported - is refused with <see cref="NotSupportedException"/> before anything is written.
+    /// imported - is refused with <see cref="NotSupportedException"/> before anything is written. Such a file is
+    /// opened as one opened with <see cref="DatabaseOpenOptions.ReadOnly"/> is, beside a writer.
     /// </para>
     /// </summary>
     /// <param name="path">The path of the file to open.</param>
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
-    /// <exception cref="IOException">
-    /// The file is open for writing in another process - Access holding it - or in another <see cref="Database"/>.
-    /// This library takes no lock on a file, so a second writer is refused rather than let in; nothing of the file is
-    /// changed.
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file open for writing, or without sharing it for
+    /// writing - Access, while the database is open in it; an Access 97 file, which is only read, only while one has it
+    /// open exclusively. Nothing of the file is changed.
     /// </exception>
     /// <exception cref="InvalidDataException">The file is not an Access database: it is too short, or has no signature.</exception>
     /// <exception cref="InvalidCredentialException">

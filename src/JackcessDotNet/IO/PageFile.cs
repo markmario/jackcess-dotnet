@@ -110,7 +110,21 @@ internal sealed class PageFile : IDisposable
     /// Opens the underlying file. <paramref name="access"/> is <see cref="FileAccess.Read"/> for a file that is only
     /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>): nothing is written to it, and every change is refused
     /// before anything happens (<see cref="ReadOnlyRefusal"/>).
+    /// <para>
+    /// The file is shared as Access shares a database (#62). Opened to be written, it is shared for reading only:
+    /// while it is open no other program or <see cref="Database"/> opens it for writing - ACE and DAO, which ask to
+    /// write in every mode but a read-only one, are refused ("file already in use") - and one that has it open for
+    /// writing already keeps it from being opened here. This library takes none of Access's locks, so a second writer
+    /// would write over pages this one keeps track of, and this one over its. Opened only to be read, it is shared
+    /// for reading and writing, as Access shares a database it opens read-only: a writer, Access or a
+    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out.
+    /// </para>
     /// </summary>
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
+    /// open for writing, or not shared for writing, when this one would write; not shared for reading - Access
+    /// holding it exclusively - when this one would only read. Nothing is created or changed.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// <paramref name="format"/> is one this library only reads (<see cref="JetFormat.IsReadOnly"/>: Access 97's)
     /// and <paramref name="mode"/> would create or empty the file. Nothing is created or changed.
@@ -139,8 +153,47 @@ internal sealed class PageFile : IDisposable
             mode   = FileMode.Open;
             access = FileAccess.Read;
         }
-        _stream = new FileStream(path, mode, access, FileShare.ReadWrite);
+        _stream = OpenShared(path, mode, access);
     }
+
+    /// <summary>
+    /// The file's handle, shared as the constructor says: for reading only by a writer, for reading and writing by a
+    /// reader. A sharing violation is the file being in use, and is thrown as <see cref="DatabaseInUseException"/>.
+    /// </summary>
+    private static FileStream OpenShared(string path, FileMode mode, FileAccess access)
+    {
+        try
+        {
+            // A mode that empties a file that is there replaces it whole, which a reader sharing it for writing would
+            // not keep out: it is refused while anyone has the file open, as Access needs a database to itself to
+            // replace it, so that no one goes on reading a file that has become another.
+            if (mode is FileMode.Create or FileMode.Truncate && File.Exists(path))
+                using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+            // Windows checks the sharing before it creates or empties a file, so a file in use is refused unchanged.
+            return new FileStream(path, mode, access, access == FileAccess.Read ? FileShare.ReadWrite : FileShare.Read);
+        }
+        catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
+        {
+            throw InUse(path, mode, access, e);
+        }
+    }
+
+    /// <summary>
+    /// What refuses a file that another program, or another <see cref="Database"/>, has open in a way that does not
+    /// let an open with <paramref name="mode"/> and <paramref name="access"/> in: <paramref name="e"/>, the sharing
+    /// violation Windows gave, said in terms of what was not done.
+    /// </summary>
+    internal static DatabaseInUseException InUse(string path, FileMode mode, FileAccess access, IOException e)
+        => new(access == FileAccess.Read
+                ? $"'{path}' is in use: another program has it open without sharing it - Access, with the database " +
+                  "open exclusively. It was not opened."
+                : mode is FileMode.Open or FileMode.OpenOrCreate
+                    ? $"'{path}' is in use: another program, or another Database, has it open for writing - Access, while " +
+                      "the database is open in it - or without sharing it. It was not opened for writing, as two writers " +
+                      "would write over each other's pages; open it with DatabaseOpenOptions.ReadOnly to read it meanwhile."
+                    : $"'{path}' is in use: another program, or another Database, has it open. It was not replaced, and is " +
+                      "as it was.",
+            e);
 
     /// <summary>
     /// The format of the file at <paramref name="path"/>, as its header says: the signature at offset 4 and the
@@ -229,9 +282,9 @@ internal sealed class PageFile : IDisposable
     /// <summary>
     /// As <see cref="ReadPage"/>, for a page every page appended consults (the header,
     /// the global usage map): read from the file once, then kept as written here. The
-    /// copy returned is the caller's to change. A file has one writer: like the rest of
-    /// this library, it does not see what another handle on the file writes - another
-    /// Database open on it, in this process or another - while it is open.
+    /// copy returned is the caller's to change. Only a file opened to be written is
+    /// written to, and nothing else writes to it while it is open (see the constructor),
+    /// so what is kept stays what the file holds.
     /// </summary>
     internal byte[] ReadKeptPage(int pageNumber)
     {
