@@ -187,7 +187,9 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     Integer, Long or Large Number column's 5 is a caller's 5L, 5m or 5.0, and no number that is not that whole
     number (5.5, or a double 5.000000000000001) is in it. A Currency is the caller's number taken to its four
     places (1.23456 finds 1.2346, as with ACE's `=` and DAO's `Seek`), and a Double or a Single the caller's number
-    as the column stores it, by its bits.
+    as the column stores it, by its bits. A Decimal is the same number exactly, a caller's `double` or `float`
+    taken to a decimal as Access takes one - to 15 or 7 significant digits, as OLE Automation rounds it - so the
+    double 0.1 finds the Decimal 0.1, and is written as 0.1, on every runtime (.NET 11's own conversion is exact).
   - *A Date/Time* is the number the row stores. A `DateTime` - taken first to what it reads as once stored, to
     the millisecond, so `DateTime.Now` finds the row written with it - finds every row whose number **reads
     as** that `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not
