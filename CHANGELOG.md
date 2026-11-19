@@ -31,6 +31,9 @@ changed since 1.2.2.
 - **An import makes a `long` a Large Number** (#38). A `long` column or property was a Long Integer, and a
   value past 32 bits stopped the import at its row. It is imported into an `.accdb` whole; in an `.mdb`, which
   has no Large Number, the table is refused with `NotSupportedException` before it is made.
+- **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
+  `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
+  which is not the key Access makes for it.
 - **A new table or relationship has its owner's entry in `MSysACEs`**, with the others its container passes
   on, as Access gives them (#37). Without it, Access in an `.mdb` did not read a table this library made in a
   database DAO had created, nor drop a relationship it made.
