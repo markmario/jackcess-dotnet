@@ -202,6 +202,17 @@ JackcessDotNet.JoinType
 JackcessDotNet.JoinType.Inner = 0 -> JackcessDotNet.JoinType
 JackcessDotNet.JoinType.LeftOuter = 1 -> JackcessDotNet.JoinType
 JackcessDotNet.JoinType.RightOuter = 2 -> JackcessDotNet.JoinType
+JackcessDotNet.Joiner
+JackcessDotNet.Joiner.CreateReverse() -> JackcessDotNet.Joiner!
+JackcessDotNet.Joiner.FindFirstRow(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! fromRow) -> JackcessDotNet.Row?
+JackcessDotNet.Joiner.FindRows(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! fromRow) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
+JackcessDotNet.Joiner.FromColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+JackcessDotNet.Joiner.FromTable.get -> JackcessDotNet.Table!
+JackcessDotNet.Joiner.HasRows(System.Collections.Generic.IReadOnlyDictionary<string!, object?>! fromRow) -> bool
+JackcessDotNet.Joiner.Joiner(JackcessDotNet.Table! fromTable, System.Collections.Generic.IEnumerable<string!>! fromColumnNames, JackcessDotNet.Table! toTable, System.Collections.Generic.IEnumerable<string!>! toColumnNames) -> void
+JackcessDotNet.Joiner.ToColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+JackcessDotNet.Joiner.ToIndex.get -> JackcessDotNet.Index!
+JackcessDotNet.Joiner.ToTable.get -> JackcessDotNet.Table!
 JackcessDotNet.PropertyMap
 JackcessDotNet.PropertyMap.Count.get -> int
 JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.PropertyMap.Property!>!
