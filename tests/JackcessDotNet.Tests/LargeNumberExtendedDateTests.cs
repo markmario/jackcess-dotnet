@@ -333,7 +333,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
         var table = db.CreateTable("T", Columns(), primaryKey: "Id");
         table.Insert(RowOf(1, long.MinValue, DateTime.MaxValue));
 
-        DataTable exported = db.ExportToDataTable("T");
+        DataTable exported = db.GetTable("T").ToDataTable();
         Assert.Equal(typeof(long), exported.Columns["N"]!.DataType);
         Assert.Equal(typeof(DateTime), exported.Columns["D"]!.DataType);
         Assert.Equal(long.MinValue, exported.Rows[0]["N"]);

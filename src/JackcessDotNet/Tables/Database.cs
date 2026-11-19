@@ -540,14 +540,6 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Lists the Decimal (Numeric) values in the database's tables - not its system tables - that read with more
-    /// digits than their column's precision allows: <see cref="Table.FindDecimalsBeyondPrecision"/> for each
-    /// table, where what it finds, and what it cannot, is described. Nothing is changed.
-    /// </summary>
-    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
-        => GetTableNames().SelectMany(name => GetTable(name).FindDecimalsBeyondPrecision());
-
-    /// <summary>
     /// Reads MSysRelationships and returns the schema's foreign-key / join
     /// relationships, grouping the per-column-pair rows back into one entry
     /// per named relationship. Returns an empty list when MSysRelationships
@@ -691,8 +683,8 @@ public sealed class Database : IDisposable
     /// Creates a table of columns already made - an import's, mapped from another source - as
     /// <see cref="CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> does.
     /// </summary>
-    internal Table CreateTableOf(string name, IReadOnlyList<Column> columns, string? primaryKey)
-        => CreateTableCore(name, columns, primaryKey is null ? null : new[] { primaryKey }, Array.Empty<IndexDefinition>());
+    internal Table CreateTableOf(string name, IReadOnlyList<Column> columns, IReadOnlyList<string>? primaryKey)
+        => CreateTableCore(name, columns, primaryKey is { Count: > 0 } ? primaryKey : null, Array.Empty<IndexDefinition>());
 
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
                                   IReadOnlyList<string>? pkColumns,

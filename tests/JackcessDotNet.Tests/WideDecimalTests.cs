@@ -1,4 +1,5 @@
 using System.IO;
+using JackcessDotNet.Diagnostics;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -79,7 +80,7 @@ public sealed class WideDecimalTests : IDisposable
         Assert.Equal(123.45m, cursor.Current!["Small"]);
 
         // Each is listed, with the number a read gives - the three that fit their columns as much as the rest.
-        var listed = read.FindDecimalsBeyondPrecision().ToList();
+        var listed = DecimalByteOrder.Find(read).ToList();
         Assert.Equal(new[] { "1 Small", "1 Big", "2 Small", "2 Big", "3 Small", "3 Big", "4 Small" },
                      listed.Select(found => $"{found.PrimaryKey["Id"]} {found.Column.Name}"));
         Assert.All(listed, found =>
@@ -104,7 +105,7 @@ public sealed class WideDecimalTests : IDisposable
         using var read = Database.Open(_path);
         Assert.Equal(new object?[] { decimal.MinValue, 9_999_999_999_999_999_999_999_999_999m }, read.GetTable("D").Rows.Select(row => row["Big"]));
 
-        var found = Assert.Single(read.FindDecimalsBeyondPrecision());   // 29 digits in a column of 28
+        var found = Assert.Single(DecimalByteOrder.Find(read));   // 29 digits in a column of 28
         Assert.False(found.IsCut);
         Assert.Equal(decimal.MinValue, found.Value);
     }

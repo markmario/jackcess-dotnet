@@ -77,7 +77,6 @@ JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
 JackcessDotNet.Database.FileFormat.get -> JackcessDotNet.FileFormat
-JackcessDotNet.Database.FindDecimalsBeyondPrecision() -> System.Collections.Generic.IEnumerable<JackcessDotNet.DecimalBeyondPrecision!>!
 JackcessDotNet.Database.GetRelationships() -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Relationship!>!
 JackcessDotNet.Database.GetSystemTableNames() -> System.Collections.Generic.IReadOnlyList<string!>!
 JackcessDotNet.Database.GetTable(string! name) -> JackcessDotNet.Table!
@@ -92,31 +91,34 @@ JackcessDotNet.Database.TryGetTable(string! name, out JackcessDotNet.Table? tabl
 JackcessDotNet.Database.VerifyIndexes.get -> bool
 JackcessDotNet.Database.VerifyIndexes.set -> void
 JackcessDotNet.DatabaseExporter
-static JackcessDotNet.DatabaseExporter.ExportToCollection<T>(this JackcessDotNet.Database! db, string? tableName = null) -> System.Collections.Generic.IEnumerable<T>!
-static JackcessDotNet.DatabaseExporter.ExportToDataSet(this JackcessDotNet.Database! db, bool includeSystem = false) -> System.Data.DataSet!
-static JackcessDotNet.DatabaseExporter.ExportToDataTable(this JackcessDotNet.Database! db, string! tableName) -> System.Data.DataTable!
+static JackcessDotNet.DatabaseExporter.ReadRows<T>(this JackcessDotNet.Table! table) -> System.Collections.Generic.IEnumerable<T>!
+static JackcessDotNet.DatabaseExporter.ToDataSet(this JackcessDotNet.Database! database) -> System.Data.DataSet!
+static JackcessDotNet.DatabaseExporter.ToDataTable(this JackcessDotNet.Table! table) -> System.Data.DataTable!
 JackcessDotNet.DatabaseImporter
-static JackcessDotNet.DatabaseImporter.CreateFromCollection<T>(string! path, System.Collections.Generic.IEnumerable<T>! items, JackcessDotNet.FileFormat version = JackcessDotNet.FileFormat.Access2000, string? tableName = null, string? primaryKey = null, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Database!
-static JackcessDotNet.DatabaseImporter.CreateFromDataSet(string! path, System.Data.DataSet! dataSet, JackcessDotNet.FileFormat version = JackcessDotNet.FileFormat.Access2000, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Database!
-static JackcessDotNet.DatabaseImporter.CreateFromDataTable(string! path, System.Data.DataTable! table, JackcessDotNet.FileFormat version = JackcessDotNet.FileFormat.Access2000, string? tableName = null, string? primaryKey = null, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Database!
-static JackcessDotNet.DatabaseImporter.ImportTable(this JackcessDotNet.Database! db, System.Data.DataTable! table, string? tableName = null, string? primaryKey = null, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Table!
-static JackcessDotNet.DatabaseImporter.ImportTable<T>(this JackcessDotNet.Database! db, System.Collections.Generic.IEnumerable<T>! items, string? tableName = null, string? primaryKey = null, JackcessDotNet.ImportOptions? options = null) -> JackcessDotNet.Table!
-static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! db, System.Data.DataSet! dataSet, JackcessDotNet.ImportOptions? options = null) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
+static JackcessDotNet.DatabaseImporter.ImportTable(this JackcessDotNet.Database! database, System.Data.DataTable! table) -> JackcessDotNet.Table!
+static JackcessDotNet.DatabaseImporter.ImportTable(this JackcessDotNet.Database! database, System.Data.DataTable! table, JackcessDotNet.ImportOptions! options) -> JackcessDotNet.Table!
+static JackcessDotNet.DatabaseImporter.ImportTable<T>(this JackcessDotNet.Database! database, System.Collections.Generic.IEnumerable<T>! items) -> JackcessDotNet.Table!
+static JackcessDotNet.DatabaseImporter.ImportTable<T>(this JackcessDotNet.Database! database, System.Collections.Generic.IEnumerable<T>! items, JackcessDotNet.ImportOptions! options) -> JackcessDotNet.Table!
+static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
+static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet, JackcessDotNet.ImportOptions! options) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 JackcessDotNet.DatabaseOpenOptions
 JackcessDotNet.DatabaseOpenOptions.DatabaseOpenOptions() -> void
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileFormat?
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.set -> void
 JackcessDotNet.DatabaseOpenOptions.Password.get -> string?
 JackcessDotNet.DatabaseOpenOptions.Password.set -> void
-JackcessDotNet.DecimalBeyondPrecision
-JackcessDotNet.DecimalBeyondPrecision.Column.get -> JackcessDotNet.Column!
-JackcessDotNet.DecimalBeyondPrecision.IsCut.get -> bool
-JackcessDotNet.DecimalBeyondPrecision.PrimaryKey.get -> JackcessDotNet.Row!
-JackcessDotNet.DecimalBeyondPrecision.RowIndex.get -> int
-JackcessDotNet.DecimalBeyondPrecision.Table.get -> string!
-override JackcessDotNet.DecimalBeyondPrecision.ToString() -> string!
-JackcessDotNet.DecimalBeyondPrecision.Value.get -> decimal?
-JackcessDotNet.DecimalBeyondPrecision.ValueInEarlierByteOrder.get -> decimal?
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Column.get -> JackcessDotNet.Column!
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.IsCut.get -> bool
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.PrimaryKey.get -> JackcessDotNet.Row!
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.RowIndex.get -> int
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Table.get -> string!
+override JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ToString() -> string!
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Value.get -> decimal?
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ValueInEarlierByteOrder.get -> decimal?
+JackcessDotNet.Diagnostics.DecimalByteOrder
+static JackcessDotNet.Diagnostics.DecimalByteOrder.Find(JackcessDotNet.Database! database) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Diagnostics.DecimalBeyondPrecision!>!
+static JackcessDotNet.Diagnostics.DecimalByteOrder.Find(JackcessDotNet.Table! table) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Diagnostics.DecimalBeyondPrecision!>!
 JackcessDotNet.FileFormat
 JackcessDotNet.FileFormat.Access2000 = 1 -> JackcessDotNet.FileFormat
 JackcessDotNet.FileFormat.Access2007 = 2 -> JackcessDotNet.FileFormat
@@ -126,15 +128,18 @@ JackcessDotNet.FileFormat.Access2019 = 5 -> JackcessDotNet.FileFormat
 JackcessDotNet.FileFormat.Access97 = 0 -> JackcessDotNet.FileFormat
 JackcessDotNet.ImportOptions
 JackcessDotNet.ImportOptions.AppendIfExists.get -> bool
-JackcessDotNet.ImportOptions.AppendIfExists.init -> void
-static JackcessDotNet.ImportOptions.Default.get -> JackcessDotNet.ImportOptions!
+JackcessDotNet.ImportOptions.AppendIfExists.set -> void
 JackcessDotNet.ImportOptions.FallbackUnmappableToString.get -> bool
-JackcessDotNet.ImportOptions.FallbackUnmappableToString.init -> void
+JackcessDotNet.ImportOptions.FallbackUnmappableToString.set -> void
 JackcessDotNet.ImportOptions.ImportOptions() -> void
 JackcessDotNet.ImportOptions.KeepIdentity.get -> bool
-JackcessDotNet.ImportOptions.KeepIdentity.init -> void
+JackcessDotNet.ImportOptions.KeepIdentity.set -> void
 JackcessDotNet.ImportOptions.OnUnmappableColumn.get -> System.Action<string!, System.Type!>?
-JackcessDotNet.ImportOptions.OnUnmappableColumn.init -> void
+JackcessDotNet.ImportOptions.OnUnmappableColumn.set -> void
+JackcessDotNet.ImportOptions.PrimaryKey.get -> System.Collections.Generic.IEnumerable<string!>?
+JackcessDotNet.ImportOptions.PrimaryKey.set -> void
+JackcessDotNet.ImportOptions.TableName.get -> string?
+JackcessDotNet.ImportOptions.TableName.set -> void
 JackcessDotNet.Index
 JackcessDotNet.Index.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.IndexColumn!>!
 JackcessDotNet.Index.IgnoreNulls.get -> bool
@@ -240,7 +245,6 @@ JackcessDotNet.Table.CreateCursor() -> JackcessDotNet.Cursor!
 JackcessDotNet.Table.CreateIndexCursor() -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.CreateIndexCursor(string! indexName) -> JackcessDotNet.IndexCursor!
 JackcessDotNet.Table.DeleteRow(string! columnName, object! value) -> void
-JackcessDotNet.Table.FindDecimalsBeyondPrecision() -> System.Collections.Generic.IEnumerable<JackcessDotNet.DecimalBeyondPrecision!>!
 JackcessDotNet.Table.FindRowByPrimaryKey(params object?[]! primaryKey) -> JackcessDotNet.Row?
 JackcessDotNet.Table.Indexes.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Index!>!
 JackcessDotNet.Table.Insert(JackcessDotNet.Row! row) -> void

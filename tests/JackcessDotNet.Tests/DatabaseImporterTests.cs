@@ -146,7 +146,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1);
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, tableName: "ChosenName");
+            db.ImportTable(dt, new ImportOptions { TableName = "ChosenName" });
 
         using var reopen = Database.Open(_path);
         Assert.Contains("ChosenName", reopen.GetTableNames());
@@ -169,7 +169,7 @@ public sealed class DatabaseImporterTests : IDisposable
         };
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: opts);
+            db.ImportTable(dt, opts);
 
         Assert.Equal("Unhandled",          droppedName);
         Assert.Equal(typeof(System.IO.Stream), droppedType);
@@ -301,7 +301,7 @@ public sealed class DatabaseImporterTests : IDisposable
         int dropped = 0;
         var opts = new ImportOptions { OnUnmappableColumn = (_, _) => dropped++ };
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(rows, options: opts);
+            db.ImportTable(rows, opts);
 
         Assert.Equal(1, dropped);   // only AlsoIgnore — IgnoreMe is [NotMapped] and never reaches the mapper
 
@@ -403,55 +403,6 @@ public sealed class DatabaseImporterTests : IDisposable
         Assert.Empty(reopen.GetTable("CustomerPoco").Rows.ToList());
     }
 
-    // ── Static factories ─────────────────────────────────────────────────────
-
-    [Fact]
-    public void CreateFromDataTable_StaticShortcut_BuildsAndPopulatesFile()
-    {
-        var dt = new DataTable("Items");
-        dt.Columns.Add("Id",   typeof(int));
-        dt.Columns.Add("Name", typeof(string)).MaxLength = 20;
-        dt.Rows.Add(1, "X");
-        dt.Rows.Add(2, "Y");
-
-        using (var db = DatabaseImporter.CreateFromDataTable(_path, dt))
-        {
-            Assert.Equal(2, db.GetTable("Items").Rows.Count());
-        }
-        Assert.True(File.Exists(_path));
-    }
-
-    [Fact]
-    public void CreateFromCollection_StaticShortcut_BuildsAndPopulatesFile()
-    {
-        var rows = Enumerable.Range(1, 4).Select(i => new CustomerPoco
-        {
-            Id = i, Name = $"P{i}", Joined = new DateTime(2024, 1, i), Balance = i, IsActive = i % 2 == 0
-        });
-
-        using (var db = DatabaseImporter.CreateFromCollection(_path, rows))
-        {
-            Assert.Equal(4, db.GetTable("CustomerPoco").Rows.Count());
-        }
-        Assert.True(File.Exists(_path));
-    }
-
-    [Fact]
-    public void CreateFromDataSet_StaticShortcut_BuildsAndPopulatesFile()
-    {
-        var ds = new DataSet();
-        var dt = ds.Tables.Add("T1");
-        dt.Columns.Add("A", typeof(int));
-        dt.Rows.Add(1);
-        dt.Rows.Add(2);
-
-        using (var db = DatabaseImporter.CreateFromDataSet(_path, ds))
-        {
-            Assert.Equal(2, db.GetTable("T1").Rows.Count());
-        }
-        Assert.True(File.Exists(_path));
-    }
-
     // ── Fallback-to-string for unmappable columns ────────────────────────────
 
     [Fact]
@@ -464,7 +415,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(2, new Uri("https://example.com/b"));
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
+            db.ImportTable(dt, new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Pages");
@@ -484,7 +435,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(2, new Uri("https://x"));
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
+            db.ImportTable(dt, new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var rows = reopen.GetTable("Pages").Rows.ToList()
@@ -508,7 +459,7 @@ public sealed class DatabaseImporterTests : IDisposable
             OnUnmappableColumn = (_, _) => callbackCount++,
         };
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: opts);
+            db.ImportTable(dt, opts);
 
         Assert.Equal(1, callbackCount);
         // Even though callback fired, the column was kept (as Memo).
@@ -539,7 +490,7 @@ public sealed class DatabaseImporterTests : IDisposable
         };
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(rows, options: new ImportOptions { FallbackUnmappableToString = true });
+            db.ImportTable(rows, new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("WithCustomPropertyPoco");
@@ -562,7 +513,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, "A", new Uri("https://a"));
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: new ImportOptions { FallbackUnmappableToString = true });
+            db.ImportTable(dt, new ImportOptions { FallbackUnmappableToString = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("Mixed");
@@ -643,7 +594,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, 100);
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, primaryKey: "B");
+            db.ImportTable(dt, new ImportOptions { PrimaryKey = new[] { "B" } });
 
         using var reopen = Database.Open(_path);
         var pk = reopen.GetTable("T").Indexes.Single(i => i.IsPrimaryKey);
@@ -665,6 +616,138 @@ public sealed class DatabaseImporterTests : IDisposable
         using var reopen = Database.Open(_path);
         // No single-column PK could be inferred from a composite key, so none is created.
         Assert.DoesNotContain(reopen.GetTable("T").Indexes, i => i.IsPrimaryKey);
+    }
+
+    [Fact]
+    public void ImportTable_FromDataTable_PrimaryKeyOfSeveralColumns_IsTheTablesKey()
+    {
+        var dt = new DataTable("T");
+        dt.Columns.Add("A", typeof(int));
+        dt.Columns.Add("B", typeof(int));
+        dt.Columns.Add("C", typeof(string));
+        dt.Rows.Add(1, 2, "x");
+        dt.Rows.Add(1, 3, "y");
+
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.ImportTable(dt, new ImportOptions { PrimaryKey = new[] { "B", "A" } });
+
+        using var reopen = Database.Open(_path);
+        var table = reopen.GetTable("T");
+        var pk = table.Indexes.Single(i => i.IsPrimaryKey);
+        Assert.Equal(new[] { "B", "A" }, pk.Columns.Select(c => c.Column.Name));
+        Assert.Equal("y", table.FindRowByPrimaryKey(3, 1)!["C"]);
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["A"] = 1, ["B"] = 2 }));
+    }
+
+    [Fact]
+    public void ImportTable_FromCollection_PrimaryKeyOfSeveralColumns_IsTheTablesKey()
+    {
+        var rows = new[] { new CustomerPoco { Id = 1, Name = "a" }, new CustomerPoco { Id = 1, Name = "b" } };
+
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.ImportTable(rows, new ImportOptions { PrimaryKey = new[] { "Id", "Name" } });
+
+        using var reopen = Database.Open(_path);
+        var pk = reopen.GetTable("CustomerPoco").Indexes.Single(i => i.IsPrimaryKey);
+        Assert.Equal(new[] { "Id", "Name" }, pk.Columns.Select(c => c.Column.Name));
+    }
+
+    [Fact]
+    public void ImportTable_PrimaryKeyWithNoNames_MakesATableWithoutOne_WhateverTheSourceHas()
+    {
+        var dt = new DataTable("T");
+        dt.Columns.Add("A", typeof(int));
+        dt.PrimaryKey = new[] { dt.Columns["A"]! };
+        dt.Rows.Add(1);
+
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var fromTable   = db.ImportTable(dt, new ImportOptions { PrimaryKey = Array.Empty<string>() });
+        var fromObjects = db.ImportTable(new[] { new KeyedPoco { Id = 1 } },
+                                         new ImportOptions { PrimaryKey = Array.Empty<string>() });
+
+        Assert.DoesNotContain(fromTable.Indexes, i => i.IsPrimaryKey);
+        Assert.DoesNotContain(fromObjects.Indexes, i => i.IsPrimaryKey);
+        Assert.Contains(db.ImportTable(new[] { new KeyedPoco { Id = 1 } }, new ImportOptions { TableName = "Keyed" }).Indexes,
+                        i => i.IsPrimaryKey);
+    }
+
+    private sealed class KeyedPoco
+    {
+        [Key] public int Id { get; set; }
+    }
+
+    [Fact]
+    public void ImportTable_PrimaryKeyNamingNoColumnOrAnEmptyName_IsRefused_AndNoTableIsMade()
+    {
+        var dt = new DataTable("T");
+        dt.Columns.Add("A", typeof(int));
+
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        Assert.Throws<ArgumentException>(() => db.ImportTable(dt, new ImportOptions { PrimaryKey = new[] { "Missing" } }));
+        Assert.Throws<ArgumentException>(() => db.ImportTable(dt, new ImportOptions { PrimaryKey = new[] { "A", " " } }));
+        Assert.Empty(db.GetTableNames());
+    }
+
+    [Fact]
+    public void ImportTables_OptionsThatDescribeOneTable_AreRefused_AndNothingIsImported()
+    {
+        var ds = new DataSet();
+        ds.Tables.Add("One").Columns.Add("A", typeof(int));
+        ds.Tables.Add("Two").Columns.Add("A", typeof(int));
+
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var named = Assert.Throws<ArgumentException>(() => db.ImportTables(ds, new ImportOptions { TableName = "Both" }));
+        var keyed = Assert.Throws<ArgumentException>(() => db.ImportTables(ds, new ImportOptions { PrimaryKey = new[] { "A" } }));
+
+        Assert.Equal("options", named.ParamName);
+        Assert.Equal("options", keyed.ParamName);
+        Assert.Empty(db.GetTableNames());
+    }
+
+    [Fact]
+    public void Import_NullArguments_AreRefusedByName()
+    {
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var dt   = new DataTable("T");
+        var ds   = new DataSet();
+        var rows = Array.Empty<CustomerPoco>();
+        var opts = new ImportOptions();
+
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTable(null!, dt)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTable(null!, dt, opts)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTables(null!, ds)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTables(null!, ds, opts)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTable(null!, rows)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseImporter.ImportTable(null!, rows, opts)).ParamName);
+
+        Assert.Equal("table",   Assert.Throws<ArgumentNullException>(() => db.ImportTable((DataTable)null!)).ParamName);
+        Assert.Equal("dataSet", Assert.Throws<ArgumentNullException>(() => db.ImportTables(null!)).ParamName);
+        Assert.Equal("items",   Assert.Throws<ArgumentNullException>(() => db.ImportTable((IEnumerable<CustomerPoco>)null!)).ParamName);
+
+        Assert.Equal("options", Assert.Throws<ArgumentNullException>(() => db.ImportTable(dt, null!)).ParamName);
+        Assert.Equal("options", Assert.Throws<ArgumentNullException>(() => db.ImportTables(ds, null!)).ParamName);
+        Assert.Equal("options", Assert.Throws<ArgumentNullException>(() => db.ImportTable(rows, null!)).ParamName);
+        Assert.Empty(db.GetTableNames());
+    }
+
+    [Fact]
+    public void ImportOptions_AreChangedAfterTheyAreMade_AndEachInstanceIsItsOwn()
+    {
+        var first  = new ImportOptions();
+        var second = new ImportOptions();
+        first.TableName = "Renamed";
+        first.AppendIfExists = true;
+        first.KeepIdentity = true;
+        first.FallbackUnmappableToString = true;
+        first.OnUnmappableColumn = (_, _) => { };
+        first.PrimaryKey = new[] { "Id" };
+
+        Assert.Null(second.TableName);
+        Assert.Null(second.PrimaryKey);
+        Assert.Null(second.OnUnmappableColumn);
+        Assert.False(second.AppendIfExists);
+        Assert.False(second.KeepIdentity);
+        Assert.False(second.FallbackUnmappableToString);
     }
 
     [Fact]
@@ -716,7 +799,7 @@ public sealed class DatabaseImporterTests : IDisposable
             Id = 1, Name = "A", Joined = new DateTime(2024,1,1), Balance = 10m, IsActive = true,
         }};
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(rows, primaryKey: "Name");
+            db.ImportTable(rows, new ImportOptions { PrimaryKey = new[] { "Name" } });
 
         using var reopen = Database.Open(_path);
         var pk = reopen.GetTable("CustomerPoco").Indexes.Single(i => i.IsPrimaryKey);
@@ -795,7 +878,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(3, "Carol");
 
         using (var db = Database.Open(_path))
-            db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var rows = reopen.GetTable("Customers").Rows.ToList()
@@ -823,7 +906,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, "Alice", "ignored value");
 
         using (var db = Database.Open(_path))
-            db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var row = reopen.GetTable("T").Rows.Single();
@@ -850,7 +933,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, "Alice");
 
         using (var db = Database.Open(_path))
-            db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var row = reopen.GetTable("T").Rows.Single();
@@ -869,7 +952,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, "Hello");
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         Assert.Contains("Brand-New", reopen.GetTableNames());
@@ -916,7 +999,7 @@ public sealed class DatabaseImporterTests : IDisposable
         };
 
         using (var db = Database.Open(_path))
-            db.ImportTable(rows, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(rows, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var saved = reopen.GetTable("CustomerPoco").Rows.ToList()
@@ -945,7 +1028,7 @@ public sealed class DatabaseImporterTests : IDisposable
         dt.Rows.Add(1, 42);
 
         using (var db = Database.Open(_path))
-            db.ImportTable(dt, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var row = reopen.GetTable("T").Rows.Single();
@@ -973,7 +1056,7 @@ public sealed class DatabaseImporterTests : IDisposable
         using (var db = Database.Open(_path))
             db.ImportTable(
                 new[] { new CustomerPoco { Id = 1, Name = "appended", Joined = DateTime.Today, Balance = 0m, IsActive = true } },
-                options: new ImportOptions { AppendIfExists = true });
+                new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var t = reopen.GetTable("CustomerPoco");
@@ -1009,7 +1092,7 @@ public sealed class DatabaseImporterTests : IDisposable
         brandNew.Rows.Add(42);
 
         using (var db = Database.Open(_path))
-            db.ImportTables(ds, options: new ImportOptions { AppendIfExists = true });
+            db.ImportTables(ds, new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         Assert.Equal(3, reopen.GetTable("Existing").Rows.Count());   // 999 + 1 + 2
@@ -1045,7 +1128,7 @@ public sealed class DatabaseImporterTests : IDisposable
         var rows = new[] { new TableAttributedPoco { Id = 1, Name = "Ada" } };
 
         using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.ImportTable(rows, tableName: "People");
+            db.ImportTable(rows, new ImportOptions { TableName = "People" });
 
         using var reopen = Database.Open(_path);
         // The explicit parameter wins over [Table].
@@ -1071,7 +1154,7 @@ public sealed class DatabaseImporterTests : IDisposable
 
         using (var db = Database.Open(_path))
             db.ImportTable(new[] { new TableAttributedPoco { Id = 1, Name = "Ada" } },
-                options: new ImportOptions { AppendIfExists = true });
+                new ImportOptions { AppendIfExists = true });
 
         using var reopen = Database.Open(_path);
         var saved = reopen.GetTable("Customers").Rows.ToList();

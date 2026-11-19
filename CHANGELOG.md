@@ -69,6 +69,19 @@ changes with them.
   `FromColumnNames` and `ToColumnNames`;** `CascadeNull` is `CascadeNullOnDelete`; `LeftOuterJoin` and
   `RightOuterJoin` are `JoinType`. `RelationshipDefinition` has the same names, takes each side's columns as a
   list, and `RelationshipJoinType` is `JoinType`.
+- **An import takes its source alone, or its source and an `ImportOptions`.** `ImportTable` and `ImportTables`
+  have no optional parameters: `ImportOptions.TableName` and `ImportOptions.PrimaryKey` are in place of
+  `tableName` and `primaryKey`. `PrimaryKey` is the key's columns, so a key of several can be asked for, and one
+  with no names asks for a table without a key. `ImportTables` refuses options that set either, with
+  `ArgumentException`: they describe one table. The properties of `ImportOptions` are set, not `init`, and
+  `ImportOptions.Default` is removed. `CreateFromDataTable`, `CreateFromDataSet` and `CreateFromCollection` are
+  removed: `Database.Create(path)` and then `ImportTable`.
+- **`ExportToDataTable(name)`, `ExportToDataSet()` and `ExportToCollection<T>(name)` are `Table.ToDataTable()`,
+  `Database.ToDataSet()` and `Table.ReadRows<T>()`.** `ToDataSet` reads the database's own tables; a system
+  table is read with `GetTable(name).ToDataTable()`.
+- **`Database.FindDecimalsBeyondPrecision()` and `Table.FindDecimalsBeyondPrecision()` are
+  `DecimalByteOrder.Find(database)` and `DecimalByteOrder.Find(table)`,** in the namespace
+  `JackcessDotNet.Diagnostics`, where `DecimalBeyondPrecision` is too.
 
 ### Added
 

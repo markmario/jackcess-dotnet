@@ -419,16 +419,17 @@ index slots.
 Skip the schema boilerplate — the importer infers columns from the source type:
 
 ```csharp
-using var db = DatabaseImporter.CreateFromDataTable("out.mdb", myDataTable);
+using var db = Database.Create("out.mdb");
+db.ImportTable(myDataTable);
 
-// or add into an existing database
-db.ImportTable(otherDataTable, tableName: "Extra", primaryKey: "Id");
+// a table under another name, with a primary key of its own
+db.ImportTable(otherDataTable, new ImportOptions { TableName = "Extra", PrimaryKey = new[] { "Id" } });
 db.ImportTables(myDataSet);
 
-db.ImportTable<Customer>(customers, primaryKey: "Id");
+db.ImportTable(customers, new ImportOptions { PrimaryKey = new[] { "Id" } });
 
 // Append rows into a pre-existing table (instead of failing):
-db.ImportTable(moreRows, options: new ImportOptions { AppendIfExists = true });
+db.ImportTable(moreRows, new ImportOptions { AppendIfExists = true });
 ```
 
 POCO mapping respects `[Key]`, `[Column("X")]`, `[MaxLength]`, `[NotMapped]`,
@@ -439,9 +440,9 @@ back to `Memo` via `ImportOptions.FallbackUnmappableToString = true`.
 ## Exporting back
 
 ```csharp
-DataTable          dt    = db.ExportToDataTable("Customers");
-DataSet            ds    = db.ExportToDataSet();
-IEnumerable<Customer> cs = db.ExportToCollection<Customer>("Customers");
+DataTable          dt    = db.GetTable("Customers").ToDataTable();
+DataSet            ds    = db.ToDataSet();
+IEnumerable<Customer> cs = db.GetTable("Customers").ReadRows<Customer>();
 ```
 
 The `IEnumerable<T>` path is lazy via `yield`, so `Take(n)` stops early without
@@ -554,14 +555,15 @@ have been deleted - and a row Access moved to another page is read where its poi
   cannot be told from one Access wrote; one that reads with more digits than its column's precision is almost
   certainly one. Access-written Decimals, which earlier releases misread, now read correctly.
 
-  `Database.FindDecimalsBeyondPrecision()`, and the same on a `Table`, lists the values that read with more digits
+  `DecimalByteOrder.Find(database)`, and the same for a `Table`, in the `JackcessDotNet.Diagnostics` namespace,
+  lists the values that read with more digits
   than their column holds: the table, the column, the row (its primary key, and its place among the table's rows),
   the value as it reads and the value its bytes make in the earlier order
   ([qcatco/exportmdb.interop#66](https://github.com/qcatco/exportmdb.interop/issues/66)). It changes nothing - a
   read returns what it did - and repairs nothing:
 
   ```csharp
-  foreach (var suspect in db.FindDecimalsBeyondPrecision())
+  foreach (var suspect in DecimalByteOrder.Find(db))
       Console.WriteLine(suspect);
   // Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order
   ```
