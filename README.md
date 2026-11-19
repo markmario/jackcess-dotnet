@@ -714,7 +714,7 @@ value of its type, or of the values the source has (#44):
 | `string` / `char` | `Text` | the source's maximum length, or 255 when it has none, when every value fits it |
 | `string` that does not fit | `Memo` | |
 | `byte[]` | `Binary` | the source's maximum length, when it has one of 255 or less and every value fits it |
-| `byte[]` otherwise | `OleObject` | |
+| `byte[]` otherwise | `OleObject` | a `byte[]` without a length - a `DataTable`'s, which `DataColumn.MaxLength` gives none - as Java's importer makes a BLOB: it holds any value, now and later |
 | `Nullable<T>` | as `T` | |
 | `enum` | its underlying type | comes back as the enum on read |
 
