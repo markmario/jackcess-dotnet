@@ -70,6 +70,20 @@ changed since 1.2.2.
   General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
   and ß among accented letters).
 
+- **A key of several columns cut at 510 bytes is Access's** (#56); this fixes a defect on `main`, which no
+  release has had. Access ends a cut key in a digest of every byte it cut off; this library left the last of
+  them out, as Jackcess does. That byte is 0 in a key that ends in text, so keys of one column, a Memo's and keys
+  that end in a text column were Access's; a key that ends in a number, a date or the like after text that
+  filled the entry was not, and Access could neither update nor delete such a row ("The search key was not
+  found in any record") nor find it by `Seek`. In a unique index two rows whose values differ only in the last
+  byte of such a key were taken for duplicates, where Access takes both. The digest is now Access's: compared
+  with the entries ACE 16 wrote, in General - Legacy and in General, 448 of them in seven indexes (a text key cut
+  in the first, middle and last column, before a Long ascending and descending, after another text, and
+  unique), and DAO seeks, updates and deletes the rows this library writes. An entry a version since the cut
+  wrote the earlier way is found, and taken out with its row; a rewritten row is entered under Access's key,
+  and with `Database.VerifyIndexes` an index that is looked at has such entries replaced when the table is next
+  changed.
+
 ### Breaking changes to the public API
 
 Code written against 1.2.2 does not compile against this without the changes below. Nothing a file holds

@@ -11,6 +11,13 @@ reads the index pages back; `TextIndexKeyTests` compares the library's keys with
 | `general-ace16.tsv` | General (1033 version 1) | ACE 16 | yes |
 | `access97-ace12.tsv` | Access 97's General (Jet3, 1033) | 32-bit ACE 12.0 | yes |
 | `access97-more-ace12.tsv` | Access 97's General | 32-bit ACE 12.0 | yes |
+| `cut-keys-general-legacy-ace16.tsv` | General - Legacy | ACE 16 | yes |
+| `cut-keys-general-ace16.tsv` | General | ACE 16 | yes |
+
+The `cut-keys-` files are of whole entries, not of values: the entries ACE wrote for 32 rows in seven indexes
+of several columns whose keys it cut at 510 bytes - text cut in the first, middle and last column, before a
+Long ascending and descending, after another text, and in a unique index. They are made by
+`tools/ace-cut-keys.ps1`, and `CutKeyTests` compares the library's keys and entries with them.
 
 The Access 97 files (`Access97TextKeyTests`) took an engine that is rare: ACE 16 does not make or open a Jet3
 file, so it took the 32-bit ACE 12.0 of Access 2007 (Jet 4.0, `DAO.DBEngine.36`, writes the same key for

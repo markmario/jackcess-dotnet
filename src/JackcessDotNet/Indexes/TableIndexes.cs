@@ -79,13 +79,14 @@ internal sealed class TableIndexes
     /// <summary>A row's entry in one tree: its key, and whether a unique index compares it with other rows'.</summary>
     internal readonly struct Entry
     {
-        internal Entry(Tree tree, byte[] key, bool hasNull, IReadOnlyList<object?> values, bool isCut = false)
+        internal Entry(Tree tree, byte[] key, bool hasNull, IReadOnlyList<object?> values, bool isCut = false, byte[]? earlierKey = null)
         {
-            Tree    = tree;
-            Key     = key;
-            HasNull = hasNull;
-            Values  = values;
-            IsCut   = isCut;
+            Tree       = tree;
+            Key        = key;
+            HasNull    = hasNull;
+            Values     = values;
+            IsCut      = isCut;
+            EarlierKey = earlierKey;
         }
 
         /// <summary>The row's values for the tree's columns, in their order: what a refusal names.</summary>
@@ -103,6 +104,13 @@ internal sealed class TableIndexes
         /// (<see cref="TableIndexes.StoredUnder"/>).
         /// </summary>
         internal bool   IsCut   { get; }
+
+        /// <summary>
+        /// The key as versions of this library after the cut and before #56 cut it, when that is not
+        /// <see cref="Key"/>: a key of several columns that ends in another type than text after text that filled
+        /// the entry (<see cref="IndexKeys.TruncateAsEarlierVersions"/>). Null for any other key.
+        /// </summary>
+        internal byte[]? EarlierKey { get; }
     }
 
     internal IReadOnlyList<Tree> Trees => _trees ??= _table.Indexes
@@ -169,13 +177,25 @@ internal sealed class TableIndexes
                         $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(tree.Columns[i].Column, values[i])}. " +
                         "The table is left as it was.");
 
-            // The key as an entry holds it: one longer than Access keeps is cut, and ends in a digest of the rest
-            // (IndexKeys.Truncate), so it is never longer than an index page takes.
-            byte[] key = IndexKeys.Encode(tree.Columns, values);
-            bool isCut = key.Length == IndexKeys.MaxKeyLength && IndexKeys.IsCut(tree.Columns, values);
-            entries.Add(new Entry(tree, key, nulls > 0, values, isCut));
+            entries.Add(EntryOf(tree, values, nulls > 0));
         }
         return entries;
+    }
+
+    /// <summary>
+    /// The entry of a row with <paramref name="values"/> in <paramref name="tree"/>. Its key is as an entry holds
+    /// it: one longer than Access keeps is cut, and ends in a digest of the rest (<see cref="IndexKeys.Truncate"/>),
+    /// so it is never longer than an index page takes; and for a cut key, the key earlier versions cut it to, when
+    /// that is another (<see cref="Entry.EarlierKey"/>).
+    /// </summary>
+    private static Entry EntryOf(Tree tree, IReadOnlyList<object?> values, bool hasNull)
+    {
+        byte[] key = IndexKeys.Encode(tree.Columns, values);
+        if (key.Length < IndexKeys.MaxKeyLength) return new Entry(tree, key, hasNull, values);
+        byte[] whole = IndexKeys.EncodeWhole(tree.Columns, values);
+        if (whole.Length <= IndexKeys.MaxKeyLength) return new Entry(tree, key, hasNull, values);
+        byte[] earlier = IndexKeys.TruncateAsEarlierVersions(whole);
+        return new Entry(tree, key, hasNull, values, isCut: true, earlier.AsSpan().SequenceEqual(key) ? null : earlier);
     }
 
     /// <summary><paramref name="row"/>'s values for the tree's columns, in their order, and how many of them are null.</summary>
@@ -279,11 +299,9 @@ internal sealed class TableIndexes
             for (int i = 0; i < values.Count; i++)
                 if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i])) return null;
 
-            // A key that is cut is looked for under every form an entry of it can have - cut, or whole as
-            // earlier releases wrote it (StoredUnder) - so a row whose entry is whole is not missed.
-            byte[] key = IndexKeys.Encode(tree.Columns, values);
-            bool isCut = key.Length == IndexKeys.MaxKeyLength && IndexKeys.IsCut(tree.Columns, values);
-            entry = new Entry(tree, key, hasNull: false, values, isCut);
+            // A key that is cut is looked for under every form an entry of it can have - cut, or whole or cut
+            // otherwise as earlier versions wrote it (StoredUnder) - so a row whose entry is one of those is not missed.
+            entry = EntryOf(tree, values, hasNull: false);
         }
         catch (Exception e) when (e is FormatException or InvalidCastException or OverflowException)
         {
@@ -387,7 +405,7 @@ internal sealed class TableIndexes
 
         // ...and each index's entries, from first to last: each is the entry of the row it points at, when that
         // row has its key, and otherwise no row's. A long key may be there whole, as earlier versions wrote it
-        // (StoredUnder); it is the row's when, cut, it is.
+        // (StoredUnder); it is the row's when, cut, it is. One cut with an earlier version's digest is not (KeysMatch).
         for (int t = 0; t < trees.Count; t++)
         {
             var held  = new HashSet<int>();
@@ -407,12 +425,16 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// The entries the tree holds for <paramref name="entry"/>'s key, each with the key it is stored under. For a
-    /// key that was not cut, those under that key. For one that was, a file can hold three kinds of entry, and
+    /// key that was not cut, those under that key. For one that was, a file can hold four kinds of entry, and
     /// each is one of that key's: Access's, cut at 510 bytes and ended in a digest; this library's, the same
-    /// bytes; and one written whole, by a version of this library before it cut keys or by Jackcess before it
-    /// did. A whole key begins as its cut form does, so all are found among the entries that begin with what
-    /// the cut kept, and a whole one is this key's when cutting it gives this key - whether it is the same
-    /// value's or another's that is cut to the same entry, which Access holds to be the same key.
+    /// bytes; one written whole, by a version of this library before it cut keys or by Jackcess before it
+    /// did; and one cut by a version after that and before #56, whose digest differs from Access's for a key of
+    /// several columns that ends in another type than text (<see cref="Entry.EarlierKey"/>). A whole key begins as
+    /// its cut forms do, so all are found among the entries that begin with what the cut kept, and a whole one is
+    /// this key's when cutting it gives this key - whether it is the same value's or another's that is cut to the
+    /// same entry, which Access holds to be the same key. An entry cut the earlier way is found when it is the key
+    /// the earlier way gives this value - which it gives a value that differs from this one only in the last byte
+    /// cut off too, so whose entry it is, the row it points at tells.
     /// </summary>
     internal static IEnumerable<(byte[] Key, int RowPointer)> StoredUnder(IndexWriter writer, Entry entry)
     {
@@ -421,10 +443,12 @@ internal sealed class TableIndexes
             return writer.RowPointersForKey(root, entry.Key).Select(pointer => (entry.Key, pointer));
 
         byte[] kept = entry.Key.Slice(0, IndexKeys.MaxKeyLength - 2);
+        byte[] key = entry.Key;
+        byte[]? earlier = entry.EarlierKey;
         return writer.EntriesWithPrefix(root, kept).Where(stored =>
             stored.Key.Length > IndexKeys.MaxKeyLength
-                ? IndexKeys.Truncate(stored.Key).AsSpan().SequenceEqual(entry.Key)
-                : stored.Key.AsSpan().SequenceEqual(entry.Key));
+                ? IndexKeys.Truncate(stored.Key).AsSpan().SequenceEqual(key)
+                : stored.Key.AsSpan().SequenceEqual(key) || earlier is not null && stored.Key.AsSpan().SequenceEqual(earlier));
     }
 
     /// <summary>
@@ -585,7 +609,9 @@ internal sealed class TableIndexes
     private bool IsOfItsRow(Tree tree, byte[] key, int pointer) => IsItsRows(RowAt(tree, pointer), key);
 
     // A key as an entry holds it and a row's key, which is cut: a whole key an earlier version wrote is the row's
-    // when, cut, it is.
+    // when, cut, it is. One an earlier version cut with another digest (Entry.EarlierKey) is not: Access cannot
+    // update or delete a row under it, so it is taken out and the row entered under its own key, as an entry of no
+    // row is (#56).
     private static bool KeysMatch(byte[] stored, byte[] rowsKey)
         => (stored.Length > IndexKeys.MaxKeyLength ? IndexKeys.Truncate(stored) : stored).AsSpan().SequenceEqual(rowsKey);
 
@@ -633,9 +659,7 @@ internal sealed class TableIndexes
             if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i]))
                 return new Pointee(isRow: true, own: null, hasEntry: true);
 
-        byte[] key = IndexKeys.Encode(tree.Columns, values);
-        bool isCut = key.Length == IndexKeys.MaxKeyLength && IndexKeys.IsCut(tree.Columns, values);
-        return new Pointee(isRow: true, new Entry(tree, key, nulls > 0, values, isCut),
+        return new Pointee(isRow: true, EntryOf(tree, values, nulls > 0),
                            hasEntry: !(nulls == values.Length && tree.IgnoreNulls));
     }
 

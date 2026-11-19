@@ -678,32 +678,48 @@ Refused, rather than write a key Access cannot find:
 ### Keys longer than 510 bytes
 
 Access keeps no index key longer than 510 bytes. It cuts a longer one there
-and ends it in a two-byte digest of the rest - a key of one column, of a Memo
-(its first 255 characters) or of several columns together. A file can hold
-three kinds of entry for such a key:
+and ends it in a two-byte digest of every byte it cut off (their remainder by
+the CRC-16 polynomial 0x8005) - a key of one column, of a Memo (its first 255
+characters) or of several columns together. A file can hold four kinds of
+entry for such a key:
 
 | Written by | Stored as | Read / lookup | Insert, update | Delete |
 | --- | --- | --- | --- | --- |
 | Access (Jet 4.0, ACE 12, ACE 16 alike) | cut, with the digest | found | a duplicate in a unique index is refused | entry removed |
-| This library, since it cut keys | the same bytes as Access | found | the same | entry removed |
+| This library | the same bytes as Access | found | the same | entry removed |
+| This library from when it cut keys until #56 (never released), and the versions of Jackcess that cut keys | cut, with a digest that leaves the last byte out: Access's for a key that ends in text, **another** for a key of several columns that ends in a number, a date or the like after text that filled the entry | found | seen by a unique index; a rewritten row's entry is removed and Access's written | entry removed, under the key it has |
 | This library before that, and Jackcess before 5.2.0 | **whole**, over 510 bytes | found | seen by a unique index, so a duplicate is refused; a rewritten row's whole entry is removed and a cut one written | entry removed, under the whole key |
 
 - **Lookups** of a value whose key is cut read the table instead of searching
   the index, so a row is found whichever way its entry is stored.
-- **Writes** always store the cut key. Updating a row whose entry was whole
-  replaces it with a cut one; nothing converts rows that are not written.
+- **Writes** always store Access's cut key. Updating a row whose entry was
+  whole, or cut with the earlier digest, replaces it with Access's; nothing
+  converts rows that are not written, except that with
+  `Database.VerifyIndexes` an index that is looked at (a unique one, or a
+  relationship's) has entries cut with the earlier digest replaced when its
+  table is next changed.
 - **Uniqueness** follows Access: two values cut to the same entry are
   duplicates, whichever way the existing one is stored. A file an earlier
   release wrote may hold two such rows (their whole keys differed); neither
   can then be rewritten until the other is deleted.
-- **Deletes and updates** remove the entry the row actually has, cut or whole,
-  matched by its row. A row with no entry at all - earlier releases kept only
-  the primary key - has nothing to remove, and that is not an error.
+- **Deletes and updates** remove the entry the row actually has, cut either
+  way or whole, matched by its row. A row with no entry at all - earlier
+  releases kept only the primary key - has nothing to remove, and that is not
+  an error.
 - Access itself does not seek a whole key: until such a row is rewritten,
-  Access finds it by a scan but not through the index.
+  Access finds it by a scan but not through the index. Nor does it find, update
+  or delete a row whose entry is cut with the earlier digest ("The search key
+  was not found in any record") until the row is rewritten here or the file is
+  compacted in Access.
+- ACE's SQL does not find a row by `=` through an index whose key for the value
+  is cut - a row Access wrote itself no more than one this library wrote - where
+  DAO's `Seek` through the same index does.
 
 `tests/JackcessDotNet.Tests/Assets/engine-696ca52-long-keys.mdb` is a file an
-earlier release wrote, made by `tools/legacy-long-keys.ps1`.
+earlier release wrote, made by `tools/legacy-long-keys.ps1`, and
+`engine-913240c-cut-keys.mdb` one this library wrote with the earlier digest,
+made by `tools/earlier-cut-keys.ps1`. `IndexKeys/cut-keys-*.tsv` hold the
+entries ACE wrote for keys of several columns, made by `tools/ace-cut-keys.ps1`.
 
 ## Rows and long values: what to know
 

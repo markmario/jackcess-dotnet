@@ -72,8 +72,9 @@ internal static class IndexKeys
 
     /// <summary>
     /// True when the key of <paramref name="values"/> is longer than an entry holds, so that <see cref="Encode"/>
-    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it, or under
-    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it.
+    /// cuts it. An index may then hold the row under the cut key, as Access and this library write it; under
+    /// the whole key, as versions of this library before the cut and Jackcess before it wrote it; or under the key
+    /// cut with the digest versions from the cut until #56 wrote (<see cref="TruncateAsEarlierVersions"/>).
     /// </summary>
     public static bool IsCut(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
         => EncodeWhole(columns, values).Length > MaxKeyLength;
@@ -103,8 +104,9 @@ internal static class IndexKeys
     /// <see cref="Encode"/> makes, so that a search of the index that misses means there is no such row: every
     /// value is one a key is made for (<see cref="CanEncode(Column, object?)"/>), and the key is no longer than an
     /// entry holds. Access cuts a longer key and ends it in a digest, and so does <see cref="Encode"/>, but
-    /// Jackcess and versions of this library before the digest wrote such a key whole, where a search by the cut
-    /// key does not find it. An Access 97 file's entry holds half as much (<see cref="Access97MaxKeyLength"/>),
+    /// Jackcess and versions of this library before the digest wrote such a key whole, and versions after it a key
+    /// of several columns with another digest, where a search by the cut key does not find it. An Access 97 file's
+    /// entry holds half as much (<see cref="Access97MaxKeyLength"/>),
     /// and how it ends a longer key is not made here. A caller scans the table for values this is false for.
     /// </summary>
     public static bool CanSearch(IReadOnlyList<IndexColumn> columns, IReadOnlyList<object?> values)
@@ -118,22 +120,39 @@ internal static class IndexKeys
 
     /// <summary>
     /// A key as an entry holds it: whole up to <see cref="MaxKeyLength"/> bytes, and a longer one cut to that
-    /// length, its last two bytes a digest of what was cut off (all of it but the last byte), as Access writes a
-    /// long text key. The digest is CRC-16 with the polynomial 0x8005, its register kept in the order the entry
-    /// holds it.
+    /// length, its last two bytes a digest of every byte cut off, as Access writes a long key of one column or of
+    /// several (#56): the remainder of those bytes, read as one number from the first, divided by the CRC-16
+    /// polynomial 0x8005, its low byte first.
     /// </summary>
     public static byte[] Truncate(byte[] key)
     {
         if (key.Length <= MaxKeyLength) return key;
 
+        // Each byte cut off comes in at the bottom of the remainder, and the byte that goes out at the top is
+        // divided out (Reduction): the last two bytes are in the remainder as they are.
         const int kept = MaxKeyLength - 2;
-        int digest = 0;
-        for (int i = kept; i < key.Length - 1; i++)
-            digest = (digest >> 8) ^ DigestTable[digest & 0xFF] ^ key[i];
+        int remainder = 0;
+        for (int i = kept; i < key.Length; i++)
+            remainder = (remainder << 8 & 0xFFFF | key[i]) ^ Reduction[remainder >> 8];
 
         byte[] truncated = key.Slice(0, MaxKeyLength);
-        truncated[kept] = (byte)(digest >> 8);
-        truncated[kept + 1] = (byte)digest;
+        truncated[kept] = (byte)remainder;
+        truncated[kept + 1] = (byte)(remainder >> 8);
+        return truncated;
+    }
+
+    /// <summary>
+    /// <paramref name="key"/> cut as versions of this library from when it cut keys until #56 cut it, and as
+    /// Jackcess cuts it: their digest left the last byte cut off out. That byte is 0 in every key that ends in
+    /// text, where the two digests are the same; it is not in a key of several columns that ends in a number, a
+    /// date or the like after text that filled the entry, which a file such a version wrote holds under this key
+    /// (<see cref="TableIndexes.StoredUnder"/>).
+    /// </summary>
+    internal static byte[] TruncateAsEarlierVersions(byte[] key)
+    {
+        byte[] truncated = Truncate(key);
+        // The remainder holds the last byte as it is, in its low byte.
+        if (key.Length > MaxKeyLength) truncated[MaxKeyLength - 2] ^= key[key.Length - 1];
         return truncated;
     }
 
@@ -146,9 +165,11 @@ internal static class IndexKeys
     /// </summary>
     internal const int Access97MaxKeyLength = 255;
 
-    private static readonly ushort[] DigestTable = BuildDigestTable();
+    // What a byte that goes out at the top of the remainder leaves in it: the byte times x^16, divided by the
+    // polynomial (x^16 + x^15 + x^2 + 1).
+    private static readonly ushort[] Reduction = BuildReductionTable();
 
-    private static ushort[] BuildDigestTable()
+    private static ushort[] BuildReductionTable()
     {
         var table = new ushort[256];
         for (int i = 0; i < table.Length; i++)
@@ -156,7 +177,7 @@ internal static class IndexKeys
             int register = i << 8;
             for (int bit = 0; bit < 8; bit++)
                 register = (register << 1 & 0xFFFF) ^ ((register & 0x8000) != 0 ? 0x8005 : 0);
-            table[i] = (ushort)((register & 0xFF) << 8 | register >> 8);
+            table[i] = (ushort)register;
         }
         return table;
     }
