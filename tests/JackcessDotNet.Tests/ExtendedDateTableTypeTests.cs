@@ -177,6 +177,25 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         }
     }
 
+    // An index with a column before the date - HowK (How, K), added by this library over the rows, keyed from their bytes
+    // - is searched under the How given and, after it, the date's three parts: the third layout's is every key that
+    // begins with the How's key and the 38 bytes.
+    [Fact]
+    public void A_date_is_found_through_an_index_with_a_column_before_it()
+    {
+        using var db = Database.Open(Copy(TableType));
+        var t = db.GetTable("T");
+        t.AddIndex(new IndexDefinition("HowK", "How", "K"));
+        Assert.Equal(5, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: 14));
+        var howK = t.CreateIndexCursor("HowK");
+        Assert.Equal(4, howK.FindRowByEntry("AddNew, table-type, text", D0)!["Id"]);
+        Assert.Equal(new[] { 7 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type", D1)));
+        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type", DateTime.MinValue)));
+        Assert.Equal(new[] { 1 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("INSERT", D0)));
+        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByEntry("INSERT", D0.AddSeconds(1)));
+        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type, a Date", D1));
+    }
+
     // P is keyed by D, the date in each layout: p3 by UPDATE, p2 by INSERT, p1 by a table-type AddNew, which is the
     // order of their keys. Each is found through the primary key, trusting the index and verifying it.
     [Theory]
