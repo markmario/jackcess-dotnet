@@ -236,6 +236,8 @@ internal static class TypeMapper
     ///   it (a <see cref="double"/> in its round-trip form, a date in ISO 8601).</item>
     ///   <item>A Text or Binary column of one length (SQL's CHAR and BINARY) takes a value of that length only:
     ///   a shorter one would read back filled with spaces or zeros.</item>
+    ///   <item>A Binary or OLE Object column takes no value of no bytes, which DAO - and so Access's own forms -
+    ///   reads as Null.</item>
     ///   <item>A Yes/No column takes a <see cref="bool"/> and no null, which it would read as No; no number, of
     ///   which only 0 and 1 would read back as they were.</item>
     ///   <item>A Date/Time column takes a date from 1 January 100, the first it holds, to the millisecond it is
@@ -272,7 +274,7 @@ internal static class TypeMapper
             DataType.Text             => TextOf(value, column),
             DataType.Memo             => TextOf(value, column: null),
             DataType.Binary           => BinaryOf(value, column),
-            DataType.OleObject        => value as byte[] ?? throw NotOfType(value, "an OLE Object column holds bytes"),
+            DataType.OleObject        => NotEmpty(value as byte[] ?? throw NotOfType(value, "an OLE Object column holds bytes")),
             _                         => throw new NotHeldException($"a {column.DataType} column is not written by this library"),
         };
     }
@@ -471,9 +473,13 @@ internal static class TypeMapper
         return text;
     }
 
+    // A value of no bytes is one DAO - and so Access's own forms - reads as Null, as it writes an empty array.
+    private static byte[] NotEmpty(byte[] bytes) => bytes.Length > 0 ? bytes
+        : throw new NotHeldException("it has no bytes, and Access's DAO reads a value of no bytes as Null, as it writes an empty array");
+
     private static byte[] BinaryOf(object value, Column column)
     {
-        var bytes = value as byte[] ?? throw NotOfType(value, "a Binary column holds bytes");
+        var bytes = NotEmpty(value as byte[] ?? throw NotOfType(value, "a Binary column holds bytes"));
         int length = column.LengthInBytes;
         if (!column.IsVariableLength && bytes.Length != length)
             throw new NotHeldException(

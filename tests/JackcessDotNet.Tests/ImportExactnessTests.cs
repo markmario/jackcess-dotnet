@@ -200,7 +200,7 @@ public sealed class ImportExactnessTests : IDisposable
         var rows = new[]
         {
             new BytesPoco { Id = 1, Short = new byte[] { 1, 2, 3 }, Unbounded = new byte[] { 4 }, Overflowing = new byte[10] },
-            new BytesPoco { Id = 2, Short = Array.Empty<byte>(), Unbounded = new byte[5000], Overflowing = new byte[11] },
+            new BytesPoco { Id = 2, Short = new byte[] { 9 }, Unbounded = new byte[5000], Overflowing = new byte[11] },
             new BytesPoco { Id = 3, Short = null, Unbounded = null, Overflowing = null },
         };
         rows[1].Unbounded![4999] = 0xAB;
@@ -211,9 +211,52 @@ public sealed class ImportExactnessTests : IDisposable
         Assert.Equal((DataType.Binary, 10), (ColumnNamed(t, "Short").DataType, ColumnNamed(t, "Short").MaxLength));
         Assert.Equal(DataType.OleObject, ColumnNamed(t, "Unbounded").DataType);
         Assert.Equal(DataType.OleObject, ColumnNamed(t, "Overflowing").DataType);
-        Assert.Equal(new object?[] { new byte[] { 1, 2, 3 }, Array.Empty<byte>(), null }, ValuesOf(reopen, "T", "Short"));
+        Assert.Equal(new object?[] { new byte[] { 1, 2, 3 }, new byte[] { 9 }, null }, ValuesOf(reopen, "T", "Short"));
         Assert.Equal(rows.Select(r => (object?)r.Unbounded), ValuesOf(reopen, "T", "Unbounded"));
         Assert.Equal(rows.Select(r => (object?)r.Overflowing), ValuesOf(reopen, "T", "Overflowing"));
+    }
+
+    // DAO - and so Access's own forms - reads a binary value of no bytes as Null, and writes an empty array as Null:
+    // an import, which writes every value as its source has it, refuses one, naming its column and row.
+    [Fact]
+    public void An_empty_byte_array_is_refused_before_anything_is_written()
+    {
+        Database.Create(_path).Dispose();
+        var refused = RefusedAndUnchanged<ArgumentException>(_path, db => db.ImportTable(TableOf("Bytes", typeof(byte[]), new byte[] { 1 }, Array.Empty<byte>())));
+        Assert.Contains("Bytes", refused.Message);
+        Assert.Contains("DataTable.Rows[1]", refused.Message);
+        RefusedAndUnchanged<ArgumentException>(_path, db => db.ImportTable(new[] { new BytesPoco { Id = 1, Short = Array.Empty<byte>() } }, new ImportOptions { TableName = "T" }));
+
+        // Added to a table that is there, to an OLE Object column and to a Binary one.
+        using (var db = Database.Open(_path))
+            db.CreateTable("Have", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Ole", DataType.OleObject),
+                new ColumnDefinition("Bin", DataType.Binary) { MaxLength = 10 },
+            }, "Id");
+        foreach (string column in new[] { "Ole", "Bin" })
+        {
+            var source = TableOf(column, typeof(byte[]), Array.Empty<byte>());
+            source.TableName = "Have";
+            RefusedAndUnchanged<ArgumentException>(_path, db => db.ImportTable(source, new ImportOptions { AppendIfExists = true }));
+        }
+    }
+
+    // An insert writes an empty array as ACE's OLE DB writes one: a value of no bytes, which ACE's OLE DB and SQL read
+    // as such (IS NULL is false, LenB 0), and so does this library; DAO reads it as Null.
+    [Fact]
+    public void An_empty_byte_array_inserted_reads_back_as_a_value_of_no_bytes()
+    {
+        using (var db = Database.Create(_path))
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Ole", DataType.OleObject),
+                new ColumnDefinition("Bin", DataType.Binary) { MaxLength = 10 },
+            }, "Id").Insert(new Row { ["Id"] = 1, ["Ole"] = Array.Empty<byte>(), ["Bin"] = Array.Empty<byte>() });
+        using var reopen = Database.Open(_path);
+        var row = reopen.GetTable("T").FindRowByPrimaryKey(1)!;
+        Assert.Equal(Array.Empty<byte>(), row["Ole"]);
+        Assert.Equal(Array.Empty<byte>(), row["Bin"]);
     }
 
     private sealed class BytesPoco
