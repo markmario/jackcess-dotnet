@@ -450,7 +450,21 @@ public sealed class Table
     /// being written, leaves the file, the counter and <paramref name="row"/> as they were, so the number is not
     /// lost.
     /// </para>
+    /// <para>
+    /// A Currency column's number is taken to its four places as Access takes one: its exact value, half to even.
+    /// The double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written as - 0.0001, and the
+    /// decimal 1.23465 1.2346. A lookup by the same number finds the row.
+    /// </para>
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// A Currency column's value is not a number: text, which is not read as one, or a value of another kind.
+    /// Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
+    /// <exception cref="OverflowException">
+    /// A Currency column's value is a number no Currency holds: NaN, an infinity, or one past
+    /// -922,337,203,685,477.5808 to 922,337,203,685,477.5807 once taken to four places. Nothing of the row is
+    /// written, and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
     /// <exception cref="ColumnValueTooLongException">
     /// A Text or Binary value is longer than its column, as Access refuses one. Nothing of the row is written, and
     /// the counter and <paramref name="row"/> are as they were.
@@ -590,7 +604,9 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
+    /// its column, <see cref="ArgumentException"/> for a Currency column's value that is not a number and
+    /// <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
+    /// takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
     /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
@@ -712,7 +728,12 @@ public sealed class Table
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
-    /// table's. Nothing is written.
+    /// table's. Or a value it assigns to a Currency column is not a number (<see cref="Insert"/>). Nothing is
+    /// written.
+    /// </exception>
+    /// <exception cref="OverflowException">
+    /// A value <paramref name="row"/> assigns to a Currency column is a number no Currency holds
+    /// (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The row is no longer where it was read: it has been deleted since. Nothing is written.

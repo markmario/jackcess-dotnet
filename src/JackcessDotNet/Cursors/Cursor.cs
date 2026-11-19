@@ -442,6 +442,13 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     /// <param name="values">The values to give the row, by column name.</param>
     /// <exception cref="ArgumentNullException"><paramref name="values"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// A value given to a Currency column is not a number (<see cref="Table.Insert"/>). Nothing is written.
+    /// </exception>
+    /// <exception cref="OverflowException">
+    /// A value given to a Currency column is a number no Currency holds (<see cref="Table.Insert"/>). Nothing is
+    /// written.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The cursor is not on a row (<see cref="Current"/> is null), or the row has been deleted through
     /// something other than this cursor since the cursor read it. Nothing is written.
@@ -583,8 +590,9 @@ public class Cursor : IEnumerable<Row>
     {
         // A null is never a match, so a pattern with one matches no row.
         if (pattern.Any(p => RowValues.IsNull(p.Value))) return null;
-        // A double or a float looked for in a Currency column is the value Access takes it to (CurrencyRounding): as
-        // that value an index is searched for it and every row compared with it. One no Currency holds is no row's.
+        // A number looked for in a Currency column is the value Access takes it to (CurrencyRounding): as that value
+        // an index is searched for it and every row compared with it. One no Currency holds, and a value that is no
+        // number, is no row's.
         if (!AsLookedFor(ref pattern)) return null;
 
         object place      = BeginMoving();
@@ -646,10 +654,10 @@ public class Cursor : IEnumerable<Row>
     }
 
     /// <summary>
-    /// <paramref name="pattern"/> with each double or float asked of a Currency column replaced by the decimal Access
-    /// takes it to - its exact value rounded to four places, half to even (#49) - so that the key an index is searched
-    /// by is made of that, and not of the number as a row would be written with it. False when such a number is one no
-    /// Currency holds: no row has it.
+    /// <paramref name="pattern"/> with each value asked of a Currency column replaced by the decimal Access takes it
+    /// to - its exact value rounded to four places, half to even (#49, #65) - which is the value a row written with it
+    /// stores, so that an index is searched by that value's key and every row compared with that value. False when a
+    /// value is not a number, or is a number no Currency holds: no row has it.
     /// </summary>
     private static bool AsLookedFor(ref IReadOnlyList<(Column Column, object? Value)> pattern)
     {
@@ -657,11 +665,10 @@ public class Cursor : IEnumerable<Row>
         for (int i = 0; i < pattern.Count; i++)
         {
             var (column, value) = pattern[i];
-            if (column.DataType != DataType.Currency || value is not (double or float)) continue;
-            if (!CurrencyRounding.TryUnits(Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture), out long units))
-                return false;
+            if (column.DataType != DataType.Currency) continue;
+            if (!CurrencyRounding.TryUnits(value, out long units)) return false;
             taken ??= pattern.ToArray();
-            taken[i] = (column, units / 10_000m);
+            taken[i] = (column, CurrencyRounding.ToDecimal(units));
         }
         if (taken is not null) pattern = taken;
         return true;

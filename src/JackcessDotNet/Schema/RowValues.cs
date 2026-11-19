@@ -33,10 +33,13 @@ internal static class RowValues
 
     /// <summary>
     /// <paramref name="row"/> as it will be written to a table of <paramref name="columns"/>: no
-    /// <see cref="DBNull"/> (a column without a value has none), and a Yes/No column's value as the
-    /// <see cref="bool"/> it stands for. The row itself when it is already so; otherwise a copy - the caller's
-    /// row is not changed.
+    /// <see cref="DBNull"/> (a column without a value has none), a Yes/No column's value as the
+    /// <see cref="bool"/> it stands for, and a Currency column's as the <see cref="decimal"/> the row stores
+    /// (<see cref="AsCurrency"/>). The row itself when it is already so; otherwise a copy - the caller's row is not
+    /// changed.
     /// </summary>
+    /// <exception cref="ArgumentException">A Currency column's value is not a number.</exception>
+    /// <exception cref="OverflowException">A Currency column's value is a number no Currency holds.</exception>
     public static Row AsWritten(Row row, IReadOnlyList<Column> columns)
     {
         Row? written = null;
@@ -45,11 +48,33 @@ internal static class RowValues
             if (!row.TryGetValue(column.Name, out var value)) continue;
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
+                : column.DataType == DataType.Currency && value is not null ? AsCurrency(column, value)
                 : value;
             if (ReferenceEquals(normal, value)) continue;
             written ??= new Row(row);
             written[column.Name] = normal;
         }
         return written ?? row;
+    }
+
+    /// <summary>
+    /// <paramref name="value"/>, given for the Currency column <paramref name="column"/>, as the row stores it: the
+    /// number taken to four places as Access takes it - its exact value, half to even (<see cref="Util.CurrencyRounding"/>,
+    /// #65) - as a <see cref="decimal"/>. A decimal that is that already is returned as it is. Refused, before
+    /// anything is written, when it is not a number - text among them, which a row's number is never read from - or
+    /// is a number no Currency holds: NaN, an infinity, or one past the range once taken to four places.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="value"/> is not a number.</exception>
+    /// <exception cref="OverflowException"><paramref name="value"/> is a number no Currency holds.</exception>
+    public static object AsCurrency(Column column, object value)
+    {
+        if (!Util.CurrencyRounding.IsNumber(value))
+            throw new ArgumentException(
+                $"Column '{column.Name}' is a Currency, which holds a number, and {Util.CurrencyRounding.NotANumber(value)}. Nothing was written.");
+        if (!Util.CurrencyRounding.TryUnits(value, out long units))
+            throw new OverflowException(
+                $"Column '{column.Name}' is a Currency, and {Util.CurrencyRounding.NotHeld(value)}. Nothing was written.");
+        decimal stored = Util.CurrencyRounding.ToDecimal(units);
+        return value is decimal given && given == stored ? value : stored;
     }
 }
