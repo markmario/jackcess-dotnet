@@ -72,4 +72,51 @@ public sealed class CursorThirdReviewTests : IDisposable
         Assert.Equal(table.FindRowByPrimaryKey(2)!.Id, refused.Id);
         Assert.Equal(2, refused["Id"]);
     }
+
+    // ── A cursor's update of a row it read ───────────────────────────────────
+
+    [Fact]
+    public void A_cursor_s_update_of_a_row_read_from_the_table_assigns_what_the_row_was_given_as_Table_Update_does()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 50 }, new ColumnDefinition("C", DataType.Text) { MaxLength = 50 },
+            new ColumnDefinition("M", DataType.Memo),
+        }, "Id");
+        table.Insert(new Row { ["Id"] = 1, ["A"] = "", ["B"] = "b", ["C"] = "c", ["M"] = new string('m', 4000) });
+        table.Columns.First(c => c.Name == "A").Properties.Set("AllowZeroLength", false);
+        table.Properties.Save();
+
+        // The cursor's own row given back with B changed: A, which breaks its rule already, is not assigned.
+        var cursor = table.CreateCursor();
+        Assert.True(cursor.MoveNext());
+        var current = cursor.Current!;
+        current["B"] = "b2";
+        cursor.UpdateCurrentRow(current);
+        Assert.Equal("b2", table.FindRowByPrimaryKey(1)!["B"]);
+        Assert.Equal("b2", cursor.Current!["B"]);
+
+        // A row read before another update changed C: only B is written - not C's old value, not the Memo.
+        var staleCursor = table.CreateCursor();
+        Assert.True(staleCursor.MoveNext());
+        var stale = staleCursor.Current!;
+        var other = table.FindRowByPrimaryKey(1)!;
+        other["C"] = "changed by another";
+        table.Update(other);
+        stale["B"] = "b3";
+        long writes = db.File.WriteCount;
+        staleCursor.UpdateCurrentRow(stale);
+        Assert.Equal(1, db.File.WriteCount - writes);
+        var now = table.FindRowByPrimaryKey(1)!;
+        Assert.Equal("b3|changed by another|4000", $"{now["B"]}|{now["C"]}|{((string)now["M"]!).Length}");
+
+        // Given back with nothing changed it writes nothing; a set of values of its own assigns every column it
+        // names, and A given "" is refused.
+        writes = db.File.WriteCount;
+        staleCursor.UpdateCurrentRow(staleCursor.Current!);
+        Assert.Equal(writes, db.File.WriteCount);
+        Assert.Throws<ConstraintViolationException>(() => cursor.UpdateCurrentRow(new Row { ["A"] = "", ["B"] = "b4" }));
+    }
 }

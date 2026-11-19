@@ -392,8 +392,14 @@ public class Cursor : IEnumerable<Row>
     /// <summary>
     /// Gives the row the cursor is on the values in <paramref name="values"/>, as <see cref="Table.Update"/>
     /// does - every index kept, every enforced relationship kept or the update refused: Jackcess's
-    /// <c>updateCurrentRowFromMap</c>. A column <paramref name="values"/> does not name keeps its value.
-    /// <see cref="Current"/> is the row as it is afterwards.
+    /// <c>updateCurrentRowFromMap</c>. <see cref="Current"/> is the row as it is afterwards.
+    /// <para>
+    /// What is assigned is what <see cref="Table.Update"/> assigns. A <see cref="Row"/> read from this table -
+    /// <see cref="Current"/> among them, given back with a column changed - assigns the columns given a value
+    /// since it was read, and no other: the rest of it, which may no longer be what the file holds, is left as
+    /// the file has it, and a <see cref="Row"/> that is the row updated has nothing assigned afterwards. Any other
+    /// set of values assigns every column it names. A column that is not assigned keeps its value.
+    /// </para>
     /// <para>
     /// The cursor stays where it is: the next move goes on to the row after the one updated. A row keeps its
     /// place in the table when it is updated. In an index's order it moves when the update changes its key in
@@ -418,7 +424,11 @@ public class Cursor : IEnumerable<Row>
         if (values is null) throw new ArgumentNullException(nameof(values));
         var row     = OnRow();
         int pointer = row.Pointer;
-        _table.UpdateAt(pointer, values);
+
+        // One rule with Table.Update: a row read from the table assigns what it was given since.
+        bool read = ReferenceEquals(values.Source, _table);
+        _table.UpdateAt(pointer, read ? values.AssignedSinceRead() : values);
+        if (read && values.Pointer == pointer) values.ReadFrom(_table, pointer);
         _currentRow = ReadRow(pointer);
     }
 
