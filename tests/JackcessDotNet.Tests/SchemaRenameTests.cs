@@ -13,10 +13,12 @@ namespace JackcessDotNet.Tests;
 public sealed class SchemaRenameTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"schema_rename_{Guid.NewGuid():N}.mdb");
+    private readonly string _accdb = Path.Combine(Path.GetTempPath(), $"schema_rename_{Guid.NewGuid():N}.accdb");
 
     public void Dispose()
     {
         if (File.Exists(_path)) File.Delete(_path);
+        if (File.Exists(_accdb)) File.Delete(_accdb);
     }
 
     private static ColumnDefinition Long(string name) => new ColumnDefinition(name, DataType.Int32);
@@ -39,15 +41,16 @@ public sealed class SchemaRenameTests : IDisposable
         return db;
     }
 
-    private void AssertRefusedAndUnchanged<TException>(Action<Database> change) where TException : Exception
+    private void AssertRefusedAndUnchanged<TException>(Action<Database> change, string? path = null) where TException : Exception
     {
-        byte[] before = File.ReadAllBytes(_path);
-        using (var db = Database.Open(_path))
+        path ??= _path;
+        byte[] before = File.ReadAllBytes(path);
+        using (var db = Database.Open(path))
         {
             var refused = Assert.Throws<TException>(() => change(db));
             Assert.Contains("Nothing was changed", refused.Message);
         }
-        Assert.Equal(before, File.ReadAllBytes(_path));
+        Assert.Equal(before, File.ReadAllBytes(path));
     }
 
     private int FailAtEveryWrite(Action<Database> change)
@@ -282,6 +285,41 @@ public sealed class SchemaRenameTests : IDisposable
         var pages = IndexChecks.AllPages(open);
         open.RenameTable("CHILD", "CHILD");
         IndexChecks.AssertUnchanged(pages, open);
+    }
+
+    // A table is renamed by what it is, not by its name. In Assets/dao-odd-names.accdb, made with DAO 16, are tables
+    // Access keeps apart that .NET takes as one without regard to case - x and the micro sign, x and the Greek mu - and
+    // tables named x and a compatibility ideograph and x and the ideograph it decomposes to; a relationship from each
+    // of the first two. A table is refused the name another has, however the two compare, with the file unchanged; and
+    // a rename changes the relationships of the table renamed, and of no other.
+    [Fact]
+    public void A_table_is_refused_the_name_another_has_and_a_rename_changes_its_relationships_alone()
+    {
+        File.Copy(ProtectedFileTests.Asset("dao-odd-names.accdb"), _accdb);
+        const string micro = "xµ", mu = "xμ";
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable(micro, mu), _accdb);
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable(mu, micro), _accdb);
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable("x豈", "x豈"), _accdb);
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable("x豈", "x豈"), _accdb);
+        AssertRefusedAndUnchanged<ArgumentException>(db => db.RenameTable("F_FDD0", "f_ffff"), _accdb);
+
+        using (var db = Database.Open(_accdb))
+        {
+            db.RenameTable(micro, "Micro");
+            db.RenameTable("Micro", "MICRO");   // in another case: the table's own name
+        }
+
+        using var reopened = Database.Open(_accdb);
+        var names = reopened.GetTableNames();
+        Assert.Contains("MICRO", names);
+        Assert.Contains(mu, names);
+        Assert.DoesNotContain(micro, names);
+        Assert.Contains("x豈", names);
+        Assert.Contains("x豈", names);
+        var related = reopened.GetRelationships().ToDictionary(r => r.Name);
+        Assert.Equal(("MICRO", "F_FFFE"), (related["MicroFFFE"].FromTableName, related["MicroFFFE"].ToTableName));
+        Assert.Equal((mu, "F_FDD0"), (related["MuFDD0"].FromTableName, related["MuFDD0"].ToTableName));
+        IndexChecks.AssertEveryIndexHoldsTheRows(reopened, "MSysObjects");
     }
 
     [Fact]

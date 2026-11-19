@@ -175,6 +175,11 @@ changed since 1.2.2.
   names that differ in width, in kana or in an accent written as one character or two, which are two here; and it
   keeps apart some names .NET takes as one - `xµ` and `xμ`, and letters of other scripts that .NET's newer case
   tables pair - which are one here on .NET, and two on .NET Framework.
+- **`GetTable` and `TryGetTable` find the table of exactly the name asked for**, when there is one, and only then
+  one of that name without regard to case: in a file Access made with tables `xµ` and `xμ`, on .NET, either could
+  be found for the other, and so dropped, renamed or written to in its place. `RenameTable` compares the new name
+  with every other object's, leaving the table out by what it is, not by its name, and changes the relationships
+  that name the table and no other's.
 - **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
   (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
   - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with

@@ -483,6 +483,9 @@ index slots.
   two objects are taken for each other. `CreateTable` is refused two columns of one name so (`ArgumentException`,
   before anything is written): it made both, and a row then kept one value for the two. The comparison throws for
   no name: one already in a file - a noncharacter in it, say - stands in the way only of a new name equal to it.
+  What is renamed is compared with every other object of its kind, and left out by what it is, not by its name; a
+  table's rename changes the relationships that name it, and no other table's. A table asked for by a name one has
+  exactly is that table, though another's is the same without regard to case.
   This is not yet Access's own rule. Measured with DAO, Access also takes as one names that differ in width, in
   kana, or in an accent written as one character or as two, which are two names here. And it keeps apart names
   .NET takes as one without regard to case - `xµ` and `xμ` (the micro sign and the Greek mu), and letters of

@@ -120,19 +120,27 @@ internal static class SchemaRename
         EnsureNewName(newName, "a table", nameof(newName));
         if (oldName == newName) return tdefPage;
 
-        // A name that is another object's is refused, and one no catalog key is made for: what refuses a new table.
-        if (!ObjectNames.Same(oldName, newName))
-        {
-            try { db.Catalog.EnsureCanRegister(newName); }
-            catch (InvalidOperationException e) { throw new ArgumentException(e.Message + " Nothing was changed.", nameof(newName)); }
-        }
+        // A name another object has is refused, and one no catalog key is made for: what refuses a new table. Every
+        // object but this table is compared, and the table is left out by what it is - its definition's page - not by
+        // its name: Access keeps apart names this library takes as one without regard to case (ObjectNames), and a
+        // table renamed to the name of another, one with its own in that sense, would be the other's twin.
+        try { db.Catalog.EnsureCanRename(tdefPage, newName); }
+        catch (InvalidOperationException e) { throw new ArgumentException(e.Message + " Nothing was changed.", nameof(newName)); }
 
         var catalog = db.GetTable(CatalogTable);
-        var entry = SchemaRemoval.RowsOf(file, catalog, "Id", "Type")
+        var catalogRows = SchemaRemoval.RowsOf(file, catalog, "Id", "Type", "Name");
+        var entry = catalogRows
             .FirstOrDefault(r => r.Values["Id"] is int id && id == tdefPage && r.Values["Type"] is short type && type == JetFormat.CatalogTypeTable);
         if (entry.Values is null)
             throw new NotSupportedException($"Table '{oldName}' is not renamed: the catalog has no entry of a table for it. Nothing was changed.");
         SchemaRemoval.EnsureRowsCanBeChanged(catalog);
+
+        // The rows of MSysRelationships that name the table: by its name as the catalog has it, or by one equal to that
+        // without regard to case which is not exactly another object's name - never a table that only shares its
+        // name in that sense.
+        var others = new HashSet<string>(
+            catalogRows.Where(r => r.RowPointer != entry.RowPointer).Select(r => r.Values["Name"]).OfType<string>(), StringComparer.Ordinal);
+        bool NamesTable(object? value) => value is string named && (named == oldName || Same(named, oldName) && !others.Contains(named));
 
         var changes = new List<(int RowPointer, Row Change)>();
         Table? relationships = null;
@@ -142,8 +150,8 @@ internal static class SchemaRename
             foreach (var (pointer, row) in SchemaRemoval.RowsOf(file, found, "szObject", "szReferencedObject"))
             {
                 var change = new Row();
-                if (Same(row["szObject"], oldName)) change["szObject"] = newName;
-                if (Same(row["szReferencedObject"], oldName)) change["szReferencedObject"] = newName;
+                if (NamesTable(row["szObject"])) change["szObject"] = newName;
+                if (NamesTable(row["szReferencedObject"])) change["szReferencedObject"] = newName;
                 if (change.Count > 0) changes.Add((pointer, change));
             }
             if (changes.Count > 0) SchemaRemoval.EnsureRowsCanBeChanged(found);
