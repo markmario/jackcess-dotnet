@@ -518,9 +518,14 @@ public sealed class Table
         // The row is the one inserted from now on.
         row.ReadFrom(this, rowPtr);
 
-        // A cursor over an index is told of the row's entry in it.
-        foreach (var entry in entries)
-            TellCursors(entry.Tree.Number, rowPtr, null, entry.Key);
+        // A cursor over an index is told of the row's entry in it, once the insert is in the file for good: when a
+        // batch it is part of is committed, and not at all when the batch is taken back.
+        if (_indexCursors.Count > 0)
+            _file.WhenKept(() =>
+            {
+                foreach (var entry in entries)
+                    TellCursors(entry.Tree.Number, rowPtr, null, entry.Key);
+            });
     }
 
     /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
@@ -874,7 +879,8 @@ public sealed class Table
             entries.Follow(rowPtr, newRowPtr);
             undo?.Commit();
         }
-        entries.TellCursors(newRowPtr);
+        // Told once the update is in for good: now, or when a change it is part of is committed.
+        if (_indexCursors.Count > 0) _file.WhenKept(() => entries.TellCursors(newRowPtr));
         return newRowPtr;
     }
 
@@ -1007,18 +1013,14 @@ public sealed class Table
     /// </summary>
     /// <param name="rowPtr">Where the row is.</param>
     /// <param name="changes">The values to give it, by column name.</param>
-    /// <param name="tellCursors">
-    /// Where to put what tells the cursors over the table's indexes of the row's entries, for a caller that
-    /// commits a larger change to run once it has; null to tell them now.
-    /// </param>
-    internal int RewriteRowAt(int rowPtr, Row changes, List<Action>? tellCursors = null)
+    internal int RewriteRowAt(int rowPtr, Row changes)
     {
         _file.EnsureWritable();
         var entries = new EntryMove(this, refuseDuplicates: false);
         int newRowPtr = _dataWriter.RewriteRowAt(_definition, rowPtr, changes, entries.BeforeChange);
         entries.Follow(rowPtr, newRowPtr);
-        if (tellCursors is null) entries.TellCursors(newRowPtr);
-        else tellCursors.Add(() => entries.TellCursors(newRowPtr));
+        // The cursors over the table's indexes are told once the change this is part of is in for good.
+        if (_indexCursors.Count > 0) _file.WhenKept(() => entries.TellCursors(newRowPtr));
         return newRowPtr;
     }
 

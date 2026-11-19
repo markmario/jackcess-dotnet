@@ -646,19 +646,16 @@ internal sealed class ForeignKeyEnforcer
                     encoder.Validate(row.Changes!);
             }
 
-            // The cursors over the tables' indexes are told of the rows' entries once the change is in for good.
-            var tellCursors = new List<Action>();
-            using (var undo = changed[0].Table.File.BeginUndo())
-            {
-                foreach (var (table, rows) in changed)
-                    foreach (var row in rows.Where(r => r.Deleted))
-                        table.DeleteRowAt(row.Pointer);
-                foreach (var (table, rows) in changed)
-                    foreach (var row in rows.Where(r => !r.Deleted))
-                        row.WrittenAt = table.RewriteRowAt(row.Pointer, row.Changes!, tellCursors);
-                undo.Commit();
-            }
-            foreach (var tell in tellCursors) tell();
+            // The cursors over the tables' indexes are told of the rows' entries once the change is in for good, when
+            // the scope is committed (PageFile.WhenKept).
+            using var undo = changed[0].Table.File.BeginUndo();
+            foreach (var (table, rows) in changed)
+                foreach (var row in rows.Where(r => r.Deleted))
+                    table.DeleteRowAt(row.Pointer);
+            foreach (var (table, rows) in changed)
+                foreach (var row in rows.Where(r => !r.Deleted))
+                    row.WrittenAt = table.RewriteRowAt(row.Pointer, row.Changes!);
+            undo.Commit();
         }
     }
 

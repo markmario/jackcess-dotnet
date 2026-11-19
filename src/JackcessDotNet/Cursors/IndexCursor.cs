@@ -71,6 +71,9 @@ public sealed class IndexCursor : Cursor
     // them (passing the others, and stopping where none can be) or for one at or after them.
     private (EntryBound Values, bool Equal)? _seeking;
 
+    /// <summary>How many times the cursor has been told of an entry of its index that was added, moved or taken out: for tests.</summary>
+    internal int TimesTold { get; private set; }
+
     internal IndexCursor(Table table, PageFile file, TableDefinition definition, Index index, IndexRange? range, bool watched = true)
         : base(table, file, definition)
     {
@@ -334,6 +337,7 @@ public sealed class IndexCursor : Cursor
     internal void EntryMoved(int tree, int rowPointer, byte[]? oldKey, byte[]? newKey)
     {
         if (tree != _index.IndexDataNumber) return;
+        TimesTold++;
         Follow(_where, _key, _pointer, _pass, rowPointer, oldKey, newKey);
         if (_saved is null) return;
         foreach (var held in _saved)

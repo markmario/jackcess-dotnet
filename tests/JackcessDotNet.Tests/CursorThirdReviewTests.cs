@@ -73,6 +73,37 @@ public sealed class CursorThirdReviewTests : IDisposable
         Assert.Equal(2, refused["Id"]);
     }
 
+    // ── When a cursor is told ────────────────────────────────────────────────
+
+    [Fact]
+    public void A_cursor_is_told_of_a_batch_s_rows_once_the_batch_is_in_and_of_a_batch_taken_back_never()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+        for (int i = 1; i <= 5; i++) table.Insert(new Row { ["Id"] = i, ["K"] = i * 10 });
+        var cursor = table.CreateIndexCursor("ByK");
+        Assert.True(cursor.MoveNext());
+
+        // The batch's second row is refused (a duplicate key): the first was in the file for a moment, and is not told.
+        Assert.Throws<BatchInsertException>(() => table.InsertRange(new[] { new Row { ["Id"] = 6, ["K"] = 5 }, new Row { ["Id"] = 1, ["K"] = 7 } }));
+        Assert.Equal(0, cursor.TimesTold);
+
+        // A batch that goes in is told, a row at a time, once it is in.
+        table.InsertRange(new[] { new Row { ["Id"] = 6, ["K"] = 55 }, new Row { ["Id"] = 7, ["K"] = 7 } });
+        Assert.Equal(2, cursor.TimesTold);
+        Assert.Equal(new[] { 2, 3, 4, 5, 6 }, Rest(cursor));
+    }
+
+    private static List<int> Rest(Cursor cursor)
+    {
+        var ids = new List<int>();
+        while (cursor.MoveNext()) ids.Add((int)cursor.Current!["Id"]!);
+        return ids;
+    }
+
     // ── A cursor's update of a row it read ───────────────────────────────────
 
     [Fact]

@@ -285,6 +285,17 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal UndoScope? BeginUndoUnlessOpen() => _undo is null ? BeginUndo() : null;
 
+    /// <summary>
+    /// Runs <paramref name="action"/> once what has been written is in the file for good: now, when no change is
+    /// being kept for undoing, and otherwise when that change is committed - never when it is taken back. What
+    /// tells the cursors over a table's indexes of the rows a change has moved.
+    /// </summary>
+    internal void WhenKept(Action action)
+    {
+        if (_undo is null) action();
+        else _undo.AfterCommit(action);
+    }
+
     /// <summary>The pages a change has written over, as they were, until it is committed or disposed.</summary>
     internal sealed class UndoScope : IDisposable
     {
@@ -292,6 +303,7 @@ internal sealed class PageFile : IDisposable
         private readonly Dictionary<int, byte[]> _before = new();
         private readonly long _length;
         private bool _done;
+        private List<Action>? _afterCommit;
 
         internal UndoScope(PageFile file)
         {
@@ -299,11 +311,19 @@ internal sealed class PageFile : IDisposable
             _length = file._stream.Length;
         }
 
+        /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
+        internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);
+
         /// <summary>Keeps the change: nothing is taken back when the scope is disposed.</summary>
         public void Commit()
         {
             _done = true;
             _file._undo = null;
+            if (_afterCommit is { } actions)
+            {
+                _afterCommit = null;
+                foreach (var action in actions) action();
+            }
         }
 
         // The page's bytes as the file holds them (before any codec), the first time it is written in this scope.
@@ -328,6 +348,7 @@ internal sealed class PageFile : IDisposable
             if (_done) return;
             _done = true;
             _file._undo = null;
+            _afterCommit = null;
             foreach (var (pageNumber, raw) in _before)
             {
                 _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
