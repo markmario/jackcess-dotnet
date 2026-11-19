@@ -37,8 +37,10 @@ internal sealed class RowDecoder
 
     /// <summary>
     /// As <see cref="Decode(byte[], Column)"/>, for the row's index keys: a Date/Time column's value is the double the row
-    /// stores, which is what its key is made of. A <see cref="DateTime"/> does not hold every double Access can
-    /// have written, and a key made from one would not be the key Access wrote for the row.
+    /// stores, and a Date/Time Extended column's the 42 bytes it stores (<see cref="StoredExtendedDate"/>), whatever
+    /// date they say or whether they say one - which is what Access makes their keys of. A <see cref="DateTime"/> does
+    /// not hold every double Access can have written, and Access writes a date in more than one form of 42 bytes, so
+    /// a key made from the <see cref="DateTime"/> read would not be the key Access wrote for the row.
     /// </summary>
     public object? DecodeForKey(byte[] rowBytes, Column col) => Decode(rowBytes, col, datesAsStored: true);
 
@@ -81,6 +83,7 @@ internal sealed class RowDecoder
         int size = col.DataType.GetFixedSize();
         if (size <= 0 || length < size) return null;
         if (datesAsStored && col.DataType == DataType.DateTime) return ByteUtil.GetDouble(rowBytes, start);
+        if (datesAsStored && col.DataType == DataType.DateTimeExtended) return new StoredExtendedDate(rowBytes.Slice(start, start + size));
         return ReadFixed(rowBytes, start, col);
     }
 

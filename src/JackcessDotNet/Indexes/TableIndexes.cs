@@ -304,8 +304,8 @@ internal sealed class TableIndexes
             // to search by: the caller reads the table for it.
             for (int i = 0; i < values.Count; i++)
                 if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i])) return null;
-            // Nor has a key this library may not make as Access does: a Date/Time Extended value ACE stored in its
-            // second form is under another key than this library's (#51), and a search for it would miss the row.
+            // Nor has a key this library may not make as Access does - one cut in an index of columns the cut was
+            // not measured in - which may be under another key than this library's: a search for it could miss the row.
             if (!IndexKeys.MatchesAccess(tree.Columns, values)) return null;
 
             // A key that is cut is looked for under every form an entry of it can have - cut, or whole or cut
@@ -391,7 +391,7 @@ internal sealed class TableIndexes
         var unasked = trees.Select(_ => new HashSet<int>()).ToList();
         // The rows whose key this library may not make as Access does (IndexKeys.MatchesAccess): an entry that points
         // at one is believed, whatever its key, but the row is held only when its entry is under this library's
-        // key, which a search makes - so that an index with such a row under another key is not searched (#51).
+        // key, which a search makes - so that an index with such a row under another key is not searched.
         var believed = trees.Select(_ => new HashSet<int>()).ToList();
         var row     = new Row();
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
@@ -517,19 +517,30 @@ internal sealed class TableIndexes
 
             if (!found)
             {
-                // A row whose key this library may not make as Access does - a Date/Time Extended value ACE stored
-                // in its second form (#51) - can be under a key this library does not make: when its entry is not
-                // under this library's, its entries are found by the row they point at, every leaf of the index
-                // read, so that none is left pointing where the row was. Any other row with no entry - one an
-                // earlier version of this library wrote without keeping the index - has nothing to take out, and
-                // that is no error: the row is gone and the index holds nothing of it, which is what a delete is for.
-                if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)) RemoveByPointer(writer, entry.Tree, rowPointer);
+                // A row whose key this library may not make as Access does - one cut in an index of columns the cut
+                // was not measured in - can be under a key this library does not make; and a row with a Date/Time
+                // Extended value in another form than the one this library writes, under the key an earlier version
+                // of this library made of the date it read (#51). When its entry is not under its own key, its
+                // entries are found by the row they point at, every leaf of the index read, so that none is left
+                // pointing where the row was. Any other row with no entry - one an earlier version of this library
+                // wrote without keeping the index - has nothing to take out, and that is no error: the row is gone
+                // and the index holds nothing of it, which is what a delete is for.
+                if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values) || HasExtendedDateInAnotherForm(entry))
+                    RemoveByPointer(writer, entry.Tree, rowPointer);
                 continue;
             }
             if (ComparesRows(entry) && (another || entry.IsCut))
                 TakeOutEntriesOfNoRow(writer, entry, rowPointer);
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="entry"/>'s values hold a Date/Time Extended value in another form than the one this
+    /// library writes for the date it says, or bytes that say none: a value whose key an earlier version of this
+    /// library, which keyed the date it read, made otherwise than of its bytes (#51).
+    /// </summary>
+    private static bool HasExtendedDateInAnotherForm(Entry entry)
+        => entry.Values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm);
 
     /// <summary>
     /// Takes every entry of <paramref name="tree"/> that points at <paramref name="rowPointer"/> out of it,

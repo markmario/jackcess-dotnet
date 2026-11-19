@@ -39,6 +39,8 @@ namespace JackcessDotNet;
 /// Every value is compared as the row stores it (<see cref="Stored"/>), never as a caller reads or gives it: a
 /// Double or Single by its bits, so 1 and the next Double after it are two keys and so are 0 and -0, as in
 /// Access's indexes; a Date/Time as the double stored, which a <see cref="DateTime"/> does not always hold; a
+/// Date/Time Extended by its 42 bytes, in whichever form Access stored them, so a child whose bytes are another
+/// form of its parent's date has no parent, as in Access (#51); a
 /// Yes/No, which holds no null, as <see cref="RowValues"/> reads it - no value being No. A key made of anything else is not the key the
 /// index holds, and a row looked for under it is not found.
 /// </para>
@@ -482,9 +484,11 @@ internal sealed class ForeignKeyEnforcer
     /// <paramref name="value"/> as a row of <paramref name="column"/> stores it: the one form values are compared
     /// and keyed in. It is what <see cref="RowEncoder"/> writes for the value and what
     /// <see cref="RowDecoder.DecodeForKey"/> reads back - a number in the column's own type, a Currency rounded to
-    /// its four places, a Date/Time as its double, and a Yes/No as the true or false it stands for, by the one
-    /// reading of a caller's value that rows and keys are made from (<see cref="RowValues"/>): the column holds no
-    /// null, and no value is No. A value the column cannot hold is left as it is, for the row encoder to refuse.
+    /// its four places, a Date/Time as its double, a Date/Time Extended as its 42 bytes (a caller's
+    /// <see cref="DateTime"/> in the form Access's <c>INSERT</c> writes, which a parent keyed in Access's other form
+    /// is not: Access refuses such a child), and a Yes/No as the true or false it stands for, by the one reading of a
+    /// caller's value that rows and keys are made from (<see cref="RowValues"/>): the column holds no null, and no
+    /// value is No. A value the column cannot hold is left as it is, for the row encoder to refuse.
     /// </summary>
     private static object? Stored(Column column, object? value)
     {
@@ -502,6 +506,7 @@ internal sealed class ForeignKeyEnforcer
                 DataType.Double        => Convert.ToDouble(value),
                 DataType.Currency         => IndexKeys.MoneyUnits(Convert.ToDecimal(value)) / 10000m,
                 DataType.DateTime => value is DateTime date ? date.ToOADate() : value,
+                DataType.DateTimeExtended => value is DateTime extended ? StoredExtendedDate.Of(extended) : value,
                 DataType.Guid          => value is Guid ? value : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!),
                 _                      => value,
             };

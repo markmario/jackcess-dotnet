@@ -339,7 +339,9 @@ internal sealed class RowEncoder
                 Util.ByteUtil.PutLong(buffer, offset, Convert.ToInt64(value));
                 return;
             case DataType.DateTimeExtended:
-                Util.ByteUtil.PutBytes(buffer, offset, ExtendedDateTimeCodec.Encode((DateTime)value));
+                // A value a row stores - one a relationship's cascade carries from its parent - is written as the
+                // parent holds it, in whichever form that is: the child's bytes are then the parent's key's.
+                Util.ByteUtil.PutBytes(buffer, offset, value is StoredExtendedDate stored ? stored.Bytes : ExtendedDateTimeCodec.Encode((DateTime)value));
                 return;
             case DataType.Text:
             {
