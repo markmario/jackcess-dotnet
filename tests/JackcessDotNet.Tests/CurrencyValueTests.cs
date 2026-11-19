@@ -249,4 +249,81 @@ public sealed class CurrencyValueTests : IDisposable
             Assert.Null(properties["Bad"]);
         }
     }
+
+    [Fact]
+    public void An_import_takes_a_double_or_a_float_to_a_Currency_column_as_Access_does_and_refuses_one_it_does_not_hold()
+    {
+        using (var db = Create(FileFormat.Access2010))
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", DataType.Currency), new ColumnDefinition("F", DataType.Currency),
+            }, "Id");
+
+        // Past 2^38 or so, the round-trip form of a double can be another Currency than the one Access makes of it,
+        // a digit further on: 35184372088832.0078125 reads back from 35184372088832.01, and was imported as that.
+        var source = new DataTable("T");
+        source.Columns.Add("Id", typeof(int));
+        source.Columns.Add("D", typeof(double));
+        source.Columns.Add("F", typeof(float));
+        source.Rows.Add(1, 35184372088832.0078125, 131072.015625f);
+        source.Rows.Add(2, 0.1, 0.1f);
+        source.Rows.Add(3, -562949953421312.5, -2048.000244140625f);
+        using (var db = Database.Open(_file!))
+            db.ImportTable(source, new ImportOptions { AppendIfExists = true });
+
+        using (var db = Database.Open(_file!))
+        {
+            var rows = db.GetTable("T").Rows.OrderBy(r => (int)r["Id"]!).Select(r => ((decimal)r["D"]!, (decimal)r["F"]!)).ToList();
+            Assert.Equal(new[] { (35184372088832.0078m, 131072.0156m), (0.1m, 0.1m), (-562949953421312.5m, -2048.0002m) }, rows);
+
+            // A number the Currency Access makes of does not read back as is refused, as it was: it has more places.
+            foreach (object bad in new object[] { 0.03125, 0.00015, 1.234549999999999 })
+            {
+                var more = new DataTable("T");
+                more.Columns.Add("Id", typeof(int));
+                more.Columns.Add("D", typeof(double));
+                more.Rows.Add(9, bad);
+                var e = Assert.Throws<ArgumentException>(() => db.ImportTable(more, new ImportOptions { AppendIfExists = true }));
+                Assert.Contains("four places", e.Message);
+            }
+            Assert.Equal(3, db.GetTable("T").Rows.Count());
+        }
+    }
+
+    /// <summary>
+    /// The doubles an import puts in a Currency column are those it put there before #65 - whose round-trip form has
+    /// four places or fewer, or whose exact value has - each now as the Currency Access makes of it. Checked over
+    /// doubles of every magnitude a Currency holds, near and away from halves of the fifth place.
+    /// </summary>
+    [Fact]
+    public void An_import_takes_the_doubles_it_took_and_refuses_those_it_refused()
+    {
+        var random = new Random(65);
+        var column = new ColumnDefinition("C", DataType.Currency).ToColumn("T");
+        int taken = 0;
+        for (int i = 0; i < 20_000; i++)
+        {
+            // A number of up to six places at a magnitude from 10^-6 to 10^15, as text, and the double nearest it.
+            int places = random.Next(0, 7);
+            double magnitude = Math.Pow(10, random.Next(-6, 16));
+            double number = Math.Round(random.NextDouble() * magnitude, places) * (random.Next(2) == 0 ? 1 : -1);
+            if (i % 3 == 0 && number != 0) number = BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(number) + random.Next(-2, 3));
+
+            // What the import took before: the number exactly or its round-trip form, whichever has four places or
+            // fewer and is in the range.
+            bool before = new[] { ExactNumber.Of(number), ExactNumber.Shortest(number) }.Any(n =>
+                n.Scale <= 4 && n.ToDecimal() is decimal d && d >= -922337203685477.5808m && d <= 922337203685477.5807m);
+            object? now;
+            try { now = TypeMapper.ToColumnValue(number, column); }
+            catch (TypeMapper.NotHeldException) { now = null; }
+
+            Assert.True(before == (now is not null), $"{number:R}: taken before {before}, now {now is not null}");
+            if (now is decimal held)
+            {
+                taken++;
+                Assert.True(Util.CurrencyRounding.TryUnits(number, out long units) && held == Util.CurrencyRounding.ToDecimal(units), $"{number:R} is {held}");
+            }
+        }
+        Assert.True(taken > 5_000, $"{taken} doubles taken");
+    }
 }
