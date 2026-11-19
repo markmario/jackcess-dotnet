@@ -298,4 +298,53 @@ public sealed class SchemaRenameTests : IDisposable
         Assert.Equal(new[] { "Parent", "Children" }, after.GetTableNames());
         IndexChecks.AssertEveryIndexHoldsTheRows(after, "MSysObjects");
     }
+
+    [Fact]
+    public void A_required_column_is_required_under_its_new_name_and_a_dropped_one_leaves_no_properties()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            var table = db.CreateTable("Rules", new[]
+            {
+                Long("Id"),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 20, IsRequired = true, AllowZeroLength = false },
+                new ColumnDefinition("Code", DataType.Text) { MaxLength = 20, IsRequired = true },
+            });
+
+            // A change to the table's properties that is not saved is not written with the rename, and is still to save.
+            table.Properties.Set("Description", "not saved yet");
+            table.RenameColumn("Name", "Title");
+            table.DropColumn("Code");
+
+            var title = table.Columns.Single(c => c.Name == "Title");
+            Assert.True(title.IsRequired);
+            Assert.False(title.AllowZeroLength);
+            Assert.Null(table.PropertyMaps.Get("Name"));
+            Assert.Null(table.PropertyMaps.Get("Code"));
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 1 }));
+            Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 1, ["Title"] = "" }));
+            table.Insert(new Row { ["Id"] = 1, ["Title"] = "one" });
+
+            Assert.True(table.PropertyMaps.IsDirty);
+            var inFile = PropertyMapReader.Read(db.Catalog.FindObject(table.Definition.TdefPageNumber)!.Value.Properties, db.File.Format);
+            Assert.False(inFile.Default.TryGetValue("Description", out _));
+            Assert.NotNull(inFile.Get("Title"));
+            table.Properties.Save();
+        }
+
+        using var reopened = Database.Open(_path);
+        var read = reopened.GetTable("Rules");
+        Assert.Equal(new[] { "Id", "Title" }, read.Columns.Select(c => c.Name));
+        Assert.True(read.Columns[1].IsRequired);
+        Assert.False(read.Columns[1].AllowZeroLength);
+        Assert.Equal("not saved yet", read.Properties["Description"]);
+        Assert.Null(read.PropertyMaps.Get("Name"));
+        Assert.Null(read.PropertyMaps.Get("Code"));
+        Assert.Throws<ConstraintViolationException>(() => read.Insert(new Row { ["Id"] = 2 }));
+
+        // A column later given a dropped column's name has none of its properties.
+        var code = read.AddColumn(new ColumnDefinition("Code", DataType.Text) { MaxLength = 20 });
+        Assert.False(code.IsRequired);
+        read.Insert(new Row { ["Id"] = 2, ["Title"] = "two" });
+    }
 }
