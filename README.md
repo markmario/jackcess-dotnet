@@ -1115,14 +1115,20 @@ have been deleted - and a row Access moved to another page is read where its poi
   - An update that fits where the row is lists nothing. A row that comes home lists the page its values leave by the
     same rule as a delete; values that move on to another page do not list the page they leave.
   - Access gives back to the file a page an update leaves with no row - out of the table's maps - and takes it again
-    for the next page it needs, its slots begun again from the first, so a row updated back and forth past its
-    page's room adds a page to Access's file at most (one in 3,000 such cycles, measured). This library adds every
-    page at the end of the file and takes none back from it, so it keeps such a page for the table, begun again and
-    listed: the next row, or values moved, go to it, and its file grows by a page at most too. Every slot on such a
-    page was a deleted one - values moved there and gone again, or a row deleted with its index entries. A row
-    deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint, so the page keeps that
-    row's slot, deleted, with the slots before it, and is begun again after them: a slot number is used again only
-    where nothing names it, and what read a deleted row finds no row in its slot.
+    for the next page it needs, its slots begun again from the first: a row updated back and forth past its page's
+    room adds a page to Access's file at most when each change is a session of its own (one in 3,000 such cycles,
+    measured). In one session Access did not take such pages back: its file grew by about three pages in four cycles
+    (26 to 774 pages in 1,000), its table keeping its 4. This library adds every page at the end of the file and takes
+    none back from it, so it keeps such a page for the table, begun again and listed: the next row, or values moved,
+    go to it. Every slot on such a page was a deleted one - values moved there and gone again, or a row deleted with
+    its index entries. A row deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint,
+    so until the session ends the page keeps that row's slot, deleted, with the slots before it, and is begun again
+    after them: a slot number is used again only where nothing names it, and what read a deleted row finds no row in
+    its slot. So the file grows by a page at most from one session to the next, and in one session while no row is
+    deleted from that page; rows inserted and deleted on it in one session fill it with kept slots, up to 255, and the
+    table then takes a new page. Over 3,000 such cycles in one session, each also inserting and deleting a small row
+    on that page, this library's file went from 64 to 76 pages, and Access's from 64 to 8,931, its table keeping its 4
+    pages (from 64 to 2,804 without the small row).
   - Finding a page reads the pages tried and no other: the map is read once a session, and kept. A page tried
     without room for the row leaves the map, as in Access, so each listed page is tried once while it is listed: a
     run of inserts tries at most as many pages as it has inserts and the map lists pages, a few pages read for each,

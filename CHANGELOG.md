@@ -299,14 +299,17 @@ changed since 1.2.2.
 - **Room on a table's pages is used again as Access uses it** (#58). A deleted row's bytes stayed on its page, and
   no row was put where a delete, or a row's values moving back from another page, had left room: a row updated back
   and forth past its page's room grew the file by a page every few hundred changes, without end - 13 pages in 3,000
-  cycles, where Access's grew by one. This library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
+  cycles, where Access's grew by one with each change a session of its own (in one session, by hundreds). This
+  library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
   and `.accdb`; the README's "Rows and long values" has the rules): a row goes to the lowest page the table's
   free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
   another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
   for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
   Access gives back to the file and takes again, is kept for the table, begun again, and listed. It keeps the slots
   of the rows deleted from it in the session, so that a `Row`, a cursor or a savepoint that read one of them finds no
-  row there and an update or a delete through it is still refused. The free-space map was left empty, so Access added
+  row there and an update or a delete through it is still refused - until the session ends, so rows inserted and
+  deleted on such a page in one session can fill it, and the table then takes a new page. The free-space map was left
+  empty, so Access added
   a page for the first row it wrote to a table this library had filled. A table only inserted into, as an export
   is, still takes its rows on its last page, in insertion order; after a delete, or an update that moves a row's
   values to another page and back, a row can go to an earlier page, as in Access, and is read there in the table's
