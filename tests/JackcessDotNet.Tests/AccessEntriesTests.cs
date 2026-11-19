@@ -225,9 +225,18 @@ public sealed class AccessEntriesTests : IDisposable
         var (e, d) = (Pointers(extended), Pointers(plain));
         for (int id = Rows / 2; id < Rows / 2 + 20; id++)
         {
-            long extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["Nt"] = "changed" }));
-            long plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["Nt"] = "changed" }));
+            // A row is rewritten where it is, and goes to another page when it no longer fits its own: a value of
+            // the same length keeps both rows where they are, so that what is compared is what the rewrite reads of
+            // the index, not which of the two pages was full.
+            long extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["Nt"] = "m" }));
+            long plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["Nt"] = "m" }));
             Assert.True(extendedReads <= plainReads + 1, $"rewriting row {id} read {extendedReads} pages, a Date/Time row {plainReads}");
+
+            // A rewrite of the date itself takes the row's entry out under this library's key, as a Date/Time row's.
+            var later = start.AddSeconds(id * 37 + 1);
+            extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["D"] = later }));
+            plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["D"] = later }));
+            Assert.True(extendedReads <= plainReads + 1, $"rewriting row {id}'s date read {extendedReads} pages, a Date/Time row {plainReads}");
         }
         (e, d) = (Pointers(extended), Pointers(plain));
         for (int id = Rows / 4; id < Rows / 4 + 20; id++)

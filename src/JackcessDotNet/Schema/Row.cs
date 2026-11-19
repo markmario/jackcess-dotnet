@@ -22,8 +22,12 @@ namespace JackcessDotNet;
 /// <c>DataRow</c>, and is never what a read returns.
 /// </para>
 /// <para>
-/// The entries keep the order they were added in. A row is not tied to the table it came from: changing it
-/// changes nothing in the file until it is given to an insert or an update.
+/// The entries keep the order they were added in. Changing a row changes nothing in the file until it is given
+/// to an insert or an update. A row that was read knows where it was read from (<see cref="Id"/>), which is how
+/// <see cref="Table.Update"/> and <see cref="Table.Delete"/> find it, and which of its columns have been given a
+/// value since - with the indexer or <see cref="Add"/>, whatever the value - which are the columns
+/// <see cref="Table.Update"/> assigns. A value changed in place and not given to the row again (a byte array whose
+/// bytes are changed) is not one of them.
 /// </para>
 /// </summary>
 public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<string, object?>
@@ -31,6 +35,71 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     // The entries in the order they were added, and where each column's entry is.
     private readonly List<KeyValuePair<string, object?>> _entries;
     private readonly Dictionary<string, int> _places;
+
+    // The table the row was read from and where in it, for a row that was read.
+    private Table? _source;
+    private int    _pointer;
+
+    // The columns of a row that was read that have been given a value since - with the indexer or Add, whatever
+    // the value: what an update assigns, as Access's Edit and Update assign the fields given a value in between.
+    private HashSet<string>? _assigned;
+
+    private void Assigned(string columnName)
+    {
+        if (_source is not null) (_assigned ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(columnName);
+    }
+
+    /// <summary>
+    /// The entries of the columns given a value since the row was read, in the row's order, with the values they
+    /// have now - the value it was read with among them: what <see cref="Table.Update"/> assigns. Empty for a
+    /// row nothing has been given to since. A column taken out of the row is not among them.
+    /// </summary>
+    internal Row AssignedSinceRead()
+    {
+        var assigned = new Row();
+        if (_assigned is null) return assigned;
+        foreach (var entry in _entries)
+            if (_assigned.Contains(entry.Key)) assigned.Add(entry.Key, entry.Value);
+        return assigned;
+    }
+
+    /// <summary>Whether <paramref name="columnName"/> has been given a value since the row was read (<see cref="AssignedSinceRead"/>).</summary>
+    internal bool WasAssigned(string columnName) => _assigned?.Contains(columnName) == true && _places.ContainsKey(columnName);
+
+    /// <summary>
+    /// Which row of which table the row is, and what it has been given since it was read: kept by an insert, which
+    /// makes the row the one it inserts, to give it back as it came when the insert is taken back.
+    /// </summary>
+    internal (Table? Source, int Pointer, HashSet<string>? Assigned) Identity
+    {
+        get => (_source, _pointer, _assigned is null ? null : new HashSet<string>(_assigned, StringComparer.OrdinalIgnoreCase));
+        set => (_source, _pointer, _assigned) = value;
+    }
+
+    /// <summary>
+    /// Where the row is in the table it was read from or inserted into, or null for a row that is in no table: one
+    /// a caller made and has not inserted, a copy of another row, or a row that has been deleted. An update does
+    /// not change it. An insert makes it the new row's: a row read from a table and given to
+    /// <see cref="Table.Insert"/> as a copy is the copy from then on. Jackcess's <c>Row.getId</c>.
+    /// </summary>
+    public RowId? Id => _source is null ? null : RowId.FromPointer(_pointer);
+
+    /// <summary>The table the row was read from, or null (<see cref="Id"/>).</summary>
+    internal Table? Source => _source;
+
+    /// <summary>The row's place as one number (<see cref="RowPointer"/>); meaningful only with a <see cref="Source"/>.</summary>
+    internal int Pointer => _pointer;
+
+    /// <summary>Notes that the row is the one at <paramref name="pointer"/> in <paramref name="source"/>.</summary>
+    internal void ReadFrom(Table source, int pointer)
+    {
+        _source   = source;
+        _pointer  = pointer;
+        _assigned = null;
+    }
+
+    /// <summary>Notes that the row is in no table any longer: it was deleted.</summary>
+    internal void Detach() => _source = null;
 
     /// <summary>Creates a row with no values.</summary>
     public Row()
@@ -46,7 +115,10 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         _places  = new Dictionary<string, int>(capacity, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Creates a row with the values of <paramref name="values"/>, in their order: a copy of another row, for one.</summary>
+    /// <summary>
+    /// Creates a row with the values of <paramref name="values"/>, in their order: a copy of another row, for one.
+    /// A copy of a row that was read is a new row, with no <see cref="Id"/>.
+    /// </summary>
     /// <exception cref="ArgumentException">Two of the values are for one column.</exception>
     public Row(IEnumerable<KeyValuePair<string, object?>> values) : this()
     {
@@ -72,6 +144,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         set
         {
             if (columnName is null) throw new ArgumentNullException(nameof(columnName));
+            Assigned(columnName);
             if (_places.TryGetValue(columnName, out int at))
             {
                 // The entry keeps the name it was added under.
@@ -141,6 +214,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
         if (_places.ContainsKey(columnName))
             throw new ArgumentException($"The row already has a value for column '{columnName}'.", nameof(columnName));
+        Assigned(columnName);
         _places.Add(columnName, _entries.Count);
         _entries.Add(new KeyValuePair<string, object?>(columnName, value));
     }

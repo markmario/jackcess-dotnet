@@ -40,11 +40,16 @@ changed since 1.2.2.
   of every table that was opened), and `CreateTable` and `AddColumn` write them, as DAO writes them for a field
   it makes. **Rows are held to them, as Access holds them**: `Insert` refuses, with
   `ConstraintViolationException`, a row with no value in a required column or a zero-length string in a Text or
-  Memo column that does not allow one, and `UpdateByPrimaryKey` refuses the same of the columns it is given a
+  Memo column that does not allow one, and an update refuses the same of the columns it is given a
   value for. A table made by an earlier version has no such properties and takes the rows it took.
   `Column.AllowZeroLength` is `false` for a column that is not Text or Memo.
 - **A Replication ID AutoNumber has the `DefaultValue` property `GenGUID()`** when it is made with a table or
   added to one (#33), so Access generates the GUID of a row it adds; it left the column null.
+- **An insert and a delete are written whole or not at all**, as an update is: a failure while one is being
+  written takes back what it wrote, and an insert gives the row back with the AutoNumber values it came with. A
+  delete of a row whose values are on another page left one page changed, and an insert could leave a page added
+  or a row without its index entries.
+- **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
   left an entry where a row had been, and an entry under the value a row had before its primary key was changed.
@@ -151,6 +156,53 @@ changes with them.
 - **A cursor moves with `MoveNext()` and `MovePrevious()` and has `Current`**, in place of `GetNextRow()`,
   `GetPreviousRow()` and `GetCurrentRow()`; `BeforeFirst()` and `AfterLast()` are `MoveBeforeFirst()` and
   `MoveAfterLast()`.
+- **`Table.UpdateByPrimaryKey(key, values)` and `Table.DeleteRow(column, value)` are removed:
+  `Table.Update(row)` and `Table.Delete(row)`** take a row that was read from the table - by `Rows`, a cursor
+  or `FindRowByPrimaryKey` - and find it by where it was read (`Row.Id`), so a table with a key of several
+  columns, or with none, is updated and deleted like any other (#34). `Update` assigns the columns the `Row`
+  has been given a value in since it was read, as Access's `Edit` and `Update` do: each is held to its column's
+  Required and Allow Zero Length even when the value is the one the row already has, as Access holds it, and is
+  written when it is not what the file holds now. A row that was not read from the table is refused with
+  `ArgumentException`, and one that has been deleted since with `InvalidOperationException`.
+- **A row keeps its place when it is updated** (#29), as Access keeps it: rewritten in its slot when it still
+  fits its page, and otherwise moved to another page with its slot left pointing there (an overflow row), to
+  come home when it fits again. An update used to delete the row and add it again at the end of the table, so
+  its address and its place in the table's order changed. A row's id is now the same for as long as the row is
+  there, rows can be updated while they are gone through, and an update is taken back whole if writing it
+  fails.
+- **An index cursor is a cursor over its index** (#43, #29). `CreateIndexCursor()` throws
+  `InvalidOperationException` for a table with no primary key (it made a cursor that read the table), and
+  `IndexCursor.Index` is never null. Its rows come in the index's order (they came in the table's). Every
+  lookup goes through the cursor's own index: `FindRowByEntry` with more values than the index has columns
+  throws `ArgumentException` (it looked in another index, or in the table's leading columns), and with fewer
+  finds the first row with those leading values. `FindRow(column, value)` is `Cursor`'s, finds the first row in
+  the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
+  A lookup that finds a row leaves the cursor on it, and one that finds none leaves the cursor where it was;
+  a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
+  a cast, `(string)null`, now that there is an overload taking an `IndexRange`. Rows can be inserted, updated
+  and deleted while an index cursor goes through them: going one way it gives each row once, wherever updates
+  move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A row it went
+  past without looking at it - outside its range, left out by a range's date, looked past by
+  `FindClosestRowByEntry` - is given once an update moves it ahead of the cursor. A savepoint keeps what the
+  cursor had come to, as rows move. What a cursor holds of that stays a few stretches of its index however many
+  rows it moves, and is told only once a change is in the file for good: a batch taken back tells it nothing.
+- **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
+  that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` - taken first to
+  what it reads as once stored, to the millisecond, so that `DateTime.Now` finds the row written with it - finds
+  every row that reads as it, through an index as by reading the table: a lookup through an index used to look
+  for `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. In a range's entry,
+  in whichever place, and given to `FindClosestRowByEntry`, a `DateTime` is put against a row by the date the
+  row's number reads as, a time of 30 December 1899 stored as a negative number among them; Access's `BETWEEN`
+  goes by the numbers, as a `double` in a range does.
+- **Text is found as its column's sort order has it**, which is Access's `=`: without regard to case or to
+  spaces at the end, by a cursor over a table and a cursor over an index alike. It was matched character for
+  character once found, and by a table cursor a number-like text matched any text that was the same number
+  (`"007"` found `"7"`). Text is not read as a number, nor a number as text, except that a number looked for
+  in a text column is the text that writes it.
+- **A table or column that is not there is an `ArgumentException`** in `CreateRelationship`, `AddIndex` and
+  `CreateTable` (an index's column), and so is a primary key of more than ten columns; they threw
+  `InvalidOperationException`. A name that is taken stays an `InvalidOperationException` where it was one:
+  `CreateTable`, an import under a table's name, a relationship's name.
 - **`DatabaseBuilder`, `CursorBuilder`, `TableBuilder` and `ColumnBuilder` are removed.** A column is described
   by a `ColumnDefinition` - `new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 }` - and
   `Database.CreateTable` and `Table.AddColumn` take definitions; `CreateTable`'s primary key is
@@ -189,6 +241,23 @@ changes with them.
 
 ### Added
 
+- **Row ids.** `Row.Id` is a `RowId` - the page a row is on and its number there, Jackcess's `RowId` - for a
+  row that was read or inserted, and null for one a caller made (#34). A row given to `Insert` or `InsertRange`
+  is the row inserted afterwards - one read from a table and inserted as a copy among them - so an update of it
+  changes the new row; one that was refused, or whose batch was taken back, is as it came.
+- **`Table.InsertRange(rows)`** inserts a batch whole or not at all: when a row is refused the rows before it
+  are taken out again and a `BatchInsertException` names the row (`RowIndex`) and carries what refused it. What
+  Jackcess does with `addRows` and `BatchUpdateException`, which leaves the rows before it in the table (#29).
+- **Cursors** (#29): `UpdateCurrentRow` and `DeleteCurrentRow`, which keep every index and enforced
+  relationship as `Table.Update` and `Table.Delete` do, and assign what `Table.Update` assigns - of a row read
+  from the table, the columns given a value since; `FindRow` and `FindNextRow`, by one column or by a
+  pattern of several; `GetCurrentRowValue` for one column of the current row; `ColumnNames` to read some of the
+  columns; `EnumerateBackward`; `IsBeforeFirst` and `IsAfterLast`; `GetSavepoint` and `RestoreSavepoint`.
+- **Index cursors** (#29): a cursor over the rows between two entries of an index
+  (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
+  an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
+  with `NotSupportedException` for a value no key is made for.
+- **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
 - **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;
   `Database.DropRelationship`, `DropTable` and `RenameTable`. Jackcess has none of them: each is written as

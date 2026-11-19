@@ -142,6 +142,9 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["update of text"]          = db => db.GetTable("LongRows").UpdateByPrimaryKey(7, new Row { ["A"] = "text" }),
         ["delete"]                  = db => db.GetTable("Keys").DeleteRow("Id", 7),
         ["delete of a long row"]    = db => db.GetTable("LongRows").DeleteRow("Id", 200),
+        ["update of a row that was read"] = db => { var keys = db.GetTable("Keys"); var row = keys.Rows.First(); row["K10"] = 1; keys.Update(row); },
+        ["delete of a row that was read"] = db => { var keys = db.GetTable("Keys"); keys.Delete(keys.Rows.First()); },
+        ["insert of a batch"]       = db => db.GetTable("Keys").InsertRange(new[] { KeysRow(5000), KeysRow(5001) }),
         ["insert, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").Insert(KeysRow(5000)); },
         ["update, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").UpdateByPrimaryKey(7, new Row { ["K10"] = 1 }); },
         ["delete, foreign keys kept"] = db => { db.EnforceForeignKeys = true; db.GetTable("Keys").DeleteRow("Id", 7); },
@@ -158,8 +161,8 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["rewrite a row in place"]  = db => db.GetTable("Keys").RewriteRowAt(FirstRowOf(db, "Keys"), new Row { ["K10"] = 1 }),
         ["delete a row in place"]   = db => db.GetTable("Keys").DeleteRowAt(FirstRowOf(db, "Keys")),
         ["insert through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).InsertRow(db.GetTable("Keys").Definition, KeysRow(5000)),
-        ["update through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).UpdateRowByPrimaryKey(db.GetTable("Keys").Definition, 7, new Row { ["K10"] = 1 }),
-        ["delete through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).DeleteRow(db.GetTable("Keys").Definition, "Id", 7),
+        ["update through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).RewriteRowAt(db.GetTable("Keys").Definition, FirstRowOf(db, "Keys"), new Row { ["K10"] = 1 }),
+        ["delete through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).DeleteRowAt(db.GetTable("Keys").Definition, FirstRowOf(db, "Keys")),
         ["count a row through DataPageWriter"] = db => new DataPageWriter(db.File, new PageAllocator(db.File)).IncrementTdefRowCount(db.GetTable("Keys").Definition.TdefPageNumber),
         ["raise the AutoNumber"]    =db => db.GetTable("Keys").RaiseLastAutoNumber(9000),
         ["write a page"]            = db => db.File.WritePage(1, new byte[db.File.Format.PageSize]),
@@ -339,7 +342,7 @@ public sealed class Access97ReadOnlyTests : IDisposable
             var held = rows.First(row => !row.IsNull(text.Name));
 
             AssertRefused(() => table.Insert(new Row { [text.Name] = "x" }));
-            AssertRefused(() => table.UpdateByPrimaryKey(1, new Row { [text.Name] = "x" }));
+            AssertRefused(() => { var row = table.Rows.First(); row[text.Name] = "x"; table.Update(row); });
             AssertRefused(() => table.DeleteRow(text.Name, held[text.Name]!));
             AssertRefused(() => db.CreateTable("New", new[] { Long("Id") }));
 

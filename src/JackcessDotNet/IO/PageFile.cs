@@ -36,6 +36,19 @@ internal sealed class PageFile : IDisposable
     internal long WriteCount { get; private set; }
 
     /// <summary>
+    /// Pages read from the file again, since it was opened, only to keep them as they were for a change that may be
+    /// taken back (<see cref="UndoScope"/>): those a change writes over without having read them. Not in
+    /// <see cref="ReadCount"/>. For tests of what keeping a change for undoing costs.
+    /// </summary>
+    internal long UndoReadCount { get; private set; }
+
+    /// <summary>
+    /// A number that changes whenever the file's pages may have: when one is written, and when a change is taken
+    /// back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by.
+    /// </summary>
+    internal long ChangeStamp { get; private set; }
+
+    /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written
     /// and the write after them throws <see cref="IOException"/>, as a full disk would. Null (always, outside a
     /// test) for no such failure.
@@ -200,6 +213,7 @@ internal sealed class PageFile : IDisposable
         if (read != buffer.Length)
             throw new EndOfStreamException($"Failed to read full page {pageNumber}.");
 
+        _undo?.Saw(pageNumber, offset, buffer);
         return Codec.DecodePage(buffer, pageNumber);
     }
 
@@ -217,6 +231,7 @@ internal sealed class PageFile : IDisposable
         {
             page = ReadPage(pageNumber);
             _kept[pageNumber] = page;
+            Journal(() => _kept.Remove(pageNumber));
         }
         return (byte[])page.Clone();
     }
@@ -243,14 +258,18 @@ internal sealed class PageFile : IDisposable
         long requiredLength = offset + _format.PageSize;
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
+        ChangeStamp++;
         if (_stream.Length < requiredLength)
             _stream.SetLength(requiredLength);
 
         _stream.Seek(offset, SeekOrigin.Begin);
         _stream.Write(encoded, 0, encoded.Length);
         _stream.Flush();
-        if (_kept.ContainsKey(pageNumber))
+        if (_kept.TryGetValue(pageNumber, out var was))
+        {
             _kept[pageNumber] = (byte[])data.Clone();
+            Journal(() => _kept[pageNumber] = was);
+        }
     }
 
     // ── Undo ──────────────────────────────────────────────────────────────────
@@ -259,6 +278,21 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>Whether a change is being kept for undoing (<see cref="BeginUndo"/>): one that begins inside it is part of it.</summary>
     internal bool IsUndoing => _undo is not null;
+
+    // Buffers of a page's size, for the images of pages an undo scope keeps: used again from one scope to the next,
+    // so that a change of a row - each its own scope - allocates none.
+    private readonly Stack<byte[]> _spareImages = new();
+    private const int SpareImagesKept = 64;
+
+    private byte[] RentImage() => _spareImages.Count > 0 ? _spareImages.Pop() : new byte[_format.PageSize];
+
+    private void ReturnImage(byte[] image)
+    {
+        if (image.Length == _format.PageSize && _spareImages.Count < SpareImagesKept) _spareImages.Push(image);
+    }
+
+    // What FreedLvalPages notes through while a scope is open: one delegate, not one a scope.
+    private Action<Action>? _journalNote;
 
     /// <summary>
     /// Starts keeping every page as it was before it is next written, so that a change of many rows that fails
@@ -272,16 +306,82 @@ internal sealed class PageFile : IDisposable
         EnsureWritable();
         if (_undo is not null)
             throw new InvalidOperationException("A change to this file is already being kept for undoing; another cannot begin inside it.");
-        return _undo = new UndoScope(this);
+        _undo = new UndoScope(this);
+        FreedLvalPages.Journal = _journalNote ??= Journal;
+        return _undo;
     }
 
-    /// <summary>The pages a change has written over, as they were, until it is committed or disposed.</summary>
+    /// <summary>
+    /// While a change is being kept for undoing, notes <paramref name="undo"/>, which takes back a change made to
+    /// what this file keeps in memory of its pages (<see cref="FreedLvalPages"/>, <see cref="IndexesChecked"/>, the
+    /// pages <see cref="ReadKeptPage"/> keeps): a change taken back runs them, the last first, so that what was
+    /// known before it began is known again. Nothing is noted otherwise.
+    /// </summary>
+    internal void Journal(Action undo) => _undo?.Remember(undo);
+
+    /// <summary>Notes, in <see cref="IndexesChecked"/>, the rows an index that was looked at does not hold.</summary>
+    internal void NoteIndexChecked((int TdefPage, int Index) index, RowsNotHeld rows)
+    {
+        if (_undo is not null)
+        {
+            bool had = IndexesChecked.TryGetValue(index, out var was);
+            Journal(() =>
+            {
+                if (had) IndexesChecked[index] = was!;
+                else IndexesChecked.Remove(index);
+            });
+        }
+        IndexesChecked[index] = rows;
+    }
+
+    /// <summary>
+    /// As <see cref="BeginUndo"/>, for a change that is made on its own or as part of a larger one: null, with
+    /// nothing begun, when a scope is open already, which then takes the change back with the rest of its own.
+    /// </summary>
+    internal UndoScope? BeginUndoUnlessOpen() => _undo is null ? BeginUndo() : null;
+
+    /// <summary>
+    /// Runs <paramref name="action"/> once what has been written is in the file for good: now, when no change is
+    /// being kept for undoing, and otherwise when that change is committed - never when it is taken back. What
+    /// tells the cursors over a table's indexes of the rows a change has moved.
+    /// </summary>
+    internal void WhenKept(Action action)
+    {
+        if (_undo is null) action();
+        else _undo.AfterCommit(action);
+    }
+
+    /// <summary>
+    /// Whether what <see cref="WhenKept"/> runs now is one of several things a change committed together runs: the
+    /// rows of a batch, or of a cascade. Each runs once the whole change is in the file, so what one finds there is
+    /// what the others left too.
+    /// </summary>
+    internal bool KeptTogether { get; private set; }
+
+    /// <summary>
+    /// The pages a change has written over, as they were, and what it changed of what the file keeps in memory,
+    /// until it is committed or disposed.
+    /// <para>
+    /// A page's image is taken when the scope first writes it, and costs no read of the file when the scope has
+    /// read the page already - as a change nearly always has, a page being changed where it is read - or when the
+    /// file keeps the page (<see cref="ReadKeptPage"/>): the bytes read are copied as they are read, a window of
+    /// the latest pages (<see cref="Saw"/>). A page added since the scope began needs none: taking the change back
+    /// cuts the file to the length it had. The buffers go back to the file when the scope ends, for the next.
+    /// </para>
+    /// </summary>
     internal sealed class UndoScope : IDisposable
     {
+        // How many pages read and not yet written a scope keeps the bytes of: enough for any one row's change.
+        private const int ReadImagesKept = 64;
+
         private readonly PageFile _file;
         private readonly Dictionary<int, byte[]> _before = new();
+        private readonly Dictionary<int, byte[]> _read = new();
         private readonly long _length;
         private bool _done;
+        private bool _wrote;
+        private List<Action>? _afterCommit;
+        private List<Action>? _journal;
 
         internal UndoScope(PageFile file)
         {
@@ -289,35 +389,110 @@ internal sealed class PageFile : IDisposable
             _length = file._stream.Length;
         }
 
+        /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
+        internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);
+
+        /// <summary>Notes what takes back a change to what the file keeps in memory (<see cref="Journal"/>).</summary>
+        internal void Remember(Action undo) => (_journal ??= new List<Action>()).Add(undo);
+
         /// <summary>Keeps the change: nothing is taken back when the scope is disposed.</summary>
         public void Commit()
         {
+            End();
+            if (_afterCommit is { } actions)
+            {
+                _afterCommit = null;
+                _file.KeptTogether = actions.Count > 1;
+                try
+                {
+                    foreach (var action in actions) action();
+                }
+                finally
+                {
+                    _file.KeptTogether = false;
+                }
+            }
+        }
+
+        private void End()
+        {
             _done = true;
             _file._undo = null;
+            _file.FreedLvalPages.Journal = null;
+            Release(_read);
+        }
+
+        private void Release(Dictionary<int, byte[]> images)
+        {
+            foreach (var image in images.Values) _file.ReturnImage(image);
+            images.Clear();
+        }
+
+        /// <summary>
+        /// The bytes of a page just read (<paramref name="raw"/>, as the file holds them), kept for the page's first
+        /// write in the scope when the file held them when the scope began: the page was not written since, and is not
+        /// one added since.
+        /// </summary>
+        internal void Saw(int pageNumber, long offset, byte[] raw)
+        {
+            if (offset >= _length || _before.ContainsKey(pageNumber) || _read.ContainsKey(pageNumber)) return;
+            // A window, not every page a large change reads: one of these not written yet is read again if it is.
+            if (_read.Count >= ReadImagesKept) Release(_read);
+            var image = _file.RentImage();
+            Buffer.BlockCopy(raw, 0, image, 0, image.Length);
+            _read[pageNumber] = image;
         }
 
         // The page's bytes as the file holds them (before any codec), the first time it is written in this scope.
         internal void Keep(int pageNumber, long offset)
         {
+            _wrote = true;
             if (offset >= _length || _before.ContainsKey(pageNumber)) return;
-            var raw = new byte[_file._format.PageSize];
-            _file._stream.Seek(offset, SeekOrigin.Begin);
-            int read = 0;
-            while (read < raw.Length)
+            if (_read.TryGetValue(pageNumber, out var image))
             {
-                int n = _file._stream.Read(raw, read, raw.Length - read);
-                if (n == 0) break;
-                read += n;
+                _read.Remove(pageNumber);
             }
-            _before[pageNumber] = raw;
+            else if (_file._kept.TryGetValue(pageNumber, out var kept))
+            {
+                // As written here or read, before any codec: encoded again, a copy, so that the page kept is untouched.
+                image = _file.RentImage();
+                Buffer.BlockCopy(kept, 0, image, 0, image.Length);
+                image = _file.Codec.EncodePage(image, pageNumber);
+            }
+            else
+            {
+                image = _file.RentImage();
+                _file.UndoReadCount++;
+                _file._stream.Seek(offset, SeekOrigin.Begin);
+                int read = 0;
+                while (read < image.Length)
+                {
+                    int n = _file._stream.Read(image, read, image.Length - read);
+                    if (n == 0) break;
+                    read += n;
+                }
+            }
+            _before[pageNumber] = image;
         }
 
-        /// <summary>Takes back everything written since the scope began, unless it was committed.</summary>
+        /// <summary>
+        /// Takes back everything written since the scope began, unless it was committed: the pages, and what the
+        /// file keeps in memory of them, which is then what it was when the scope began. A scope that wrote nothing
+        /// changes nothing: what was learnt of the file while it was open is still true.
+        /// </summary>
         public void Dispose()
         {
-            if (_done) return;
-            _done = true;
-            _file._undo = null;
+            if (!_done)
+            {
+                End();
+                _afterCommit = null;
+                if (_wrote) TakeBack();
+            }
+            Release(_before);
+        }
+
+        private void TakeBack()
+        {
             foreach (var (pageNumber, raw) in _before)
             {
                 _file._stream.Seek((long)pageNumber * _file._format.PageSize, SeekOrigin.Begin);
@@ -325,10 +500,11 @@ internal sealed class PageFile : IDisposable
             }
             _file._stream.SetLength(_length);
             _file._stream.Flush();
-            // What was read or noted of the pages since is no longer what the file holds.
-            _file._kept.Clear();
-            _file.FreedLvalPages.Clear();
-            _file.IndexesChecked.Clear();
+            // What was read of the pages since is no longer what the file holds; what was noted of them is taken
+            // back, the last first.
+            _file.ChangeStamp++;
+            if (_journal is { } journal)
+                for (int i = journal.Count - 1; i >= 0; i--) journal[i]();
         }
     }
 
@@ -339,6 +515,7 @@ internal sealed class PageFile : IDisposable
             throw new ArgumentNullException(nameof(source));
         EnsureWritable();
 
+        ChangeStamp++;
         _kept.Clear();
         IndexesChecked.Clear();
         _stream.Seek(0, SeekOrigin.Begin);
