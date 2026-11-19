@@ -339,6 +339,11 @@ public sealed class Database : IDisposable
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
+    /// <exception cref="IOException">
+    /// The file is open for writing in another process - Access holding it - or in another <see cref="Database"/>,
+    /// whatever the options. This library takes no lock on a file, so a second writer is refused rather than let in;
+    /// nothing of the file is changed.
+    /// </exception>
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
@@ -383,9 +388,10 @@ public sealed class Database : IDisposable
     {
         Span<byte> head = stackalloc byte[0x15];
         int read;
-        // With the sharing the file is then opened with (PageFile): another database that has it open, for writing,
-        // lets it be read.
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        // Shared for reading only: a file another process or Database has open for writing - Access holding it, or
+        // this library - is refused here, with IOException. This library takes no lock on a file, so two writers
+        // would each overwrite what the other wrote.
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             read = fs.Read(head);
 
         if (read == head.Length && (StartsWithSignature(head, "Standard Jet DB") || StartsWithSignature(head, "Standard ACE DB")))
@@ -488,6 +494,11 @@ public sealed class Database : IDisposable
     /// <param name="path">The path of the file to open.</param>
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
+    /// <exception cref="IOException">
+    /// The file is open for writing in another process - Access holding it - or in another <see cref="Database"/>.
+    /// This library takes no lock on a file, so a second writer is refused rather than let in; nothing of the file is
+    /// changed.
+    /// </exception>
     /// <exception cref="InvalidDataException">The file is not an Access database: it is too short, or has no signature.</exception>
     /// <exception cref="InvalidCredentialException">
     /// The file has a database password, or is an encrypted .accdb: open it with

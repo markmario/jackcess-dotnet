@@ -804,6 +804,10 @@ Limits to know about:
   asks each before it writes to any.
 - Access 97 (Jet 3) files are read and not written, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`.
+- One writer at a time. This library takes no lock on a file, as Access does with its lock file: `Database.Open`
+  refuses, with `IOException`, a file another process - Access holding it - or another `Database` has open for
+  writing, and leaves it as it was. A file this library has open is not kept from Access, which should not be
+  given it until the `Database` is disposed.
 - A Large Number or Date/Time Extended column is for an `.accdb`. A table with one is refused in an `.mdb`
   before anything is written, as Access refuses it. In an `.accdb` of an earlier format it is created, and
   the file becomes one of Access 2016's format (a Large Number) or Access 2019's (a Date/Time Extended), as

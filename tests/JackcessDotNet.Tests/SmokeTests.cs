@@ -28,21 +28,35 @@ public sealed class SmokeTests : IDisposable
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
-    // A file a database has open - for writing, with others let to read and write it - opens again, with options or
-    // without: the header is read with the sharing the file is opened with.
+    // A file a database has open for writing is refused to a second opener, with options or without, and is left as it
+    // was: this library takes no lock on a file, so a second writer would overwrite what the first wrote.
     [Fact]
-    public void A_file_a_database_has_open_opens_again_with_options_or_without()
+    public void A_file_a_database_has_open_is_refused_to_a_second_opener_and_left_as_it_was()
     {
         Database.Create(_path).Dispose();
         using var first = Database.Open(_path);
-        first.CreateTable("People", PeopleColumns(), "Id");
+        var people = first.CreateTable("People", PeopleColumns(), "Id");
+        people.Insert(new Row { ["Id"] = 1, ["Name"] = "first", ["Age"] = (short)30 });
+        byte[] before = Shared(_path);
 
-        using (var again = Database.Open(_path))
-            Assert.Equal(new[] { "People" }, again.GetTableNames());
-        using (var fallback = Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }))
-            Assert.Equal(new[] { "People" }, fallback.GetTableNames());
-        using (var password = Database.Open(_path, new DatabaseOpenOptions { Password = "not looked at" }))
-            Assert.Equal(new[] { "People" }, password.GetTableNames());
+        Assert.Throws<IOException>(() => Database.Open(_path).Dispose());
+        Assert.Throws<IOException>(() => Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }).Dispose());
+        Assert.Throws<IOException>(() => Database.Open(_path, new DatabaseOpenOptions { Password = "not looked at" }).Dispose());
+        Assert.Equal(before, Shared(_path));
+
+        // The first goes on as it was.
+        people.Insert(new Row { ["Id"] = 2, ["Name"] = "second", ["Age"] = (short)31 });
+        Assert.Equal(2, people.RowCount);
+    }
+
+    // The file's bytes as a reader that lets the database go on writing reads them.
+    private static byte[] Shared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var bytes = new byte[stream.Length];
+        int read = 0;
+        while (read < bytes.Length) read += stream.Read(bytes, read, bytes.Length - read);
+        return bytes;
     }
 
     [Fact]
