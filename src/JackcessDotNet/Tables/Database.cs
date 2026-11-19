@@ -890,7 +890,8 @@ public sealed class Database : IDisposable
             planned.Add(new PlannedIndex(
                 TableDefinition.PrimaryKeyIndexName,
                 pkColumns.Select(pk => new IndexColumn(Find(pk, "Primary key", ofPrimaryKey: true), TableDefinition.AscendingColumnFlag)).ToList(),
-                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag,
+                // Unique and required (0x89), as Access writes a primary key's block.
+                TableDefinition.UnknownIndexFlag | TableDefinition.UniqueIndexFlag | TableDefinition.RequiredIndexFlag,
                 TableDefinition.PrimaryKeyIndexType));
         }
 

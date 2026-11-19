@@ -143,7 +143,7 @@ internal sealed class TableDefinition
         return new[]
         {
             new Index(PrimaryKeyIndexName, columns, PrimaryKeyIndexPage, indexNumber: 0,
-                      flags: UnknownIndexFlag | UniqueIndexFlag, indexType: PrimaryKeyIndexType,
+                      flags: UnknownIndexFlag | UniqueIndexFlag | RequiredIndexFlag, indexType: PrimaryKeyIndexType,
                       indexDataNumber: 0, usedPagesUmapPage: PrimaryKeyIndexUmapPage, usedPagesUmapRow: PrimaryKeyIndexUmapRow),
         };
     }
@@ -384,7 +384,9 @@ internal sealed class TableDefinition
             p += 1;                                                 // relIndexType
             ByteUtil.PutInt(page, p, InvalidIndexNumber);  p += 4;   // relIndexNumber
             p += 4;                                                 // relTablePage
-            p += 2;                                                 // cascadeUpdates + cascadeDeletes
+            // cascadeUpdates + cascadeDeletes: 4 in each, as Access writes them in a slot that is no relationship's.
+            page[p++] = TdefEditor.NoRelationshipCascade;
+            page[p++] = TdefEditor.NoRelationshipCascade;
             page[p] = index.IndexType;
             pos = slotStart + format.SizeIndexInfoBlock;
         }
