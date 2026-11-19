@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net472;netstandard2.0</TargetFrameworks>
+    <TargetFrameworks>net10.0;net11.0;net48;netstandard2.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
@@ -20,7 +20,7 @@
          next major in the same change, so it cannot ship as a minor or patch release. 2.0.0 because the
          public API has changed since upstream's 1.2.2, where this repository started. -->
     <MinimumReleaseVersion>2.0.0</MinimumReleaseVersion>
-    <Description>Pure managed library for reading and writing Microsoft Access (.mdb and .accdb) files, for .NET 8, .NET Framework 4.7.2 and .NET Standard 2.0, with no ACE or ODBC driver. A port of the Jackcess Java library whose files are checked against Access's own engine.</Description>
+    <Description>Pure managed library for reading and writing Microsoft Access (.mdb and .accdb) files, for .NET 10, .NET 11, .NET Framework 4.8 and .NET Standard 2.0, with no ACE or ODBC driver. A port of the Jackcess Java library whose files are checked against Access's own engine.</Description>
     <Authors>markmario; Mehran Ghanizadeh</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <Optimize>true</Optimize>
@@ -56,19 +56,10 @@
     <None Include="..\..\jackcess.png"  Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- .NET (Core) only: .NET Framework has the legacy code pages in-box, and this
-         package's Unsafe 6.x dependency breaks redirect-free xcopy deployment there
-         (see the NETFRAMEWORK guard in JetFormat.InitEncodings). -->
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0"
-                      Condition="'$(TargetFramework)' != 'net472' AND '$(TargetFramework)' != 'netstandard2.0'" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
-  </ItemGroup>
-
   <!-- The public API is recorded in PublicAPI.Shipped.txt (what a release has
        published) and PublicAPI.Unshipped.txt (what has changed since), and the
        build fails when the code and the files disagree: a public type or member
-       added, changed or removed shows as a diff of those files. The three target
+       added, changed or removed shows as a diff of those files. The four target
        frameworks have the same API, so they share one pair of files.
        The version is pinned here because this repository builds on its own,
        with no central package management. -->
@@ -93,10 +84,10 @@
     <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
   </PropertyGroup>
 
-  <!-- net472 support: framework references plus packages backfilling BCL types
-       (Span/Memory/BinaryPrimitives, ValueTuple, HashCode). See Compat/. -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'netstandard2.0'">
-    <Reference Include="System.ComponentModel.DataAnnotations" Condition="'$(TargetFramework)' == 'net472'" />
+  <!-- net48 and netstandard2.0 support: framework references plus packages backfilling BCL types
+       (Span/Memory/BinaryPrimitives, ValueTuple, HashCode). See Util/FrameworkCompat.cs. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48' OR '$(TargetFramework)' == 'netstandard2.0'">
+    <Reference Include="System.ComponentModel.DataAnnotations" Condition="'$(TargetFramework)' == 'net48'" />
     <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
     <PackageReference Include="System.Memory" Version="4.6.0" />
     <PackageReference Include="Microsoft.Bcl.HashCode" Version="6.0.0" />

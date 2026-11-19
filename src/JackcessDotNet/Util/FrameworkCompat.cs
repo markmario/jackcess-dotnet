@@ -1,4 +1,4 @@
-// BCL-surface compatibility helpers for the net472 target. Language-level
+// BCL-surface compatibility helpers for the net48 and netstandard2.0 targets. Language-level
 // polyfills (Index/Range, required members, init-only setters) come from the
 // PolySharp source generator; this file covers missing runtime METHODS only.
 using System.Text;
@@ -22,7 +22,7 @@ namespace JackcessDotNet
     using System.Security.Cryptography;
 
     // One-shot hash statics (MD5.HashData etc.) arrived in .NET 5. A single
-    // Create()-based implementation keeps net472 and net8 byte-identical.
+    // Create()-based implementation keeps every target byte-identical.
     internal static class CryptoCompat
     {
         internal static byte[] Md5(ReadOnlySpan<byte> data) { using var h = MD5.Create(); return h.ComputeHash(data.ToArray()); }
@@ -50,7 +50,7 @@ namespace JackcessDotNet.Util
     {
         // Replaces C# range indexing on arrays (buf[a..b]), whose lowering needs
         // RuntimeHelpers.GetSubArray — a runtime member that cannot be polyfilled
-        // on net472 (RuntimeHelpers already exists and can't be extended).
+        // on net48 (RuntimeHelpers already exists and can't be extended).
         internal static byte[] Slice(this byte[] source, int start, int endExclusive)
         {
             var result = new byte[endExclusive - start];
@@ -66,7 +66,7 @@ namespace System.Buffers.Binary
     internal static class BinaryPrimitivesCompat
     {
         // BitConverter.Int32BitsToSingle/SingleToInt32Bits were added after
-        // net472; reinterpret via byte round-trip (endianness-neutral here
+        // .NET Framework; reinterpret via byte round-trip (endianness-neutral here
         // because both sides use the platform representation).
         internal static float Int32BitsToSingle(int value)
             => BitConverter.ToSingle(BitConverter.GetBytes(value), 0);
@@ -79,7 +79,7 @@ namespace System.Buffers.Binary
 namespace System.Collections.Generic
 {
     // KeyValuePair<,>.Deconstruct arrived in netstandard2.1; this extension
-    // lets `foreach (var (k, v) in dict)` compile unchanged on net472.
+    // lets `foreach (var (k, v) in dict)` compile unchanged on net48.
     internal static class KeyValuePairCompatExtensions
     {
         public static void Deconstruct<TKey, TValue>(this KeyValuePair<TKey, TValue> pair, out TKey key, out TValue value)
@@ -103,7 +103,7 @@ namespace System.Collections.Generic
 namespace System.IO
 {
     // Stream.Read(Span<byte>) arrived in netstandard2.1; extension form lets
-    // `fs.Read(spanBuffer)` compile unchanged on net472 (instance method wins on net8).
+    // `fs.Read(spanBuffer)` compile unchanged on net48 (instance method wins on .NET).
     internal static class StreamCompatExtensions
     {
         public static int Read(this Stream stream, Span<byte> buffer)
