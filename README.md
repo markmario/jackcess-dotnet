@@ -321,18 +321,20 @@ And the other way about, with Access - or another `Database` - there first:
 
 **What a `ReadOnly` database reads while another program writes** is the file as it is when each page is read, by the
 columns and indexes a table had when it was first got: rows Access has written to the file by then. Access does not
-write a change to the file as it commits it: measured, a row ACE or DAO had just inserted reached the file between half
-a second and a second later, in both formats - Access writes what it has committed once it has been idle for half a
-second - so a reading can be a moment behind Access. Measured too: while ACE inserted 272,000 rows, updating and
-deleting some as it went (each statement its own transaction, and in transactions of 200), a `ReadOnly` database read
-the table 3,921 times, in an .mdb and an .accdb. No reading failed or had a row twice or a value of another row's;
-four of 2.2 million lookups through the primary key missed a row the reading had found a moment before, which ACE may
-have deleted between the two; the readings followed ACE's commits, a whole transaction at a time when ACE committed
-200 statements at a time; and once ACE had closed, the same open database read every row. That is what was seen, not
-a promise: nothing keeps a reading from meeting another program's change part-way, and such a reading can miss rows,
-find one that has gone, or fail. For a reading that agrees with itself, open the file when no other program has it
-open for writing. (Access reading with `Mode=Read` while this library wrote 1.4 million rows found nothing amiss
-either, in 282 readings.)
+write a change to the file as it commits it. Measured with ACE and DAO, in both formats: a row just inserted reached
+the file about half a second later - Access writes what it has committed once it has been idle for half a second - but
+not always; in 2 of 12 runs of 300 inserts on a connection kept open, the last row was still not in the file 15
+seconds later, and reached it with the next inserts. So a reading can miss the last rows Access committed for as long
+as Access keeps them; once Access has closed the file, everything it committed is in it. Measured too: while ACE
+inserted 272,000 rows, updating and deleting some as it went (each statement its own transaction, and in transactions
+of 200), a `ReadOnly` database read the table 3,921 times, in an .mdb and an .accdb. No reading failed or had a row
+twice or a value of another row's; four of 2.2 million lookups through the primary key missed a row the reading had
+found a moment before, which ACE may have deleted between the two; the readings followed ACE's commits, a whole
+transaction at a time when ACE committed 200 statements at a time; and once ACE had closed, the same open database
+read every row. That is what was seen, not a promise: nothing keeps a reading from meeting another program's change
+part-way, and such a reading can miss rows, find one that has gone, or fail. For a reading that agrees with itself,
+open the file when no other program has it open for writing. (Access reading with `Mode=Read` while this library
+wrote 1.4 million rows found nothing amiss either, in 282 readings.)
 
 Java Jackcess takes no lock, says that a file must not be written by two programs at once, and opens one read-only when
 asked (`DatabaseBuilder.withReadOnly`); it also opens a file it cannot write to read-only without being asked, which

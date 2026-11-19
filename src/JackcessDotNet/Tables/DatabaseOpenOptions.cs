@@ -47,9 +47,11 @@ public sealed class DatabaseOpenOptions
     /// </para>
     /// <para>
     /// What such a database reads is the file as it is when each page is read: rows another program has written to the
-    /// file by then are read - Access writes a change it has committed only once it has been idle for half a second or
-    /// so, so the last it committed may not be there yet - and a table's columns and indexes are as they were when the
-    /// table was first got from the database. This library takes none of Access's locks, so nothing keeps it
+    /// file by then are read, and a table's columns and indexes are as they were when the table was first got from the
+    /// database. Access writes a change it has committed once it has been idle for half a second, and can keep the
+    /// last until it next changes something or closes the database, so the last rows Access committed may not be
+    /// read while Access has the file open; once it has closed it, every one is. This library takes none of Access's
+    /// locks, so nothing keeps it
     /// from reading a table part-way through another program's change of several pages: a reading made while the
     /// file is being written to can miss rows, or read one that has since gone, and can fail. For a reading that
     /// agrees with itself, open the file when no other program has it open for writing.
