@@ -793,6 +793,7 @@ internal sealed class SystemCatalog
             UmapPageNumber = info.OwnedPagesUmapPage,
             OwnedPagesRow  = info.OwnedPagesUmapRow,
             FreeSpaceRow   = info.FreeSpaceUmapRow,
+            FreeSpaceUmapPage = info.FreeSpaceUmapPage,
             Indexes        = info.Indexes,
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,

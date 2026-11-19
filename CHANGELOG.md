@@ -359,6 +359,34 @@ changed since 1.2.2.
   place held - a deleted value's bytes, or a shorter value made up with zeros - and two such references were refused
   with `InvalidOperationException`. A reading beside a writer meets one when the writer changes a row between the
   reading of the row and of its value; so does a reading of a damaged file.
+- **Room on a table's pages is used again as Access uses it** (#58). A deleted row's bytes stayed on its page, and
+  no row was put where a delete, or a row's values moving back from another page, had left room: a row updated back
+  and forth past its page's room grew the file by a page every few hundred changes, without end - 13 pages in 3,000
+  cycles, where Access's grew by one with each change a session of its own (in one session, by hundreds). This
+  library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
+  and `.accdb`; the README's "Rows and long values" has the rules): a row goes to the lowest page the table's
+  free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
+  another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
+  for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
+  Access gives back to the file and takes again, is kept for the table, begun again, and listed. It keeps the slots
+  of the rows deleted from it in the session, so that a `Row`, a cursor or a savepoint that read one of them finds no
+  row there and an update or a delete through it is still refused - until the session ends, so rows inserted and
+  deleted on such a page in one session can fill it, and the table then takes a new page. The free-space map was left
+  empty, so Access added
+  a page for the first row it wrote to a table this library had filled. A table only inserted into, as an export
+  is, still takes its rows on its last page, in insertion order; after a delete, or an update that moves a row's
+  values to another page and back, a row can go to an earlier page, as in Access, and is read there in the table's
+  order. A scan in that order - `Table.Rows`, a cursor - gives no row inserted after it began, whichever page the row
+  goes to: one inserted into room a delete left can be on a page the scan has still to come to, as before only a row
+  on the last page could. Finding room costs no more as a table grows: the map is read once a session, and a listed
+  page tried without room for the row leaves it, so a run of inserts tries at most as many pages as it has inserts
+  and the map lists pages. One insert can try every listed page, when none has room for it - a row larger than any
+  room a delete left, in a table with rows deleted all over it - and takes each off the map, as Access does: with
+  2,000 pages listed, 3,012 pages read and 1,008 written for that one row.
+- **A long value's chain goes to pages an earlier session emptied** (#58). Only a value of one chunk looked at the
+  column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
+  change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's
+  grew by 3. It grows by a page at most.
 
 ### Breaking changes to the public API
 
