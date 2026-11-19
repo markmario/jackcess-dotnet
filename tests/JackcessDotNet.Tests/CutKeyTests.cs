@@ -117,6 +117,45 @@ public sealed class CutKeyTests : IDisposable
         }
     }
 
+    // The indexes added to a table that has its rows already (Table.AddIndex), a primary key among them: each entry
+    // is the one ACE wrote for the row. The primary key on A and J holds the keys of the unique index on them.
+    [Theory]
+    [MemberData(nameof(GoldenFiles))]
+    public void Indexes_and_a_primary_key_added_over_the_rows_hold_the_entries_ACE_wrote(string file, string order)
+    {
+        var golden = GoldenEntries(file);
+        using var db = NewDatabase(order == "General");
+        var table = db.CreateTable("CutKeys", new[]
+        {
+            new ColumnDefinition("CutKeyRow", DataType.Int32), new ColumnDefinition("A", DataType.Text) { MaxLength = 255 },
+            new ColumnDefinition("B", DataType.Text) { MaxLength = 255 }, new ColumnDefinition("K", DataType.Int32),
+            new ColumnDefinition("J", DataType.Int32),
+        });
+        foreach (var row in Rows(golden))
+            table.Insert(row);
+
+        table.AddIndex(new IndexDefinition("PrimaryKey", "A", "J") { IsPrimaryKey = true });
+        foreach (var index in IndexesOf(golden).Where(ix => ix.Name != "UniqueAJ"))
+            table.AddIndex(index);
+
+        var held = EntriesByRow(db, "CutKeys", "CutKeyRow");
+        var differ = golden.Where(g => !held[g.Index == "UniqueAJ" ? "PrimaryKey" : g.Index].TryGetValue(g.Row, out string? key) || key != g.Key)
+                           .Select(g => $"{g.Index} row {g.Row}").ToList();
+        Assert.True(differ.Count == 0, $"{differ.Count} entries are not ACE's: {string.Join(", ", differ.Take(20))}");
+        Assert.Equal(7, IndexChecks.AssertEveryIndexHoldsTheRows(db, "CutKeys", expectedRows: 32));
+    }
+
+    /// <summary>The golden file's indexes, as definitions: each with its columns, and those that sort descending.</summary>
+    private static IEnumerable<IndexDefinition> IndexesOf(List<Golden> golden)
+        => golden.GroupBy(g => g.Index).Select(g =>
+        {
+            var columns = g.First().Columns.Split(',');
+            var index = new IndexDefinition(g.Key, columns.Select(c => c.Split(' ')[0]).ToArray()) { IsUnique = g.Key.StartsWith("Unique", StringComparison.Ordinal) };
+            foreach (string column in columns.Where(c => c.EndsWith(" desc", StringComparison.Ordinal)))
+                index.DescendingColumns.Add(column.Split(' ')[0]);
+            return index;
+        });
+
     private Database NewDatabase(bool general)
     {
         string path = Path.Combine(Path.GetTempPath(), $"cutkeys_{Guid.NewGuid():N}{(general ? ".accdb" : ".mdb")}");
