@@ -11,7 +11,10 @@ namespace JackcessDotNet;
 /// </summary>
 public sealed class DatabaseOpenOptions
 {
-    /// <summary>Creates options with nothing set: no password, and no format to fall back on.</summary>
+    /// <summary>
+    /// Creates options with nothing set: no password, no format to fall back on, and the file opened for reading and
+    /// writing.
+    /// </summary>
     public DatabaseOpenOptions()
     {
     }
@@ -31,4 +34,15 @@ public sealed class DatabaseOpenOptions
     /// with <see cref="System.IO.InvalidDataException"/>.
     /// </summary>
     public FileFormat? FallbackFormat { get; set; }
+
+    /// <summary>
+    /// Whether the file is opened only to be read. Default <c>false</c>: it is opened for reading and writing.
+    /// <para>
+    /// <c>true</c> opens it as Access opens a database read-only: nothing is ever written to the file - its handle
+    /// cannot write - and every change asked of the database, its tables and their cursors is refused with
+    /// <see cref="NotSupportedException"/> before anything happens (<see cref="Database.IsReadOnly"/>). A file marked
+    /// read-only opens this way.
+    /// </para>
+    /// </summary>
+    public bool ReadOnly { get; set; }
 }

@@ -71,8 +71,9 @@ public sealed class Database : IDisposable
     public FileFormat FileFormat => _file.Format.Version;
 
     /// <summary>
-    /// Whether the file is only read: an Access 97 file (<see cref="FileFormat.Access97"/>). Every change to such
-    /// a database is refused with <see cref="NotSupportedException"/> before anything is written.
+    /// Whether the file is only read: one opened with <see cref="DatabaseOpenOptions.ReadOnly"/>, an Access 97 file
+    /// (<see cref="FileFormat.Access97"/>), or an .accdb in ECMA Standard Encryption. Every change to such a
+    /// database is refused with <see cref="NotSupportedException"/> before anything is written.
     /// </summary>
     public bool IsReadOnly => _file.IsReadOnly;
 
@@ -295,9 +296,9 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Opens an existing .mdb / .accdb file with what <paramref name="options"/> says about it: the password of
-    /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), and the format to read a file as when its
-    /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>). With neither set this is
-    /// <see cref="Open(string)"/>.
+    /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), the format to read a file as when its
+    /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), and whether it is only to be read
+    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>). With none set this is <see cref="Open(string)"/>.
     /// <para>
     /// A file is protected as its header says, and a password is checked as Access checks it: exactly, letter
     /// case and all.
@@ -347,7 +348,7 @@ public sealed class Database : IDisposable
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
-        return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null);
+        return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly);
     }
 
     /// <summary>
@@ -356,12 +357,13 @@ public sealed class Database : IDisposable
     /// database. So an Access 97 file is read as one, and is read-only, whatever <paramref name="fallback"/> is,
     /// and an Access 2000 file opened with a fallback of <see cref="FileFormat.Access97"/> is the Access 2000
     /// file it is, read and written as any other. A protected file is opened with <paramref name="password"/>, as
-    /// <see cref="Open(string, DatabaseOpenOptions)"/> describes.
+    /// <see cref="Open(string, DatabaseOpenOptions)"/> describes; a file is opened only to be read when
+    /// <paramref name="readOnly"/> is true.
     /// </summary>
-    private static Database OpenFile(string path, FileFormat? fallback, string? password)
+    private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly)
     {
         var (format, hasHeader) = FormatOf(path, fallback);
-        var file = new PageFile(path, format, FileMode.Open);
+        var file = new PageFile(path, format, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite);
         try
         {
             // A file read in the fallback format has no header to say how it is protected: what its bytes there
@@ -507,7 +509,7 @@ public sealed class Database : IDisposable
     /// <exception cref="NotSupportedException">
     /// The file is damaged: its catalog does not read, and its header names no protection that accounts for it.
     /// </exception>
-    public static Database Open(string path) => OpenFile(path, fallback: null, password: null);
+    public static Database Open(string path) => OpenFile(path, fallback: null, password: null, readOnly: false);
 
     // ── Foreign keys ─────────────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ internal sealed class PageFile : IDisposable
     private readonly JetFormat _format;
     private readonly string _path;
     private readonly bool _readOnly;
+    private readonly bool _openedToRead;
 
     private bool _disposed;
 
@@ -16,10 +17,11 @@ internal sealed class PageFile : IDisposable
     public int PageCount { get { ThrowIfDisposed(); return (int)(_stream.Length / _format.PageSize); } }
 
     /// <summary>
-    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read, or
-    /// one protected by a codec that writes nothing (<see cref="ICodecHandler.WriteRefusal"/>).
+    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read, one
+    /// opened only to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), or one protected by a codec that writes
+    /// nothing (<see cref="ICodecHandler.WriteRefusal"/>).
     /// </summary>
-    internal bool IsReadOnly => _readOnly || Codec.WriteRefusal is not null;
+    internal bool IsReadOnly => _readOnly || _openedToRead || Codec.WriteRefusal is not null;
 
     private void ThrowIfDisposed()
     {
@@ -105,10 +107,9 @@ internal sealed class PageFile : IDisposable
         : this(path, format, mode, FileAccess.ReadWrite) { }
 
     /// <summary>
-    /// Opens the underlying file. <paramref name="access"/> should be
-    /// <see cref="FileAccess.Read"/> when the caller will not mutate pages
-    /// (read-only access avoids contending with other readers for write locks
-    /// on corpus files mounted from read-only filesystems or git checkouts).
+    /// Opens the underlying file. <paramref name="access"/> is <see cref="FileAccess.Read"/> for a file that is only
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>): nothing is written to it, and every change is refused
+    /// before anything happens (<see cref="ReadOnlyRefusal"/>).
     /// </summary>
     /// <exception cref="NotSupportedException">
     /// <paramref name="format"/> is one this library only reads (<see cref="JetFormat.IsReadOnly"/>: Access 97's)
@@ -130,6 +131,7 @@ internal sealed class PageFile : IDisposable
         if (mode is FileMode.Truncate or FileMode.Append && File.Exists(path) && FormatOf(path) is { IsReadOnly: true })
             throw ReadOnlyFormat($"'{path}' was not changed.");
 
+        _openedToRead = access == FileAccess.Read;
         bool opensWhatIsThere = mode is FileMode.Open or FileMode.OpenOrCreate;
         _readOnly = format.IsReadOnly || (opensWhatIsThere && FormatOf(path) is { IsReadOnly: true });
         if (_readOnly)
@@ -169,11 +171,14 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Refuses a change to a file this library only reads: one opened in a format that is only read
-    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one, or one protected by a codec that
-    /// writes nothing (ECMA Standard Encryption). Every operation that writes calls it before it does anything else,
-    /// so a refused one leaves the file, and what the caller gave it, as they were.
+    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one, one opened only to be read
+    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), or one protected by a codec that writes nothing (ECMA Standard
+    /// Encryption). Every operation that writes calls it before it does anything else, so a refused one leaves the
+    /// file, and what the caller gave it, as they were.
     /// </summary>
-    /// <exception cref="NotSupportedException">The file is an Access 97 one, or an .accdb in ECMA Standard Encryption.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one, was opened read-only, or is an .accdb in ECMA Standard Encryption.
+    /// </exception>
     internal void EnsureWritable()
     {
         if (ReadOnlyRefusal is { } why) throw new NotSupportedException(why);
@@ -185,6 +190,7 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal string? ReadOnlyRefusal
         => _readOnly ? ReadOnlyFormat($"'{_path}' was not changed.").Message
+         : _openedToRead ? $"'{_path}' was opened read-only (DatabaseOpenOptions.ReadOnly), and nothing is written to it: it was not changed."
          : Codec.WriteRefusal is { } why ? $"{why} '{_path}' was not changed."
          : null;
 
