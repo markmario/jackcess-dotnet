@@ -65,8 +65,10 @@ changed since 1.2.2.
   bytes (#51): a search by this library's key missed the row, so that, enforcing foreign keys, a parent was deleted
   from under a child ACE had keyed so - ACE refuses that delete - and a removal by that key left the row's entry
   pointing at no row, which ACE then listed as a row and took a child of. The table is read for such a key, as for
-  one no index can be searched for, with or without `Database.VerifyIndexes`, and a row's entries are found by the
-  row they point at, every leaf of the index read. This fixes a defect on `main`.
+  one no index can be searched for, with or without `Database.VerifyIndexes`. A row's entry is taken out under this
+  library's key, as any row's is, so a row in the form this library and ACE's `INSERT` write costs what a Date/Time
+  row does; only a row with no entry there, one ACE stored in its second form, has its entries found by the row they
+  point at, every leaf of the index read. This fixes a defect on `main`.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the

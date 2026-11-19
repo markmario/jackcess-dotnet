@@ -502,34 +502,43 @@ internal sealed class TableIndexes
             // Gone, or about to be entered where it now is, the row is not one its index lacks any longer.
             if (_file.IndexesChecked.TryGetValue(Which(entry.Tree), out var notHeld)) notHeld.Forget(rowPointer);
 
-            // A row whose key this library may not make as Access does - a Date/Time Extended value ACE stored in
-            // its second form (#51) - can be under a key this library does not make: its entries are found by the
-            // row they point at, every leaf of the index read, so that none is left pointing where the row was.
-            if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
-            {
-                var root = entry.Tree.Target.RootPage;
-                foreach (byte[] key in writer.EntriesWithPrefix(root, Array.Empty<byte>()).Where(e => e.RowPointer == rowPointer).Select(e => e.Key).ToList())
-                    writer.Remove(entry.Tree.Target, key, rowPointer);
-                continue;
-            }
-
             // The entry goes under the key it is stored under: for a key that was cut, the cut key, the whole one or
             // the one cut the earlier way (StoredUnder), whichever holds this row - the one that points at it, whose
             // values the entry is made of, so an entry under the earlier way's key is never another value's row's.
-            // A row with no entry at all - one an earlier version of this library wrote without keeping the index -
-            // has nothing to take out, and that is no error: the row is gone and the index holds nothing of it,
-            // which is what a delete is for.
-            byte[] storedKey = entry.Key;
+            bool found, another;
             if (entry.IsCut)
             {
                 var stored = StoredUnder(writer, entry).Where(s => s.RowPointer == rowPointer).Select(s => s.Key).ToList();
-                if (stored.Count == 0) continue;
-                storedKey = stored[0];
+                found = stored.Count > 0;
+                another = found && writer.Remove(entry.Tree.Target, stored[0], rowPointer);
             }
-            bool another = writer.Remove(entry.Tree.Target, storedKey, rowPointer);
+            else another = writer.Remove(entry.Tree.Target, entry.Key, rowPointer, out found);
+
+            if (!found)
+            {
+                // A row whose key this library may not make as Access does - a Date/Time Extended value ACE stored
+                // in its second form (#51) - can be under a key this library does not make: when its entry is not
+                // under this library's, its entries are found by the row they point at, every leaf of the index
+                // read, so that none is left pointing where the row was. Any other row with no entry - one an
+                // earlier version of this library wrote without keeping the index - has nothing to take out, and
+                // that is no error: the row is gone and the index holds nothing of it, which is what a delete is for.
+                if (!IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)) RemoveByPointer(writer, entry.Tree, rowPointer);
+                continue;
+            }
             if (ComparesRows(entry) && (another || entry.IsCut))
                 TakeOutEntriesOfNoRow(writer, entry, rowPointer);
         }
+    }
+
+    /// <summary>
+    /// Takes every entry of <paramref name="tree"/> that points at <paramref name="rowPointer"/> out of it,
+    /// whatever its key: each of the index's leaves is read.
+    /// </summary>
+    private static void RemoveByPointer(IndexWriter writer, Tree tree, int rowPointer)
+    {
+        foreach (byte[] key in writer.EntriesWithPrefix(tree.Target.RootPage, Array.Empty<byte>())
+                                     .Where(e => e.RowPointer == rowPointer).Select(e => e.Key).ToList())
+            writer.Remove(tree.Target, key, rowPointer);
     }
 
     // ── Entries that are no row's ────────────────────────────────────────────

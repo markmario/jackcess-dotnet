@@ -380,8 +380,11 @@ answered with the row that no longer has it, and that row is not found under the
 - **A key this library may not make as Access does** - a Date/Time Extended value, which ACE can store in a
   second form and key otherwise ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)) - is never looked
   for through an index, with or without `VerifyIndexes`: the table is read for it, so a relationship's child or
-  parent is found however ACE keyed it. When a row with such a key is deleted or rewritten, its entries are found
-  by the row they point at - every leaf of the index read - so that none is left pointing where the row was.
+  parent is found however ACE keyed it. When a row with such a key is deleted or rewritten, its entry is looked for
+  under this library's key, as any row's is, and a row in the form this library writes - and ACE's `INSERT` - costs
+  what a Date/Time row does. Only when the row has no entry there, a value ACE stored in its second form, are its
+  entries found by the row they point at - every leaf of the index read - so that none is left pointing where the
+  row was.
 
 An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
 insert reads are the ones it read before. An index that is not unique is not looked at this way without

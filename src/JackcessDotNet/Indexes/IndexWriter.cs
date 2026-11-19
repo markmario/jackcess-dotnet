@@ -296,8 +296,15 @@ internal sealed class IndexWriter
     /// Returns whether the tree holds another entry under <paramref name="key"/> beside the one taken out, as
     /// <see cref="Insert"/> does, the first of the next leaf among them; false when it held no such entry.
     /// </summary>
-    internal bool Remove(Target target, byte[] key, int rowPointer)
+    internal bool Remove(Target target, byte[] key, int rowPointer) => Remove(target, key, rowPointer, out _);
+
+    /// <summary>
+    /// <see cref="Remove(Target, byte[], int)"/>, saying in <paramref name="found"/> whether the tree held the entry,
+    /// and so whether it was taken out.
+    /// </summary>
+    internal bool Remove(Target target, byte[] key, int rowPointer, out bool found)
     {
+        found = false;
         var entry = new Entry(key, rowPointer, 0);
         var path  = new List<(IndexPage Node, int Slot)>();   // Slot -1: the node's tail
 
@@ -311,6 +318,7 @@ internal sealed class IndexWriter
         }
         int at = page.Entries.FindIndex(e => Compare(e, entry) == 0);
         if (at < 0) return false;
+        found = true;
         bool another = HasNeighbourUnder(key, page.Entries, at - 1, at + 1, path);
         // Entries are in the order of their keys and then of their rows, so the leaf after this one can begin under
         // the key of this one's last entry: when that is the one taken out, the next leaf's first entry is read too

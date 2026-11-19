@@ -158,8 +158,8 @@ public sealed class AccessEntriesTests : IDisposable
     }
 
     // The child deleted, then the parent: each row's entries go with it, the ones ACE made of the second form found
-    // by the row they point at. Found by this library's key, they were left behind, pointing at no row: ACE then
-    // listed a row that was not there and took a child of it.
+    // by the row they point at, as they are under no key this library makes. Found by this library's key alone,
+    // they were left behind, pointing at no row: ACE then listed a row that was not there and took a child of it.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -175,6 +175,68 @@ public sealed class AccessEntriesTests : IDisposable
         Assert.Empty(EntriesOfNoRow(db, "P"));
         Assert.Equal(new[] { "p1" }, db.GetTable("P").Rows.Select(r => (string)r["Nm"]!));
         Assert.Equal(new[] { 1 }, db.GetTable("C").Rows.Select(r => (int)r["Id"]!));
+        // And nothing of the rows left went with them: p1 and child 1, in ACE's first form, keep their entries.
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "P", expectedRows: 1);
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "C", expectedRows: 1);
+    }
+
+    // A row whose Date/Time Extended value is in the form this library writes - as ACE's INSERT writes it - is found
+    // under this library's key, as a row of any other type is: deleting it, or rewriting a column no index has,
+    // reads what it does for a Date/Time row, a page more at most for the longer key, however large the table. With
+    // the leaves walked for every such row, a delete read them all: 22 pages against 6 at 1,000 rows, 1,572 against
+    // 8 at 100,000.
+    [Fact]
+    public void A_row_under_the_key_this_library_makes_is_deleted_and_rewritten_for_what_a_Date_Time_row_costs()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"access_entries_{Guid.NewGuid():N}.accdb");
+        _paths.Add(path);
+        using var db = Database.Create(path, FileFormat.Access2016);
+        ColumnDefinition[] Columns(DataType type) => new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", type),
+            new ColumnDefinition("Nt", DataType.Text) { MaxLength = 20 },
+        };
+        var extended = db.CreateTable("TE", Columns(DataType.DateTimeExtended), new[] { "Id" }, new[] { new IndexDefinition("ByD", "D") });
+        var plain = db.CreateTable("TD", Columns(DataType.DateTime), new[] { "Id" }, new[] { new IndexDefinition("ByD", "D") });
+        const int Rows = 5_000;
+        var start = new DateTime(2020, 1, 1);
+        for (int i = 0; i < Rows; i++)
+        {
+            extended.Insert(new Row { ["Id"] = i, ["D"] = start.AddSeconds(i * 37), ["Nt"] = "n" });
+            plain.Insert(new Row { ["Id"] = i, ["D"] = start.AddSeconds(i * 37), ["Nt"] = "n" });
+        }
+        int leaves = JetPages.TreePages(db.File, extended.Indexes.Single(ix => ix.Name == "ByD").RootPageNumber).Count(p => p.IsLeaf);
+        Assert.True(leaves > 50, $"the index on D has {leaves} leaves, too few to show them all read");
+
+        Dictionary<int, int> Pointers(Table table)
+        {
+            var pointers = new Dictionary<int, int>();
+            var cursor = table.CreateCursor();
+            while (cursor.MoveNext()) pointers[(int)cursor.Current!["Id"]!] = cursor.CurrentRowPointer;
+            return pointers;
+        }
+        long Reads(Action change)
+        {
+            long before = db.File.ReadCount;
+            change();
+            return db.File.ReadCount - before;
+        }
+
+        var (e, d) = (Pointers(extended), Pointers(plain));
+        for (int id = Rows / 2; id < Rows / 2 + 20; id++)
+        {
+            long extendedReads = Reads(() => extended.RewriteRowAt(e[id], new Row { ["Nt"] = "changed" }));
+            long plainReads = Reads(() => plain.RewriteRowAt(d[id], new Row { ["Nt"] = "changed" }));
+            Assert.True(extendedReads <= plainReads + 1, $"rewriting row {id} read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        (e, d) = (Pointers(extended), Pointers(plain));
+        for (int id = Rows / 4; id < Rows / 4 + 20; id++)
+        {
+            long extendedReads = Reads(() => extended.DeleteRowAt(e[id]));
+            long plainReads = Reads(() => plain.DeleteRowAt(d[id]));
+            Assert.True(extendedReads <= plainReads + 1, $"deleting row {id} read {extendedReads} pages, a Date/Time row {plainReads}");
+        }
+        Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "TE", expectedRows: Rows - 20));
     }
 
     // ── Entries an earlier version left ─────────────────────────────────────
