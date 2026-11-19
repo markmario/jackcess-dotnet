@@ -83,10 +83,14 @@
          RS0022: a constructor that would let a caller derive from a class.
          RS0024/RS0025/RS0048/RS0050: the files themselves are wrong. -->
     <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017;RS0022;RS0024;RS0025;RS0036;RS0037;RS0041;RS0048;RS0050</WarningsAsErrors>
-    <!-- RS0026/RS0027 object to overloads with optional parameters, which the API
-         as recorded already has (ImportTable and the importer's Create methods): they
-         would report every build without saying anything about a change. -->
-    <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
+  </PropertyGroup>
+
+  <!-- Every public type and member has XML documentation, and the package carries it as
+       JackcessDotNet.xml beside each assembly, which is where an editor's IntelliSense reads it.
+       CS1591: a public type or member without documentation fails the build. -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
   </PropertyGroup>
 
   <!-- net472 support: framework references plus packages backfilling BCL types

@@ -1,15 +1,21 @@
 namespace JackcessDotNet;
 
 /// <summary>
-/// Cursor that supports key-based row lookup, made by <see cref="Table.CreateIndexCursor()"/>. To find a row by
-/// its primary key, <see cref="Table.FindRowByPrimaryKey"/> does it in one call.
-///
-/// Lookup strategy:
-///   1. The primary key, when its keys are ones this library makes: through
-///      <see cref="IndexWriter"/>'s walk of the tree, whoever wrote it.
-///   2. Otherwise an index on disk whose keys <see cref="IndexReader"/> makes.
-///   3. Otherwise a forward table scan that compares column values: an index whose
-///      keys cannot be made (a text index in another sort order) is not trusted.
+/// A cursor that also finds a row by the values it has in indexed columns: made by
+/// <see cref="Table.CreateIndexCursor()"/> for the table's primary key, or by
+/// <see cref="Table.CreateIndexCursor(string)"/> for the index of a name. To find a row by its primary key,
+/// <see cref="Table.FindRowByPrimaryKey"/> does it in one call.
+/// <para>
+/// A row is found through an index when the index's keys are ones this library makes, whoever wrote the index.
+/// Otherwise - a text index in a sort order other than General - Legacy and General, a column with no index -
+/// the table is read from its first row and each row's values are compared. Either way a row is compared with
+/// the values asked for before it is returned, and a null is never a match: a row with no value in a column is
+/// not found by looking for null.
+/// </para>
+/// <para>
+/// A lookup made through an index does not move the cursor. One that reads the table does: the cursor is left
+/// on the row found, or after the last row when there is none.
+/// </para>
 /// </summary>
 public sealed class IndexCursor : Cursor
 {
@@ -49,8 +55,18 @@ public sealed class IndexCursor : Cursor
     /// <summary>
     /// Finds the first row where <paramref name="columnName"/> equals <paramref name="value"/>, or null when
     /// there is none. Uses the primary key, or another index on the column alone, when its keys are ones this
-    /// library makes; otherwise reads the table from its first row.
+    /// library makes - whichever index the cursor was made for; otherwise reads the table from its first row.
+    /// <para>
+    /// Text is matched exactly, a number with a number of another type that is equal to it, and a Double or a
+    /// Single by its bits.
+    /// </para>
     /// </summary>
+    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
+    /// <param name="value">The value to look for. Null finds no row.</param>
+    /// <returns>
+    /// The row, with an entry for every column of the table, or null when no row has the value in that column,
+    /// or the table has no column of that name.
+    /// </returns>
     public Row? FindRow(string columnName, object? value)
     {
         // Fast path #1: the primary key, through IndexWriter's own walk of the tree (prefix-compressed
@@ -144,7 +160,17 @@ public sealed class IndexCursor : Cursor
     /// <paramref name="entryValues"/>, or null when there is none: a lookup by a key of several columns. Uses
     /// the index when its keys are ones this library makes; otherwise reads the table from its first row.
     /// Jackcess's <c>findRowByEntry</c>.
+    /// <para>
+    /// A cursor made for an index by name (<see cref="Table.CreateIndexCursor(string)"/>) looks in that index
+    /// when there are as many values as it has columns. Otherwise, and for a cursor made for the primary key
+    /// (<see cref="Table.CreateIndexCursor()"/>), the values are matched against the first of the table's
+    /// indexes (<see cref="Table.Indexes"/>) that has that many columns, and when the table has none, against
+    /// the table's first columns in their order.
+    /// </para>
     /// </summary>
+    /// <param name="entryValues">The values to look for, in the order of the index's columns. A null among them finds no row.</param>
+    /// <returns>The row, with an entry for every column of the table, or null when no row has those values.</returns>
+    /// <exception cref="ArgumentException"><paramref name="entryValues"/> is null or has no values.</exception>
     public Row? FindRowByEntry(params object?[] entryValues)
     {
         if (entryValues is null || entryValues.Length == 0)
@@ -225,7 +251,7 @@ public sealed class IndexCursor : Cursor
     /// <summary>
     /// Sanity-checks that <paramref name="pageNumber"/> points at a data page (type 0x01)
     /// within file bounds. Returns false on any error so spurious rowPtrs from
-    /// compressed Access leaves can't crash <see cref="ReadRowAt"/>.
+    /// compressed Access leaves can't crash <see cref="Cursor.ReadRowAt"/>.
     /// </summary>
     private bool IsLikelyDataPage(int pageNumber)
     {

@@ -1,10 +1,12 @@
+using JackcessDotNet.Diagnostics;
 using JackcessDotNet.Util;
 
 namespace JackcessDotNet;
 
 /// <summary>
 /// A table of an open database: its columns and indexes, its rows to read, and the operations that insert,
-/// update and delete them. Got from <see cref="Database.GetTable"/> or <see cref="Database.CreateTable"/>; a
+/// update and delete them. Got from <see cref="Database.GetTable"/> or
+/// <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/>; a
 /// table is one object for as long as its database is open.
 /// </summary>
 public sealed class Table
@@ -437,6 +439,15 @@ public sealed class Table
     /// <see cref="AllowAutoNumberInsert"/> lets a row bring its own, when a Long one past the table's counter
     /// moves the counter up to it.
     /// </summary>
+    /// <param name="primaryKeyValue">The value the row has in the primary key's column.</param>
+    /// <param name="newValues">
+    /// The values to give the row, by column name. A column it does not name keeps the value it has.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="newValues"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// No row has that primary key, or the table's primary key is not one column: it has none, or one of
+    /// several columns. Nothing is written.
+    /// </exception>
     /// <exception cref="ConstraintViolationException">
     /// The updated row would be a duplicate of another in the primary key or another unique index, or has a null
     /// in a column of the primary key or of an index that requires its values. The row is left as it was.
@@ -499,6 +510,7 @@ public sealed class Table
         private IReadOnlyList<TableIndexes.Entry> _old = Array.Empty<TableIndexes.Entry>();
         private IReadOnlyList<TableIndexes.Entry> _new = Array.Empty<TableIndexes.Entry>();
 
+        /// <param name="indexes">The table's indexes, whose entries move.</param>
         /// <param name="refuseDuplicates">
         /// Whether a duplicate in a unique index is looked for in the file. The foreign-key enforcer has looked
         /// already, among the rows as its whole change leaves them: the file, part-way through that change, can
@@ -560,6 +572,12 @@ public sealed class Table
     /// Any LVAL page chains held by the deleted row are freed and their space is reclaimed.
     /// The TDEF row count is decremented by one, and the row's entries leave the table's indexes.
     /// </summary>
+    /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
+    /// <param name="value">The value the row to delete has in that column.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="columnName"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The table has no column of that name, or no row has the value in it. Nothing is deleted.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
     /// 97 file, which is only read. Nothing is deleted.
@@ -589,35 +607,10 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Lists the Decimal (Numeric) values in the table whose stored number has more digits than their column's
-    /// precision allows. Nothing is changed, in the file or in what a read returns: this is a way to look for
-    /// values a version of this library before qcatco/exportmdb.interop#61 wrote.
-    /// <para>
-    /// Those versions wrote a Decimal's sixteen bytes in an order Access does not use, so every value they wrote
-    /// reads as a different number - a 1 as 16,777,216 - in Access and, now, here. Nothing in the file says who
-    /// wrote a value. What can be seen is a value its column could not have been given: Access refuses a number
-    /// with more digits than the column's precision, and so does this library, so one that reads that way was
-    /// almost certainly written in the earlier order, and <see cref="DecimalBeyondPrecision.ValueInEarlierByteOrder"/>
-    /// is what it was meant to be.
-    /// </para>
-    /// <para>
-    /// It finds some such values, not all, and how many depends on the precision. A number under 4,294,967,296
-    /// (before its decimal point is placed) written in the earlier order reads as one of at most ten digits, at
-    /// least eight when it is not a multiple of 256. So in a column of precision 7 or less every such number that
-    /// is not a multiple of 256 is listed; of precision 8 or 9, some are; and of precision 10 or more - 18 is what
-    /// Access and this library give a column by default - none is, and only numbers of ten digits or more can be.
-    /// A table with nothing listed may still hold values written in the earlier order.
-    /// </para>
-    /// <para>
-    /// A stored number that runs past 96 bits is always listed: it is past every precision, and Access writes
-    /// none. A read gives its low 96 bits, as Access does (<see cref="DecimalBeyondPrecision.IsCut"/>), and those
-    /// can be a number the column would hold - the listing says what the row holds, not only how it reads.
-    /// </para>
-    /// <para>
-    /// The table is read as it is asked for, a row at a time. A calculated column is not looked at.
-    /// </para>
+    /// The table's Decimal values whose stored number has more digits than their column's precision allows:
+    /// what <see cref="DecimalByteOrder.Find(Table)"/> lists, where it is described.
     /// </summary>
-    public IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
+    internal IEnumerable<DecimalBeyondPrecision> FindDecimalsBeyondPrecision()
     {
         var decimals = _definition.Columns
             .Where(c => c.DataType == DataType.Decimal && !c.IsCalculated && c.Precision > 0)

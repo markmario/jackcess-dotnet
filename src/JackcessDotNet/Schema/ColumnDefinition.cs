@@ -18,8 +18,13 @@ public sealed class ColumnDefinition
     // The longest name Access gives a field.
     private const int MaxNameLength = 64;
 
+    /// <summary>
+    /// Describes a column of a name and a type. The name's length is checked when a table is made with the
+    /// definition, not here.
+    /// </summary>
     /// <param name="name">The column's name: 1 to 64 characters, unique among the table's columns.</param>
     /// <param name="dataType">The column's type.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
     public ColumnDefinition(string name, DataType dataType)
     {
         Name     = name ?? throw new ArgumentNullException(nameof(name));

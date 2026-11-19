@@ -5,52 +5,63 @@ using System.Reflection;
 namespace JackcessDotNet;
 
 /// <summary>
-/// High-level read helpers that materialise an Access table into a
-/// <see cref="DataTable"/>, every user table into a <see cref="DataSet"/>,
-/// or an <c>IEnumerable&lt;T&gt;</c> of POCO instances. Counterpart to
-/// <see cref="DatabaseImporter"/>.
-///
-/// <para>Type mapping (Jet → CLR) mirrors what <see cref="Table.Rows"/>
-/// already produces — Boolean→bool, Int→short, Long→int, Money/Numeric→decimal,
-/// Date/Time→DateTime, Text/Memo→string, Binary/OLE Object→byte[], Guid→Guid.</para>
-///
-/// <para>The <c>IEnumerable&lt;T&gt;</c> path matches Access columns to
-/// public writable properties on <c>T</c> by name (case-insensitive).
-/// <see cref="ColumnAttribute"/> renames; <see cref="NotMappedAttribute"/> skips;
-/// Nullable / enum / <see cref="DateTimeOffset"/> properties are coerced
-/// from the underlying boxed value.  Columns with no matching property are
-/// silently ignored, and properties whose column is missing keep their default.</para>
+/// Reads a table into a <see cref="DataTable"/>, every table of a database into a <see cref="DataSet"/>, or a
+/// table's rows into objects of a type: the counterpart of <see cref="DatabaseImporter"/>.
+/// <para>
+/// A value has the CLR type a row read from the table gives it (<see cref="Table.Rows"/>):
+/// <see cref="DataType.Boolean"/> is <see cref="bool"/>; <see cref="DataType.Byte"/> is <see cref="byte"/>;
+/// <see cref="DataType.Int16"/> is <see cref="short"/>; <see cref="DataType.Int32"/> is <see cref="int"/>;
+/// <see cref="DataType.Int64"/> is <see cref="long"/>; <see cref="DataType.Single"/> is <see cref="float"/>;
+/// <see cref="DataType.Double"/> is <see cref="double"/>; <see cref="DataType.Currency"/> and
+/// <see cref="DataType.Decimal"/> are <see cref="decimal"/>; <see cref="DataType.DateTime"/> and
+/// <see cref="DataType.DateTimeExtended"/> are <see cref="DateTime"/>; <see cref="DataType.Text"/> and
+/// <see cref="DataType.Memo"/> are <see cref="string"/>; <see cref="DataType.Binary"/> and
+/// <see cref="DataType.OleObject"/> are <c>byte[]</c>; <see cref="DataType.Guid"/> is
+/// <see cref="Guid"/>.
+/// </para>
 /// </summary>
 public static class DatabaseExporter
 {
     // ── DataTable / DataSet ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Reads <paramref name="tableName"/> in full and returns it as an
-    /// in-memory <see cref="DataTable"/>. The PK (when present and single-column)
-    /// is set on <see cref="DataTable.PrimaryKey"/>; column <see cref="DataColumn.MaxLength"/>
-    /// is filled in for Text columns.
+    /// Reads the whole table into a new <see cref="DataTable"/> of the table's name, with a column for each of
+    /// the table's columns, in their order, and a row for each of its rows.
+    /// <para>
+    /// A <see cref="DataColumn"/> has its column's name and the CLR type of its values; a Text column's length
+    /// in characters is its <see cref="DataColumn.MaxLength"/>. A null is <see cref="DBNull.Value"/>. Every
+    /// column allows nulls, whether or not the table's column is required. When the table's primary key is one
+    /// column and no row has a null in it, that column is the <see cref="DataTable.PrimaryKey"/>; a primary key
+    /// of several columns is not carried over. The rows are accepted: each is
+    /// <see cref="DataRowState.Unchanged"/>.
+    /// </para>
     /// </summary>
-    public static DataTable ExportToDataTable(this Database db, string tableName)
+    /// <param name="table">The table to read.</param>
+    /// <returns>A <see cref="DataTable"/> holding the table's rows, which the caller owns.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="table"/> is null.</exception>
+    public static DataTable ToDataTable(this Table table)
     {
-        if (db is null)        throw new ArgumentNullException(nameof(db));
-        if (string.IsNullOrWhiteSpace(tableName))
-            throw new ArgumentException("Table name must not be empty.", nameof(tableName));
+        if (table is null) throw new ArgumentNullException(nameof(table));
 
-        return BuildDataTable(db.GetTable(tableName));
+        return BuildDataTable(table);
     }
 
     /// <summary>
-    /// Reads every user table (and optionally system tables) into a single
-    /// <see cref="DataSet"/>. Tables are named after the Access table name.
+    /// Reads every table of the database - not its system tables - into a new <see cref="DataSet"/>: a
+    /// <see cref="DataTable"/> for each, as <see cref="ToDataTable"/> makes it, in the order
+    /// <see cref="Database.GetTableNames"/> names them. The database's relationships are not carried over.
     /// </summary>
-    public static DataSet ExportToDataSet(this Database db, bool includeSystem = false)
+    /// <param name="database">The database to read.</param>
+    /// <returns>A <see cref="DataSet"/> holding the tables, which the caller owns.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="database"/> is null.</exception>
+    /// <exception cref="ObjectDisposedException"><paramref name="database"/> is disposed.</exception>
+    public static DataSet ToDataSet(this Database database)
     {
-        if (db is null) throw new ArgumentNullException(nameof(db));
+        if (database is null) throw new ArgumentNullException(nameof(database));
 
         var ds = new DataSet();
-        foreach (var name in db.Catalog.GetTableNames(includeSystem))
-            ds.Tables.Add(BuildDataTable(db.GetTable(name)));
+        foreach (var name in database.GetTableNames())
+            ds.Tables.Add(BuildDataTable(database.GetTable(name)));
         return ds;
     }
 
@@ -107,17 +118,36 @@ public static class DatabaseExporter
     // ── IEnumerable<T> ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Streams <paramref name="tableName"/> as <c>T</c> instances.
-    /// Table name defaults to <c>typeof(T).Name</c>.
-    /// Rows are yielded lazily — keeps memory bounded for large tables and
-    /// lets the caller stop early via <c>Take</c>/<c>FirstOrDefault</c>.
+    /// Reads the table's rows as objects of <typeparamref name="T"/>, one for each row, in the order of
+    /// <see cref="Table.Rows"/>.
+    /// <para>
+    /// A column's value is set on the public instance property of its name, whatever its case, or on the one a
+    /// <see cref="ColumnAttribute"/> names for it. A property without a setter, an indexer and a property with
+    /// <see cref="NotMappedAttribute"/> are not set; a column with no such property is not read into anything,
+    /// and a property with no column keeps the value a new <typeparamref name="T"/> gives it, as does one whose
+    /// column is null in the row.
+    /// </para>
+    /// <para>
+    /// A value is converted to its property's type when it is not of that type already: to the underlying type
+    /// of a nullable property; to an enum from its integer; to a <see cref="DateTimeOffset"/> from a
+    /// <see cref="DateTime"/> taken as UTC; to a <see cref="Guid"/> from its text; to a <see cref="string"/> by
+    /// <see cref="object.ToString"/>; and otherwise as <see cref="Convert.ChangeType(object, Type)"/> converts
+    /// it.
+    /// </para>
     /// </summary>
-    public static IEnumerable<T> ExportToCollection<T>(this Database db, string? tableName = null)
+    /// <typeparam name="T">The type of object to make for each row, which has a public parameterless constructor.</typeparam>
+    /// <param name="table">The table to read.</param>
+    /// <returns>
+    /// The objects. The table is read as the result is enumerated, a row at a time, and read again each time it
+    /// is enumerated. Enumerating throws <see cref="InvalidCastException"/>, <see cref="FormatException"/> or
+    /// <see cref="OverflowException"/> at a value that cannot be converted to its property's type.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="table"/> is null.</exception>
+    public static IEnumerable<T> ReadRows<T>(this Table table)
         where T : new()
     {
-        if (db is null) throw new ArgumentNullException(nameof(db));
+        if (table is null) throw new ArgumentNullException(nameof(table));
 
-        var table = db.GetTable(tableName ?? typeof(T).Name);
         return EnumerateAsCollection<T>(table);
     }
 

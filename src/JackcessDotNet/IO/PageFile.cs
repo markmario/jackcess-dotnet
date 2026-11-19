@@ -82,7 +82,7 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Per-page codec applied on every Read/Write. Default is the identity
-    /// (<see cref="NullCodecHandler.Instance"/>); <see cref="Database.Open"/> may
+    /// (<see cref="NullCodecHandler.Instance"/>); <see cref="Database.Open(string)"/> may
     /// install a different one for encrypted files (none implemented today).
     /// </summary>
     public ICodecHandler Codec { get; set; } = NullCodecHandler.Instance;

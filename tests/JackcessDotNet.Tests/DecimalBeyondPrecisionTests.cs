@@ -1,11 +1,12 @@
 using System.IO;
+using JackcessDotNet.Diagnostics;
 using System.Numerics;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// <see cref="Table.FindDecimalsBeyondPrecision"/> and <see cref="Database.FindDecimalsBeyondPrecision"/>: the
+/// <see cref="DecimalByteOrder.Find(Table)"/> and <see cref="DecimalByteOrder.Find(Database)"/>: the
 /// Decimal values that read with more digits than their column holds, which is how a value written by a version of
 /// this library before qcatco/exportmdb.interop#61 can show (qcatco/exportmdb.interop#66).
 /// <para>
@@ -55,6 +56,13 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     }
 
     [Fact]
+    public void a_null_database_or_table_is_refused_at_the_call()
+    {
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DecimalByteOrder.Find((Database)null!)).ParamName);
+        Assert.Equal("table",    Assert.Throws<ArgumentNullException>(() => DecimalByteOrder.Find((Table)null!)).ParamName);
+    }
+
+    [Fact]
     public void a_value_in_the_earlier_byte_order_is_listed_with_the_number_it_was_meant_to_be()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
@@ -69,7 +77,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
 
         using var read = Database.Open(_path);
         var table = read.GetTable("Prices");
-        var found = table.FindDecimalsBeyondPrecision().ToList();
+        var found = DecimalByteOrder.Find(table).ToList();
 
         Assert.Equal(2, found.Count);
         Assert.All(found, f => { Assert.Equal("Prices", f.Table); Assert.Equal("Price", f.Column.Name); Assert.Equal(5, f.Column.Precision); Assert.False(f.IsCut); });
@@ -90,7 +98,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         Assert.All(found, f => Assert.Equal(f.Value, rows[f.RowIndex]["Price"]));
 
         // The database's list is its tables' lists.
-        Assert.Equal(found.Select(f => f.ToString()), read.FindDecimalsBeyondPrecision().Select(f => f.ToString()));
+        Assert.Equal(found.Select(f => f.ToString()), DecimalByteOrder.Find(read).Select(f => f.ToString()));
         Assert.Equal("Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order", found[0].ToString());
     }
 
@@ -106,7 +114,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         StoreInEarlierByteOrder(111.11m, 5, 2, meant: 9.99m);
 
         using var read = Database.Open(_path);
-        var found = Assert.Single(read.FindDecimalsBeyondPrecision());
+        var found = Assert.Single(DecimalByteOrder.Find(read));
 
         Assert.Empty(found.PrimaryKey);
         Assert.Equal(1, found.RowIndex);
@@ -127,7 +135,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         }
 
         using var read = Database.Open(_path);
-        Assert.Empty(read.FindDecimalsBeyondPrecision());
+        Assert.Empty(DecimalByteOrder.Find(read));
     }
 
     /// <summary>
@@ -147,7 +155,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         StoreInEarlierByteOrder(123_456_789m, 18, 0, meant: 1m);
 
         using var read = Database.Open(_path);
-        Assert.Empty(read.FindDecimalsBeyondPrecision());
+        Assert.Empty(DecimalByteOrder.Find(read));
 
         var row = Assert.Single(read.GetTable("Prices").Rows.ToList());
         Assert.Equal(655.36m, row["Price"]);
@@ -168,7 +176,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         StoreInEarlierByteOrder(111.11m, 5, 2, BigInteger.Pow(2, 100), negative: false);
 
         using var read = Database.Open(_path);
-        var found = Assert.Single(read.FindDecimalsBeyondPrecision());
+        var found = Assert.Single(DecimalByteOrder.Find(read));
 
         Assert.Equal(1, found.PrimaryKey["Id"]);
         Assert.True(found.IsCut);
@@ -205,7 +213,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
 
                     seen.Add($"{Path.GetFileName(file)}:{name}");
                     values += table.Rows.Sum(row => decimals.Count(c => row.TryGetValue(c.Name, out var value) && value is not null));
-                    listed.AddRange(table.FindDecimalsBeyondPrecision().Select(f => $"{Path.GetFileName(file)}: {f}"));
+                    listed.AddRange(DecimalByteOrder.Find(table).Select(f => $"{Path.GetFileName(file)}: {f}"));
                 }
             }
         }

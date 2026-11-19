@@ -86,9 +86,6 @@ public sealed class Access97ReadOnlyTests : IDisposable
     public static readonly Dictionary<string, Action<string>> WaysToCreate = new()
     {
         ["Database.Create"]            = path => Database.Create(path, FileFormat.Access97).Dispose(),
-        ["CreateFromDataTable"]        = path => DatabaseImporter.CreateFromDataTable(path, Things("Things"), FileFormat.Access97).Dispose(),
-        ["CreateFromDataSet"]          = path => DatabaseImporter.CreateFromDataSet(path, new DataSet { Tables = { Things("Things") } }, FileFormat.Access97).Dispose(),
-        ["CreateFromCollection"]       = path => DatabaseImporter.CreateFromCollection(path, new[] { new Thing { Id = 1, Name = "one" } }, FileFormat.Access97).Dispose(),
         ["PageFile, FileMode.Create"]  = path => new PageFile(path, JetFormat.Jet3, FileMode.Create).Dispose(),
         ["PageFile, FileMode.CreateNew"] = path => new PageFile(path, JetFormat.Jet3, FileMode.CreateNew).Dispose(),
         ["PageFile, FileMode.OpenOrCreate"] = path => new PageFile(path, JetFormat.Jet3, FileMode.OpenOrCreate, FileAccess.ReadWrite).Dispose(),
@@ -154,9 +151,9 @@ public sealed class Access97ReadOnlyTests : IDisposable
         ["create table with indexes"] = db => db.CreateTable("New", new[] { Long("Id"), Long("N") }, new[] { "Id" }, new[] { new IndexDefinition("ByN", "N") }),
         ["create table with text"]  = db => db.CreateTable("New", new[] { Long("Id"), Text("Name") }),
         ["import a DataTable"]      = db => db.ImportTable(Things("Things")),
-        ["import a DataTable into a table"] = db => db.ImportTable(KeysAsDataTable(), options: new ImportOptions { AppendIfExists = true }),
+        ["import a DataTable into a table"] = db => db.ImportTable(KeysAsDataTable(), new ImportOptions { AppendIfExists = true }),
         ["import a DataSet"]        = db => db.ImportTables(new DataSet { Tables = { Things("Things"), Things("More") } }),
-        ["import a collection"]     = db => db.ImportTable(new[] { new Thing { Id = 1, Name = "one" } }, tableName: "Things"),
+        ["import a collection"]     = db => db.ImportTable(new[] { new Thing { Id = 1, Name = "one" } }, new ImportOptions { TableName = "Things" }),
         // What the public operations come down to, and what the foreign-key enforcer calls.
         ["rewrite a row in place"]  = db => db.GetTable("Keys").RewriteRowAt(FirstRowOf(db, "Keys"), new Row { ["K10"] = 1 }),
         ["delete a row in place"]   = db => db.GetTable("Keys").DeleteRowAt(FirstRowOf(db, "Keys")),

@@ -81,7 +81,7 @@ internal sealed class TableDefinition
     // ── Long-value column usage maps (one per Memo/OLE column) ───────────────
     /// <summary>
     /// Usage-map page numbers for long-value (Memo/OLE) columns, keyed by column name.
-    /// Populated by <see cref="Database.CreateTable"/> before <see cref="Serialize"/> is called.
+    /// Populated by <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> before <see cref="Serialize"/> is called.
     /// </summary>
     public Dictionary<string, LvalUmapRef> LvalColumnUmapPages { get; }
         = new Dictionary<string, LvalUmapRef>(StringComparer.OrdinalIgnoreCase);

@@ -1,8 +1,8 @@
-namespace JackcessDotNet;
+namespace JackcessDotNet.Diagnostics;
 
 /// <summary>
 /// A Decimal (Numeric) value whose stored number has more digits than its column's precision allows: what
-/// <see cref="Table.FindDecimalsBeyondPrecision"/> and <see cref="Database.FindDecimalsBeyondPrecision"/> list.
+/// <see cref="DecimalByteOrder.Find(JackcessDotNet.Table)"/> and <see cref="DecimalByteOrder.Find(Database)"/> list.
 /// Access does not write such a value, and neither does this library, so it is almost certainly one a version of
 /// this library before qcatco/exportmdb.interop#61 wrote, with its bytes in the order those versions used:
 /// <see cref="ValueInEarlierByteOrder"/> is then the number that was meant.
@@ -56,6 +56,13 @@ public sealed class DecimalBeyondPrecision
     /// </summary>
     public decimal? ValueInEarlierByteOrder { get; }
 
+    /// <summary>
+    /// The value in a line of text: its table and column, its row's place and primary key, the number it reads
+    /// as and the number its bytes make in the earlier order, those two written in the invariant culture.
+    /// </summary>
+    /// <returns>
+    /// Text such as <c>Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order</c>.
+    /// </returns>
     public override string ToString()
         => $"{Table}.{Column.Name}, row {RowIndex}" +
            (PrimaryKey.Count > 0 ? $" ({string.Join(", ", PrimaryKey.Select(k => $"{k.Key}={k.Value}"))})" : string.Empty) +

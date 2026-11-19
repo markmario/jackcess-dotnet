@@ -3,15 +3,9 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Sequential row iterator over a single table.
-/// Walks the table's owned-pages usage map and yields decoded rows in physical
-/// (insertion-)order, transparently following LVAL chains for Memo/OLE columns.
-///
-/// State machine:
-///   position = (pageIndex into ownedPages, rowIndex into that page).
-///   MoveBeforeFirst → pageIndex = -1 (so the next MoveNext moves to the first row).
-///   MoveAfterLast   → pageIndex = ownedPages.Count (so the next MovePrevious moves to the last row).
-///
+/// A cursor over the rows of one table, in the order they are stored, which for a table only added to is the
+/// order they were inserted in: made by <see cref="Table.CreateCursor"/>. A new cursor is before the first row.
+/// Deleted rows are passed, and Memo and OLE values are read whole.
 /// <code>
 ///   var cursor = table.CreateCursor();
 ///   while (cursor.MoveNext())
@@ -54,7 +48,7 @@ public class Cursor : IEnumerable<Row>
         MoveBeforeFirst();
     }
 
-    /// <summary>The table this cursor iterates.</summary>
+    /// <summary>The table whose rows the cursor reads.</summary>
     public Table Table => _table;
 
     /// <summary>
@@ -228,6 +222,7 @@ public class Cursor : IEnumerable<Row>
     /// The table's rows from the first: the cursor is put before the first row, then moved through them all.
     /// Enumerating moves the cursor itself, so one cursor is enumerated by one loop at a time.
     /// </summary>
+    /// <returns>An enumerator that reads a row each time it is moved, and leaves the cursor after the last row.</returns>
     public IEnumerator<Row> GetEnumerator()
     {
         MoveBeforeFirst();

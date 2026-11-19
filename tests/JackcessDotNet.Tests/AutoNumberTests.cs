@@ -344,11 +344,11 @@ public sealed class AutoNumberTests : IDisposable
         var table = db.ImportTable(PeopleCountingFrom(1, "A", "B"));
 
         // A second batch that counts from 1 again: its numbers are the table's, not its own.
-        db.ImportTable(PeopleCountingFrom(1, "C", "D"), options: new ImportOptions { AppendIfExists = true });
+        db.ImportTable(PeopleCountingFrom(1, "C", "D"), new ImportOptions { AppendIfExists = true });
         Assert.Equal(new[] { 1, 2, 3, 4 }, Ids(table));
 
         // Rows other tables refer to keep the numbers they came with.
-        db.ImportTable(PeopleCountingFrom(100, "E", "F"), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        db.ImportTable(PeopleCountingFrom(100, "E", "F"), new ImportOptions { AppendIfExists = true, KeepIdentity = true });
         Assert.Equal(new[] { 1, 2, 3, 4, 100, 101 }, Ids(table));
         Assert.Equal(101, table.LastAutoNumber);
         Assert.Null(table.AllowAutoNumberInsert);
@@ -361,7 +361,7 @@ public sealed class AutoNumberTests : IDisposable
         var table = db.ImportTable(new[] { new Person { Name = "A" } });
 
         db.ImportTable(new[] { new Person { Id = 50, Name = "B" }, new Person { Name = "C" } },
-            options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+            new ImportOptions { AppendIfExists = true, KeepIdentity = true });
 
         Assert.Equal(new[] { 1, 50, 51 }, Ids(table));
     }
@@ -520,7 +520,7 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(People(0, 0));
 
-        db.ImportTable(People(brought), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        db.ImportTable(People(brought), new ImportOptions { AppendIfExists = true, KeepIdentity = true });
 
         Assert.Equal(expected, Ids(table));
         AssertKeyFindsEveryRow(table);
@@ -534,7 +534,7 @@ public sealed class AutoNumberTests : IDisposable
         long length = new FileInfo(_path).Length;
 
         var refused = Assert.Throws<ConstraintViolationException>(() => db.ImportTable(People(0, 9, 2),
-            options: new ImportOptions { AppendIfExists = true, KeepIdentity = true }));
+            new ImportOptions { AppendIfExists = true, KeepIdentity = true }));
 
         Assert.Contains("another row holds 2 for Id", refused.Message);   // the refusal an insert of the row would be
         Assert.Equal(new[] { 1, 2 }, Ids(table));
@@ -576,7 +576,7 @@ public sealed class AutoNumberTests : IDisposable
         var table = db.ImportTable(PeopleNumbered(null, 1, null));
         Assert.Equal(new[] { 2, 1, 3 }, Ids(table));
 
-        db.ImportTable(PeopleNumbered(null, 10), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        db.ImportTable(PeopleNumbered(null, 10), new ImportOptions { AppendIfExists = true, KeepIdentity = true });
         Assert.Equal(new[] { 2, 1, 3, 11, 10 }, Ids(table));
         Assert.Equal(11, table.LastAutoNumber);
     }
@@ -590,11 +590,11 @@ public sealed class AutoNumberTests : IDisposable
         db.AllowAutoNumberInsert = true;
         var table = db.ImportTable(People(1));
 
-        var appended = db.ImportTable(People(1, 2), options: new ImportOptions { AppendIfExists = true, KeepIdentity = false });
+        var appended = db.ImportTable(People(1, 2), new ImportOptions { AppendIfExists = true, KeepIdentity = false });
         Assert.Equal(new[] { 1, 2, 3 }, Ids(table));
         Assert.Null(appended.AllowAutoNumberInsert);
 
-        db.ImportTable(PeopleCountingFrom(1, "X"), tableName: "Person", options: new ImportOptions { AppendIfExists = true });
+        db.ImportTable(PeopleCountingFrom(1, "X"), new ImportOptions { TableName = "Person", AppendIfExists = true });
         Assert.Equal(new[] { 1, 2, 3, 4 }, Ids(table));
         AssertKeyFindsEveryRow(table);
     }
@@ -607,8 +607,8 @@ public sealed class AutoNumberTests : IDisposable
         using var db = Database.Create(_path, FileFormat.Access2000);
         var table = db.ImportTable(People(1));
 
-        var kept = db.ImportTable(People(40), options: new ImportOptions { AppendIfExists = true, KeepIdentity = true });
-        var numbered = db.ImportTable(People(40), options: new ImportOptions { AppendIfExists = true, KeepIdentity = false });
+        var kept = db.ImportTable(People(40), new ImportOptions { AppendIfExists = true, KeepIdentity = true });
+        var numbered = db.ImportTable(People(40), new ImportOptions { AppendIfExists = true, KeepIdentity = false });
 
         Assert.Equal(new[] { 1, 40, 41 }, Ids(table));
         Assert.Null(kept.AllowAutoNumberInsert);

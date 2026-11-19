@@ -6,117 +6,113 @@ using System.Reflection;
 namespace JackcessDotNet;
 
 /// <summary>
-/// High-level import helpers that turn a <see cref="DataTable"/>, <see cref="DataSet"/>,
-/// or any <c>IEnumerable&lt;T&gt;</c> into a fully-populated Access table without the
-/// caller having to spell out a <see cref="ColumnDefinition"/> per column.
-///
-/// Schema is inferred via <see cref="TypeMapper"/>:
-/// <list type="bullet">
-///   <item><see cref="DataTable"/> — uses <c>DataColumn.DataType</c>, <c>MaxLength</c>,
-///         <c>AllowDBNull</c>, and the <c>PrimaryKey</c> array.</item>
-///   <item><see cref="DataSet"/> — calls <see cref="ImportTable(Database, DataTable, string?, string?)"/>
-///         once per table; respects <c>DataSet.Relations</c> only as table iteration
-///         order (relationship rows aren't written to MSysRelationships yet).</item>
-///   <item><c>IEnumerable&lt;T&gt;</c> — reflects over public instance properties of
-///         <c>T</c>. <see cref="MaxLengthAttribute"/> sets Text length;
-///         <see cref="KeyAttribute"/> picks the primary key;
-///         <see cref="NotMappedAttribute"/> skips a property;
-///         <see cref="ColumnAttribute"/> renames a property;
-///         <see cref="TableAttribute"/> renames the table (overridden by the
-///         <c>tableName</c> parameter; <c>Schema</c> is ignored).</item>
-/// </list>
-///
-/// Properties / DataColumns of unmappable types are skipped with a warning logged via
-/// the optional <see cref="ImportOptions.OnUnmappableColumn"/> callback — no exception
-/// is thrown so legacy <c>DataTable</c>s with object/Type-typed columns don't blow up.
+/// Imports a <see cref="DataTable"/>, the tables of a <see cref="DataSet"/> or a sequence of objects into a
+/// <see cref="Database"/>: a table is created with columns worked out from the source, and the source's rows are
+/// inserted into it.
+/// <para>
+/// A column's type follows the CLR type of the source's column or property. <see cref="bool"/> is
+/// <see cref="DataType.Boolean"/>; <see cref="byte"/> and <see cref="sbyte"/> are <see cref="DataType.Byte"/>;
+/// <see cref="short"/> and <see cref="ushort"/> are <see cref="DataType.Int16"/>; <see cref="int"/>,
+/// <see cref="uint"/>, <see cref="long"/> and <see cref="ulong"/> are <see cref="DataType.Int32"/>;
+/// <see cref="float"/> is <see cref="DataType.Single"/>; <see cref="double"/> is <see cref="DataType.Double"/>;
+/// <see cref="decimal"/> is <see cref="DataType.Currency"/>; <see cref="DateTime"/> and
+/// <see cref="DateTimeOffset"/> are <see cref="DataType.DateTime"/>, a <see cref="DateTimeOffset"/> stored as its
+/// UTC date and time; <see cref="Guid"/> is <see cref="DataType.Guid"/>. A <see cref="string"/> or a
+/// <see cref="char"/> is <see cref="DataType.Text"/> of the source's maximum length, 255 characters when it has
+/// none, and <see cref="DataType.Memo"/> when that length is more than 255. A <c>byte[]</c> is
+/// <see cref="DataType.Binary"/> of the source's maximum length, 50 bytes when it has none, and
+/// <see cref="DataType.OleObject"/> when that length is more than 255. A nullable type is its underlying type,
+/// and an enum its underlying integer type. A value that does not fit its column's type - a <see cref="long"/>
+/// beyond a 32-bit integer - stops the import at its row, with <see cref="OverflowException"/>.
+/// </para>
+/// <para>
+/// A column or property of any other type is left out, unless
+/// <see cref="ImportOptions.FallbackUnmappableToString"/> has it stored as text;
+/// <see cref="ImportOptions.OnUnmappableColumn"/> is called for each either way.
+/// </para>
+/// <para>
+/// A table that is already there is refused, unless <see cref="ImportOptions.AppendIfExists"/> has the rows
+/// added to it. Rows are inserted one at a time, each checked as <see cref="Table.Insert"/> checks it: when a
+/// row is refused, the table and the rows inserted before it stay.
+/// </para>
 /// </summary>
 public static class DatabaseImporter
 {
-    // ── Static factories ─────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Creates a fresh .mdb at <paramref name="path"/> and imports
-    /// <paramref name="table"/> into it. Returns the open database — caller owns
-    /// the disposal.
-    /// </summary>
-    public static Database CreateFromDataTable(
-        string path, DataTable table, FileFormat version = FileFormat.Access2000,
-        string? tableName = null, string? primaryKey = null,
-        ImportOptions? options = null)
-    {
-        var db = Database.Create(path, version);
-        try
-        {
-            db.ImportTable(table, tableName, primaryKey, options);
-            return db;
-        }
-        catch
-        {
-            db.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Creates a fresh .mdb at <paramref name="path"/> and imports every
-    /// <see cref="DataTable"/> in <paramref name="dataSet"/>.
-    /// </summary>
-    public static Database CreateFromDataSet(
-        string path, DataSet dataSet, FileFormat version = FileFormat.Access2000,
-        ImportOptions? options = null)
-    {
-        var db = Database.Create(path, version);
-        try
-        {
-            db.ImportTables(dataSet, options);
-            return db;
-        }
-        catch
-        {
-            db.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Creates a fresh .mdb at <paramref name="path"/> and imports
-    /// <paramref name="items"/> as a single table.
-    /// </summary>
-    public static Database CreateFromCollection<T>(
-        string path, IEnumerable<T> items, FileFormat version = FileFormat.Access2000,
-        string? tableName = null, string? primaryKey = null,
-        ImportOptions? options = null)
-    {
-        var db = Database.Create(path, version);
-        try
-        {
-            db.ImportTable(items, tableName, primaryKey, options);
-            return db;
-        }
-        catch
-        {
-            db.Dispose();
-            throw;
-        }
-    }
-
     // ── Extension methods on Database ────────────────────────────────────────
 
     /// <summary>
-    /// Imports <paramref name="table"/> into the database. The Access table is
-    /// named after <paramref name="tableName"/> if supplied, otherwise
-    /// <c>DataTable.TableName</c>, falling back to <c>"Table1"</c>.
+    /// Imports a <see cref="DataTable"/> as a table named for it, with its primary key:
+    /// <see cref="ImportTable(Database, DataTable, ImportOptions)"/> with no option set.
     /// </summary>
-    public static Table ImportTable(this Database db, DataTable table,
-        string? tableName = null, string? primaryKey = null,
-        ImportOptions? options = null)
+    /// <param name="database">The database to import into.</param>
+    /// <param name="table">The table to import: its columns and its rows.</param>
+    /// <returns>The table created.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="table"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The database has a table of that name already, or no column of <paramref name="table"/> has a type a
+    /// column of a database can have.
+    /// </exception>
+    public static Table ImportTable(this Database database, DataTable table)
     {
-        if (db is null)    throw new ArgumentNullException(nameof(db));
-        if (table is null) throw new ArgumentNullException(nameof(table));
-        options ??= ImportOptions.Default;
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (table is null)    throw new ArgumentNullException(nameof(table));
+        return ImportDataTable(database, table, new ImportOptions());
+    }
 
-        string name = ResolveTableName(tableName, table.TableName, "Table1");
-        string? pk  = primaryKey ?? InferPrimaryKey(table);
+    /// <summary>
+    /// Imports a <see cref="DataTable"/>: creates a table with a column for each of its columns and inserts its
+    /// rows, or adds its rows to a table that is already there.
+    /// <para>
+    /// The table is named <see cref="ImportOptions.TableName"/>, or else <see cref="DataTable.TableName"/>, or
+    /// else <c>Table1</c>. A column takes its name, its type and - for text and binary - its
+    /// <see cref="DataColumn.MaxLength"/> from the source's column; an <see cref="int"/> column with
+    /// <see cref="DataColumn.AutoIncrement"/> is an AutoNumber. The primary key is
+    /// <see cref="ImportOptions.PrimaryKey"/>, or else the source's <see cref="DataTable.PrimaryKey"/> when that is
+    /// one column; a source key of several columns is not carried over. The table's rows keep the values the
+    /// source has for an AutoNumber column, and the table numbers later rows on from the highest. Rows the
+    /// source has marked deleted are not imported.
+    /// </para>
+    /// <para>
+    /// When the database has a table of that name already - compared without regard to case - and
+    /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
+    /// changed: a source column is matched to the table's column of the same name, whatever its case, its values
+    /// converted to that column's type; a source column the table does not have is left out, and a column of the
+    /// table the source does not have is null in the added rows. <see cref="ImportOptions.PrimaryKey"/> is not
+    /// used. <see cref="ImportOptions.KeepIdentity"/> says whether the rows keep the source's AutoNumber values.
+    /// </para>
+    /// </summary>
+    /// <param name="database">The database to import into.</param>
+    /// <param name="table">The table to import: its columns and its rows.</param>
+    /// <param name="options">How to import it.</param>
+    /// <returns>The table created, or the table the rows were added to.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="database"/>, <paramref name="table"/> or <paramref name="options"/> is null.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="ImportOptions.PrimaryKey"/> names a column the new table does not have, or holds an empty name.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
+    /// no column of <paramref name="table"/> has a type a column of a database can have; or, adding to a table,
+    /// no column of <paramref name="table"/> has the name of one of its columns.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
+    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
+    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    public static Table ImportTable(this Database database, DataTable table, ImportOptions options)
+    {
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (table is null)    throw new ArgumentNullException(nameof(table));
+        if (options is null)  throw new ArgumentNullException(nameof(options));
+        return ImportDataTable(database, table, options);
+    }
+
+    private static Table ImportDataTable(Database db, DataTable table, ImportOptions options)
+    {
+        string name = ResolveTableName(options.TableName, table.TableName, "Table1");
 
         // Pre-existing target: append rows into the existing schema instead of creating.
         if (TableExists(db, name))
@@ -156,7 +152,10 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
 
-        var t = db.CreateTableOf(name, columns, primaryKey: pk);
+        // The key is read here, for a table that is made: rows added to a table that is there take no key,
+        // and the option is not looked at for them.
+        var pk = PrimaryKeyOf(options) ?? InferPrimaryKey(table);
+        var t = db.CreateTableOf(name, columns, pk);
 
         // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the
         // new table takes them as given, and its counter ends at the highest: rows added later, here or in
@@ -184,41 +183,163 @@ public static class DatabaseImporter
     }
 
     /// <summary>
-    /// Imports every <see cref="DataTable"/> in <paramref name="dataSet"/> in
-    /// declaration order. Returns the created <see cref="Table"/>s in the same order.
+    /// Imports every <see cref="DataTable"/> of a <see cref="DataSet"/>, each as a table named for it, with its
+    /// primary key: <see cref="ImportTables(Database, DataSet, ImportOptions)"/> with no option set.
     /// </summary>
-    public static IReadOnlyList<Table> ImportTables(this Database db, DataSet dataSet,
-        ImportOptions? options = null)
+    /// <param name="database">The database to import into.</param>
+    /// <param name="dataSet">The tables to import.</param>
+    /// <returns>The tables created, in the order the <see cref="DataSet"/> has them.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="dataSet"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The database has a table with the name of one to import already, or no column of one has a type a column
+    /// of a database can have. The tables before it stay.
+    /// </exception>
+    public static IReadOnlyList<Table> ImportTables(this Database database, DataSet dataSet)
     {
-        if (db is null)      throw new ArgumentNullException(nameof(db));
-        if (dataSet is null) throw new ArgumentNullException(nameof(dataSet));
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (dataSet is null)  throw new ArgumentNullException(nameof(dataSet));
+        return ImportDataSet(database, dataSet, new ImportOptions());
+    }
 
+    /// <summary>
+    /// Imports every <see cref="DataTable"/> of a <see cref="DataSet"/>, in the order the <see cref="DataSet"/>
+    /// has them, each as <see cref="ImportTable(Database, DataTable, ImportOptions)"/> imports one. Each table is
+    /// named for its <see cref="DataTable"/> and has that table's primary key. The <see cref="DataSet"/>'s
+    /// relations are not imported.
+    /// <para>
+    /// A table that is refused stops the import, and the tables imported before it stay.
+    /// </para>
+    /// </summary>
+    /// <param name="database">The database to import into.</param>
+    /// <param name="dataSet">The tables to import.</param>
+    /// <param name="options">
+    /// How to import each table. <see cref="ImportOptions.TableName"/> and <see cref="ImportOptions.PrimaryKey"/>
+    /// describe one table and must be null.
+    /// </param>
+    /// <returns>
+    /// The tables created, or added to, in the order the <see cref="DataSet"/> has them: none for a
+    /// <see cref="DataSet"/> without tables.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="database"/>, <paramref name="dataSet"/> or <paramref name="options"/> is null.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="ImportOptions.TableName"/> or <see cref="ImportOptions.PrimaryKey"/> is set. Nothing is imported.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A table is refused as <see cref="ImportTable(Database, DataTable, ImportOptions)"/> refuses one.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">A row breaks a rule of its table.</exception>
+    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
+    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    public static IReadOnlyList<Table> ImportTables(this Database database, DataSet dataSet, ImportOptions options)
+    {
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (dataSet is null)  throw new ArgumentNullException(nameof(dataSet));
+        if (options is null)  throw new ArgumentNullException(nameof(options));
+        if (options.TableName is not null)
+            throw new ArgumentException(
+                "ImportOptions.TableName names one table; each table of a DataSet is named for its DataTable.",
+                nameof(options));
+        if (options.PrimaryKey is not null)
+            throw new ArgumentException(
+                "ImportOptions.PrimaryKey is one table's key; each table of a DataSet has its DataTable's primary key.",
+                nameof(options));
+        return ImportDataSet(database, dataSet, options);
+    }
+
+    private static IReadOnlyList<Table> ImportDataSet(Database db, DataSet dataSet, ImportOptions options)
+    {
         var result = new List<Table>(dataSet.Tables.Count);
         foreach (DataTable dt in dataSet.Tables)
-            result.Add(db.ImportTable(dt, options: options));
+            result.Add(ImportDataTable(db, dt, options));
         return result;
     }
 
     /// <summary>
-    /// Imports <paramref name="items"/> as a new table. Columns are inferred
-    /// from <c>T</c>'s public instance properties — see
-    /// <see cref="DatabaseImporter"/> for attribute handling. The table name
-    /// is taken from <paramref name="tableName"/> if supplied, otherwise from
-    /// <see cref="TableAttribute"/> on <c>T</c>, otherwise from <c>T</c>'s
-    /// CLR name.
+    /// Imports a sequence of objects as a table named for their type, with a column for each property:
+    /// <see cref="ImportTable{T}(Database, IEnumerable{T}, ImportOptions)"/> with no option set.
     /// </summary>
-    public static Table ImportTable<T>(this Database db, IEnumerable<T> items,
-        string? tableName = null, string? primaryKey = null,
-        ImportOptions? options = null)
+    /// <typeparam name="T">The type whose public properties are the table's columns.</typeparam>
+    /// <param name="database">The database to import into.</param>
+    /// <param name="items">The objects to import, each a row. A null among them is passed over.</param>
+    /// <returns>The table created.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="database"/> or <paramref name="items"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The database has a table of that name already, or no property of <typeparamref name="T"/> has a type a
+    /// column of a database can have.
+    /// </exception>
+    public static Table ImportTable<T>(this Database database, IEnumerable<T> items)
     {
-        if (db is null)    throw new ArgumentNullException(nameof(db));
-        if (items is null) throw new ArgumentNullException(nameof(items));
-        options ??= ImportOptions.Default;
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (items is null)    throw new ArgumentNullException(nameof(items));
+        return ImportCollection(database, items, new ImportOptions());
+    }
 
-        // Table name precedence: explicit parameter > [Table("X")] on T > typeof(T).Name.
+    /// <summary>
+    /// Imports a sequence of objects: creates a table with a column for each public property of
+    /// <typeparamref name="T"/> and inserts a row for each object, or adds the rows to a table that is already
+    /// there.
+    /// <para>
+    /// The table is named <see cref="ImportOptions.TableName"/>, or else the name a <see cref="TableAttribute"/>
+    /// on <typeparamref name="T"/> gives (its schema is not used), or else <typeparamref name="T"/>'s own name.
+    /// Every public instance property that can be read is a column, in the order reflection lists them, but an
+    /// indexer and a property with <see cref="NotMappedAttribute"/>. A column is named for its property, or as
+    /// its <see cref="ColumnAttribute"/> names it; <see cref="MaxLengthAttribute"/> is its length, for text and
+    /// binary; and an <see cref="int"/> property with <see cref="DatabaseGeneratedAttribute"/> of
+    /// <see cref="DatabaseGeneratedOption.Identity"/> is an AutoNumber. The primary key is
+    /// <see cref="ImportOptions.PrimaryKey"/>, or else the first property with <see cref="KeyAttribute"/>.
+    /// An AutoNumber property that has a value keeps it; one that is 0 is numbered by the table, past every
+    /// value the objects bring.
+    /// </para>
+    /// <para>
+    /// When the database has a table of that name already - compared without regard to case - and
+    /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
+    /// changed: a property is matched to the table's column of the same name, whatever its case, its values
+    /// converted to that column's type; a property the table has no column for is left out, and a column no
+    /// property matches is null in the added rows. <see cref="ImportOptions.PrimaryKey"/> is not used.
+    /// <see cref="ImportOptions.KeepIdentity"/> says whether the rows keep the objects' AutoNumber values.
+    /// </para>
+    /// </summary>
+    /// <typeparam name="T">The type whose public properties are the table's columns.</typeparam>
+    /// <param name="database">The database to import into.</param>
+    /// <param name="items">
+    /// The objects to import, each a row. A null among them is passed over. They are read once, as the rows are
+    /// inserted.
+    /// </param>
+    /// <param name="options">How to import them.</param>
+    /// <returns>The table created, or the table the rows were added to.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="database"/>, <paramref name="items"/> or <paramref name="options"/> is null.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="ImportOptions.PrimaryKey"/> names a column the new table does not have, or holds an empty name.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The database has a table of that name already and <see cref="ImportOptions.AppendIfExists"/> is not set;
+    /// no property of <typeparamref name="T"/> has a type a column of a database can have; or, adding to a
+    /// table, no property of <typeparamref name="T"/> has the name of one of its columns.
+    /// </exception>
+    /// <exception cref="ConstraintViolationException">
+    /// A row breaks a rule of the table: a duplicate in its primary key or a unique index, a null in a column
+    /// of its primary key or of an index that requires its values, or a foreign key with no row to refer to.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">A text value is longer than its column.</exception>
+    /// <exception cref="NotSupportedException">The database is an Access 97 file, which is only read.</exception>
+    public static Table ImportTable<T>(this Database database, IEnumerable<T> items, ImportOptions options)
+    {
+        if (database is null) throw new ArgumentNullException(nameof(database));
+        if (items is null)    throw new ArgumentNullException(nameof(items));
+        if (options is null)  throw new ArgumentNullException(nameof(options));
+        return ImportCollection(database, items, options);
+    }
+
+    private static Table ImportCollection<T>(Database db, IEnumerable<T> items, ImportOptions options)
+    {
+        // Table name precedence: ImportOptions.TableName > [Table("X")] on T > typeof(T).Name.
         // [Table].Schema is ignored — Access has no schemas.
         string? attrName = typeof(T).GetCustomAttribute<TableAttribute>()?.Name;
-        string name = ResolveTableName(tableName, attrName ?? typeof(T).Name, typeof(T).Name);
+        string name = ResolveTableName(options.TableName, attrName ?? typeof(T).Name, typeof(T).Name);
 
         // Pre-existing target: append rows; bind T's properties to the existing
         // schema by name (case-insensitive). Source properties that don't have
@@ -239,9 +360,9 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"Type '{typeof(T).Name}' has no public properties that map to a Jet type.");
 
-        string? pk  = primaryKey ?? pkFromAttr;
+        var pk = PrimaryKeyOf(options) ?? (pkFromAttr is null ? null : new[] { pkFromAttr });
 
-        var t = db.CreateTableOf(name, columns, primaryKey: pk);
+        var t = db.CreateTableOf(name, columns, pk);
 
         // An identity property that has a value keeps it; one still at 0 - an object the database has yet to
         // number - is numbered by the table.
@@ -263,6 +384,18 @@ public static class DatabaseImporter
         }
         InsertRows(t, Rows(), keepIdentity: true);
         return t;
+    }
+
+    /// <summary>
+    /// The primary key the options ask for: null when they ask for none, and the source's is used; a list
+    /// without names for a table without a primary key.
+    /// </summary>
+    private static IReadOnlyList<string>? PrimaryKeyOf(ImportOptions options)
+    {
+        var key = options.PrimaryKey?.ToList();
+        if (key is not null && key.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("A primary key column name must not be empty.", nameof(options));
+        return key;
     }
 
     // ── Append-into-existing-table helpers ───────────────────────────────────
@@ -475,10 +608,10 @@ public static class DatabaseImporter
         return fallback;
     }
 
-    private static string? InferPrimaryKey(DataTable table)
+    private static IReadOnlyList<string>? InferPrimaryKey(DataTable table)
     {
-        // Only single-column PKs map cleanly onto Jet primary indexes.
-        if (table.PrimaryKey.Length == 1) return table.PrimaryKey[0].ColumnName;
+        // Only a key of one column is carried over.
+        if (table.PrimaryKey.Length == 1) return new[] { table.PrimaryKey[0].ColumnName };
         return null;
     }
 
@@ -529,45 +662,60 @@ public static class DatabaseImporter
 }
 
 /// <summary>
-/// Optional knobs for <see cref="DatabaseImporter"/>. Use the default instance
-/// for "just work" behaviour; supply your own to intercept unmappable columns
-/// or force them through as text instead of dropping.
+/// How <see cref="DatabaseImporter"/> imports a table: its name and primary key, what becomes of a column whose
+/// type a database has no type for, and whether rows are added to a table that is already there. An instance
+/// with nothing set imports a table under the source's name, with the source's primary key, leaves out columns
+/// that have no type, and refuses a table that is already there.
 /// </summary>
 public sealed class ImportOptions
 {
-    /// <summary>Default options: silently drop unmappable columns.</summary>
-    public static ImportOptions Default { get; } = new();
+    /// <summary>Creates options with nothing set.</summary>
+    public ImportOptions()
+    {
+    }
 
     /// <summary>
-    /// Invoked once per column/property whose CLR type can't be represented in
-    /// Jet, *regardless* of <see cref="FallbackUnmappableToString"/>. Receives
-    /// (columnName, clrType). Use this to log or surface the event; the
-    /// disposition (drop vs. fallback) is controlled by the other flag.
+    /// The name of the table to create or add to. When null, empty or white space, the source names the table:
+    /// <see cref="DataTable.TableName"/>, or the type of the objects (see
+    /// <see cref="DatabaseImporter.ImportTable{T}(Database, IEnumerable{T}, ImportOptions)"/>). It describes one
+    /// table, so <see cref="DatabaseImporter.ImportTables(Database, DataSet, ImportOptions)"/> refuses options
+    /// that set it.
     /// </summary>
-    public Action<string, Type>? OnUnmappableColumn { get; init; }
+    public string? TableName { get; set; }
 
     /// <summary>
-    /// When <c>true</c>, columns whose CLR type can't be mapped are stored as
-    /// <see cref="DataType.Memo"/> columns containing <c>value.ToString()</c>
-    /// (null stays null). When <c>false</c> (default), they are dropped.
-    /// Useful for forcing through <see cref="Uri"/>, JSON blobs, or custom
-    /// classes that have a meaningful <c>ToString()</c>.
+    /// The names of the columns of the primary key of a table the import creates, in key order. When null, the
+    /// source says: a <see cref="DataTable"/>'s primary key of one column, or the first property with
+    /// <see cref="KeyAttribute"/>. When it has no names, the table has no primary key, whatever the source has.
+    /// It is not used when rows are added to a table that is already there, and
+    /// <see cref="DatabaseImporter.ImportTables(Database, DataSet, ImportOptions)"/> refuses options that set it.
     /// </summary>
-    public bool FallbackUnmappableToString { get; init; }
+    public IEnumerable<string>? PrimaryKey { get; set; }
 
     /// <summary>
-    /// When <c>true</c> and the import target name already exists in the
-    /// database, the importer appends rows to the existing table instead of
-    /// throwing. Source columns / POCO properties are matched to the existing
-    /// table's columns by name (case-insensitive). Unmatched source columns are
-    /// silently dropped; unmatched target columns are left null on inserted
-    /// rows. The existing table's schema, primary key, and indexes are
-    /// preserved untouched.
-    /// <para>When <c>false</c> (default), importing to a name that already
-    /// exists throws <see cref="InvalidOperationException"/> — matches the
-    /// pre-existing behaviour.</para>
+    /// Called once for each column or property whose CLR type a database has no type for, with the column's name
+    /// and that type, whether the column is then left out or stored as text
+    /// (<see cref="FallbackUnmappableToString"/>). It is not called when rows are added to a table that is
+    /// already there.
     /// </summary>
-    public bool AppendIfExists { get; init; }
+    public Action<string, Type>? OnUnmappableColumn { get; set; }
+
+    /// <summary>
+    /// Whether a column or property whose CLR type a database has no type for is stored as a
+    /// <see cref="DataType.Memo"/> column holding each value's <see cref="object.ToString"/>, a null staying
+    /// null. When <c>false</c>, the default, the column is left out. When rows are added to a table that is
+    /// already there, it applies to a value of such a type bound for a Text or Memo column.
+    /// </summary>
+    public bool FallbackUnmappableToString { get; set; }
+
+    /// <summary>
+    /// Whether the rows are added to the table when the database already has one of the name to import under.
+    /// The table's columns, primary key and indexes are left as they are; columns of the source are matched to
+    /// the table's by name, whatever their case. A column the table does not have is left out, and a column the
+    /// source does not have is null in the added rows. When <c>false</c>, the default, importing under a name a
+    /// table already has throws <see cref="InvalidOperationException"/>.
+    /// </summary>
+    public bool AppendIfExists { get; set; }
 
     /// <summary>
     /// When rows are appended to an existing table (<see cref="AppendIfExists"/>), whether they keep the values
@@ -584,5 +732,5 @@ public sealed class ImportOptions
     /// <para>It decides for the append whatever <see cref="Database.AllowAutoNumberInsert"/> says.</para>
     /// <para>A table the import creates always keeps the source's values: nothing is there to collide with.</para>
     /// </summary>
-    public bool KeepIdentity { get; init; }
+    public bool KeepIdentity { get; set; }
 }

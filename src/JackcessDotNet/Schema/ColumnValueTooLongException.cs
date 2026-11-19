@@ -6,6 +6,13 @@ namespace JackcessDotNet;
 /// </summary>
 public sealed class ColumnValueTooLongException : ArgumentException
 {
+    /// <summary>
+    /// Creates the exception for a value of <paramref name="length"/> characters given to a column that holds
+    /// <paramref name="maxLength"/>. Its <see cref="Exception.Message"/> names the column and both numbers.
+    /// </summary>
+    /// <param name="columnName">The column's name.</param>
+    /// <param name="maxLength">The most characters the column holds.</param>
+    /// <param name="length">The characters the value has.</param>
     public ColumnValueTooLongException(string columnName, int maxLength, int length)
         : base($"Column '{columnName}' holds at most {maxLength} characters; the value has {length}.")
     {

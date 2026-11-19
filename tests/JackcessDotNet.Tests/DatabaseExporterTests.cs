@@ -20,7 +20,7 @@ public sealed class DatabaseExporterTests : IDisposable
     // ── DataTable ────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ExportToDataTable_BasicRoundTrip()
+    public void ToDataTable_BasicRoundTrip()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -37,7 +37,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        DataTable dt = reopen.ExportToDataTable("Customers");
+        DataTable dt = reopen.GetTable("Customers").ToDataTable();
 
         Assert.Equal("Customers", dt.TableName);
         Assert.Equal(5, dt.Columns.Count);
@@ -65,7 +65,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToDataTable_NullValues_BecomeDBNull()
+    public void ToDataTable_NullValues_BecomeDBNull()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -79,7 +79,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var dt = reopen.ExportToDataTable("Things");
+        var dt = reopen.GetTable("Things").ToDataTable();
         var rows = dt.Rows.Cast<DataRow>().OrderBy(r => (int)r["Id"]).ToList();
         Assert.Equal(DBNull.Value, rows[0]["Note"]);
         Assert.Equal("Hi",         rows[1]["Note"]);
@@ -88,7 +88,7 @@ public sealed class DatabaseExporterTests : IDisposable
     // ── DataSet ──────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ExportToDataSet_ReturnsAllUserTables()
+    public void ToDataSet_ReturnsAllUserTables()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -99,7 +99,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        DataSet ds = reopen.ExportToDataSet();
+        DataSet ds = reopen.ToDataSet();
 
         Assert.Equal(2, ds.Tables.Count);
         Assert.NotNull(ds.Tables["A"]);
@@ -109,13 +109,13 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToDataSet_SystemTablesExcludedByDefault()
+    public void ToDataSet_SystemTablesExcludedByDefault()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("UserT", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
-        var ds = reopen.ExportToDataSet();
+        var ds = reopen.ToDataSet();
         Assert.All(ds.Tables.Cast<DataTable>(),
                    dt => Assert.DoesNotContain("MSys", dt.TableName));
     }
@@ -132,7 +132,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_BasicRoundTrip()
+    public void ReadRows_BasicRoundTrip()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -149,7 +149,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<CustomerPoco>().OrderBy(c => c.Id).ToList();
+        var saved = reopen.GetTable(nameof(CustomerPoco)).ReadRows<CustomerPoco>().OrderBy(c => c.Id).ToList();
         Assert.Equal(2, saved.Count);
         Assert.Equal("Ann", saved[0].Name);
         Assert.Equal(new DateTime(2024,1,1), saved[0].Joined);
@@ -159,22 +159,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_DefaultsToTypeName_WhenTableNameOmitted()
-    {
-        using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("CustomerPoco", new[]
-            {
-                new ColumnDefinition("Id", DataType.Int32)
-            }).Insert(new Row { ["Id"] = 42 });
-
-        using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<CustomerPoco>().ToList();
-        Assert.Single(saved);
-        Assert.Equal(42, saved[0].Id);
-    }
-
-    [Fact]
-    public void ExportToCollection_ExplicitTableName_OverridesTypeName()
+    public void ReadRows_ReadsTheTableItIsCalledOn_WhateverItsName()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("OtherName", new[]
@@ -183,7 +168,7 @@ public sealed class DatabaseExporterTests : IDisposable
             }).Insert(new Row { ["Id"] = 7 });
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<CustomerPoco>("OtherName").ToList();
+        var saved = reopen.GetTable("OtherName").ReadRows<CustomerPoco>().ToList();
         Assert.Equal(7, saved.Single().Id);
     }
 
@@ -200,7 +185,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_RespectsColumnAndNotMapped_AndExtraPropertyStaysDefault()
+    public void ReadRows_RespectsColumnAndNotMapped_AndExtraPropertyStaysDefault()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -214,7 +199,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<RenamedColumnPoco>("Renamed").Single();
+        var saved = reopen.GetTable("Renamed").ReadRows<RenamedColumnPoco>().Single();
 
         Assert.Equal(5,    saved.Key);
         Assert.Equal("X",  saved.Name);
@@ -232,7 +217,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_NullableProperties_RoundTrip()
+    public void ReadRows_NullableProperties_RoundTrip()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -248,7 +233,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<NullableValuesPoco>().OrderBy(c => c.Id).ToList();
+        var saved = reopen.GetTable(nameof(NullableValuesPoco)).ReadRows<NullableValuesPoco>().OrderBy(c => c.Id).ToList();
         Assert.Equal(42,  saved[0].OptInt);
         Assert.Equal("hi", saved[0].OptText);
         Assert.Null(saved[1].OptInt);
@@ -264,7 +249,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_EnumProperty_ReadFromLongColumn()
+    public void ReadRows_EnumProperty_ReadFromLongColumn()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -278,7 +263,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<EnumPoco>().OrderBy(c => c.Id).ToList();
+        var saved = reopen.GetTable(nameof(EnumPoco)).ReadRows<EnumPoco>().OrderBy(c => c.Id).ToList();
         Assert.Equal(Kind.Beta,  saved[0].Kind);
         Assert.Equal(Kind.Gamma, saved[1].Kind);
     }
@@ -290,7 +275,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_DateTimeOffsetProperty_GetsUtcDateTime()
+    public void ReadRows_DateTimeOffsetProperty_GetsUtcDateTime()
     {
         var stored = new DateTime(2024, 7, 4, 12, 0, 0, DateTimeKind.Unspecified);
         using (var db = Database.Create(_path, FileFormat.Access2000))
@@ -304,13 +289,13 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<DateTimeOffsetPoco>().Single();
+        var saved = reopen.GetTable(nameof(DateTimeOffsetPoco)).ReadRows<DateTimeOffsetPoco>().Single();
         Assert.Equal(stored, saved.When.UtcDateTime);
         Assert.Equal(TimeSpan.Zero, saved.When.Offset);
     }
 
     [Fact]
-    public void ExportToCollection_IsLazy_AndCanBeStoppedEarly()
+    public void ReadRows_IsLazy_AndCanBeStoppedEarly()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -323,7 +308,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var firstThree = reopen.ExportToCollection<CustomerPoco>().Take(3).ToList();
+        var firstThree = reopen.GetTable(nameof(CustomerPoco)).ReadRows<CustomerPoco>().Take(3).ToList();
         Assert.Equal(3, firstThree.Count);
         Assert.Equal(1, firstThree[0].Id);
     }
@@ -349,7 +334,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_NonStringColumns_ReadIntoStringProperties()
+    public void ReadRows_NonStringColumns_ReadIntoStringProperties()
     {
         // Schema has typed columns; the POCO has only string props. The
         // exporter must call ToString() to bridge each value.
@@ -377,7 +362,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<StringEverywherePoco>().Single();
+        var saved = reopen.GetTable(nameof(StringEverywherePoco)).ReadRows<StringEverywherePoco>().Single();
 
         Assert.Equal("7",          saved.Id);
         Assert.Equal((3.14).ToString(System.Globalization.CultureInfo.CurrentCulture), saved.Score);
@@ -400,7 +385,7 @@ public sealed class DatabaseExporterTests : IDisposable
             db.ImportTable(original);
 
         using var reopen = Database.Open(_path);
-        var back = reopen.ExportToCollection<FullRoundTripPoco>().OrderBy(c => c.Id).ToList();
+        var back = reopen.GetTable(nameof(FullRoundTripPoco)).ReadRows<FullRoundTripPoco>().OrderBy(c => c.Id).ToList();
         Assert.Equal(3, back.Count);
         for (int i = 0; i < original.Length; i++)
         {
@@ -415,7 +400,7 @@ public sealed class DatabaseExporterTests : IDisposable
     // ── Schema-level coverage ────────────────────────────────────────────────
 
     [Fact]
-    public void ExportToDataTable_TableWithoutPK_HasNoDataTablePK()
+    public void ToDataTable_TableWithoutPK_HasNoDataTablePK()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -426,12 +411,12 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var dt = reopen.ExportToDataTable("NoPK");
+        var dt = reopen.GetTable("NoPK").ToDataTable();
         Assert.Empty(dt.PrimaryKey);
     }
 
     [Fact]
-    public void ExportToDataTable_ColumnOrderingMatchesAccessTable()
+    public void ToDataTable_ColumnOrderingMatchesAccessTable()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -444,27 +429,27 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var dt = reopen.ExportToDataTable("Ordered");
+        var dt = reopen.GetTable("Ordered").ToDataTable();
         Assert.Equal(new[] { "Charlie", "Alpha", "Bravo" },
                      dt.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
     }
 
     [Fact]
-    public void ExportToDataSet_IncludeSystem_BringsBackMSysTables()
+    public void ToDataTable_ReadsASystemTable()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
             db.CreateTable("U", new[] { new ColumnDefinition("X", DataType.Int32) });
 
         using var reopen = Database.Open(_path);
-        var ds = reopen.ExportToDataSet(includeSystem: true);
-        Assert.Contains(ds.Tables.Cast<DataTable>(),
-                        dt => dt.TableName.StartsWith("MSys", StringComparison.Ordinal));
+        var dt = reopen.GetTable("MSysObjects").ToDataTable();
+        Assert.Equal("MSysObjects", dt.TableName);
+        Assert.Contains(dt.Rows.Cast<DataRow>(), row => "U".Equals(row["Name"]));
     }
 
     // ── Data-type round-trip coverage ────────────────────────────────────────
 
     [Fact]
-    public void ExportToDataTable_MemoColumn_LandsAsStringWithLargeValue()
+    public void ToDataTable_MemoColumn_LandsAsStringWithLargeValue()
     {
         string big = new string('m', 1000);
         using (var db = Database.Create(_path, FileFormat.Access2000))
@@ -478,13 +463,13 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var dt = reopen.ExportToDataTable("Memos");
+        var dt = reopen.GetTable("Memos").ToDataTable();
         Assert.Equal(typeof(string), dt.Columns["Body"]!.DataType);
         Assert.Equal(big, dt.Rows[0]["Body"]);
     }
 
     [Fact]
-    public void ExportToDataTable_BinaryColumn_LandsAsByteArray()
+    public void ToDataTable_BinaryColumn_LandsAsByteArray()
     {
         var blob = new byte[] { 1, 2, 3, 4, 5 };
         using (var db = Database.Create(_path, FileFormat.Access2000))
@@ -498,7 +483,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var dt = reopen.ExportToDataTable("Blobs");
+        var dt = reopen.GetTable("Blobs").ToDataTable();
         Assert.Equal(typeof(byte[]), dt.Columns["Raw"]!.DataType);
         var read = (byte[])dt.Rows[0]["Raw"];
         Assert.Equal(blob.Length, read.Length);
@@ -514,7 +499,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_WidensIntoLargerPropertyTypes()
+    public void ReadRows_WidensIntoLargerPropertyTypes()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -527,7 +512,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<WidenedPoco>().Single();
+        var saved = reopen.GetTable(nameof(WidenedPoco)).ReadRows<WidenedPoco>().Single();
         Assert.Equal(42L,        saved.BigId);
         Assert.Equal(1234.56,    saved.Amount, 4);   // tolerance for double<->decimal
     }
@@ -539,7 +524,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_ReadOnlyProperty_IsSkipped()
+    public void ReadRows_ReadOnlyProperty_IsSkipped()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
@@ -552,7 +537,7 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<ReadOnlyPropertyPoco>().Single();
+        var saved = reopen.GetTable(nameof(ReadOnlyPropertyPoco)).ReadRows<ReadOnlyPropertyPoco>().Single();
         Assert.Equal(1,    saved.Id);
         Assert.Equal("hi", saved.Greeting);   // computed; never set from DB
     }
@@ -564,7 +549,7 @@ public sealed class DatabaseExporterTests : IDisposable
     }
 
     [Fact]
-    public void ExportToCollection_GuidProperty_ParsedFromStringColumn()
+    public void ReadRows_GuidProperty_ParsedFromStringColumn()
     {
         // Synthetic mismatch: column is Text holding a GUID string, property is Guid.
         var g = new Guid("11111111-2222-3333-4444-555555555555");
@@ -579,29 +564,21 @@ public sealed class DatabaseExporterTests : IDisposable
         }
 
         using var reopen = Database.Open(_path);
-        var saved = reopen.ExportToCollection<GuidFromStringPoco>().Single();
+        var saved = reopen.GetTable(nameof(GuidFromStringPoco)).ReadRows<GuidFromStringPoco>().Single();
         Assert.Equal(g, saved.Marker);
     }
 
     [Fact]
-    public void ExportToCollection_TableNotFound_Throws()
+    public void ReadRows_NullTable_IsRefusedAtTheCall()
     {
-        using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("Real", new[] { new ColumnDefinition("X", DataType.Int32) });
-
-        using var reopen = Database.Open(_path);
-        Assert.Throws<ArgumentException>(
-            () => reopen.ExportToCollection<CustomerPoco>("DoesNotExist").ToList());
+        var refused = Assert.Throws<ArgumentNullException>(() => DatabaseExporter.ReadRows<CustomerPoco>(null!));
+        Assert.Equal("table", refused.ParamName);
     }
 
     [Fact]
-    public void ExportToDataTable_TableNotFound_Throws()
+    public void ToDataTable_And_ToDataSet_NullArguments_AreRefusedByName()
     {
-        using (var db = Database.Create(_path, FileFormat.Access2000))
-            db.CreateTable("Real", new[] { new ColumnDefinition("X", DataType.Int32) });
-
-        using var reopen = Database.Open(_path);
-        Assert.Throws<ArgumentException>(
-            () => reopen.ExportToDataTable("DoesNotExist"));
+        Assert.Equal("table",    Assert.Throws<ArgumentNullException>(() => DatabaseExporter.ToDataTable(null!)).ParamName);
+        Assert.Equal("database", Assert.Throws<ArgumentNullException>(() => DatabaseExporter.ToDataSet(null!)).ParamName);
     }
 }

@@ -1,4 +1,5 @@
 using System.IO;
+using JackcessDotNet.Diagnostics;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -300,7 +301,7 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
             () => db.GetRelationships(),
             () => db.CreateTable("More", new[] { new ColumnDefinition("Id", DataType.Int32) }),
             () => db.CreateRelationship(new RelationshipDefinition("People", "Id", "People", "Id")),
-            () => db.FindDecimalsBeyondPrecision(),
+            () => DecimalByteOrder.Find(db),
             () => _ = db.EnforceForeignKeys,
             () => db.EnforceForeignKeys = false,
             () => _ = db.AllowAutoNumberInsert,
