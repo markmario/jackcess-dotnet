@@ -890,6 +890,41 @@ public sealed class DatabaseImporterTests : IDisposable
     }
 
     [Fact]
+    public void ImportTable_FromDataTable_AppendIfExists_DoesNotLookAtThePrimaryKeyOption()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id",   DataType.Int32),
+                new ColumnDefinition("Name", DataType.Text) { MaxLength = 50 },
+            });
+
+        var dt = new DataTable("T");
+        dt.Columns.Add("Id",   typeof(int));
+        dt.Columns.Add("Name", typeof(string));
+        dt.Rows.Add(1, "Ann");
+
+        // Rows added to a table that is there take no key: a key that would be refused for a new table - a
+        // blank name - and one that cannot be read at all are both left alone.
+        using (var db = Database.Open(_path))
+        {
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true, PrimaryKey = new[] { " " } });
+            db.ImportTable(dt, new ImportOptions { AppendIfExists = true, PrimaryKey = NeverRead() });
+        }
+
+        using var reopen = Database.Open(_path);
+        Assert.Equal(2, reopen.GetTable("T").Rows.Count());
+
+        static IEnumerable<string> NeverRead()
+        {
+            throw new InvalidOperationException("The key was read.");
+#pragma warning disable CS0162 // makes this an iterator, so nothing runs until it is enumerated
+            yield break;
+#pragma warning restore CS0162
+        }
+    }
+
+    [Fact]
     public void ImportTable_FromDataTable_AppendIfExists_ExtraSourceColumnIsIgnored()
     {
         using (var db = Database.Create(_path, FileFormat.Access2000))

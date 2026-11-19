@@ -113,7 +113,6 @@ public static class DatabaseImporter
     private static Table ImportDataTable(Database db, DataTable table, ImportOptions options)
     {
         string name = ResolveTableName(options.TableName, table.TableName, "Table1");
-        var    pk   = PrimaryKeyOf(options) ?? InferPrimaryKey(table);
 
         // Pre-existing target: append rows into the existing schema instead of creating.
         if (TableExists(db, name))
@@ -153,6 +152,9 @@ public static class DatabaseImporter
             throw new InvalidOperationException(
                 $"DataTable '{table.TableName}' has no columns that map to a Jet type.");
 
+        // The key is read here, for a table that is made: rows added to a table that is there take no key,
+        // and the option is not looked at for them.
+        var pk = PrimaryKeyOf(options) ?? InferPrimaryKey(table);
         var t = db.CreateTableOf(name, columns, pk);
 
         // An AutoIncrement column's values are the rows' own - other tables of a DataSet refer to them - so the
