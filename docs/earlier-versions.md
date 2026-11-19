@@ -131,6 +131,8 @@ bytes. How Access keys a Date/Time Extended value: [How keys are matched](relati
   [Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes).
 - **Decimal values in another byte order**, which read as other numbers; `DecimalByteOrder.Find` lists some of
   them: [Decimal](data-types.md#decimal).
+- **Currency values rounded half away from zero**, which are consistent with Access and need no mending, but some
+  of which are not found by the number they were written from: [Currency](data-types.md#currency).
 - **Rows deleted with one flag bit**, which stay deleted for this library and for Access:
   [Rows on a page](storage.md#rows-on-a-page).
 - **Long values whose last chunk shares a page with other values**, which Access must not be given to edit, and

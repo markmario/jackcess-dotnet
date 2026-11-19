@@ -204,11 +204,14 @@ internal static class PropertyMapWriter
                 case DataType.Double:   return System.Convert.ToDouble(value, invariant);
                 case DataType.Currency:
                 {
-                    // A Currency is a 64-bit count of ten-thousandths.
-                    decimal currency = Math.Round(System.Convert.ToDecimal(value, invariant), 4);
-                    if (currency < MinCurrency || currency > MaxCurrency)
-                        throw OutOfRange(name, value, dataType, $"a Currency is from {MinCurrency.ToString(invariant)} to {MaxCurrency.ToString(invariant)}");
-                    return currency;
+                    // A Currency is a 64-bit count of ten-thousandths. A number is taken to them as Access takes one, its
+                    // exact value, half to even, as a row's is (Util.CurrencyRounding, #65); any other value as the decimal
+                    // it converts to - text in the invariant culture.
+                    object number = Util.CurrencyRounding.IsNumber(value) ? value : System.Convert.ToDecimal(value, invariant);
+                    if (!Util.CurrencyRounding.TryUnits(number, out long units))
+                        throw new ArgumentException(
+                            $"The value of property '{name}' cannot be kept as {dataType}: {Util.CurrencyRounding.NotHeld(number)}.", nameof(value));
+                    return Util.CurrencyRounding.ToDecimal(units);
                 }
                 case DataType.DateTime:
                 {
@@ -248,8 +251,6 @@ internal static class PropertyMapWriter
             $"The value of property '{name}' ({value.GetType().Name}) cannot be kept as {dataType}: it is not a byte array.", nameof(value));
     }
 
-    private const decimal MaxCurrency = long.MaxValue / 10000m;
-    private const decimal MinCurrency = long.MinValue / 10000m;
     private static readonly DateTime MinDate = new DateTime(100, 1, 1);
 
     private static ArgumentException OutOfRange(string name, object value, DataType dataType, string why)

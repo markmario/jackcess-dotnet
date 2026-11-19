@@ -42,8 +42,10 @@ An import holds every value of its source exactly, or refuses before anything is
   equal in those are a duplicate, as Access takes them (measured with DAO).
 - **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
   holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` to a Decimal
-  or Currency column as the number it is when the column holds that, and otherwise as the number its round-trip
-  form denotes; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
+  column as the number it is when the column holds that, and otherwise as the number its round-trip form denotes;
+  a `double` or `float` to a Currency column as the Currency Access makes of it - its exact value to four places,
+  half to even - when that reads back as the number given, which it does when the number's round-trip form has
+  four places or fewer; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
   it as its round-trip form); text to a numeric column as the number it denotes in the invariant culture, held as
   a number would be - exactly: `"1e-30"` goes to a Double column and is refused by a Currency one, and NaN, the
   infinities and a number past the column's range are refused; text to a Yes/No,

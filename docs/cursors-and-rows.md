@@ -117,13 +117,16 @@ doubles.
 
 ### Currency
 
-A Currency is the caller's number taken to its four places: a `double` or `float` by its exact value, half to
-even, as ACE's `=` (through an index and without) and DAO's `Seek` take one - 0.03125 finds 0.0312, and the
-double 0.00015, which is just under that half, finds 0.0001 - and a `decimal` or a whole number as this library
-writes it, half away from zero: 1.23456 finds 1.2346, and 1.23465m finds 1.2347, where ACE's index rounds a
-decimal half to even and its scan takes it through a double ([#65]). A range of an index cursor, and
-`FindClosestRowByEntry`, still key a `double` as a row is written with it, which rounds some of these the other
-way ([#65]).
+A Currency is the caller's number taken to its four places as a row written with it stores it - its exact value,
+half to even, as Access takes one ([#65]) - by an equality, in a range and for `FindClosestRowByEntry` alike, as
+ACE's `=`, `BETWEEN`, `>=`, `>`, `<=` and `<` through an index and DAO's `Seek` take it: the double 0.03125 finds
+0.0312, the double 0.00015, which is just under that half, finds 0.0001, and 1.23465m finds 1.2346. ACE's scan,
+with no index to answer, takes a decimal through a double, and finds 1.2347 for it. Text is no number to an
+equality, as in every number column, and a range takes it as a write does. NaN, an infinity or a number past the
+range is no Currency: it finds no row, and a range or `FindClosestRowByEntry` refuses it with `ArgumentException`,
+as ACE's refuses a number past the range. A row an earlier version wrote holds that version's rounding, and some
+such rows are found by the value they hold and not by the number they were written from (see
+[Currency](data-types.md#currency)).
 
 ### Double, Single and Decimal
 

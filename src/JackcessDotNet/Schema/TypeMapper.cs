@@ -236,7 +236,8 @@ internal static class TypeMapper
     ///   <item>A number goes to a numeric column when the column holds its value: an integer in range, a
     ///   <see cref="decimal"/> with no more places than a Currency's four or a Decimal's scale, nor more digits than
     ///   its precision. A floating-point value and a <see cref="decimal"/> go to each other's columns when the value
-    ///   the column holds converts back to the one given.</item>
+    ///   the column holds converts back to the one given - to a Currency column, the Currency Access makes of a
+    ///   <see cref="double"/> or <see cref="float"/>, its exact value to four places, half to even.</item>
     ///   <item>Text goes to a numeric, Yes/No, Date/Time or GUID column when it reads, in the invariant culture, as a
     ///   value the column holds; a value goes to a Text or Memo column as its invariant text, which reads back as
     ///   it (a <see cref="double"/> in its round-trip form, a date in ISO 8601).</item>
@@ -399,6 +400,24 @@ internal static class TypeMapper
 
     private static decimal CurrencyOf(object value)
     {
+        // A double or a float is the Currency Access makes of it - its exact value to four places, half to even, as a
+        // row is written with it (Util.CurrencyRounding, #65) - and the column holds it when that reads back as the
+        // number given, which is so for exactly the numbers whose round-trip form has four places or fewer. That form
+        // can itself be another Currency, past 2^38 or so: the double 35184372088832.0078125 reads back from
+        // 35184372088832.01, and is 35184372088832.0078 to Access.
+        if (value is double or float)
+        {
+            NumbersOf(value, "a Currency column");   // NaN and the infinities are no number a column holds
+            if (!Util.CurrencyRounding.TryUnits(value, out long units))
+                throw new NotHeldException($"{Describe(value)} is out of range: a Currency column holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807");
+            decimal held = Util.CurrencyRounding.ToDecimal(units);
+            bool readsBack = value is double d
+                ? ExactNumber.Of(held).NearestDouble() == d
+                : ExactNumber.Of(held).NearestSingle() == (float)value;
+            if (readsBack) return held;
+            throw new NotHeldException($"{Describe(value)} has more than four places after the point, and a Currency column keeps four");
+        }
+
         bool tooManyPlaces = true;
         foreach (ExactNumber number in NumbersOf(value, "a Currency column"))
         {

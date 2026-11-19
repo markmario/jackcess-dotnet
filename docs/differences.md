@@ -48,6 +48,11 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   on by default) ([Relationships and foreign keys](relationships.md)).
 - **Rows and long values are laid out as Access lays them out**, so Access reads back every value the
   engine writes, a long memo in several pieces included ([Storage](storage.md)).
+- **A Currency is the number Access makes of a caller's**: its exact value to four places, half to even, for a
+  row, its keys and every lookup, on every runtime. The engine rounded half away from zero, after taking a `double`
+  through a `decimal` of 15 significant digits and a `float` through one of 7 on .NET Framework and .NET up to 10,
+  so a row was not found by the number it was written with. A file it wrote keeps those values: see
+  [Currency](data-types.md#currency).
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds

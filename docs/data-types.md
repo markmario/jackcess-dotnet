@@ -30,8 +30,31 @@ Extended value is found: [Date/Time Extended](cursors-and-rows.md#datetime-exten
 
 ## Currency
 
-A Currency is a number to four places. How a caller's number is taken to one when it is looked for:
-[Currency](cursors-and-rows.md#currency) ([#65]).
+**A Currency is the caller's number taken to four places as Access takes one** - its exact value, half to even -
+wherever one is made: a row, its index keys, a relationship's check, a property, an import ([#65]). Measured with
+ACE 16 and DAO, which write alike through every path tried: the double 0.03125 is 0.0312, the double 0.00015 -
+just under the half it is written as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346.
+Text and a `bool` are taken as every number column takes them - text read in the current culture, a `bool` as 1 or
+0 - and the number they make is taken to four places so; Access reads text by the machine's locale and writes
+True as -1. A date, a `Guid`, bytes or a `char` is refused with `ArgumentException`, and text that reads as no
+number with `FormatException`. NaN, an infinity and a number past -922,337,203,685,477.5808 to
+922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"), and
+writes NaN as the least Currency, which this library does not. How a caller's number is taken to one when it is
+looked for: [Currency](cursors-and-rows.md#currency).
+
+**A file an earlier version wrote holds that version's rounding.** 1.2.2, and this library until [#65], rounded a
+Currency half away from zero, after `Convert.ToDecimal`, which on .NET Framework and .NET up to 10 keeps 15
+significant digits of a `double` and 7 of a `float`. The values are consistent with one another and with Access,
+and nothing needs mending, but some rows are no longer found by the number they were written from: a lookup, a
+range, `FindClosestRowByEntry`, a relationship's check and a unique index all take the number as Access does now,
+and come to the neighbouring row or to none. The numbers that differ: a `decimal` at a half of the fifth place
+(1.23465m was written as 1.2347 and is now 1.2346); a `double` or `float` that is an exact binary half of the
+fifth place, such as 0.03125 (written as 0.0313, now 0.0312); and on .NET Framework and .NET up to 10, a `double`
+whose 15-digit form is such a half (0.00015, written as 0.0002, now 0.0001) and a `float` of more than 7
+significant digits (98765432f, written as 98765430). So `FindRowByPrimaryKey(1.23465m)` in such a file finds the
+row of 1.2346, a `Delete` of it deletes that row, and a child given 0.03125 has no parent written from 0.03125.
+**Find such rows by the value stored - as a row reads it back - and not by the number they were written from.**
+The [CHANGELOG's breaking changes](../CHANGELOG.md#breaking-changes-to-the-public-api) give more examples.
 
 ## Decimal
 
