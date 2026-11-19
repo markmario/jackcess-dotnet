@@ -148,7 +148,9 @@ changed since 1.2.2.
   - **Adding to a table converts a value exactly or refuses it** (`AppendIfExists`): a value went through
     `Convert`, which rounded a `double` into an integer column, a `decimal` into Currency, and text in the current
     culture. Text with an offset is the UTC time it denotes, as a `DateTimeOffset` is, and text without one the
-    time it says, whatever the machine's time zone.
+    time it says, whatever the machine's time zone. A `double` or `float` goes to Text as its round-trip form,
+    the same text on every target: .NET Framework's round-trip format does not always read back as the double.
+    Whether a number goes to a numeric column is worked out exactly, so it is the same on every target.
 - **A Date/Time Extended value Access wrote in whole seconds is read as its date** (#38): the form Access's SQL
   `UPDATE` leaves in a row, which was read as null. Its index key is still made as for Access's usual form,
   which is not the key Access makes for it.

@@ -632,12 +632,15 @@ An import holds every value of its source exactly, or refuses before anything is
   several columns is the table's key, in its order; several `[Key]` properties make a key of several columns, in the
   order of their `[Column(Order = n)]` where they give one, and then as they are declared.
 - **Adding to a table that is there** (`AppendIfExists`) converts a value to its column's type only when the column
-  holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` and a
-  `decimal` to each other's columns when the value converts back to the one given); text to a numeric, Yes/No,
+  holds it exactly: a number to a numeric column whose range, places and digits hold it (a `double` to a Decimal
+  or Currency column as the number it is when the column holds that, and otherwise as the number its round-trip
+  form denotes; a `decimal` or an integer to a Double column when the double nearest it is that number, or has
+  it as its round-trip form); text to a numeric, Yes/No,
   Date/Time or GUID column when it reads as one in the invariant culture (text with an offset to a Date/Time
   column is the UTC time it denotes, and text without one the time it says, whatever the machine's time zone);
   any of these to Text or Memo as its
-  invariant text (a `double` in its round-trip form, a date in ISO 8601) when that fits; bytes to a Binary column
+  invariant text (a `double` or `float` in its round-trip form - the fewest digits that read back as it, written
+  as .NET writes them, the same text on every target - and a date in ISO 8601) when that fits; bytes to a Binary column
   that holds that many. A Yes/No column takes no null, which Access would read as No, and no number.
 - An `IEnumerable<T>` is read whole, every object, before anything is written.
 

@@ -59,6 +59,95 @@ public sealed class ImportConversionTests : IDisposable
         return reopen.GetTable("T").FindRowByPrimaryKey(1)![column];
     }
 
+    // An object whose one value goes to the Text column: a DataTable keeps no -0.
+    private sealed class ForText<T>
+    {
+        public int Id { get; set; } = 1;
+        [System.ComponentModel.DataAnnotations.Schema.Column("Txt")] public T? Value { get; set; }
+    }
+
+    private object? AppendedToText<T>(T value)
+    {
+        MakeTable();
+        using (var db = Database.Open(_path))
+            db.ImportTable(new[] { new ForText<T> { Value = value } }, new ImportOptions { TableName = "T", AppendIfExists = true });
+        using var reopen = Database.Open(_path);
+        return reopen.GetTable("T").FindRowByPrimaryKey(1)!["Txt"];
+    }
+
+    // ── Doubles and floats as text, and as decimals ──────────────────────────
+
+    // A double or a float appended to a Text column is its round-trip form - the fewest digits that read back as it,
+    // written as .NET writes them - and the same text on every target.
+    [Theory]
+    [InlineData(0.84551240822557006, "0.8455124082255701")]
+    [InlineData(0.1, "0.1")]
+    [InlineData(1.0 / 3, "0.3333333333333333")]
+    [InlineData(0.0001, "0.0001")]
+    [InlineData(0.00001, "1E-05")]
+    [InlineData(1e16, "10000000000000000")]
+    [InlineData(1e17, "1E+17")]
+    [InlineData(99999999999999984.0, "99999999999999980")]
+    [InlineData(5e-324, "5E-324")]
+    [InlineData(2.2250738585072014E-308, "2.2250738585072014E-308")]
+    [InlineData(double.MaxValue, "1.7976931348623157E+308")]
+    [InlineData(-1.5, "-1.5")]
+    [InlineData(double.NaN, "NaN")]
+    [InlineData(double.NegativeInfinity, "-Infinity")]
+    public void A_double_appended_to_a_Text_column_is_its_round_trip_form_on_every_target(double value, string text)
+        => Assert.Equal(text, Appended("Txt", value));
+
+    [Theory]
+    [InlineData(0.1f, "0.1")]
+    [InlineData(16777216f, "16777216")]
+    [InlineData(123456789f, "123456790")]
+    [InlineData(1e9f, "1E+09")]
+    [InlineData(3.4e38f, "3.4E+38")]
+    [InlineData(1.17549435E-38f, "1.1754944E-38")]
+    [InlineData(1.401298E-45f, "1E-45")]
+    public void A_float_appended_to_a_Text_column_is_its_round_trip_form_on_every_target(float value, string text)
+        => Assert.Equal(text, Appended("Txt", value));
+
+    [Fact]
+    public void A_negative_zero_appended_to_a_Text_column_keeps_its_sign_on_every_target()
+    {
+        Assert.Equal("-0", AppendedToText(-0.0));
+        Assert.Equal("-0", AppendedToText(-0f));
+    }
+
+    // A double goes to a Decimal or Currency column as the number it is when the column holds that, and otherwise as
+    // the number its round-trip form denotes: a form of sixteen places is held by a column of sixteen, on every target.
+    [Fact]
+    public void A_double_appended_to_a_Decimal_column_is_the_number_its_round_trip_form_denotes_on_every_target()
+    {
+        Assert.Equal(0.8455124082255701m, Appended("Dec16", 0.84551240822557006));
+        Assert.Equal(0.3333333333333333m, Appended("Dec16", 1.0 / 3));
+        Assert.Equal(0.1m, Appended("Cur", 0.1));
+        Assert.Equal(0.5m, Appended("Dec", 0.5));
+    }
+
+#if NET
+    // On .NET the round-trip format is the shortest text that reads back as the double, as ExactNumber's is.
+    [Fact]
+    public void The_round_trip_form_is_dotnets_for_any_double_and_float()
+    {
+        var random = new Random(20261119);
+        var bytes = new byte[8];
+        for (int i = 0; i < 20000; i++)
+        {
+            random.NextBytes(bytes);
+            double d = BitConverter.ToDouble(bytes, 0);
+            if (!double.IsNaN(d) && !double.IsInfinity(d))
+                Assert.Equal(d.ToString("R", Invariant), ExactNumber.Text(d));
+            float f = BitConverter.ToSingle(bytes, 0);
+            if (!float.IsNaN(f) && !float.IsInfinity(f))
+                Assert.Equal(f.ToString("R", Invariant), ExactNumber.Text(f));
+        }
+        foreach (double d in new[] { 1.0, 10.0, 1e22, 1e23, 9007199254740993.0, 0.3, 2.0 / 3, 4.35, 1e-7, 123e-20 })
+            Assert.Equal(d.ToString("R", Invariant), ExactNumber.Text(d));
+    }
+#endif
+
     // ── Dates ────────────────────────────────────────────────────────────────
 
     // Text with an offset is the UTC time it denotes, as a DateTimeOffset is; text without one is the time as written.

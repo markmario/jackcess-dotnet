@@ -284,8 +284,8 @@ internal static class TypeMapper
     {
         string s   => $"'{(s.Length > 40 ? s.Substring(0, 40) + "..." : s)}'",
         byte[] b   => $"{b.Length} bytes",
-        double d   => d.ToString("R", Invariant),
-        float f    => f.ToString("R", Invariant),
+        double d   => ExactNumber.Text(d),
+        float f    => ExactNumber.Text(f),
         DateTime t => t.ToString("o", Invariant),
         IFormattable f => f.ToString(null, Invariant),
         _          => value.ToString() ?? "",
@@ -298,9 +298,8 @@ internal static class TypeMapper
         _ => throw NotOfType(value, "a Yes/No column takes a bool, or the text True or False: of a number only 0 and 1 would read back as they were"),
     };
 
-    // A number as a decimal that converts back to it: exactly, for an integer or a decimal; for a floating-point value,
-    // the decimal of its digits, when that converts back to the same value (0.1 for the double 0.1, none for 1/3).
-    // Text that reads as a number in the invariant culture is that number. Null for anything else.
+    // A number as a decimal: exactly, for an integer or a decimal; for a floating-point value, as RoundTripDecimal
+    // gives it. Text that reads as a number in the invariant culture is that number. Null for anything else.
     private static decimal? AsDecimal(object value) => value switch
     {
         sbyte v  => v, byte v => v, short v => v, ushort v => v, int v => v, uint v => v, long v => v, ulong v => v,
@@ -311,32 +310,30 @@ internal static class TypeMapper
         _        => null,
     };
 
-    // A double as the decimal of its shortest text that reads back as it - its round-trip form, as text, not the
-    // runtime's conversion, which keeps 15 digits on one framework and more on another - when a decimal holds that
-    // text; a whole double of a long's range is that long. Null for NaN, the infinities and what no decimal holds.
+    // A double as a decimal: the number it is, when a decimal holds that exactly (the double 0.5, a whole double of
+    // up to 28 digits), and otherwise the number its round-trip form denotes (0.1 for the double 0.1). Null for NaN,
+    // the infinities and what no decimal holds (1E-30). Both are worked out exactly, the same on every target.
     private static decimal? RoundTripDecimal(double value)
     {
         if (double.IsNaN(value) || double.IsInfinity(value)) return null;
-        if (Math.Floor(value) == value && Math.Abs(value) < 9.2e18) return (long)value;
-        if (Math.Abs(value) >= 7.9e28) return null;
-        string text = value.ToString("R", Invariant);
-        if (double.Parse(text, NumberStyles.Float, Invariant) != value) text = value.ToString("G17", Invariant);
-        if (!decimal.TryParse(text, NumberStyles.Float, Invariant, out decimal parsed)) return null;
-        // A decimal keeps 28 places: a double smaller than that reads as some other number, or as 0.
-        return double.Parse(parsed.ToString(Invariant), NumberStyles.Float, Invariant) == value ? parsed : null;
+        return ExactNumber.Of(value).ToDecimal() ?? ExactNumber.Shortest(value).ToDecimal();
     }
 
-    // A float as the decimal of its shortest text that reads back as it, as for a double.
+    // A float as a decimal, as for a double.
     private static decimal? RoundTripDecimal(float value)
     {
         if (float.IsNaN(value) || float.IsInfinity(value)) return null;
-        if (Math.Floor(value) == value && Math.Abs(value) < 9.2e18f) return (long)value;
-        if (Math.Abs(value) >= 7.9e28f) return null;
-        string text = value.ToString("R", Invariant);
-        if (float.Parse(text, NumberStyles.Float, Invariant) != value) text = value.ToString("G9", Invariant);
-        if (!decimal.TryParse(text, NumberStyles.Float, Invariant, out decimal parsed)) return null;
-        return float.Parse(parsed.ToString(Invariant), NumberStyles.Float, Invariant) == value ? parsed : null;
+        return ExactNumber.Of(value).ToDecimal() ?? ExactNumber.Shortest(value).ToDecimal();
     }
+
+    // Whether a double, or a float, stands for number: it is the number, or its round-trip form denotes it.
+    private static bool StandsFor(double value, decimal number)
+        => !double.IsNaN(value) && !double.IsInfinity(value)
+        && (ExactNumber.Of(value) == ExactNumber.Of(number) || ExactNumber.Shortest(value) == ExactNumber.Of(number));
+
+    private static bool StandsFor(float value, decimal number)
+        => !float.IsNaN(value) && !float.IsInfinity(value)
+        && (ExactNumber.Of(value) == ExactNumber.Of(number) || ExactNumber.Shortest(value) == ExactNumber.Of(number));
 
     // The double, and the float, nearest a decimal: read from its text, as RoundTripDecimal writes one.
     private static double DoubleNearest(decimal value) => double.Parse(value.ToString(Invariant), NumberStyles.Float, Invariant);
@@ -375,7 +372,7 @@ internal static class TypeMapper
             {
                 float single = (float)d;
                 if ((double)single == d || double.IsNaN(d)) return single;
-                throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {single.ToString("R", Invariant)}");
+                throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(single)}");
             }
             case string s when !decimal.TryParse(s, NumberStyles.Float, Invariant, out _)
                             && double.TryParse(s, NumberStyles.Float, Invariant, out double parsed):
@@ -383,8 +380,8 @@ internal static class TypeMapper
         }
         decimal number = NumberOf(value, "a Single column");
         float asSingle = SingleNearest(number);
-        if (RoundTripDecimal(asSingle) == number) return asSingle;
-        throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {asSingle.ToString("R", Invariant)}");
+        if (StandsFor(asSingle, number)) return asSingle;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Single column holds: it would read back as {ExactNumber.Text(asSingle)}");
     }
 
     private static double DoubleOf(object value)
@@ -399,8 +396,8 @@ internal static class TypeMapper
         }
         decimal number = NumberOf(value, "a Double column");
         double asDouble = DoubleNearest(number);
-        if (RoundTripDecimal(asDouble) == number) return asDouble;
-        throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {asDouble.ToString("R", Invariant)}");
+        if (StandsFor(asDouble, number)) return asDouble;
+        throw new NotHeldException($"{Describe(value)} has more digits than a Double column holds: it would read back as {ExactNumber.Text(asDouble)}");
     }
 
     private static readonly decimal CurrencyMax = 922_337_203_685_477.5807m;
@@ -468,8 +465,8 @@ internal static class TypeMapper
             string s         => s,
             char c           => c.ToString(),
             bool b           => b ? "True" : "False",
-            double d         => d.ToString("R", Invariant),
-            float f          => f.ToString("R", Invariant),
+            double d         => ExactNumber.Text(d),
+            float f          => ExactNumber.Text(f),
             DateTime d       => d.ToString("o", Invariant),
             DateTimeOffset o => o.ToString("o", Invariant),
             Guid g           => g.ToString("D"),
