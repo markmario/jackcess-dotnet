@@ -942,6 +942,82 @@ public sealed class RoomReuseTests : IDisposable
         IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 31);
     }
 
+    /// <summary>The kind of the table's free-space map: 0 an inline map, 1 a reference map.</summary>
+    private static byte MapType(Database db, Table table)
+    {
+        var def = table.Definition;
+        byte[] page = db.File.ReadPage(def.FreeSpaceUmapPage);
+        return page[UsageMap.GetRowStart(page, def.FreeSpaceRow, db.File.Format)];
+    }
+
+    /// <summary>
+    /// <paramref name="change"/> made to fail at each of its writes in turn, until it is written: each time the file is
+    /// as it was - every page, and as many - and so is what the session knows of the table's free-space map.
+    /// </summary>
+    private static void FailsAtEveryWrite(Database db, Table table, string what, Action change)
+    {
+        Known(db, table);   // what the session knows of the map is read before the change, so it is what is tested
+        for (int writes = 0; ; writes++)
+        {
+            var before = IndexChecks.AllPages(db);
+            var known  = Known(db, table);
+            int pages  = db.File.PageCount;
+            db.File.WritesBeforeFailure = writes;
+            var thrown = Record.Exception(change);
+            db.File.WritesBeforeFailure = null;
+            if (thrown is null) break;
+            Assert.True(thrown is IOException, $"{what}: {thrown}");
+            Assert.Equal(pages, db.File.PageCount);
+            IndexChecks.AssertUnchanged(before, db);
+            Assert.Equal(known, Known(db, table));
+            Assert.True(writes < 1000, $"{what} never got written");
+        }
+        Assert.Equal(Listed(db, table), Known(db, table));
+    }
+
+    /// <summary>
+    /// As the test before, where the free-space map lists pages too far apart for an inline map: a delete that makes it
+    /// a reference map, a delete that lists a page in one, an insert that takes every page it lists off it, and a row
+    /// moved to a page of its own and home again - which begins that page again and lists it - each fail at every write
+    /// they make and leave the file, and what the session knows of the map, as they were.
+    /// </summary>
+    [Fact]
+    public void A_change_that_fails_while_a_reference_map_is_written_leaves_it_and_what_the_session_knows_of_it_as_they_were()
+    {
+        using var db = Database.Create(_path);
+        var table = Wide(db);
+        const int pages = 1_900;   // more than the 1,600 pages an inline map of this library's covers
+        for (int start = 1; start <= 9 * pages; start += 900)
+            table.InsertRange(Enumerable.Range(start, 900).Select(id => new Row { ["Id"] = id, ["A"] = Greek(200) }));
+        var owned = Owned(db, table);
+        int Id(int page) => page * 9 + 5;   // a row of the table's page of that index
+        Assert.Equal(owned[0], Where(table, Id(0)).PageNumber);
+        Assert.Equal(owned[pages - 2], Where(table, Id(pages - 2)).PageNumber);
+
+        // The map lists the last page alone, in an inline map: the first page cannot be listed in the same window.
+        Assert.Equal(0, MapType(db, table));
+        FailsAtEveryWrite(db, table, "a delete that makes the map a reference map", () => Delete(table, Id(0)));
+        Assert.Equal(1, MapType(db, table));
+        FailsAtEveryWrite(db, table, "a delete that lists a page in the reference map", () => Delete(table, Id(pages - 2)));
+
+        // Rows deleted from many pages, then a row too large for any of them: each page leaves the map as it is tried.
+        for (int page = 1; page < 120; page += 3) Delete(table, Id(page));
+        int listed = Listed(db, table).Count;
+        FailsAtEveryWrite(db, table, "an insert that takes every listed page off the map", () => Put(table, 900_001, 255, 255, 255, 255));
+        Assert.True(Listed(db, table).Count < listed);
+
+        // A row grown to a page of its own, which is not listed, and home again: the page is begun again and listed.
+        FailsAtEveryWrite(db, table, "a row grown past its page", () => Set(table, Id(700) + 1, ("A", 255), ("B", 255), ("C", 255), ("D", 255)));
+        int away = RowsMovedTo(db, table, Id(700) + 1);
+        Assert.DoesNotContain(away, Listed(db, table));
+        FailsAtEveryWrite(db, table, "the row come home, the page it left begun again and listed",
+            () => Set(table, Id(700) + 1, ("A", 200), ("B", 0), ("C", 0), ("D", 0)));
+        Assert.Contains(away, Listed(db, table));
+        Assert.Equal(0, Slots(db, away));
+        Assert.Equal(1, MapType(db, table));
+        IndexChecks.AssertEveryIndexHoldsTheRows(db, "T");
+    }
+
     // ── A table with no free-space map ───────────────────────────────────────
 
     [Fact]
