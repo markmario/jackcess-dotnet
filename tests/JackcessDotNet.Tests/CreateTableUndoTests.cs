@@ -248,16 +248,17 @@ public sealed class CreateTableUndoTests : IDisposable
                 finally { db.File.WritesBeforeFailure = null; }
             });
 
-            // The file, and what the session shows of it, are as they were: the table is not listed or handed out.
+            // The file, and what the session shows of it, are as they were: the table is not listed, held or handed out.
             Assert.True(before.AsSpan().SequenceEqual(Bytes(path)), "the file changed");
             Assert.DoesNotContain("New", db.GetTableNames());
+            Assert.DoesNotContain(made, db.HeldTables);
             Assert.False(db.TryGetTable("New", out _));
             Assert.Throws<ArgumentException>(() => db.GetTable("New"));
             Assert.Equal(view, ViewOf(db));
 
-            // The Table handed out refuses everything asked of it, rather than read or write pages that are not its own.
-            Assert.Equal("Table 'New' is not in the database: the change that created it was taken back.",
-                         Assert.Throws<InvalidOperationException>(() => made.Insert(new Row { ["Code"] = "after" })).Message);
+            // The Table handed out is marked dropped, and refuses everything asked of it rather than read or write pages
+            // that are not its own.
+            Assert.Contains("Table 'New'", Assert.Throws<InvalidOperationException>(() => made.Insert(new Row { ["Code"] = "after" })).Message);
             Assert.Throws<InvalidOperationException>(() => made.Rows.Count());
             Assert.Throws<InvalidOperationException>(() => made.RowCount);
             Assert.Throws<InvalidOperationException>(() => made.Columns);

@@ -60,9 +60,9 @@ changed since 1.2.2.
   full disk, left pages added to the file and, once the catalog row was written, a half-made table that
   `GetTableNames` listed and that Access, in an `.mdb`, refused to read ("no read permission"). What it writes is
   now taken back if writing fails: the file is byte for byte as it was, and the table is not there. A table made
-  inside a larger change that is taken back is forgotten with it: the `Table` handed out for it refuses whatever is
-  asked of it with `InvalidOperationException`, as a dropped table's does, where it read past the end of the file
-  and, once a table was made again in its pages, wrote rows into that one.
+  inside a larger change that is taken back is forgotten with it, and the `Table` handed out for it is marked
+  dropped: it refuses whatever is asked of it with `InvalidOperationException`, where it read past the end of the
+  file and, once a table was made again in its pages, wrote rows into that one.
   **`Database.Create` leaves no file when writing the new one fails**: it is closed and deleted. It was left at the
   path, part of a database, and held open. When it cannot be deleted - another process holds it - an `IOException`
   says the incomplete file is still at the path, with the failure as its `InnerException`.

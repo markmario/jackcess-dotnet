@@ -754,6 +754,22 @@ public sealed class Database : IDisposable
     internal Table CreateTableOf(string name, IReadOnlyList<Column> columns, IReadOnlyList<string>? primaryKey)
         => CreateTableCore(name, columns, primaryKey is { Count: > 0 } ? primaryKey : null, Array.Empty<IndexDefinition>());
 
+    /// <summary>
+    /// Forgets <paramref name="table"/>, which this session made and an undo scope then took back with everything
+    /// else it wrote: the file no longer has it, and the object is marked dropped, so that anything still holding it
+    /// is refused rather than reading pages that are gone, or another table's.
+    /// </summary>
+    internal void ForgetTakenBack(Table table)
+    {
+        int page = table.Definition.TdefPageNumber;
+        if (_tables.TryGetValue(page, out var held) && ReferenceEquals(held, table))
+            _tables.Remove(page);
+        table.MarkDropped();
+    }
+
+    /// <summary>The tables this session holds, each by its definition's page. For tests.</summary>
+    internal IReadOnlyCollection<Table> HeldTables => _tables.Values;
+
     private Table CreateTableCore(string name, IReadOnlyList<Column> columns,
                                   IReadOnlyList<string>? pkColumns,
                                   IReadOnlyList<IndexDefinition> secondary)
@@ -875,23 +891,11 @@ public sealed class Database : IDisposable
         propertyMaps.Written(propertyNames);
         var table = new Table(_file, _allocator, tableDef, owningDb: this, properties: propertyMaps);
         _tables[tdefPage] = table;
-        // Made inside a larger change, the table is in the file only if that change is kept: taken back, it is
-        // forgotten, and the Table handed out refuses what is asked of it (#60). Made in a change of its own, it is
-        // committed already, and nothing is noted.
-        _file.Journal(() => ForgetTableTakenBack(tdefPage, table));
+        // Made inside a change being kept for undoing - an import's - the table is forgotten when the change is taken
+        // back, with the pages it was written to: a table made after may be given its definition's page, and must not
+        // be found as this one.
+        _file.Journal(() => ForgetTakenBack(table));
         return table;
-    }
-
-    /// <summary>
-    /// Forgets <paramref name="table"/>, created inside a change that has been taken back (#60): the file has
-    /// nothing of it, so it is no longer handed out, and the <see cref="Table"/> that was refuses everything asked
-    /// of it, as one dropped does - its pages may be another table's by then.
-    /// </summary>
-    private void ForgetTableTakenBack(int tdefPage, Table table)
-    {
-        if (_tables.TryGetValue(tdefPage, out var held) && ReferenceEquals(held, table))
-            _tables.Remove(tdefPage);
-        table.MarkTakenBack();
     }
 
     // A table's index maps follow its owned-pages and free-space maps on its usage-map page.

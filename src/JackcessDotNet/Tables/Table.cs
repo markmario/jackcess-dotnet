@@ -67,18 +67,11 @@ public sealed class Table
         foreach (var column in definition.Columns) column.Owner = this;
     }
 
-    // Why the table is of no further use, once the file has nothing of it: dropped (Database.DropTable), or created
-    // inside a change that was taken back. Null while it is in the file.
-    private string? _gone;
+    // Set when the table has been dropped (Database.DropTable): there is nothing of it left to read.
+    private bool _dropped;
 
     /// <summary>Marks the table as dropped: everything asked of it from then on is refused.</summary>
-    internal void MarkDropped() => _gone ??= "has been dropped from the database";
-
-    /// <summary>
-    /// Marks the table as taken back with the change that created it (#60): the file has nothing of it, and
-    /// everything asked of it from then on is refused.
-    /// </summary>
-    internal void MarkTakenBack() => _gone ??= "is not in the database: the change that created it was taken back";
+    internal void MarkDropped() => _dropped = true;
 
     /// <summary>Reads the definition again under the name the table has been given (Database.RenameTable).</summary>
     internal void Renamed(string name)
@@ -87,8 +80,8 @@ public sealed class Table
     // Reads the definition again when it has been changed since it was read.
     private void Refresh()
     {
-        if (_gone is not null)
-            throw new InvalidOperationException($"Table '{_readDefinition.Name}' {_gone}.");
+        if (_dropped)
+            throw new InvalidOperationException($"Table '{_readDefinition.Name}' has been dropped from the database.");
         int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
         if (version != _readAtVersion)
             Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber), version);
