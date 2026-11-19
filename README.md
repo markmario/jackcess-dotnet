@@ -220,18 +220,22 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     day's times run back from its midnight. A `Joiner` joins a row that was read on its stored number, as
     Access's join does, unless the row has been given a date in that column since.
   - *A Date/Time Extended* is the 42 bytes the row stores, which Access keys and orders a value by
-    ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)): its `INSERT` writes a date in one form, and its
-    SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset in another, the time of day in whole seconds (measured;
-    on a table-type recordset the two write a layout of their own, which is read as null:
-    [#64](https://github.com/markmario/jackcess-dotnet/issues/64)). A `DateTime` finds every row whose bytes say that
-    date: through an index under the key of each form, where Access's own `=` through an index finds the first form
-    alone (measured; without an index it finds both). A value in a form that reads as its
-    date and that Access was not seen to write - a space or a plus sign among its digits - is found by a cursor over
-    the table, and not through an index, which holds it under a key of its own. In a range's entry and given to
-    `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
-    Access's `BETWEEN` through an index puts it (measured): a row in the second form is where its bytes are. A
-    `Joiner` joins a row that was read on its stored bytes, as a relationship does, unless the row has been given a
-    date in that column since.
+    ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)), and reads as Access reads them (below). Access
+    writes a date in three layouts (measured): its `INSERT` in one; its SQL `UPDATE`, DAO's `AddNew` and `Edit` on a
+    dynaset, and its own forms and datasheets in another, the time of day in whole seconds; and DAO's `AddNew` and
+    `Edit` on a table-type recordset - what DAO's `OpenRecordset` gives a table when it is asked for no other kind -
+    in a third, the day in fifteen digits and four bytes after the value that are whatever DAO's buffer held
+    ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)). A `DateTime` finds every row whose bytes say that
+    date: through an index under the key of each of the first two and among the keys that begin with the third's
+    other bytes, where Access's own `=` through an index finds the first alone (measured; without an index it finds
+    all three). A value in a form that reads as its date and that Access was not seen to write - a space or a plus
+    sign among its digits - is found by a cursor over the table, and not through an index, which holds it under a
+    key of its own. In a range's entry and given to `FindClosestRowByEntry`, a `DateTime` is the first form's key and
+    a row is put against it by its key, as Access's `BETWEEN` through an index puts it (measured): a row in another
+    layout is where its bytes are. A row in the third comes after every row of the other two from the year 2 on, so
+    ACE's own `K > '2020-01-02 03:04:05'` through an index gives the rows in the third layout of that very date and of
+    earlier ones, which without an index it does not (measured). A `Joiner` joins a row that was read on its stored
+    bytes, as a relationship does, unless the row has been given a date in that column since.
   - A null is never a match.
 - **A range and `FindClosestRowByEntry` need the key Access keeps for the values**, and are refused with
   `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
@@ -426,7 +430,9 @@ answered with the row that no longer has it, and that row is not found under the
 - **A row whose Date/Time Extended value is in another form than the one this library writes** may have its entry
   where a version of this library before [#51](https://github.com/markmario/jackcess-dotnet/issues/51) put it, when
   such a version added the index or rewrote the row: under the key of the date it read, in the first form, or of no
-  value - for Access's second form, before db6f93b. When the row is deleted or its date rewritten and it has no
+  value - for Access's second form, before db6f93b, and for the layout DAO's table-type recordset writes, which every
+  such version read as no value ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)). When the row is
+  deleted or its date rewritten and it has no
   entry under the key of its bytes, the entry is looked for under each of those keys, one way down the tree each to
   the key and the row, and taken out when it points at the row. A relationship's search for such a row, a unique
   index's for its duplicate, and a `Joiner`'s by its bytes look under the first form's key too, and read each row
@@ -434,11 +440,13 @@ answered with the row that no longer has it, and that row is not found under the
   form - and a `DateTime` looked for through an index is looked for under that key, which is its first form's. No
   search looks under the key of no value: every row with no value is under it, as an index that does not ignore
   nulls holds them (Access's default for a unique index and a relationship's), and each would be read. So a row the
-  versions from 2930d3f to db6f93b entered there - ten hours of `main`, never released - is found when it is deleted
-  or its date rewritten, and with `VerifyIndexes`, which reads the table when an index holds a row under another key
-  than its own; trusting the index, a relationship, a unique index and a `Joiner` do not find it, as Access does
-  not. With `VerifyIndexes`, in an index it looks at (a unique index, or a relationship's), such an entry is the
-  row's wrong one, and is moved to the key of the row's bytes.
+  versions from 2930d3f to db6f93b entered there - ten hours of `main`, never released - and a row in the table-type
+  layout that any of those versions keyed, is found when it is deleted or its date rewritten, and with
+  `VerifyIndexes`, which reads the table when an index holds a row under another key than its own; trusting the
+  index, a relationship, a unique index and a `Joiner` do not find it, as Access does not. Nor does a lookup by a date
+  through an index cursor, which trusts its index whether or not `VerifyIndexes` is set. With `VerifyIndexes`, in an
+  index it looks at (a unique index, or a relationship's), such an entry is the row's wrong one, and is moved to the
+  key of the row's bytes, as it is in every index when the row is rewritten.
 
 An index that is as its rows are has none of these entries, and nothing is read to look for one: the pages an
 insert reads are the ones it read before. An index that is not unique is not looked at this way without
@@ -451,7 +459,10 @@ beside it is the same for unique indexes and a primary key, made by `tools/legac
 `ace-extended-date-forms.accdb` holds Date/Time Extended values in every form Access reads a date from, with
 indexes ACE made over them (`tools/ace-extended-date-forms.ps1`); `engine-913240c-extended-date-keys.accdb` and
 `engine-c89bfe4-extended-date-keys.accdb` are copies of it that this library changed at those commits
-(`tools/earlier-extended-date-keys.ps1`).
+(`tools/earlier-extended-date-keys.ps1`). `ace-extended-date-table-type.accdb` holds values in the layout DAO's
+table-type recordset writes, beside the other two, keyed by ACE as DAO added them
+(`tools/ace-extended-date-table-type.ps1`), and `engine-c89bfe4-table-type-keys.accdb` is a copy c89bfe4 changed
+(`tools/earlier-extended-date-table-type-keys.ps1`).
 
 Keys are matched as Access matches them - as its indexes hold them:
 
@@ -465,9 +476,12 @@ Keys are matched as Access matches them - as its indexes hold them:
 - **A Date/Time Extended by the 42 bytes the row stores**, as Access matches it
   ([#51](https://github.com/markmario/jackcess-dotnet/issues/51)). Access writes a date in more than one form - its
   `INSERT` with the time of day in 100-nanosecond units, its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset
-  in whole seconds - and a child whose bytes are another form of its parent's date has no parent: Access refuses its
-  insert, and a relationship created over it. A `DateTime` a caller gives is the form `INSERT` writes, which is the
-  form this library writes.
+  in whole seconds, DAO's table-type recordset with four bytes after the value that are whatever its buffer held
+  ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)) - and a child whose bytes are another form of its
+  parent's date has no parent: Access refuses its insert, and a relationship created over it. Beside a parent whose
+  key DAO's table-type recordset wrote, Access refuses every child but a copy of the parent's bytes (`INSERT ...
+  SELECT`), whatever way in - an `INSERT`, a dynaset's `AddNew`, or a table-type recordset's own, whose four bytes are
+  its own (measured). A `DateTime` a caller gives is the form `INSERT` writes, which is the form this library writes.
 - **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
   A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
 
@@ -856,9 +870,18 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   indexed. A Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to
   9999 to 100 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick;
   it has no time zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row
-  stores, in whichever form Access wrote them, as Access makes it. A value DAO stored through a table-type
-  recordset (`dbOpenTable`), whose `AddNew` and `Edit` write a layout of their own, is read as null
-  ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)).
+  stores, in whichever form Access wrote them, as Access makes it. The bytes are read as Access reads them, not as
+  fields at fixed places, so a value DAO stored through a table-type recordset (`dbOpenTable`), whose `AddNew` and
+  `Edit` write a layout of their own, is read as its date
+  ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)). Measured with DAO 16 and ACE 16, on bytes changed
+  in a file Access made: the value ends at its first zero byte; the day is read from its start, the time of day after
+  the first colon and the count of the fraction's digits after the last, and fewer than two colons are an error; a
+  number begins with a digit, white space or a plus sign - anything else there, or nothing, is an error - and its
+  digits are read up to the first byte that is not one, to 64 bits; the day and the count are taken to their low 32
+  bits, and a count of 10 or more is an error; the time divided by 10 to the count is in seconds, and the remainder
+  in units of 100 nanoseconds whatever the count. An error is read as null, and so is a value no `DateTime` holds,
+  which Access does not show as a date of its own: a day after 31 December 9999, a time of day of a day or more, a
+  remainder of more than seven digits.
 - **Pages the engine adds are taken out of the database's free-page map**, so Access does not hand them
   out again and write over them.
 - **Protected files open as Access opens them**: an .mdb's database password is checked, an encoded .mdb is
