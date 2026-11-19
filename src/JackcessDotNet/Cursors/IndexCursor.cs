@@ -34,10 +34,14 @@ namespace JackcessDotNet;
 /// cursor's order, and the cursor is told. Going one way, the cursor gives each row once: a row it has come to
 /// is passed if an update has moved its entry ahead of the cursor, and a row it has not come to yet is given when
 /// the cursor comes to its entry, wherever updates have moved that entry in the meantime. A search comes to the
-/// rows it looks at, as a move comes to the row it gives. A cursor that turns back begins again from where it is:
-/// going the other way it gives again the rows it has passed, as any cursor does, but not the row it is on.
-/// Put before the first row or after the last, or on the row a lookup finds, it begins again from there. A
-/// savepoint keeps what the cursor had come to, and is told of rows that move as the cursor is.
+/// rows it looks at, as a move comes to the row it gives. An entry the cursor goes past without looking at it is
+/// not come to: one before its range's start or after its end, one a range's date leaves out, one
+/// <see cref="FindClosestRowByEntry"/> looks past on its way to the row it gives, and those a search jumps over
+/// to the part of the index its values are in - so a row that is one of them is given when an update moves it
+/// ahead of the cursor, into its range. A cursor that turns back begins again from where it is: going the other
+/// way it gives again the rows it has passed, as any cursor does, but not the row it is on. Put before the first
+/// row or after the last, or on the row a lookup finds, it begins again from there. A savepoint keeps what the
+/// cursor had come to, and is told of rows that move as the cursor is.
 /// </para>
 /// </summary>
 public sealed class IndexCursor : Cursor
@@ -64,12 +68,19 @@ public sealed class IndexCursor : Cursor
     private int    _pointer;
     private Pass   _pass  = new();
 
+    // Whether the row of the entry the cursor has just come to was given already in the pass (Passes).
+    private bool _passing;
+
     // The positions savepoints were taken at, each for as long as its savepoint is held: told of entries that move.
     private List<WeakReference<Saved>>? _saved;
 
     // While FindClosestRowByEntry looks: the values it was given, and whether it looks for an entry that is one of
     // them (passing the others, and stopping where none can be) or for one at or after them.
     private (EntryBound Values, bool Equal)? _seeking;
+
+    // While a search looks through a part of the index (Seek): the key the part ends before. The cursor stops short
+    // of an entry there, not coming to it, so that the next part begins with it.
+    private byte[]? _partEnd;
 
     /// <summary>How many times the cursor has been told of an entry of its index that was added, moved or taken out: for tests.</summary>
     internal int TimesTold { get; private set; }
@@ -118,7 +129,7 @@ public sealed class IndexCursor : Cursor
     private protected override void ToEnd()
     {
         _where = Where.AfterLast;
-        _pass  = new Pass { StartWhere = Where.AfterLast };
+        _pass  = new Pass();
     }
 
     private protected override bool AtStart => _where == Where.BeforeFirst;
@@ -134,12 +145,22 @@ public sealed class IndexCursor : Cursor
         {
             var entry = forward ? EntryAfterPlace() : EntryBeforePlace();
             if (entry is not { } next) break;
+
+            // A search through a part of the index stops short of the next part: the cursor is put just before
+            // the entry, without coming to it.
+            if (forward && _partEnd is { } partEnd && IndexEntryWalker.CompareKeys(next.Key, partEnd) >= 0)
+            {
+                (_where, _key, _pointer) = (Where.AtEntry, next.Key, next.RowPointer - 1);
+                return null;
+            }
+
             _where   = Where.AtEntry;
             _key     = next.Key;
             _pointer = next.RowPointer;
 
             // An entry between the range's keys that its start or end leaves out - one of a date's group with
-            // other values after it - is passed; so is one a closest row's lookup is not looking for.
+            // other values after it - is passed; so is one a closest row's lookup is not looking for. Neither is
+            // come to.
             if (!InRange(next.Key)) continue;
             if (forward && _seeking is { } seeking)
             {
@@ -147,6 +168,11 @@ public sealed class IndexCursor : Cursor
                 int against = seeking.Values.Compare(next.Key);
                 if (seeking.Equal ? against != 0 : against < 0) continue;
             }
+
+            // The entry is come to: whether its row was given is what the pass held before it reached it.
+            _passing = Given(_pass, next.Key, next.RowPointer, out bool held);
+            if (held) (_pass.Met ??= new List<int>()).Add(next.RowPointer);
+            Reach(_pass, next.Key, next.RowPointer, forward);
             return _pointer;
         }
         _where = forward ? Where.AfterLast : Where.BeforeFirst;
@@ -177,7 +203,7 @@ public sealed class IndexCursor : Cursor
         return entry is { } found && _low is not null && IndexEntryWalker.CompareKeys(found.Key, _low) < 0 ? null : entry;
     }
 
-    // Whether an entry is one of the range's: within its keys, and not left out by a start or an end with a date.
+    // Whether an entry within the range's keys is one of the range's: not left out by a start or an end with a date.
     private bool InRange(byte[] key)
     {
         if (_start is { HasDates: true } && _start.Compare(key) is var fromStart && (_startInclusive ? fromStart < 0 : fromStart <= 0))
@@ -186,6 +212,13 @@ public sealed class IndexCursor : Cursor
             return false;
         return true;
     }
+
+    // Whether an entry is one of the cursor's: within the range's keys, and not left out by a date.
+    private bool Within(byte[] key)
+        => !_none
+           && (_low is null || IndexEntryWalker.CompareKeys(key, _low) >= 0)
+           && (_high is null || IndexEntryWalker.CompareKeys(key, _high) < 0)
+           && InRange(key);
 
     private protected override object Place()
         => new Snapshot(_where, _key, _pointer, _pass);
@@ -196,6 +229,8 @@ public sealed class IndexCursor : Cursor
         (_where, _key, _pointer, _pass) = (snapshot.Where, snapshot.Key, snapshot.Pointer, snapshot.Pass);
         snapshot.PutBack();
     }
+
+    private protected override void Settle() => Settle(_pass);
 
     private protected override object SavePosition()
     {
@@ -217,61 +252,97 @@ public sealed class IndexCursor : Cursor
 
     // ── What the cursor has come to ───────────────────────────────────────────
 
+    /// <summary>A stretch of the index's order, from one place to another, both in: an entry's key and row pointer.</summary>
+    private sealed class Run
+    {
+        internal byte[] LowKey;
+        internal int    LowPointer;
+        internal byte[] HighKey;
+        internal int    HighPointer;
+
+        internal Run(byte[] key, int pointer) => (LowKey, LowPointer, HighKey, HighPointer) = (key, pointer, key, pointer);
+
+        internal Run Copy() => (Run)MemberwiseClone();
+    }
+
     /// <summary>
     /// The moves a cursor makes one way from where it began them - put before the first row or after the last,
-    /// turned, or put on the row a lookup found - and the rows it has come to on its way. Those are the rows whose
-    /// entries are between where the pass began and where the cursor is, but for the parts of the index a lookup
-    /// went over (<see cref="Skipped"/>), as long as no update moves an entry: what updates have moved across that
-    /// span is kept apart (<see cref="CameAway"/>, <see cref="MissedInside"/>).
+    /// turned, or put on the row a lookup found - and the rows it has given on its way: Jackcess's cursor gives each
+    /// entry it comes to, and this one gives a row once in a pass.
+    /// <para>
+    /// What the pass has given is held as stretches of the index (<see cref="Runs"/>, <see cref="Open"/>): each
+    /// from the first entry the cursor came to after it began - a move, a jump past entries a search does not look
+    /// at, a turn - to the last, every one of the cursor's entries in it being of a row given. An entry the cursor
+    /// passes without coming to it - outside its range, left out by a date, looked past by a closest row's lookup -
+    /// is not in one, nor is anything before the first entry come to. Updates move entries into and out of the
+    /// stretches, and the rows that are not as their places say are held apart (<see cref="Away"/>,
+    /// <see cref="Missed"/>): a row given whose entry moves out of them, and a row not given whose entry moves into
+    /// one. A row is dropped from them when the cursor comes to it.
+    /// </para>
     /// </summary>
     private sealed class Pass
     {
         /// <summary>Which way the pass goes: null before its first move, when it has come to nothing.</summary>
         internal bool? Forward;
 
-        internal Where  StartWhere = Where.BeforeFirst;
-        internal byte[] StartKey   = Array.Empty<byte>();
-        internal int    StartPointer;
+        /// <summary>The stretches gone over, in the index's order, none touching another, but for the one the cursor is in.</summary>
+        internal readonly List<Run> Runs = new();
 
-        /// <summary>The parts of the index a lookup went over without coming to them, each between two places (null: the index's beginning).</summary>
-        internal List<(byte[]? FromKey, int FromPointer, byte[] ToKey)>? Skipped;
+        /// <summary>The stretch the cursor is in, which grows as it goes; null before its first entry, and after a jump.</summary>
+        internal Run? Open;
 
-        /// <summary>Rows come to whose entries an update has moved out of the span the pass has gone over.</summary>
-        internal HashSet<int>? CameAway;
+        /// <summary>Stretches closed by a jump during a move or a search, put among <see cref="Runs"/> once it is done.</summary>
+        internal List<Run>? Closing;
 
-        /// <summary>Rows not come to whose entries an update has moved into the span the pass has gone over.</summary>
-        internal HashSet<int>? MissedInside;
+        /// <summary>Rows given whose entries are not in a stretch.</summary>
+        internal HashSet<int>? Away;
 
-        internal Pass Copy() => new()
+        /// <summary>Rows not given whose entries are in a stretch.</summary>
+        internal HashSet<int>? Missed;
+
+        /// <summary>Rows of <see cref="Away"/> or <see cref="Missed"/> the cursor has come to during a move or a search: dropped once it is done.</summary>
+        internal List<int>? Met;
+
+        internal Pass Copy()
         {
-            Forward      = Forward,
-            StartWhere   = StartWhere,
-            StartKey     = StartKey,
-            StartPointer = StartPointer,
-            Skipped      = Skipped is null ? null : new List<(byte[]?, int, byte[])>(Skipped),
-            CameAway     = CameAway is null ? null : new HashSet<int>(CameAway),
-            MissedInside = MissedInside is null ? null : new HashSet<int>(MissedInside),
-        };
+            var copy = new Pass
+            {
+                Forward = Forward,
+                Open    = Open?.Copy(),
+                Away    = Away is { Count: > 0 } ? new HashSet<int>(Away) : null,
+                Missed  = Missed is { Count: > 0 } ? new HashSet<int>(Missed) : null,
+            };
+            foreach (var run in Runs) copy.Runs.Add(run.Copy());
+            return copy;
+        }
     }
 
     /// <summary>
     /// Where the cursor was before a move or a lookup, to put it back when one fails or finds nothing. A move or a
-    /// lookup begins a new pass, or changes where one began and what it went over; it changes nothing the pass
-    /// knows of rows that moved, which only an update does, and no update is made while one runs.
+    /// lookup begins a new pass, or adds to what one has come to: the stretch the cursor is in grows, a jump closes
+    /// it and begins another, and the rows held apart that it comes to are noted. It changes nothing else, which
+    /// only an update or its end does, and no update is made while one runs.
     /// </summary>
     private sealed class Snapshot
     {
-        private readonly bool?  _forward;
-        private readonly Where  _startWhere;
-        private readonly byte[] _startKey;
-        private readonly int    _startPointer;
-        private readonly int    _skipped;
+        private readonly bool?   _forward;
+        private readonly Run?    _open;
+        private readonly byte[]? _openLowKey;
+        private readonly int     _openLowPointer;
+        private readonly byte[]? _openHighKey;
+        private readonly int     _openHighPointer;
+        private readonly int     _closing;
+        private readonly int     _met;
 
         internal Snapshot(Where where, byte[] key, int pointer, Pass pass)
         {
             (Where, Key, Pointer, Pass) = (where, key, pointer, pass);
-            (_forward, _startWhere, _startKey, _startPointer) = (pass.Forward, pass.StartWhere, pass.StartKey, pass.StartPointer);
-            _skipped = pass.Skipped?.Count ?? 0;
+            _forward = pass.Forward;
+            _open    = pass.Open;
+            if (_open is { } open)
+                (_openLowKey, _openLowPointer, _openHighKey, _openHighPointer) = (open.LowKey, open.LowPointer, open.HighKey, open.HighPointer);
+            _closing = pass.Closing?.Count ?? 0;
+            _met     = pass.Met?.Count ?? 0;
         }
 
         internal Where  Where   { get; }
@@ -281,8 +352,12 @@ public sealed class IndexCursor : Cursor
 
         internal void PutBack()
         {
-            (Pass.Forward, Pass.StartWhere, Pass.StartKey, Pass.StartPointer) = (_forward, _startWhere, _startKey, _startPointer);
-            if (Pass.Skipped is { } skipped && skipped.Count > _skipped) skipped.RemoveRange(_skipped, skipped.Count - _skipped);
+            Pass.Forward = _forward;
+            Pass.Open    = _open;
+            if (_open is { } open)
+                (open.LowKey, open.LowPointer, open.HighKey, open.HighPointer) = (_openLowKey!, _openLowPointer, _openHighKey!, _openHighPointer);
+            if (Pass.Closing is { } closing && closing.Count > _closing) closing.RemoveRange(_closing, closing.Count - _closing);
+            if (Pass.Met is { } met && met.Count > _met) met.RemoveRange(_met, met.Count - _met);
         }
     }
 
@@ -302,31 +377,24 @@ public sealed class IndexCursor : Cursor
     private void Turn(bool forward)
         => _pass = new Pass
         {
-            Forward      = forward,
-            StartWhere   = _where,
-            StartKey     = _key,
-            StartPointer = _pointer,
-            CameAway     = _where == Where.AtEntry && _pointer != 0 ? new HashSet<int> { _pointer } : null,
+            Forward = forward,
+            Away    = _where == Where.AtEntry && _pointer != 0 ? new HashSet<int> { _pointer } : null,
         };
 
     // Puts the cursor before every entry of the key and after, going forwards: where a lookup begins. The entries
-    // between where the cursor was and there are not come to.
+    // between where the cursor was and there are not come to: the stretch it was in ends where it was.
     private void JumpTo(byte[] key)
     {
-        if (_pass.Forward is null)
+        if (_pass.Forward == false) Turn(forward: true);
+        if (_pass.Open is { } open)
         {
-            // The pass has come to nothing yet: it begins there.
-            (_pass.StartWhere, _pass.StartKey, _pass.StartPointer) = (Where.AtEntry, key, 0);
-        }
-        else
-        {
-            if (_pass.Forward == false) Turn(forward: true);
-            (_pass.Skipped ??= new List<(byte[]?, int, byte[])>()).Add((_where == Where.AtEntry ? _key : null, _pointer, key));
+            (_pass.Closing ??= new List<Run>()).Add(open);
+            _pass.Open = null;
         }
         (_where, _key, _pointer) = (Where.AtEntry, key, 0);
     }
 
-    private protected override bool Passes(int pointer, bool forward) => _pass.CameAway?.Contains(pointer) == true;
+    private protected override bool Passes(int pointer, bool forward) => _passing;
 
     /// <summary>
     /// Told by the table that the entry of the row at <paramref name="rowPointer"/> in the index tree numbered
@@ -338,63 +406,128 @@ public sealed class IndexCursor : Cursor
     {
         if (tree != _index.IndexDataNumber) return;
         TimesTold++;
-        Follow(_where, _key, _pointer, _pass, rowPointer, oldKey, newKey);
+        Follow(_pass, rowPointer, oldKey, newKey);
         if (_saved is null) return;
         foreach (var held in _saved)
             if (held.TryGetTarget(out var saved))
-                Follow(saved.Where, saved.Key, saved.Pointer, saved.Pass, rowPointer, oldKey, newKey);
+                Follow(saved.Pass, rowPointer, oldKey, newKey);
     }
 
-    // Whether the row had been come to, worked out from where its entry was, is kept as its entry moves: a row
-    // come to whose entry leaves the span gone over is remembered, as is one not come to whose entry enters it.
-    private static void Follow(Where where, byte[] key, int pointer, Pass pass, int row, byte[]? oldKey, byte[]? newKey)
+    // Whether the row whose entry is at (key, pointer) was given in the pass, worked out from where its entry is;
+    // and whether the row is one the pass holds apart.
+    private bool Given(Pass pass, byte[] key, int pointer, out bool heldApart)
     {
-        bool wasIn = oldKey is not null && IsGoneOver(where, key, pointer, pass, oldKey, row);
-        bool isIn  = newKey is not null && IsGoneOver(where, key, pointer, pass, newKey, row);
-        bool cameTo = wasIn ? pass.MissedInside?.Contains(row) != true : pass.CameAway?.Contains(row) == true;
-        pass.CameAway?.Remove(row);
-        pass.MissedInside?.Remove(row);
-        if (cameTo && !isIn) (pass.CameAway ??= new HashSet<int>()).Add(row);
-        else if (!cameTo && isIn) (pass.MissedInside ??= new HashSet<int>()).Add(row);
+        if (Covers(pass, key, pointer))
+        {
+            heldApart = pass.Missed?.Contains(pointer) == true;
+            return !heldApart;
+        }
+        heldApart = pass.Away?.Contains(pointer) == true;
+        return heldApart;
     }
 
-    // Whether an entry is in the span the pass has gone over: from where it began to where the cursor is, in its
-    // direction, both ends in, but for what a lookup went over.
-    private static bool IsGoneOver(Where where, byte[] key, int pointer, Pass pass, byte[] entryKey, int entryPointer)
+    // Whether an entry at the place is in a stretch the pass has gone over, and is one of the cursor's.
+    private bool Covers(Pass pass, byte[] key, int pointer)
     {
-        if (pass.Forward is not { } forward) return false;
-        bool fromStart = forward
-            ? AtOrAfter(entryKey, entryPointer, pass.StartWhere, pass.StartKey, pass.StartPointer)
-            : AtOrBefore(entryKey, entryPointer, pass.StartWhere, pass.StartKey, pass.StartPointer);
-        bool toPlace = forward
-            ? AtOrBefore(entryKey, entryPointer, where, key, pointer)
-            : AtOrAfter(entryKey, entryPointer, where, key, pointer);
-        if (!fromStart || !toPlace) return false;
-        if (pass.Skipped is { } skipped)
-            foreach (var (fromKey, fromPointer, toKey) in skipped)
-                if ((fromKey is null || CompareEntries(entryKey, entryPointer, fromKey, fromPointer) > 0)
-                    && CompareEntries(entryKey, entryPointer, toKey, 0) < 0)
-                    return false;
-        return true;
+        if (!Within(key)) return false;
+        if (pass.Open is { } open && Holds(open, key, pointer)) return true;
+        if (pass.Closing is { } closing)
+            foreach (var run in closing)
+                if (Holds(run, key, pointer)) return true;
+        return RunAt(pass.Runs, key, pointer) >= 0;
     }
 
-    private static bool AtOrAfter(byte[] key, int pointer, Where where, byte[] placeKey, int placePointer)
-        => where switch
-        {
-            Where.BeforeFirst => true,
-            Where.AfterLast   => false,
-            _                 => CompareEntries(key, pointer, placeKey, placePointer) >= 0,
-        };
+    private bool Holds(Run run, byte[] key, int pointer)
+        => Compare(key, pointer, run.LowKey, run.LowPointer) >= 0 && Compare(key, pointer, run.HighKey, run.HighPointer) <= 0;
 
-    private static bool AtOrBefore(byte[] key, int pointer, Where where, byte[] placeKey, int placePointer)
-        => where switch
+    // The stretch of runs (in order, apart) that holds the place, or -1.
+    private int RunAt(List<Run> runs, byte[] key, int pointer)
+    {
+        int at = LastStartingAtOrBefore(runs, key, pointer);
+        return at >= 0 && Compare(key, pointer, runs[at].HighKey, runs[at].HighPointer) <= 0 ? at : -1;
+    }
+
+    // The last of runs (in order, apart) that begins at or before the place, or -1.
+    private int LastStartingAtOrBefore(List<Run> runs, byte[] key, int pointer)
+    {
+        int lo = 0, hi = runs.Count;
+        while (lo < hi)
         {
-            Where.BeforeFirst => false,
-            Where.AfterLast   => true,
-            _                 => CompareEntries(key, pointer, placeKey, placePointer) <= 0,
-        };
+            int mid = (lo + hi) >>> 1;
+            if (Compare(runs[mid].LowKey, runs[mid].LowPointer, key, pointer) <= 0) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo - 1;
+    }
+
+    // The cursor has come to the entry at (key, pointer): the stretch it is in reaches it, or one begins there.
+    private void Reach(Pass pass, byte[] key, int pointer, bool forward)
+    {
+        if (pass.Open is not { } open)
+        {
+            pass.Open = new Run(key, pointer);
+            return;
+        }
+        if (forward && Compare(key, pointer, open.HighKey, open.HighPointer) > 0) (open.HighKey, open.HighPointer) = (key, pointer);
+        else if (!forward && Compare(key, pointer, open.LowKey, open.LowPointer) < 0) (open.LowKey, open.LowPointer) = (key, pointer);
+    }
+
+    // Once a move or a search is done: the stretches it closed join the others, the stretch the cursor is in takes
+    // in those it has reached into, and the rows held apart that it came to are as their places say.
+    private void Settle(Pass pass)
+    {
+        if (pass.Closing is { Count: > 0 } closing)
+        {
+            foreach (var run in closing) Absorb(pass.Runs, run, insert: true);
+            closing.Clear();
+        }
+        if (pass.Open is { } open) Absorb(pass.Runs, open, insert: false);
+        if (pass.Met is { Count: > 0 } met)
+        {
+            foreach (int row in met)
+            {
+                pass.Away?.Remove(row);
+                pass.Missed?.Remove(row);
+            }
+            met.Clear();
+        }
+    }
+
+    // Takes into run every one of runs (in order, apart) that it overlaps, and puts it among them when insert.
+    private void Absorb(List<Run> runs, Run run, bool insert)
+    {
+        int at = Math.Max(0, LastStartingAtOrBefore(runs, run.LowKey, run.LowPointer));
+        while (at < runs.Count && Compare(runs[at].HighKey, runs[at].HighPointer, run.LowKey, run.LowPointer) < 0) at++;
+        while (at < runs.Count && Compare(runs[at].LowKey, runs[at].LowPointer, run.HighKey, run.HighPointer) <= 0)
+        {
+            var other = runs[at];
+            if (Compare(other.LowKey, other.LowPointer, run.LowKey, run.LowPointer) < 0) (run.LowKey, run.LowPointer) = (other.LowKey, other.LowPointer);
+            if (Compare(other.HighKey, other.HighPointer, run.HighKey, run.HighPointer) > 0) (run.HighKey, run.HighPointer) = (other.HighKey, other.HighPointer);
+            runs.RemoveAt(at);
+        }
+        if (insert) runs.Insert(at, run);
+    }
+
+    // Whether the row had been given, worked out from where its entry was, is kept as its entry moves: a row given
+    // whose entry leaves the stretches gone over, or one not given whose entry enters them, is held apart.
+    private void Follow(Pass pass, int row, byte[]? oldKey, byte[]? newKey)
+    {
+        bool given = oldKey is not null ? Given(pass, oldKey, row, out _) : pass.Away?.Contains(row) == true;
+        pass.Away?.Remove(row);
+        pass.Missed?.Remove(row);
+        if (newKey is null)
+        {
+            if (given) (pass.Away ??= new HashSet<int>()).Add(row);
+            return;
+        }
+        bool isIn = Covers(pass, newKey, row);
+        if (given && !isIn) (pass.Away ??= new HashSet<int>()).Add(row);
+        else if (!given && isIn) (pass.Missed ??= new HashSet<int>()).Add(row);
+    }
 
     // Two places in the index's order: by key, then by row pointer.
+    private static int Compare(byte[] a, int aPointer, byte[] b, int bPointer) => CompareEntries(a, aPointer, b, bPointer);
+
     private static int CompareEntries(byte[] a, int aPointer, byte[] b, int bPointer)
     {
         int byKey = IndexEntryWalker.CompareKeys(a, b);
@@ -480,9 +613,9 @@ public sealed class IndexCursor : Cursor
         if (_none) { MoveAfterLast(); return null; }
 
         // From the first key an entry with the values can have, within the range: first a row that has them, as
-        // far as one can be; then the first row after them. Each lookup begins a pass where it begins. A row that
-        // cannot be read leaves the cursor as it was.
-        object place = Place();
+        // far as one can be; then the first row after them. Each lookup begins a pass with the row it gives: the
+        // entries it looks past are not come to. A row that cannot be read leaves the cursor as it was.
+        object place = BeginMoving();
         var current  = CurrentRow;
         try
         {
@@ -503,11 +636,12 @@ public sealed class IndexCursor : Cursor
                 }
                 if (row is not null) break;
             }
+            DoneMoving(restoreTo: null);
             return row;
         }
         catch
         {
-            Restore(place);
+            DoneMoving(restoreTo: place);
             CurrentRow = current;
             throw;
         }
@@ -792,7 +926,8 @@ public sealed class IndexCursor : Cursor
         if (parts is null) return base.Seek(pattern, fromStart);
 
         // Every row that matches has its entry in one of the parts: the cursor goes to the first entry of each
-        // in turn - unless it is in the part already, or past it - and no further than the part's last.
+        // in turn - unless it is in the part already, or past it - and no further than the part's last, stopping
+        // short of the entry after it, which is the next part's to look at.
         if (fromStart) ToStart();
         foreach (var (from, before) in parts)
         {
@@ -800,16 +935,15 @@ public sealed class IndexCursor : Cursor
             if (_where == Where.AtEntry && before is not null && IndexEntryWalker.CompareKeys(_key, before) >= 0) continue;
             if (_where == Where.BeforeFirst || IndexEntryWalker.CompareKeys(_key, from) < 0)
                 JumpTo(_low is not null && IndexEntryWalker.CompareKeys(from, _low) < 0 ? _low : from);
-            while (MoveToRow(forward: true) is { } row)
+            _partEnd = before;
+            try
             {
-                if (before is not null && IndexEntryWalker.CompareKeys(_key, before) >= 0)
-                {
-                    // Past the part: the entry come to is the next part's to look at, so the cursor is put
-                    // just before it.
-                    _pointer--;
-                    break;
-                }
-                if (Matches(row, pattern)) return row.Pointer;
+                while (MoveToRow(forward: true) is { } row)
+                    if (Matches(row, pattern)) return row.Pointer;
+            }
+            finally
+            {
+                _partEnd = null;
             }
         }
         return null;

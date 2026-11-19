@@ -211,6 +211,80 @@ public sealed class CursorThirdReviewTests : IDisposable
         return ids;
     }
 
+    // ── What a range has come to ─────────────────────────────────────────────
+
+    private static int IdOf(Cursor cursor) => (int)cursor.Current!["Id"]!;
+
+    // The rows a cursor gives one way: the first, then what happens, then the rest.
+    private static List<int> Give(Cursor cursor, bool forward, Action afterFirst)
+    {
+        var ids = new List<int>();
+        Assert.True(forward ? cursor.MoveNext() : cursor.MovePrevious());
+        ids.Add(IdOf(cursor));
+        afterFirst();
+        while (forward ? cursor.MoveNext() : cursor.MovePrevious()) ids.Add(IdOf(cursor));
+        return ids;
+    }
+
+    [Fact]
+    public void A_range_gives_a_row_an_update_moves_into_it_from_outside_it()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("K", DataType.Int32) },
+            new[] { "Id" }, new[] { new IndexDefinition("ByK", "K") });
+        for (int i = 1; i <= 6; i++) table.Insert(new Row { ["Id"] = i, ["K"] = i * 10 });
+        void SetK(int id, int k) { var row = table.FindRowByPrimaryKey(id)!; row["K"] = k; table.Update(row); }
+
+        // Row 1, before the range's start, moved into it ahead of the cursor: the cursor never came to it.
+        var cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 30 }, EndEntry = new object?[] { 60 } });
+        Assert.Equal(new[] { 3, 4, 1, 5, 6 }, Give(cursor, forward: true, () => SetK(1, 45)));
+        SetK(1, 10);
+
+        // Row 2, the start an exclusive range leaves out, moved to 55.
+        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 20 }, IsStartInclusive = false, EndEntry = new object?[] { 60 } });
+        Assert.Equal(new[] { 3, 4, 5, 2, 6 }, Give(cursor, forward: true, () => SetK(2, 55)));
+        SetK(2, 20);
+
+        // Backwards: row 6, after the range's end, moved to 15.
+        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 10 }, EndEntry = new object?[] { 40 } });
+        cursor.MoveAfterLast();
+        Assert.Equal(new[] { 4, 3, 2, 6, 1 }, Give(cursor, forward: false, () => SetK(6, 15)));
+    }
+
+    [Fact]
+    public void A_row_a_date_leaves_out_or_a_closest_lookup_looks_past_is_given_once_an_update_moves_it_in()
+    {
+        using var db = Database.Create(_path);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("D", DataType.DateTime), new ColumnDefinition("L", DataType.Int32),
+        }, new[] { "Id" }, new[] { new IndexDefinition("ByD", "D"), new IndexDefinition("ByDL", "D", "L") });
+        var day = new DateTime(2020, 1, 1);
+        table.Insert(new Row { ["Id"] = 1, ["D"] = day, ["L"] = 3 });
+        table.Insert(new Row { ["Id"] = 2, ["D"] = day, ["L"] = 6 });
+        table.Insert(new Row { ["Id"] = 3, ["D"] = day.AddDays(1), ["L"] = 0 });
+        table.Insert(new Row { ["Id"] = 4, ["D"] = day.AddDays(4), ["L"] = 0 });
+        void Set(int id, string column, object value) { var row = table.FindRowByPrimaryKey(id)!; row[column] = value; table.Update(row); }
+
+        // After 1 January, exclusive: rows 1 and 2 are passed, not come to; row 1 moved to 3 January is given.
+        var cursor = table.CreateIndexCursor("ByD", new IndexRange { StartEntry = new object?[] { day }, IsStartInclusive = false });
+        Assert.Equal(new[] { 3, 1, 4 }, Give(cursor, forward: true, () => Set(1, "D", day.AddDays(2))));
+        Set(1, "D", day);
+
+        // (1 January, 5) to (1 January, 9): row 1, (1 January, 3), is passed on the way to row 2, then moved to L 7.
+        cursor = table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = new object?[] { day, 5 }, EndEntry = new object?[] { day, 9 } });
+        Assert.Equal(new[] { 2, 1 }, Give(cursor, forward: true, () => Set(1, "L", 7)));
+        Set(1, "L", 3);
+
+        // The closest row to (1 January, 5) is row 2: the lookup looks past row 1, which an update then moves ahead.
+        cursor = table.CreateIndexCursor("ByDL");
+        Assert.Equal(2, (int)cursor.FindClosestRowByEntry(day, 5)!["Id"]!);
+        Set(1, "L", 7);
+        var rest = new List<int>();
+        while (cursor.MoveNext()) rest.Add(IdOf(cursor));
+        Assert.Equal(new[] { 1, 3, 4 }, rest);
+    }
+
     // ── A cursor's update of a row it read ───────────────────────────────────
 
     [Fact]

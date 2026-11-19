@@ -122,22 +122,54 @@ public class Cursor : IEnumerable<Row>
     private Row? Move(bool forward)
     {
         // A move that cannot read the row it comes to leaves the cursor as it was.
-        object place = Place();
+        object place = BeginMoving();
         try
         {
+            Row? row = null;
             while (Step(forward) is { } pointer)
             {
                 if (Passes(pointer, forward)) continue;
-                if (ReadRow(pointer) is { } row) return _currentRow = row;
+                if ((row = ReadRow(pointer)) is not null) break;
             }
-            return _currentRow = null;
+            DoneMoving(restoreTo: null);
+            return _currentRow = row;
         }
         catch
         {
-            Restore(place);
+            DoneMoving(restoreTo: place);
             throw;
         }
     }
+
+    // How many moves and searches are under way: a search moves the cursor as it looks.
+    private int _moving;
+
+    /// <summary>
+    /// Where the cursor is (<see cref="Place"/>), as a move or a search begins: what to put it back to when it
+    /// fails or finds nothing (<see cref="DoneMoving"/>).
+    /// </summary>
+    private protected object BeginMoving()
+    {
+        _moving++;
+        return Place();
+    }
+
+    /// <summary>
+    /// Ends what <see cref="BeginMoving"/> began: the cursor is put back to <paramref name="restoreTo"/>, or, when
+    /// that is null, kept where it is - and once the outermost move or search is kept, what it came to is settled
+    /// (<see cref="Settle"/>).
+    /// </summary>
+    private protected void DoneMoving(object? restoreTo)
+    {
+        if (restoreTo is not null) Restore(restoreTo);
+        if (--_moving == 0 && restoreTo is null) Settle();
+    }
+
+    /// <summary>
+    /// After a move or a search the cursor is kept at, outside any other: what a kind of cursor noted while it ran,
+    /// to be taken back if it failed, is made part of what the cursor knows.
+    /// </summary>
+    private protected virtual void Settle() { }
 
     /// <summary>
     /// Whether the cursor goes past the row at <paramref name="pointer"/> without giving it: a row it has come to
@@ -543,7 +575,7 @@ public class Cursor : IEnumerable<Row>
         // A null is never a match, so a pattern with one matches no row.
         if (pattern.Any(p => RowValues.IsNull(p.Value))) return null;
 
-        object place      = Place();
+        object place      = BeginMoving();
         var    current    = _currentRow;
         var    columns    = ColumnsToRead;
         bool   asStored   = ValuesAsStored;
@@ -572,14 +604,18 @@ public class Cursor : IEnumerable<Row>
         catch
         {
             // A row that could not be read stops the search: the cursor is as it was before it.
-            Restore(place);
+            DoneMoving(restoreTo: place);
             _currentRow = current;
             throw;
         }
 
-        if (row is not null) return _currentRow = row;
+        if (row is not null)
+        {
+            DoneMoving(restoreTo: null);
+            return _currentRow = row;
+        }
 
-        Restore(place);
+        DoneMoving(restoreTo: place);
         _currentRow = current;
         return null;
     }

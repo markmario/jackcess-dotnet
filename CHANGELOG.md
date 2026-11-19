@@ -125,8 +125,11 @@ changes with them.
   a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
   a cast, `(string)null`, now that there is an overload taking an `IndexRange`. Rows can be inserted, updated
   and deleted while an index cursor goes through them: going one way it gives each row once, wherever updates
-  move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A savepoint
-  keeps what the cursor had come to, as rows move.
+  move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A row it went
+  past without looking at it - outside its range, left out by a range's date, looked past by
+  `FindClosestRowByEntry` - is given once an update moves it ahead of the cursor. A savepoint keeps what the
+  cursor had come to, as rows move. A cursor is told of a change once it is in the file for good: a batch taken
+  back tells it nothing.
 - **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
   that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` - taken first to
   what it reads as once stored, to the millisecond, so that `DateTime.Now` finds the row written with it - finds
@@ -183,12 +186,15 @@ changes with them.
 ### Added
 
 - **Row ids.** `Row.Id` is a `RowId` - the page a row is on and its number there, Jackcess's `RowId` - for a
-  row that was read, and null for one a caller made (#34).
+  row that was read or inserted, and null for one a caller made (#34). A row given to `Insert` or `InsertRange`
+  is the row inserted afterwards - one read from a table and inserted as a copy among them - so an update of it
+  changes the new row; one that was refused, or whose batch was taken back, is as it came.
 - **`Table.InsertRange(rows)`** inserts a batch whole or not at all: when a row is refused the rows before it
   are taken out again and a `BatchInsertException` names the row (`RowIndex`) and carries what refused it. What
   Jackcess does with `addRows` and `BatchUpdateException`, which leaves the rows before it in the table (#29).
 - **Cursors** (#29): `UpdateCurrentRow` and `DeleteCurrentRow`, which keep every index and enforced
-  relationship as `Table.Update` and `Table.Delete` do; `FindRow` and `FindNextRow`, by one column or by a
+  relationship as `Table.Update` and `Table.Delete` do, and assign what `Table.Update` assigns - of a row read
+  from the table, the columns given a value since; `FindRow` and `FindNextRow`, by one column or by a
   pattern of several; `GetCurrentRowValue` for one column of the current row; `ColumnNames` to read some of the
   columns; `EnumerateBackward`; `IsBeforeFirst` and `IsAfterLast`; `GetSavepoint` and `RestoreSavepoint`.
 - **Index cursors** (#29): a cursor over the rows between two entries of an index
