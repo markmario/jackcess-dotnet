@@ -69,6 +69,15 @@ changed since 1.2.2.
   DAO, on an insert and an update, in an `.mdb` and in `.accdb` files of Access 2007's and 2010's formats ("The
   field is too small to accept the amount of data you attempted to add"). The exception's `MaxLength` and `Length`
   are in bytes for a Binary column, as `Column.MaxLength` is.
+- **A number looked for is matched as the same number** (#49), as Access's `=` matches it, by a cursor over a
+  table and through an index alike. A `double` or `float` looked for in a Byte, Integer, Long or Large Number column
+  finds a row only when it is that whole number exactly: compared through a `decimal`, which keeps 15 significant
+  digits, 5.000000000000001 found an Integer's 5, and the double 1234567890123460096 found a Large Number's
+  1234567890123460000 by a scan and nothing through the index, where 2^60 as a double did not find 2^60. A
+  Currency is the number looked for taken to its four places, as a row stores it and an index keys it: 1.23456
+  finds the row of 1.2346, as it does with ACE's `=` and DAO's `Seek`, where it found none. Text is matched as
+  text, as it was: `"1.0"`, `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose
+  key reads as the same number.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index

@@ -183,7 +183,11 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     (measured in General - Legacy and General): `'abc'` is `'ABC'`, `'a'` is `'a '`, `'ss'` is `'ß'`; `'e'` is
     not `'é'`, and `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a
     character keyed by its neighbours) it is equal when it is the same text. Text is never read as a number.
-  - *Numbers* are equal across number types; a Double or Single by its bits.
+  - *Numbers* are equal across number types when they are the same number, as Access's `=` has them: a Byte,
+    Integer, Long or Large Number column's 5 is a caller's 5L, 5m or 5.0, and no number that is not that whole
+    number (5.5, or a double 5.000000000000001) is in it. A Currency is the caller's number taken to its four
+    places (1.23456 finds 1.2346, as with ACE's `=` and DAO's `Seek`), and a Double or a Single the caller's number
+    as the column stores it, by its bits.
   - *A Date/Time* is the number the row stores. A `DateTime` - taken first to what it reads as once stored, to
     the millisecond, so `DateTime.Now` finds the row written with it - finds every row whose number **reads
     as** that `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not
