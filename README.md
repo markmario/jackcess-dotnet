@@ -172,6 +172,8 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
   when it lists the table's pages, which it does again each time it is put before the first row or after the last.
   A row inserted while it goes is not given, whichever page the row goes to: a new one, or one where a delete or an
   update left room, which can be a page the scan has still to come to. A row deleted while it goes is passed.
+  These two are of changes made through the `Database` being read. Another program's are told to no cursor or scan:
+  what a `ReadOnly` database gives while one writes is under [Sharing a file with Access](#sharing-a-file-with-access).
 - **An update assigns what the `Row` was given.** `Update(row)` assigns the columns given a value since the row
   was read - the value it had among them - as Access's `Edit` and `Update` assign a field: each is held to its
   column's Required and Allow Zero Length (DAO refuses a field given the `""` it holds once the column takes
@@ -347,12 +349,14 @@ And the other way about, with Access - or another `Database` - there first:
 
 **What a `ReadOnly` database reads while another program writes** is the file as it is at each move of a cursor, and at
 each row of `Table.Rows`, by the columns and indexes a table had when it was first got: the pages a move needs are read
-again, as the other program may have written to them since the last. Access does not write a change to the file as it
-commits it. Measured with ACE and DAO, in both formats: a row just inserted reached the file about half a second
-later - Access writes what it has committed once it has been idle for half a second - but not always; in 2 of 12 runs
-of 300 inserts on a connection kept open, the last row was still not in the file 15 seconds later, and reached it with
-the next inserts. So a reading can miss the last rows Access committed for as long as Access keeps them; once Access
-has closed the file, everything it committed is in it.
+again, as the other program may have written to them since the last. No cursor or scan is told of the rows the other
+program inserts, as one is of its own database's, so a row it inserts where a scan has still to come, on a page the
+scan listed, is read. Access does not write a change to the file as it commits it. Measured with ACE and DAO, in
+both formats: a row just inserted reached the file about half a second later - Access writes what it has committed
+once it has been idle for half a second - but not always; in 2 of 12 runs of 300 inserts on a connection kept open,
+the last row was still not in the file 15 seconds later, and reached it with the next inserts. So a reading can miss
+the last rows Access committed for as long as Access keeps them; once Access has closed the file, everything it
+committed is in it.
 
 This library takes none of Access's locks, so nothing keeps such a reading from meeting another program's change
 part-way, or from seeing at one move what was changed after the last. **What a reading beside a writer can do:** miss
