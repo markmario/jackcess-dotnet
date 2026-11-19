@@ -142,6 +142,60 @@ public sealed class CursorOperationTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Orders))]
+    public void A_search_that_finds_a_row_it_cannot_read_whole_leaves_the_cursor_as_it_was(string order)
+    {
+        using var db = Database.Create(_path);
+        var table = Create(db);
+        // A row whose Memo is on a page of its own, and is the only thing wrong with it.
+        var row = table.FindRowByPrimaryKey(77)!;
+        row["Notes"] = new string('m', 3000);
+        table.Update(row);
+
+        // The Memo's reference in the row - [row:1][page:3] after its length - is made to name a page the file has not.
+        var id = row.Id!.Value;
+        byte[] page = db.File.ReadPage(id.PageNumber);
+        var format  = db.File.Format;
+        int slot    = format.OffsetDataRowTable + id.RowNumber * 2;
+        int start   = (page[slot] | page[slot + 1] << 8) & 0x1FFF;
+        int end     = id.RowNumber == 0 ? format.PageSize : (page[slot - 2] | page[slot - 1] << 8) & 0x1FFF;
+        byte[] rowBytes = page.Skip(start).Take(end - start).ToArray();
+        var reference = new RowDecoder(format, table.Columns).GetOtherPageLvRefs(rowBytes).Single();
+        int at = -1;
+        for (int i = start + 4; i + 4 <= end && at < 0; i++)
+            if (page[i] == reference.lvalRow && (page[i + 1] | page[i + 2] << 8 | page[i + 3] << 16) == reference.lvalPage
+                && (BitConverter.ToInt32(page, i - 4) & 0x3FFFFFFF) == 6000)
+                at = i;
+        Assert.True(at > 0, "the Memo's reference was not found in its row");
+        page[at + 1] = 0xFF; page[at + 2] = 0xFF; page[at + 3] = 0x7F;
+        db.File.WritePage(id.PageNumber, page);
+
+        // The row cannot be read whole, and the exception that says so is the one any reader of it gets.
+        var damaged = Record.Exception(() => table.Rows.ToList());
+        Assert.NotNull(damaged);
+
+        var cursor = CursorOver(table, order);
+        for (int i = 0; i < 5; i++) cursor.MoveNext();
+        var on   = cursor.Current!;
+        var next = CursorOver(table, order).Skip(5).First()["Id"];
+
+        // The search reads Id alone and finds the row; reading it with every column is what fails.
+        var thrown = Record.Exception(() => cursor.FindRow("Id", 77));
+        Assert.IsType(damaged!.GetType(), thrown);
+        Assert.Same(on, cursor.Current);
+        Assert.Equal(5, on.Count);
+        thrown = Record.Exception(() => cursor.FindNextRow(new Row { ["Id"] = 77 }));
+        Assert.IsType(damaged.GetType(), thrown);
+        Assert.Same(on, cursor.Current);
+        Assert.True(cursor.MoveNext());
+        Assert.Equal(next, cursor.Current!["Id"]);
+
+        // A cursor that does not read the damaged column finds the row.
+        cursor.ColumnNames = new[] { "Id", "Name" };
+        Assert.Equal("name 077", cursor.FindRow("Id", 77)!["Name"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(Orders))]
     public void Rows_are_deleted_through_a_cursor_going_either_way(string order)
     {
         using (var db = Database.Create(_path))

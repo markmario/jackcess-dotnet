@@ -491,15 +491,28 @@ public class Cursor : IEnumerable<Row>
         var    rewritten  = _rewritten;
         var    columns    = ColumnsToRead;
         bool   asStored   = ValuesAsStored;
-        int?   found;
+        Row?   row        = null;
 
-        // Only the pattern's columns are decoded while looking, as their keys are made of them.
-        ColumnsToRead  = pattern.Select(p => p.Column).Distinct().ToList();
-        ValuesAsStored = true;
         try
         {
-            if (fromStart) _rewritten = null;
-            found = Seek(pattern, fromStart);
+            // Only the pattern's columns are decoded while looking, as their keys are made of them.
+            ColumnsToRead  = pattern.Select(p => p.Column).Distinct().ToList();
+            ValuesAsStored = true;
+            int? found;
+            try
+            {
+                if (fromStart) _rewritten = null;
+                found = Seek(pattern, fromStart);
+            }
+            finally
+            {
+                ColumnsToRead  = columns;
+                ValuesAsStored = asStored;
+            }
+
+            // The row found, read again with the cursor's own columns - which can fail where the search did
+            // not, on a column the search did not read.
+            if (found is { } pointer) row = ReadRow(pointer);
         }
         catch
         {
@@ -509,14 +522,8 @@ public class Cursor : IEnumerable<Row>
             _rewritten  = rewritten;
             throw;
         }
-        finally
-        {
-            ColumnsToRead  = columns;
-            ValuesAsStored = asStored;
-        }
 
-        if (found is { } pointer && ReadRow(pointer) is { } row)
-            return _currentRow = row;
+        if (row is not null) return _currentRow = row;
 
         Restore(place);
         _currentRow = current;
