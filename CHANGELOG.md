@@ -86,13 +86,10 @@ changed since 1.2.2.
   with a fraction finds nothing, where ACE's index finds nothing for -0.0 and -2^63 and rounds the decimal (5.5m
   finds 6, 0.1m finds 0, -1.23465m finds -1); as ACE's index, 2^53 as a double does not find a Large Number's
   2^53 + 1, and a Double's or a Single's +0.0 and -0.0 are two numbers, where ACE's scan compares as doubles and
-  finds both. A Currency is the number looked for taken to its four places: a `double` or `float` by its exact
-  value, half to even, as ACE's `=` (through an index and without) and DAO's `Seek` take it - 0.03125 finds
-  0.0312, and the double 0.00015, which is just under that half, finds 0.0001, where taken through a `decimal`
-  they found 0.0313 and, on .NET Framework and .NET up to 10, 0.0002 - and a `decimal` as a row is written with
-  it, half away from zero: 1.23456 finds the row of 1.2346, where it found none, and 1.23465m the row of 1.2347,
-  where ACE's index takes 1.2346 (#65). A range and `FindClosestRowByEntry` still key a `double` as a row is
-  written with it, which rounds some of these the other way (#65). Text is matched as text, as it was: `"1.0"`,
+  finds both. A Currency is the number looked for taken to its four places as a row is written with it, as Access
+  takes it (#65, below): 0.03125 finds 0.0312, and the double 0.00015, which is just under that half, finds
+  0.0001, where taken through a `decimal` they found 0.0313 and, on .NET Framework and .NET up to 10, 0.0002; and
+  1.23456m finds the row of 1.2346, where it found none. Text is matched as text, as it was: `"1.0"`,
   `" 1"` and `"01"` do not find `"1"`, as a text primary key does not find a row whose key reads as the same
   number.
 - **A `double` or `float` written to a Decimal column, or looked for in one, is the decimal Access makes of it, on
@@ -101,6 +98,48 @@ changed since 1.2.2.
   Framework and .NET up to 10, and on .NET 11 converts exactly: there a double was written to a Decimal column of
   more places than 15 as its binary expansion (0.1 as 0.10000000000000000555), and a lookup by a double found no
   Decimal it should. This fixes a defect of the `net11.0` target on `main`.
+- **A Currency is made from a caller's number as Access makes one, wherever one is made** (#65): the number's exact
+  value - a `double`'s or `float`'s binary value, a `decimal`'s digits, an integer - taken to four places, half to
+  even, the same on every runtime. Measured with ACE 16 and DAO, in an .mdb and an .accdb, and alike for ACE's
+  `INSERT` and `UPDATE` with a parameter of the number's type, DAO's `AddNew` and `Edit` on a dynaset and on a
+  table, and ACE's `=`, `BETWEEN`, `>=`, `>`, `<=` and `<` through an index (`tools/ace-currency.ps1` writes 7,198
+  numbers; the tests hold this library to what ACE stored for each). A row is written with that Currency, keyed
+  with it, compared with it for a relationship and found by it - by a cursor over the table, through an index, in
+  a range and as the closest row - and a property and an imported value are made the same way. So a row written
+  with a number is found by that number. What changes:
+  - **Writes and their keys.** A `double` or a `float` went through `Convert.ToDecimal` and was rounded half away
+    from zero: 0.03125 was written as 0.0313 and 0.00015 as 0.0002, where Access writes 0.0312 and 0.0001, and such
+    a row was not found by the number it was written with. On .NET Framework and .NET up to 10, where
+    `Convert.ToDecimal` keeps 15 significant digits of a `double` and 7 of a `float`, 562949953421312.5 was written
+    as 562949953421312 and ±922337203685477.5 were refused, which Access writes, and the float 98765432 was written
+    as 98765430, 123456.79 as 123456.8 and 1234.5677 as 1234.568, where Access writes 98765432, 123456.7891 and
+    1234.5677. A `decimal` is taken half to even, as Access writes one: 1.23465 is 1.2346 (it was 1.2347). Against
+    what ACE stored for the 7,196 numbers of `tools/ace-currency.ps1` (NaN aside), the earlier rule gave another
+    Currency for 2,005 of 3,619 doubles, 530 of 841 floats and 1,369 of 2,736 decimals on .NET Framework and .NET up
+    to 10, and for 201, 107 and 1,369 of them on .NET 11, whose `Convert.ToDecimal` is exact. A file an earlier
+    version wrote keeps the values it was written with: see "Breaking changes" below.
+  - **Ranges and `FindClosestRowByEntry`** keyed a `double` as a write did: a range of 0.03125 alone had the rows
+    of 0.0313, where `=` found 0.0312's, and on .NET Framework and .NET up to 10 a bound past 15 significant digits
+    was refused with `ArgumentException` or found no row. A bound no Currency holds - NaN, an infinity, a number past
+    the range - is refused with `ArgumentException`, as Access refuses one past the range ("Overflow").
+  - **Relationships** compared a child's key with its parent's as a write rounded it, so the double 0.03125 had no
+    parent 0.0312. **A property** took a `double` through a `decimal` of 15 digits. **An import** that adds a
+    `double` or `float` to a Currency column (`AppendIfExists`) takes the numbers it took and refuses those it
+    refused, but each as the Currency Access makes of it: past 2^38 or so it took the number the round-trip form
+    says, which can be another Currency (35184372088832.0078125 was 35184372088832.01; it is 35184372088832.0078).
+  - **Text and a `bool` are taken as before**, as every number column takes them - text read in the current
+    culture, a `bool` as 1 or 0 - and the number they make is taken to four places by the same rule. **A write
+    refuses, before anything is written,** NaN, the infinities and a number past the range once taken to four places
+    with `OverflowException`, as a number past the range was refused; a date, a `Guid`, bytes or a `char` with
+    `ArgumentException`, where it was an `InvalidCastException`; and text that reads as no number with
+    `FormatException`, as before, now naming the column.
+
+  Where Access differs: ACE and DAO write NaN as the least Currency (-922,337,203,685,477.5808), the integer a
+  processor makes of NaN, and their `=` finds that row for NaN; ACE reads text by the machine's locale and writes
+  True as -1, where this library, for a Currency as for every number column, reads text in the current culture and
+  takes True as 1; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
+  there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's index, its writes and
+  DAO's take a decimal exactly, and so does this library, by a scan as through an index.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
 
 - **Entries that point at no row are taken out** (#36). A version of this library that did not keep every index
@@ -433,6 +472,30 @@ changes with them.
 - **A Binary value longer than its column throws `ColumnValueTooLongException`** (#45). 1.2.2 wrote it whole;
   since then a column kept among the fixed-length values threw `ArgumentOutOfRangeException` for one. Both are
   `ArgumentException`s: code that caught `ArgumentOutOfRangeException` for it catches `ColumnValueTooLongException`.
+- **A Currency row an earlier version wrote is found by the value it holds, and not always by the number it was
+  written from** (#65). This compiles unchanged; it is here because code that finds rows by the numbers it wrote
+  them with can come to another row. 1.2.2, and this library until #65, wrote a Currency rounded half away from
+  zero, after `Convert.ToDecimal`, which on .NET Framework and .NET up to 10 keeps 15 significant digits of a
+  `double` and 7 of a `float`; a number is now taken as Access takes it (above). A file such a version wrote keeps
+  the values it was written with, and they are consistent with one another and with Access: nothing in the file
+  needs mending. The numbers whose Currency is not what it was:
+  - a `decimal` at a half of the fifth place: 1.23465m was written as 1.2347, and is now taken as 1.2346;
+  - a `double` or a `float` that is an exact binary half of the fifth place - an odd number of thirty-seconds, such
+    as 0.03125, written as 0.0313 and now taken as 0.0312;
+  - on .NET Framework and .NET up to 10, a `double` whose 15-digit form is such a half (0.00015, written as 0.0002
+    and now 0.0001; 1.234549999999999, written as 1.2346 and now 1.2345), and a `float` of more than 7 significant
+    digits (98765432f, written as 98765430 and now 98765432).
+
+  For a row written from such a number, a lookup by the number - `FindRowByPrimaryKey`, an index cursor's
+  `FindRowByEntry` and `FindRowsByEntry`, a cursor's `FindRow` - a range of it and `FindClosestRowByEntry` go by the
+  Currency the number makes now, and come to the neighbouring row or to none. In a file an earlier version wrote,
+  `FindRowByPrimaryKey(1.23465m)` finds the row of 1.2346, not the row of 1.2347 written for 1.23465m, and a
+  `Delete` of what it finds deletes that row, and with a cascade its children; a range of 0.03125 alone, of 0.00015,
+  of 1.234549999999999 or of 922337203685477.58065m misses the row written from it. A relationship takes the
+  number the same way: a child given 1.23465m is a child of 1.2346, and one given 0.03125 is refused though its
+  parent was written from 0.03125 (it holds 0.0313). A unique index refuses the number when its neighbour holds what
+  it now makes, as 1.23465m beside the row of 1.234549999999999. **Find such rows by the value stored - as a row
+  reads it back - and not by the number they were written from.**
 
 ### Added
 

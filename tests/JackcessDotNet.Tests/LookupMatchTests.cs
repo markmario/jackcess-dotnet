@@ -205,9 +205,9 @@ public sealed class LookupMatchTests : IDisposable
             // A double of more significant digits than 15 is its exact value, as ACE takes it: through a decimal of 15
             // digits it was 562949953421313, and found nothing.
             ("C", 562949953421312.5, new[] { 3 }),
-            // A decimal at a half of the fifth place is taken half away from zero, as a row is written with it: 1.2347,
-            // which no row holds, where ACE's index takes 1.2346 (#65).
-            ("C", 1.23465m, Array.Empty<int>()),
+            // A decimal at a half of the fifth place is taken half to even, as a row is written with it and as ACE's
+            // index takes it: 1.2346 (#65), where ACE's scan takes it through a double and finds 1.2347.
+            ("C", 1.23465m, new[] { 1 }), ("C", 1.23455m, new[] { 1 }), ("C", 1.234549m, new[] { 2 }),
             // A Double and a Single: the number asked as the column stores it, by its bits.
             ("F", 0.1, new[] { 1 }), ("F", 0.1m, new[] { 1 }), ("F", 0.1f, Array.Empty<int>()), ("F", -0.0, new[] { 2 }),
             ("F", 0.0, Array.Empty<int>()), ("F", 1.2346m, new[] { 3 }),
