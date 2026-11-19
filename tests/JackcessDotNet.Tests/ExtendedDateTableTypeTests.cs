@@ -127,9 +127,9 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         Assert.Equal(trees, IndexChecks.AssertEveryIndexHoldsTheRows(db, table, expectedRows: rows));
     }
 
-    // The order DAO walks KAsc in: the bytes' order. The third layout's rows come after those of the other two from the
-    // year 2 on - the day's first digit is four places sooner - and among themselves by their dates, then by the bytes
-    // DAO left after them.
+    // The orders DAO walks KAsc and KDesc in (measured): the bytes' order. Ascending, the third layout's rows come after
+    // those of the other two from the year 2 on - the day's first digit is four places sooner - and among themselves by
+    // their dates, then by the bytes DAO left after them; descending, the other way round.
     [Fact]
     public void An_index_cursor_gives_the_rows_in_the_order_of_their_bytes()
     {
@@ -361,10 +361,10 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
     // key of no value (and row 4, in the second form, under the key of its date in the first form, as #51 found), and in
     // T's KAsc, KDesc and KHow rows 4, 7 and 9, which it rewrote verifying its indexes. Deleted, or given a new date, each
     // row takes that entry with it, found under the key of no value by the row it points at - one way down the tree, not
-    // a reading of the rows with no value - and leaves no entry of no row. Row 9's bytes after the value begin with a
-    // 7, where the first form has its count: those versions read it as no value all the same, as this library reads
-    // what they read; read as its date, as this library reads it, its entry was looked for under that date's key and
-    // left behind.
+    // a reading of the rows with no value - and leaves no entry of no row. Of the four bytes after row 9's value the
+    // third is a 7, at byte 40, where the first form has its count: those versions read it as no value all the same,
+    // as this library reads what they read; read as its date, as this library reads it, its entry was looked for
+    // under that date's key and left behind.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

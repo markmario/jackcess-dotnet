@@ -264,8 +264,9 @@ internal static class IndexKeys
                 // The 42 bytes the row stores, in 8-byte segments each followed by a length byte: 9 for a
                 // segment with more after it, and after the last, which is filled out with zeros, the bytes it
                 // has of the value - 2. Access keys the bytes in whichever form they are, and whatever date they
-                // say (#51), so the two forms of one date are two keys and the keys sort as the bytes do; a
-                // caller's DateTime is keyed in the form Access's INSERT writes, as Access keys a date it is given.
+                // say (#51), so each layout of one date is a key of its own - the table-type layout's with the bytes
+                // DAO left after the value (#64) - and the keys sort as the bytes do; a caller's DateTime is keyed in
+                // the form Access's INSERT writes, as Access keys a date it is given.
                 byte[] stored = value is StoredExtendedDate row ? row.Bytes : ExtendedDateTimeCodec.Encode((DateTime)value!);
                 bytes = new byte[(stored.Length / 8 + 1) * 9];
                 for (int segment = 0; segment * 8 < stored.Length; segment++)

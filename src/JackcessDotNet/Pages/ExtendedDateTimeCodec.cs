@@ -112,12 +112,12 @@ internal static class ExtendedDateTimeCodec
     }
 
     /// <summary>
-    /// The value at <paramref name="offset"/> as versions of this library from db6f93b until #64 read it, the
-    /// versions that keyed the date they read (#51): two colons at their places in Access's first form, after
-    /// nineteen bytes of the day and nineteen of the time, a count of 7 or 0 after the second, anything but a digit in
-    /// the last byte, and each number digits that spaces may stand before and after and a plus sign before. Null for
-    /// anything else - the layout DAO's table-type recordset writes among it, with its day of fifteen digits. Versions
-    /// from 2930d3f read a count of 7 alone.
+    /// The value at <paramref name="offset"/> as versions of this library from db6f93b read it, until #64: two colons at
+    /// their places in Access's first form, after nineteen bytes of the day and nineteen of the time, a count of 7 or 0
+    /// after the second, anything but a digit in the last byte, and each number digits that spaces may stand before
+    /// and after and a plus sign before. Null for anything else - the layout DAO's table-type recordset writes among it,
+    /// with its day of fifteen digits. Versions from 2930d3f read a count of 7 alone. Those of them that keyed the date
+    /// they read, until #51, made their keys of it (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>).
     /// </summary>
     public static DateTime? DecodeAsEarlierVersions(byte[] row, int offset)
     {

@@ -17,8 +17,8 @@
       W   given the index ByK (K) over its four rows: 1 and 4 the date in Access's first and second forms, which that
           version keyed as their date in the first form, and 2 and 3 in the third layout, which it keyed as no value.
       T   rows 4, 7 and 9, in the third layout, given a new How: their entries in KAsc, KDesc and KHow were found by the
-          row they point at, taken out, and each row entered under the key of no value in K. Row 9's bytes after the
-          value begin with a 7, in the place of the first form's count.
+          row they point at, taken out, and each row entered under the key of no value in K. Of the four bytes after
+          row 9's value the third is a 7, at byte 40, the place of the first form's count.
 
     The file is not the same bytes on every run (it holds the time it was made), so the fixture is committed, and this
     script is the record of how. It needs the .NET SDK and Git; it changes nothing but the fixture.

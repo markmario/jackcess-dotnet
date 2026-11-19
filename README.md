@@ -228,12 +228,13 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
     ([#64](https://github.com/markmario/jackcess-dotnet/issues/64)). A `DateTime` finds every row whose bytes say that
     date: through an index under the key of each of the first two and among the keys that begin with the third's
     other bytes, where Access's own `=` through an index finds the first alone (measured; without an index it finds
-    all three). A value in a form that reads as its date and that Access was not seen to write - a space or a plus
-    sign among its digits - is found by a cursor over the table, and not through an index, which holds it under a
-    key of its own. In a range's entry and given to `FindClosestRowByEntry`, a `DateTime` is the first form's key and
-    a row is put against it by its key, as Access's `BETWEEN` through an index puts it (measured): a row in another
-    layout is where its bytes are. A row in the third comes after every row of the other two from the year 2 on, so
-    ACE's own `K > '2020-01-02 03:04:05'` through an index gives the rows in the third layout of that very date and of
+    all three). A value in a shape that reads as its date and that Access was not seen to write - a space or a plus
+    sign among its digits, fewer digits, a count other than 7 or 0 - is found by a cursor over the table, and not
+    through an index, which holds it under a key of its own. In a range's entry and given to `FindClosestRowByEntry`, a
+    `DateTime` is the first form's key and a row is put against it by its key, as Access's `BETWEEN` through an index
+    puts it (measured): a row in another layout is where its bytes are. A row in the third comes after every row of the
+    other two from the year 2 on in an ascending index (before them in a descending one), so ACE's own
+    `K > '2020-01-02 03:04:05'` through an ascending index gives the rows in the third layout of that very date and of
     earlier ones, which without an index it does not (measured). A `Joiner` joins a row that was read on its stored
     bytes, as a relationship does, unless the row has been given a date in that column since.
   - A null is never a match.

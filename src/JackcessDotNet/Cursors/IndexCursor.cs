@@ -38,7 +38,8 @@ namespace JackcessDotNet;
 /// <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first form, and
 /// rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in another
 /// layout is where its bytes are, which is not always where its date is. A row in the third, whose day has fewer
-/// digits, comes after every row of the other two from the year 2 on.
+/// digits, comes after every row of the other two from the year 2 on in an ascending index, and before them in a
+/// descending one.
 /// </para>
 /// <para>
 /// Rows can be inserted, updated and deleted while the cursor goes through them, through the cursor itself or
@@ -1164,8 +1165,8 @@ public sealed class IndexCursor : Cursor
 /// <para>
 /// A <see cref="DateTime"/> for a Date/Time Extended column is the key of the bytes Access's <c>INSERT</c> writes for
 /// it, and rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them (measured):
-/// a row Access stored in its other form, the time of day in whole seconds, is where its bytes are, which is not
-/// always where its date is.
+/// a row Access stored in another layout - its <c>UPDATE</c>'s, the time of day in whole seconds, or a DAO table-type
+/// recordset's, the day in fifteen digits - is where its bytes are, which is not always where its date is.
 /// </para>
 /// </summary>
 public sealed class IndexRange

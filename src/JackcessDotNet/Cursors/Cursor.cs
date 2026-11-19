@@ -512,9 +512,9 @@ public class Cursor : IEnumerable<Row>
     /// <c>AddNew</c> and <c>Edit</c> on a table-type recordset - and a <see cref="DateTime"/> finds every row whose
     /// bytes say that date, read as Access reads them, in whichever layout. A null is never a match: a row with no value
     /// in a column is not found by looking for null. A cursor over a table and one over an index find the same rows, but
-    /// for a Date/Time Extended value in a form that reads as its date and that Access was not seen to write - a space
-    /// or a plus sign among its digits - which only a cursor over the table finds by its date: an index holds it under a
-    /// key of its own.
+    /// for a Date/Time Extended value in a shape that reads as its date and that Access was not seen to write - a space
+    /// or a plus sign among its digits, fewer digits, a count other than 7 or 0 - which only a cursor over the table
+    /// finds by its date: an index holds it under a key of its own.
     /// </para>
     /// </summary>
     /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
