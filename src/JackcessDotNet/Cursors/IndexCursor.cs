@@ -976,9 +976,9 @@ public sealed class IndexCursor : Cursor
     /// </para>
     /// <para>
     /// Bytes of a Date/Time Extended value in another form than the first, as a row stores them - a <see cref="Joiner"/>
-    /// looks for a row's - are looked for under their key and under each key those versions made of such bytes
-    /// (<see cref="StoredExtendedDate.AsEarlierVersionsRead"/>), a part each, where the rows are matched by their
-    /// bytes: the rows of no value are read only for bytes in such a form.
+    /// looks for a row's - are looked for under their key and under the key versions from db6f93b made of such bytes,
+    /// the first form of the date they read (<see cref="StoredExtendedDate.AsEarlierVersionsRead"/>), a part each,
+    /// where the rows are matched by their bytes. Not under the key of no value, for the same reason as a date.
     /// </para>
     /// </summary>
     private List<(byte[] From, byte[]? Before)>? PartsFor(IReadOnlyList<(Column Column, object? Value)> pattern)
@@ -1041,9 +1041,9 @@ public sealed class IndexCursor : Cursor
                 if (Key(values[values.Count - 1]) is not { } key) return null;
                 parts.Add((key, IndexEntryWalker.AfterAllBeginningWith(key)));
                 // Bytes of a Date/Time Extended value in another form than the first - a row's, as a Joiner looks
-                // for it - are also under the keys earlier versions made of the date they read, each a part of its
+                // for it - are also under the key versions from db6f93b made of the date they read, a part of its
                 // own, where the rows are matched by their bytes (TableIndexes.EarlierVersionsEntriesOf).
-                foreach (var earlier in StoredExtendedDate.AsEarlierVersionsRead(values))
+                foreach (var earlier in StoredExtendedDate.AsEarlierVersionsRead(values, asFrom2930d3f: false))
                     if (KeyOf(earlier) is { } other && !parts.Any(part => IndexEntryWalker.CompareKeys(part.From, other) == 0))
                         parts.Add((other, IndexEntryWalker.AfterAllBeginningWith(other)));
                 parts.Sort((x, y) => IndexEntryWalker.CompareKeys(x.From, y.From));

@@ -56,13 +56,14 @@ internal sealed class StoredExtendedDate : IEquatable<StoredExtendedDate>
     /// <summary>
     /// <paramref name="values"/> - a row's, for an index's columns - as the versions of this library that keyed the
     /// date they read read them (<see cref="DateAsEarlierVersionsRead"/>): each value in another form than the first
-    /// as its date, as from db6f93b, and then as from 2930d3f. None when every value is in the first form, which those
-    /// versions keyed as this library does. Such a version entered a row under the key of one of them.
+    /// as its date, as from db6f93b, and then, with <paramref name="asFrom2930d3f"/>, as from 2930d3f, which read
+    /// Access's second form as no value. None when every value is in the first form, which those versions keyed as
+    /// this library does. Such a version entered a row under the key of one of them.
     /// </summary>
-    internal static IEnumerable<object?[]> AsEarlierVersionsRead(IReadOnlyList<object?> values)
+    internal static IEnumerable<object?[]> AsEarlierVersionsRead(IReadOnlyList<object?> values, bool asFrom2930d3f)
     {
         if (!values.Any(value => value is StoredExtendedDate stored && !stored.IsFirstForm)) yield break;
-        foreach (bool secondFormAsDate in new[] { true, false })
+        foreach (bool secondFormAsDate in asFrom2930d3f ? new[] { true, false } : new[] { true })
             yield return values
                 .Select(value => value is StoredExtendedDate stored && !stored.IsFirstForm ? stored.DateAsEarlierVersionsRead(secondFormAsDate) : value)
                 .ToArray();

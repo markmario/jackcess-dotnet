@@ -263,9 +263,10 @@ internal sealed class TableIndexes
                 if (holder == replacedRowPointer || !IsDuplicateOf(entry, stored, holder)) continue;
                 throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
             }
-            // A row an earlier version entered under the key of the date it read (EarlierVersionsEntriesOf) is a
-            // duplicate when it holds these very bytes: the rows under those keys are read to see.
-            foreach (var earlier in EarlierVersionsEntriesOf(entry))
+            // A row a version from db6f93b entered under the key of the first form of the date it read
+            // (EarlierVersionsEntriesOf) is a duplicate when it holds these very bytes: the rows under that key are
+            // read to see. Not the key of no value, under which every row with no value is.
+            foreach (var earlier in EarlierVersionsEntriesOf(entry, asFrom2930d3f: false))
                 foreach (var (_, holder) in StoredUnder(writer, earlier))
                     if (holder != replacedRowPointer && HoldsKey(tree, holder, entry.Key))
                         throw new ConstraintViolationException(DuplicateIn(entry) + " The table is left as it was.");
@@ -329,9 +330,10 @@ internal sealed class TableIndexes
     /// The row pointers <paramref name="entry"/>'s index holds under its key - the rows a unique index compares it
     /// with - or null when the index does not hold every row (<see cref="HoldsEveryRow"/>), or the key is one this
     /// library may not make as Access does (<see cref="IndexKeys.MatchesAccess"/>): the caller then reads the table.
-    /// A row an earlier version entered under the key of the date it read (<see cref="EarlierVersionsEntriesOf"/>)
-    /// is among them, and so is any other row under such a key: as every row given, it is the caller's to read and
-    /// compare.
+    /// A row a version from db6f93b entered under the key of the first form of the date it read
+    /// (<see cref="EarlierVersionsEntriesOf"/>) is among them, and so is any other row under that key: as every row
+    /// given, it is the caller's to read and compare. The key of no value, which versions from 2930d3f made of
+    /// Access's second form, is not looked under: every row with no value is under it, and each would be read.
     /// </summary>
     internal IEnumerable<int>? RowPointersFor(Entry entry)
     {
@@ -339,7 +341,7 @@ internal sealed class TableIndexes
         var writer = new IndexWriter(_file, _allocator);
         return StoredUnder(writer, entry)
             .Where(stored => !IsEarlierOnly(entry, stored.Key) || HoldsKey(entry.Tree, stored.RowPointer, entry.Key))
-            .Concat(EarlierVersionsEntriesOf(entry).SelectMany(earlier => StoredUnder(writer, earlier)))
+            .Concat(EarlierVersionsEntriesOf(entry, asFrom2930d3f: false).SelectMany(earlier => StoredUnder(writer, earlier)))
             .Select(stored => stored.RowPointer);
     }
 
@@ -553,14 +555,17 @@ internal sealed class TableIndexes
     /// second form as no value, and from db6f93b as its date (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>).
     /// An index or a primary key they added over such a row, and a row they rewrote, is under that key
     /// (tools/earlier-extended-date-keys.ps1). None for values in the first form, which they keyed as this library
-    /// does, and at most two: each is looked under once, one way down the tree. The key of a date in the first form is
-    /// also the key of a row that has the date in that form, and the key of no value a row's that has none: a row
-    /// found under one is another row's but where it holds the very values looked for.
+    /// does; the key of the date read; and, with <paramref name="asFrom2930d3f"/>, the key of no value too. The key of
+    /// a date in the first form is also the key of a row that has the date in that form: a row found under it is
+    /// another row's but where it holds the very values looked for. The key of no value is every row's with no value,
+    /// so it is looked under only for the row an entry points at (<see cref="RemoveAsEarlierVersionsKeyedIt"/>), never
+    /// for the rows a search is for: those versions were on <c>main</c> from 2930d3f to db6f93b, ten hours, and never
+    /// released.
     /// </summary>
-    internal static IEnumerable<Entry> EarlierVersionsEntriesOf(Entry entry)
+    internal static IEnumerable<Entry> EarlierVersionsEntriesOf(Entry entry, bool asFrom2930d3f)
     {
         var looked = new List<byte[]> { entry.Key };
-        foreach (var values in StoredExtendedDate.AsEarlierVersionsRead(entry.Values))
+        foreach (var values in StoredExtendedDate.AsEarlierVersionsRead(entry.Values, asFrom2930d3f))
         {
             if (entry.Tree.IgnoreNulls && values.All(value => value is null)) continue;
 
@@ -573,12 +578,15 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Takes out of <paramref name="entry"/>'s tree the entry an earlier version made for the row at
-    /// <paramref name="rowPointer"/> (<see cref="EarlierVersionsEntriesOf"/>), when its entry is not under the key of
-    /// its bytes. Only this row's entry is taken out. Returns whether one was.
+    /// <paramref name="rowPointer"/> (<see cref="EarlierVersionsEntriesOf"/>), the key of no value among them, when its
+    /// entry is not under the key of its bytes. Only this row's entry is taken out. Each key is looked under for this
+    /// row's entry, one way down the tree to the key and the row: the rows under it are not read. (A key that was cut
+    /// is looked for among the entries that begin with what the cut kept, as every cut key's entry is - the rows with
+    /// the same values up to the cut.) Returns whether an entry was taken out.
     /// </summary>
     private static bool RemoveAsEarlierVersionsKeyedIt(IndexWriter writer, Entry entry, int rowPointer)
     {
-        foreach (var earlier in EarlierVersionsEntriesOf(entry))
+        foreach (var earlier in EarlierVersionsEntriesOf(entry, asFrom2930d3f: true))
         {
             if (!earlier.IsCut)
             {
