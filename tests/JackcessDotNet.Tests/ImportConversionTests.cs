@@ -204,6 +204,48 @@ public sealed class ImportConversionTests : IDisposable
         }
     }
 
+    // Text whose exponent is past what an int holds, or near it: a number past every column's range, or nearer 0 than
+    // any column holds a number apart from 0.
+    public static IEnumerable<object[]> FarExponents() =>
+        from text in new[]
+        {
+            "1e4294967296", "-7e4294967296", "100e4294967296", "1.5e4294967296",
+            "1e-4294967296", "-7e-4294967296", "100e-4294967296", "1.5e-4294967296",
+            "1e2147483648", "1e-2147483648", "1e2147483647", "1e-2147483647", "1e-2147483649", "0.001e2147483650",
+            "1e99999999999999999999", "-1e-99999999999999999999", "1e100001", "1e-100001",
+        }
+        from column in new[] { "I16", "Cur", "Dec", "Dec16", "Dbl", "Sng" }
+        select new object[] { column, text };
+
+    // Such text is refused, as other text no column holds, with ArgumentException naming the column, and the file is
+    // left as it was: nothing wraps, and no other exception escapes. It was written as 1, -7, 100 or 1.5 where the
+    // exponent wrapped to 0, and an exponent of 2^31 threw ArgumentOutOfRangeException.
+    [Theory]
+    [MemberData(nameof(FarExponents), DisableDiscoveryEnumeration = true)]
+    public void Text_with_an_exponent_past_an_int_is_refused_by_every_number_column(string column, string text)
+    {
+        MakeTable();
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            var refused = Assert.Throws<ArgumentException>(() => db.ImportTable(Source(column, text), new ImportOptions { AppendIfExists = true }));
+            Assert.Contains($"The value of {column} in", refused.Message);
+            Assert.Contains("Nothing was imported", refused.Message);
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+    }
+
+    // A zero is zero, whatever its exponent.
+    [Theory]
+    [InlineData("0e4294967296")]
+    [InlineData("0.000e-4294967296")]
+    [InlineData("-0e2147483648")]
+    public void Zero_with_any_exponent_is_zero(string text)
+    {
+        Assert.Equal((short)0, Appended("I16", text));
+        Assert.Equal(0.0, Math.Abs(Assert.IsType<double>(Appended("Dbl", text))));
+    }
+
 #if NET
     // On .NET the round-trip format is the shortest text that reads back as the double, as ExactNumber's is.
     [Fact]

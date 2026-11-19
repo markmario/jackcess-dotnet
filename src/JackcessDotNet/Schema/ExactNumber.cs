@@ -300,10 +300,16 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
 
     // ── Text ─────────────────────────────────────────────────────────────────
 
+    // How far from 1 a number read from text is kept, in powers of ten: past every column's range, and nearer 0 than
+    // any column holds a number apart from 0, by far. A number further out stands for every number as far: one, ten to
+    // the power Beyond + 1 or -(Beyond + 1), with its sign. Every column refuses it, as it refuses the number written.
+    private const long Beyond = 100_000;
+
     /// <summary>
     /// The number <paramref name="text"/> denotes, exactly, when it is a number as <see cref="NumberStyles.Float"/>
     /// reads one in the invariant culture: white space around it, a sign, digits with a point among them or none, and
-    /// an exponent. "NaN" and "Infinity" are not numbers.
+    /// an exponent. "NaN" and "Infinity" are not numbers. A number more than ten to the power 100,000 from 1, either
+    /// way, is read as one that far: a column holds neither.
     /// </summary>
     internal static bool TryParse(string text, out ExactNumber number)
     {
@@ -346,9 +352,11 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
                 negativeExponent = text[at] == '-';
                 at++;
             }
+            // Past 10^11 the exponent stops growing: more than any string has digits, so the number is past Beyond
+            // either way, whatever its digits.
             int first = at;
             for (; at < end && text[at] >= '0' && text[at] <= '9'; at++)
-                if (exponent < 1_000_000_000) exponent = exponent * 10 + (text[at] - '0');
+                if (exponent < 100_000_000_000) exponent = exponent * 10 + (text[at] - '0');
             if (at == first) return false;
             if (negativeExponent) exponent = -exponent;
         }
@@ -361,8 +369,23 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
             number = new ExactNumber(BigInteger.Zero, 0, negativeZero: negative);
             return true;
         }
-        BigInteger unscaled = BigInteger.Parse(digits.ToString(0, digits.Length - trailing), NumberStyles.None, Invariant);
-        number = new ExactNumber(negative ? -unscaled : unscaled, (int)(places - trailing - exponent));
+        int count = digits.Length - trailing;
+        long scale = checked(places - trailing - exponent);
+        long magnitude = checked(count - 1 - scale);   // the power of ten of the first digit
+        BigInteger unscaled;
+        if (magnitude > Beyond)
+        {
+            unscaled = BigInteger.One;
+            scale = -(Beyond + 1);
+        }
+        else if (magnitude < -Beyond)
+        {
+            unscaled = BigInteger.One;
+            scale = Beyond + 1;
+        }
+        else
+            unscaled = BigInteger.Parse(digits.ToString(0, count), NumberStyles.None, Invariant);
+        number = new ExactNumber(negative ? -unscaled : unscaled, checked((int)scale));
         return true;
     }
 
