@@ -45,14 +45,58 @@ namespace JackcessDotNet.AccessTests
             return connection;
         }
 
+        // Each statement or insert below is a commit of its own, which costs about a tenth of a second on CI's disk. Rows
+        // that only set the scene go in one: ACE's and DAO's in a transaction, the engine's in one InsertRange. Rows
+        // written one at a time are the ones written while the other side has the file open, where that is what a test
+        // is about - a few of them.
+        private const int OneAtATime = 10;
+
+        // How many rows set a scene. AssertTableIs looks each row up twice through ACE, each on a connection of its own, so
+        // a scene of hundreds of rows costs as many lookups at the end of the test; twenty make the table the test needs.
+        private const int Scene = 20;
+
+        private static string Insert(int id, string what) { return "INSERT INTO T (Id, V) VALUES (" + id + ", '" + what + " " + id + "')"; }
+
         private static void AceInserts(OleDbConnection connection, List<Values> rows, int from, int count, string what)
         {
             for (var id = from; id < from + count; id++)
             {
-                using (var command = new OleDbCommand("INSERT INTO T (Id, V) VALUES (" + id + ", '" + what + " " + id + "')", connection))
+                using (var command = new OleDbCommand(Insert(id, what), connection))
                     Assert.Equal(1, command.ExecuteNonQuery());
                 rows.Add(V("Id", id, "V", what + " " + id));
             }
+        }
+
+        /// <summary>ACE's inserts of rows that set the scene, in one transaction: one commit.</summary>
+        private static void AceInsertsAtOnce(OleDbConnection connection, List<Values> rows, int from, int count, string what)
+        {
+            using (var transaction = connection.BeginTransaction())
+            {
+                for (var id = from; id < from + count; id++)
+                {
+                    using (var command = new OleDbCommand(Insert(id, what), connection, transaction))
+                        Assert.Equal(1, command.ExecuteNonQuery());
+                    rows.Add(V("Id", id, "V", what + " " + id));
+                }
+                transaction.Commit();
+            }
+        }
+
+        private static void DaoInserts(dynamic dao, List<Values> rows, int from, int count, string what)
+        {
+            for (var id = from; id < from + count; id++)
+            {
+                dao.Execute(Insert(id, what), 128 /* dbFailOnError */);
+                rows.Add(V("Id", id, "V", what + " " + id));
+            }
+        }
+
+        /// <summary>DAO's inserts of rows that set the scene, in one transaction of its default workspace: one commit.</summary>
+        private static void DaoInsertsAtOnce(dynamic dbe, dynamic dao, List<Values> rows, int from, int count, string what)
+        {
+            dbe.BeginTrans();
+            DaoInserts(dao, rows, from, count, what);
+            dbe.CommitTrans();
         }
 
         private static void EngineInserts(Database db, List<Values> rows, int from, int count, string what)
@@ -63,6 +107,18 @@ namespace JackcessDotNet.AccessTests
                 table.Insert(new Row { ["Id"] = id, ["V"] = what + " " + id });
                 rows.Add(V("Id", id, "V", what + " " + id));
             }
+        }
+
+        /// <summary>The engine's inserts of rows that set the scene, in one InsertRange: one change.</summary>
+        private static void EngineInsertsAtOnce(Database db, List<Values> rows, int from, int count, string what)
+        {
+            var batch = new List<Row>();
+            for (var id = from; id < from + count; id++)
+            {
+                batch.Add(new Row { ["Id"] = id, ["V"] = what + " " + id });
+                rows.Add(V("Id", id, "V", what + " " + id));
+            }
+            db.GetTable("T").InsertRange(batch);
         }
 
         private static int AceCount(OleDbConnection connection)
@@ -114,11 +170,11 @@ namespace JackcessDotNet.AccessTests
         {
             var path = NewDatabase(extension);
             var rows = new List<Values>();
-            using (var connection = Ace(path)) AceInserts(connection, rows, 1, 100, "ace before");
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, Scene, "ace before");
 
             using (var db = Database.Open(path))
             {
-                EngineInserts(db, rows, 1000, 300, "engine");
+                EngineInsertsAtOnce(db, rows, 1000, Scene, "engine");
 
                 Assert.Contains("already in use", AceRefusal(path, null));
                 Assert.Contains("already in use", AceRefusal(path, "Share Exclusive"));
@@ -134,11 +190,12 @@ namespace JackcessDotNet.AccessTests
                 }
                 Assert.Null(DaoRefusal(path, exclusive: false, readOnly: true));
 
-                EngineInserts(db, rows, 2000, 300, "engine after");
+                // The engine goes on writing, a row at a time, having kept Access out.
+                EngineInserts(db, rows, 2000, OneAtATime, "engine after");
             }
 
             AssertTableIs(path, "T", "Id", rows, "after the engine wrote with ACE and DAO kept out");
-            using (var connection = Ace(path)) AceInserts(connection, rows, 3000, 100, "ace after");
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 3000, Scene, "ace after");
             AssertTableIs(path, "T", "Id", rows, "after ACE wrote once the engine had closed");
         }
 
@@ -154,7 +211,7 @@ namespace JackcessDotNet.AccessTests
             using (var first = Database.Open(path))
             {
                 Assert.Throws<DatabaseInUseException>(() => Database.Open(path).Dispose());
-                EngineInserts(first, rows, 1, 3000, "first");
+                EngineInsertsAtOnce(first, rows, 1, 300, "first");
                 Assert.Throws<DatabaseInUseException>(() => Database.Open(path).Dispose());
             }
 
@@ -169,13 +226,13 @@ namespace JackcessDotNet.AccessTests
         {
             var path = NewDatabase(extension);
             var rows = new List<Values>();
-            using (var connection = Ace(path)) AceInserts(connection, rows, 1, 100, "ace");
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, Scene, "ace");
 
             using (var reader = Ace(path, "Read"))
             {
-                Assert.Equal(100, AceCount(reader));
+                Assert.Equal(Scene, AceCount(reader));
                 using (var db = Database.Open(path))
-                    EngineInserts(db, rows, 1000, 300, "engine");
+                    EngineInserts(db, rows, 1000, OneAtATime, "engine");
                 // What a reader that keeps its pages counts now is ACE's affair; it reads on.
                 AceCount(reader);
             }
@@ -187,7 +244,7 @@ namespace JackcessDotNet.AccessTests
                 try
                 {
                     using (var db = Database.Open(path))
-                        EngineInserts(db, rows, 2000, 300, "engine beside DAO");
+                        EngineInserts(db, rows, 2000, OneAtATime, "engine beside DAO");
                 }
                 finally { daoReader.Close(); }
             }
@@ -223,9 +280,9 @@ namespace JackcessDotNet.AccessTests
                 {
                     using (var connection = Ace(path))
                     {
-                        AceInserts(connection, rows, 1, 300, "ace before");
+                        AceInsertsAtOnce(connection, rows, 1, Scene, "ace before");
                         reader = EngineIsKeptOutButReads(path, rows);
-                        AceInserts(connection, rows, 301, 300, "ace beside the engine reading");
+                        AceInserts(connection, rows, Scene + 1, OneAtATime, "ace beside the engine reading");
                         AssertReadsOnlyRowsWritten(reader, rows, "while ACE wrote beside it");
                     }
                 }
@@ -237,17 +294,9 @@ namespace JackcessDotNet.AccessTests
                         dynamic dao = dbe.OpenDatabase(path, false, false);
                         try
                         {
-                            for (var id = 1; id <= 300; id++)
-                            {
-                                dao.Execute("INSERT INTO T (Id, V) VALUES (" + id + ", 'dao " + id + "')", 128 /* dbFailOnError */);
-                                rows.Add(V("Id", id, "V", "dao " + id));
-                            }
+                            DaoInsertsAtOnce(dbe, dao, rows, 1, Scene, "dao");
                             reader = EngineIsKeptOutButReads(path, rows);
-                            for (var id = 301; id <= 600; id++)
-                            {
-                                dao.Execute("INSERT INTO T (Id, V) VALUES (" + id + ", 'dao " + id + "')", 128);
-                                rows.Add(V("Id", id, "V", "dao " + id));
-                            }
+                            DaoInserts(dao, rows, Scene + 1, OneAtATime, "dao");
                             AssertReadsOnlyRowsWritten(reader, rows, "while DAO wrote beside it");
                         }
                         finally { dao.Close(); }
@@ -257,12 +306,12 @@ namespace JackcessDotNet.AccessTests
 
                 // Access has closed the file, and so has written all it committed: the reader, still open, reads it all.
                 AssertSame(Written(rows), Written(EngineRows(reader)), "T as the engine opened only to be read reads it once " + writer + " has closed");
-                Assert.Equal(rows.Last()["V"], reader.GetTable("T").FindRowByPrimaryKey(600)["V"]);
+                Assert.Equal(rows.Last()["V"], reader.GetTable("T").FindRowByPrimaryKey(Convert.ToInt32(rows.Last()["Id"]))["V"]);
             }
             finally { reader?.Dispose(); }
 
             using (var db = Database.Open(path))
-                EngineInserts(db, rows, 5000, 300, "engine once Access had closed");
+                EngineInsertsAtOnce(db, rows, 5000, Scene, "engine once Access had closed");
 
             AssertTableIs(path, "T", "Id", rows, "after " + writer + " wrote with the engine kept out, and the engine after it");
         }
@@ -333,7 +382,7 @@ namespace JackcessDotNet.AccessTests
             {
                 using (var connection = Ace(path, "Share Exclusive"))
                 {
-                    AceInserts(connection, rows, 1, 200, "ace exclusively");
+                    AceInsertsAtOnce(connection, rows, 1, Scene, "ace exclusively");
                     engineIsRefused();
                 }
             }
@@ -345,11 +394,7 @@ namespace JackcessDotNet.AccessTests
                     dynamic dao = dbe.OpenDatabase(path, true, false);
                     try
                     {
-                        for (var id = 1; id <= 200; id++)
-                        {
-                            dao.Execute("INSERT INTO T (Id, V) VALUES (" + id + ", 'dao exclusively " + id + "')", 128);
-                            rows.Add(V("Id", id, "V", "dao exclusively " + id));
-                        }
+                        DaoInsertsAtOnce(dbe, dao, rows, 1, Scene, "dao exclusively");
                         engineIsRefused();
                     }
                     finally { dao.Close(); }
@@ -358,7 +403,7 @@ namespace JackcessDotNet.AccessTests
             }
 
             using (var db = Database.Open(path))
-                EngineInserts(db, rows, 1000, 100, "engine");
+                EngineInsertsAtOnce(db, rows, 1000, Scene, "engine");
             AssertTableIs(path, "T", "Id", rows, "after " + writer + " had it exclusively and the engine wrote after");
         }
 
@@ -441,13 +486,13 @@ namespace JackcessDotNet.AccessTests
         {
             var path = NewDatabase(extension);
             var rows = new List<Values>();
-            using (var connection = Ace(path)) AceInserts(connection, rows, 1, 100, "ace");
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, Scene, "ace");
 
             foreach (var mode in new[] { null, "Read" })
                 using (var connection = Ace(path, mode))
                 {
                     Assert.Throws<DatabaseInUseException>(() => Database.Create(path, FileFormat.Access2000).Dispose());
-                    Assert.Equal(100, AceCount(connection));
+                    Assert.Equal(Scene, AceCount(connection));
                 }
 
             AssertTableIs(path, "T", "Id", rows, "after Database.Create was refused the file ACE had open");
@@ -457,23 +502,28 @@ namespace JackcessDotNet.AccessTests
 
         // The review of the engine's #73, with ACE as the writer: a read-only Database's index cursor comes to the last
         // row of a data page, and ACE gives the next row a key at the end of the index. The cursor kept the leaf it had
-        // read, which still held the row's old entry, and gave the row there and again at its new key - 3,001 rows. It
-        // reads the index again at each move, and gives the row once, at its new key: a row the writer moves ahead of a
-        // cursor before the cursor has come to it is given where it is.
+        // read, which still held the row's old entry, and gave the row there and again at its new key - one row more than
+        // the table has. It reads the index again at each move, and gives the row once, at its new key: a row the writer
+        // moves ahead of a cursor before the cursor has come to it is given where it is. Measured, in an .mdb and an
+        // .accdb alike: ACE's 1,000 rows are on 8 data pages, the second beginning at row 149, and the primary key has 2
+        // leaves - the row's old entry is in the first, and its new key goes to the last.
         [Theory]
         [MemberData(nameof(Formats))]
         public void a_read_only_index_cursor_gives_once_a_row_ace_moves_ahead_of_it(string extension)
         {
             var path = NewDatabase(extension);
             var rows = new List<Values>();
-            using (var connection = Ace(path)) AceInserts(connection, rows, 1, 3000, "row");
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, 1000, "row");
 
             int moved;
             using (var reader = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true }))
             {
-                // The first row of the table's second data page.
+                // The first row of the table's second data page. The primary key's index has more than one leaf, so the
+                // row's entry is in a leaf before the last, where its new key goes.
                 var pages = reader.GetTable("T").Rows.Select(r => new { Id = (int)r["Id"], r.Id.Value.PageNumber }).OrderBy(p => p.Id).ToList();
                 moved = pages.First(p => p.PageNumber != pages[0].PageNumber).Id;
+                var layout = PagesOf(path, pages[0].PageNumber);
+                Assert.True(layout.Leaves > 1, "the primary key's index of " + rows.Count + " rows has " + layout.Leaves + " leaf: the test needs more");
 
                 var cursor = reader.GetTable("T").CreateIndexCursor();
                 var given = new List<int>();
@@ -486,7 +536,7 @@ namespace JackcessDotNet.AccessTests
                 Execute(path, "UPDATE T SET Id = 1000000 WHERE Id = " + moved);
                 while (cursor.MoveNext()) given.Add((int)cursor.Current["Id"]);
 
-                Assert.Equal(3000, given.Count);
+                Assert.Equal(rows.Count, given.Count);
                 Assert.Single(given, id => id == 1000000);
                 Assert.DoesNotContain(moved, given);
                 Assert.Equal(1000000, given[given.Count - 1]);
@@ -498,6 +548,32 @@ namespace JackcessDotNet.AccessTests
         }
 
         /// <summary>
+        /// How many of the file's pages are the data pages and the index leaves of the table <paramref name="dataPage"/>,
+        /// one of its data pages, is of: Jet's page type is a page's first byte (1 a data page, 4 an index leaf), and the
+        /// table's definition page is at offset 4 of both.
+        /// </summary>
+        private static (int DataPages, int Leaves) PagesOf(string path, int dataPage)
+        {
+            const int pageSize = 4096;
+            byte[] file;
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                file = new byte[stream.Length];
+                int read = 0;
+                while (read < file.Length) read += stream.Read(file, read, file.Length - read);
+            }
+            int definition = BitConverter.ToInt32(file, dataPage * pageSize + 4);
+            int dataPages = 0, leaves = 0;
+            for (int at = 0; at + pageSize <= file.Length; at += pageSize)
+            {
+                if (BitConverter.ToInt32(file, at + 4) != definition) continue;
+                if (file[at] == 0x01) dataPages++;
+                else if (file[at] == 0x04) leaves++;
+            }
+            return (dataPages, leaves);
+        }
+
+        /// <summary>
         /// A database DAO made with a table ACE made, M (Id LONG primary key, M MEMO), and five rows ACE inserted: each
         /// memo 300 of one letter, 'a' for row 1 to 'e' - a long value each, kept outside its row.
         /// </summary>
@@ -505,9 +581,15 @@ namespace JackcessDotNet.AccessTests
         {
             var path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + extension);
             DaoCreate(path, extension == ".mdb" ? 64 : 128);
-            Execute(path, new[] { "CREATE TABLE M (Id LONG CONSTRAINT PK PRIMARY KEY, M MEMO)" }
-                .Concat(Enumerable.Range(1, 5).Select(i => "INSERT INTO M (Id, M) VALUES (" + i + ", '" + Memo((char)('a' + i - 1)) + "')"))
-                .ToArray());
+            Execute(path, "CREATE TABLE M (Id LONG CONSTRAINT PK PRIMARY KEY, M MEMO)");
+            using (var connection = Ace(path))
+            using (var transaction = connection.BeginTransaction())
+            {
+                foreach (var i in Enumerable.Range(1, 5))
+                    using (var command = new OleDbCommand("INSERT INTO M (Id, M) VALUES (" + i + ", '" + Memo((char)('a' + i - 1)) + "')", connection, transaction))
+                        command.ExecuteNonQuery();
+                transaction.Commit();
+            }
             return path;
         }
 
