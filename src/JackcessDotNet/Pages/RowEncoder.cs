@@ -256,8 +256,8 @@ internal sealed class RowEncoder
     /// <summary>
     /// A long value as the row will hold it: its bytes with their reference, when it is short enough to stay in the
     /// row (or the column has no pages of its own), or else the bytes to go to pages and the writer that puts them
-    /// there. Text bound for pages is plain UTF-16LE, without the compression marker: that is what Access writes
-    /// for a chained Memo, and ACE fails to decode compressed text spread across chunks.
+    /// there. A Memo value's bytes are those Access writes (<see cref="EncodeMemo"/>): compressed only when it is short
+    /// enough for one long-value row, as ACE fails to decode compressed text spread across chunks.
     /// </summary>
     private (byte[]? InRow, (LvalWriter Writer, byte[] Data)? ToPages) PrepareLongValue(Column col, object value)
     {
@@ -266,10 +266,9 @@ internal sealed class RowEncoder
 
         if (col.DataType == DataType.Memo)
         {
-            string text = Convert.ToString(value) ?? string.Empty;
-            byte[] textBytes = EncodeText(col, text);
+            byte[] textBytes = EncodeMemo(col, Convert.ToString(value) ?? string.Empty);
             return textBytes.Length > InlineLvalThreshold && writer is not null
-                ? (null, (writer, Util.ByteUtil.EncodeUtf16(text)))
+                ? (null, (writer, textBytes))
                 : (BuildInlineLvRef(textBytes), null);
         }
 
@@ -429,6 +428,36 @@ internal sealed class RowEncoder
         // bytes 4..11: lval_dp + unknown, left zero
         Array.Copy(data, 0, lvRef, 12, data.Length);
         return lvRef;
+    }
+
+    /// <summary>The most characters a Memo value Access compresses has: 1,908, two bytes each uncompressed a long-value row's 3,816.</summary>
+    internal const int MaxCompressedMemoChars = 1908;
+
+    /// <summary>
+    /// A Memo value's bytes as Access writes them (#87), measured with ACE 16 on a column with Unicode compression:
+    /// <list type="bullet">
+    ///   <item>no text is no bytes;</item>
+    ///   <item>text of 3 to 1,908 characters, every one of them 0x01 to 0xFF, is compressed: 0xFF 0xFE and a byte a
+    ///         character - so it is never more than one long-value row, as ACE does not decode compressed text spread
+    ///         across a chain;</item>
+    ///   <item>anything else - 1 or 2 characters, which compression would not make shorter, longer text, or text with a
+    ///         character outside 0x01 to 0xFF - is UTF-16LE.</item>
+    /// </list>
+    /// ACE also compresses text mixing such characters with others, in runs; this library writes that text as UTF-16LE,
+    /// which ACE reads the same.
+    /// </summary>
+    internal static byte[] EncodeMemo(Column col, string text)
+    {
+        if (text.Length == 0) return Array.Empty<byte>();
+        bool compress = col.IsCompressedUnicode && text.Length >= 3 && text.Length <= MaxCompressedMemoChars;
+        for (int i = 0; compress && i < text.Length; i++)
+            compress = text[i] >= 0x01 && text[i] <= 0xFF;
+        if (!compress) return Util.ByteUtil.EncodeUtf16(text);   // the code units it holds, half a surrogate pair among them
+        var bytes = new byte[text.Length + 2];
+        bytes[0] = 0xFF;
+        bytes[1] = 0xFE;
+        for (int i = 0; i < text.Length; i++) bytes[i + 2] = (byte)text[i];
+        return bytes;
     }
 
     // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
