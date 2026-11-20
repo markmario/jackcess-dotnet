@@ -44,13 +44,15 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     private readonly List<KeyValuePair<string, object?>> _entries;
     private readonly Dictionary<string, int> _places;
 
-    // How a name that is not an entry's exactly finds one (ObjectNames), and the keys of the entries' names, worked
-    // out when such a name is first looked for. A row this library writes from, whose entries have their columns'
-    // names exactly, finds a name only exactly: a column it gives no value has none, though another column's name
-    // is one with its name to Access.
+    // How a name that is not an entry's exactly finds one (ObjectNames). A row this library writes from, whose entries
+    // have their columns' names exactly, finds a name only exactly: a column it gives no value has none, though another
+    // column's name is one with its name to Access.
     private readonly ObjectNames _names;
     private readonly bool _exactOnly;
-    private List<ObjectNames.NameKey?>? _keys;
+
+    // The entries by the hashes of their names' keys (ObjectNames.NameKey.Hashes): a name finds the entries it may be one
+    // with through its own, made when such a name is first looked for and kept as entries are added.
+    private Dictionary<int, List<int>>? _byHash;
 
     // The table the row was read from and where in it, for a row that was read.
     private Table? _source;
@@ -185,8 +187,26 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
             _entries[at] = new KeyValuePair<string, object?>(columnName, value);
             return;
         }
-        _places.Add(columnName, _entries.Count);
+        Append(columnName, value);
+    }
+
+    // A new entry, after the others.
+    private void Append(string columnName, object? value)
+    {
+        int at = _entries.Count;
+        _places.Add(columnName, at);
         _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+        if (_byHash is not null) Index(at);
+    }
+
+    // The entry at `at` among the entries found by the hashes of its name's keys.
+    private void Index(int at)
+    {
+        foreach (int hash in _names.KeyOf(_entries[at].Key).Hashes)
+        {
+            if (!_byHash!.TryGetValue(hash, out var places)) _byHash[hash] = places = new List<int>(1);
+            places.Add(at);
+        }
     }
 
     /// <summary>Whether the row has an entry of exactly <paramref name="columnName"/>.</summary>
@@ -211,16 +231,27 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         if (_places.TryGetValue(columnName, out int at)) return at;
         if (_exactOnly || _entries.Count == 0) return -1;
         var key = _names.KeyOf(columnName);
-        _keys ??= new List<ObjectNames.NameKey?>(_entries.Count);
-        while (_keys.Count < _entries.Count) _keys.Add(null);
-        int found = -1;
-        for (int i = 0; i < _entries.Count; i++)
+        if (_byHash is null)
         {
-            var other = _keys[i] ??= _names.KeyOf(_entries[i].Key);
-            if (key.HasIndexKeyOf(other)) return i;
-            if (found < 0 && key.IsOneWith(other)) found = i;
+            _byHash = new Dictionary<int, List<int>>();
+            for (int i = 0; i < _entries.Count; i++) Index(i);
         }
-        return found;
+
+        // The entries that have a key's hash in common with the name, in the row's order: the first the name is one
+        // with by its index key, else the first it is one with at all.
+        int byIndexKey = -1, found = -1;
+        foreach (int hash in key.Hashes)
+        {
+            if (!_byHash.TryGetValue(hash, out var places)) continue;
+            foreach (int i in places)
+            {
+                if (byIndexKey >= 0 && i >= byIndexKey) continue;
+                var other = _names.KeyOf(_entries[i].Key);
+                if (key.HasIndexKeyOf(other)) byIndexKey = i;
+                else if ((found < 0 || i < found) && key.IsOneWith(other)) found = i;
+            }
+        }
+        return byIndexKey >= 0 ? byIndexKey : found;
     }
 
     /// <summary>
@@ -250,8 +281,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
             else
             {
                 at = _entries.Count;
-                _places.Add(columnName, at);
-                _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+                Append(columnName, value);
             }
             Assigned(at);
         }
@@ -317,8 +347,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
                     ? $"The row already has a value for column '{columnName}'."
                     : $"The row already has a value for column '{_entries[at].Key}', which is one name with '{columnName}' to Access.",
                 nameof(columnName));
-        _places.Add(columnName, _entries.Count);
-        _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+        Append(columnName, value);
         Assigned(_entries.Count - 1);
     }
 
@@ -355,7 +384,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
 
         _places.Remove(_entries[at].Key);
         _entries.RemoveAt(at);
-        if (_keys is not null && at < _keys.Count) _keys.RemoveAt(at);
+        _byHash = null;   // the places after it have moved: made again when it is next needed
         for (int i = at; i < _entries.Count; i++)
             _places[_entries[i].Key] = i;
         return true;
@@ -366,7 +395,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     {
         _entries.Clear();
         _places.Clear();
-        _keys?.Clear();
+        _byHash = null;
     }
 
     /// <summary>The row's columns and their values, in the row's order.</summary>

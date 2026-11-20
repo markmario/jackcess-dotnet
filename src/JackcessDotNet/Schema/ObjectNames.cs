@@ -82,6 +82,11 @@ internal sealed class ObjectNames
     private readonly bool _byWholeName;
     private readonly ObjectNames? _alsoBy;
 
+    // The keys of the names compared lately, by the name exactly: a table's columns are looked up row after row, and the
+    // catalog's names scan after scan. A key is a few dozen bytes; the cache is emptied when it holds this many.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, NameKey> _keys = new(StringComparer.Ordinal);
+    private const int MostKeysKept = 4096;
+
     private ObjectNames(TextIndexCodes codes, bool byWholeName, ObjectNames? alsoBy)
     {
         _codes       = codes;
@@ -90,7 +95,15 @@ internal sealed class ObjectNames
     }
 
     /// <summary>The keys <paramref name="name"/> is compared by: worked out once, for a name compared with many.</summary>
-    internal NameKey KeyOf(string name) => new(this, name ?? throw new ArgumentNullException(nameof(name)));
+    internal NameKey KeyOf(string name)
+    {
+        if (name is null) throw new ArgumentNullException(nameof(name));
+        if (_keys.TryGetValue(name, out var key)) return key;
+        key = new NameKey(this, name);
+        if (_keys.Count >= MostKeysKept) _keys.Clear();
+        _keys.TryAdd(name, key);
+        return key;
+    }
 
     /// <summary>Whether <paramref name="first"/> and <paramref name="second"/> are one name to Access.</summary>
     internal bool Same(string first, string second) => first == second || KeyOf(first).IsOneWith(KeyOf(second));
@@ -119,12 +132,27 @@ internal sealed class ObjectNames
     /// <summary>The first of <paramref name="names"/> that is one with an earlier one, and that earlier one; null when no two are one.</summary>
     internal (string First, string Second)? FirstTwoThatAreOne(IReadOnlyList<string> names)
     {
-        var keys = new NameKey[names.Count];
+        // Each name is compared with the earlier names of its text, and with those that have the hash of one of its keys:
+        // two names that are one have a key in common (NameKey.Hashes).
+        var byText = new Dictionary<string, int>(StringComparer.Ordinal);
+        var byHash = new Dictionary<int, List<int>>();
+        var keys   = new NameKey[names.Count];
         for (int i = 0; i < names.Count; i++)
         {
             keys[i] = KeyOf(names[i]);
-            for (int j = 0; j < i; j++)
-                if (names[j] == names[i] || keys[j].IsOneWith(keys[i])) return (names[j], names[i]);
+            int first = byText.TryGetValue(names[i], out int same) ? same : -1;
+            foreach (int hash in keys[i].Hashes)
+                if (byHash.TryGetValue(hash, out var earlier))
+                    foreach (int j in earlier)
+                        if ((first < 0 || j < first) && keys[j].IsOneWith(keys[i])) first = j;
+            if (first >= 0) return (names[first], names[i]);
+
+            byText[names[i]] = i;
+            foreach (int hash in keys[i].Hashes)
+            {
+                if (!byHash.TryGetValue(hash, out var earlier)) byHash[hash] = earlier = new List<int>(1);
+                earlier.Add(i);
+            }
         }
         return null;
     }
@@ -227,6 +255,30 @@ internal sealed class ObjectNames
                 if (rule._byWholeName && rule._codes.NameKey(reading, whole: true) is { } whole) _wholeKeys.Add(whole);
             }
             if (rule._alsoBy is { } also) _alsoBy = new NameKey(also, name);
+            var hashes = new HashSet<int>();
+            for (var key = this; key is not null; key = key._alsoBy)
+            {
+                foreach (var bytes in key._indexKeys) hashes.Add(Hash(bytes, 1));
+                foreach (var bytes in key._wholeKeys) hashes.Add(Hash(bytes, 2));
+            }
+            Hashes = hashes.ToArray();
+        }
+
+        /// <summary>
+        /// A hash of each of the name's keys: two names that are one have a key in common, and so a hash, which is how a
+        /// row finds the entries a name may be one with (<see cref="Row"/>) without comparing it with every other.
+        /// </summary>
+        internal int[] Hashes { get; }
+
+        // FNV-1a over the key's bytes, after the kind of key: the same on every target.
+        private static int Hash(byte[] bytes, int kind)
+        {
+            unchecked
+            {
+                int hash = (int)2166136261 ^ kind;
+                foreach (byte b in bytes) hash = (hash ^ b) * 16777619;
+                return hash;
+            }
         }
 
         /// <summary>Whether this name and <paramref name="other"/>'s are one to Access: any of their keys equal.</summary>

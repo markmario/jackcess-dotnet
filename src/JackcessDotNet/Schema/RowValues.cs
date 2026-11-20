@@ -72,10 +72,12 @@ internal static class RowValues
             }
         }
 
-        // A row written from has its columns' names exactly. A row of another spelling, and any row for a table with
-        // two columns whose names are one to Access, is copied into one that finds names only exactly: there a column
-        // the row gives no value has none, where the rule would find the other column's.
-        Row? written = loose is null && !table.HasColumnsThatAreOne ? null : new Row(columns.Count, table.Names, exactOnly: true);
+        // A row written from has its columns' names exactly, and finds a column it gives no value at once: the caller's
+        // row when it names every column exactly (and the table has no two columns whose names are one), and otherwise
+        // a copy that finds names only exactly - there a column the row gives no value has none, where the rule would
+        // look for one, and might find the other column's.
+        bool complete = loose is null && row.Count == columns.Count;
+        Row? written = complete && !table.HasColumnsThatAreOne ? null : new Row(columns.Count, table.Names, exactOnly: true);
         foreach (var column in columns)
         {
             object? value;
