@@ -146,8 +146,12 @@ A Double or a Single is the caller's number as the column stores it, by its bits
 and -0.0 are two numbers, where ACE's scan finds both for either. A Decimal is the same number exactly, a
 caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7 significant digits, as OLE
 Automation rounds it - so the double 0.1 finds the Decimal 0.1, and is written as 0.1, on every runtime (.NET
-11's own conversion is exact). NaN finds nothing in a number column, where ACE's scan finds every row for it, and
-ACE's `=` a Currency column's least value.
+11's own conversion is exact). A number with more places than a Decimal column holds finds no row - 1.015 is not
+the row of 1.01 a write of 1.015 stores ([Decimal](data-types.md#decimal)) - as ACE's `=` with the same parameter
+finds none, through an index and without one (measured, [#80]). A negative zero, which a negative number cut to
+nothing is stored as, is zero here, as to ACE's scan: ACE's index tells -0.00 from 0.00, so through one `WHERE D = 0`
+finds the row of 0.00 alone, and without one both. NaN finds nothing in a number column, where ACE's
+scan finds every row for it, and ACE's `=` a Currency column's least value.
 
 ### Date/Time
 
@@ -203,6 +207,15 @@ longer than an entry holds ([Keys longer than 510 bytes](indexes.md#keys-longer-
   unique index, a null in a key - throws `ConstraintViolationException`, with or without
   `Database.EnforceForeignKeys` ([Relationships and foreign keys](relationships.md)). It derives from
   `InvalidOperationException`, which is what these threw before it, so a handler for that still catches one.
+- **A change a damaged index cannot take is refused** ([#81]). When an index, taken at its word, does not hold a
+  row's entry under the row's key - an entry under another key, or none, as an earlier version or another program
+  can leave - an update that changes the row's key in that index, and a delete of the row, throw
+  `NotSupportedException` before anything is written. Access refuses both on such a file ("The search key was not
+  found in any record", measured with ACE and DAO) and changes nothing; an update of the row's other columns it
+  makes, and so does this library. Made, the update left the row in the index twice, and DAO's compaction copied
+  the row twice and dropped the key. The check costs a sound index no page: the pages it reads are the ones the
+  entry's removal goes down. [`VerifyIndexes`](earlier-versions.md#indexes-that-do-not-hold-every-row) makes such
+  a change, and mends the index.
 - **A row that cannot be written changes nothing.** The whole of a new row is encoded before anything is
   written - for an update, before the row it replaces is touched - so a value its column cannot hold, a value
   not of its type, or a row too large leaves the file byte for byte as it was. A failure of the file itself (the
@@ -229,3 +242,5 @@ where Jackcess finds one.
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65
+[#80]: https://github.com/markmario/jackcess-dotnet/issues/80
+[#81]: https://github.com/markmario/jackcess-dotnet/issues/81

@@ -37,16 +37,45 @@ Either column is for an `.accdb`, and a table with one makes an older `.accdb` o
 Extended value is found: [Date/Time Extended](cursors-and-rows.md#datetime-extended); how it is matched as a key:
 [How keys are matched](relationships.md#how-keys-are-matched).
 
+## A bool, text or a date for a number
+
+**A `bool`, text and a date given for a number column are what Access stores for them**, in every number type
+alike - Byte, Integer, Long Integer, Large Number, Single, Double, Currency and Decimal ([#75]; measured with ACE
+16's typed parameters and DAO's `AddNew`, `tools/ace-number-kinds.ps1`):
+
+- **`true` is -1** and `false` 0, Access's own values.
+- **Text is read in the current culture**, as Access reads it by the machine's settings, in the forms Access reads:
+  a currency symbol ("$5" is 5), parentheses for a negative number ("(5)" is -5), an exponent ("1e2" is 100), group
+  separators and spaces around it ("1,5" is 15 where the comma groups digits). A whole-number column takes "2.5" as
+  2 and "1.5" as 2, half to even, as Access does. Text is read as a `double` for a Single or a Double column and as a
+  `decimal` for any other. Text that is no number ("True", "abc", "") is refused with `FormatException`, as Access
+  refuses it.
+- **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
+  2020 12:00 is 43832.5 in a Double, and 43832 in a Long Integer.
+- **A number the column does not hold is refused** with `OverflowException`: `true`, which is -1, and a date in a
+  Byte, a date in an Integer. DAO refuses them too; ACE wraps a negative number into a Byte (-1 is 255).
+- **A number past what a Single holds is refused** with `OverflowException`, as ACE refuses it ("Overflow"): a finite
+  number, or text of one, whose nearest Single is not finite - 1e39, 3.5e38. It was stored as an infinity.
+- **A `Guid`, bytes, a `char` or any other kind is refused** with `ArgumentException`, naming the column, before
+  anything is written. Access refuses a GUID and bytes.
+
+**Where Access differs:** ACE reads the text "&H10" as 16, a hexadecimal number in Visual Basic's form; this library
+does not read that form, and refuses such text with `FormatException`.
+
+A range or the closest row through an index takes these values the same way; an equality takes text and a `bool`
+for no number ([Numbers](cursors-and-rows.md#numbers)). The importer keeps its own rule: only a value a column holds
+exactly ([type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet)).
+
 ## Currency
 
 **A Currency is the caller's number taken to four places as Access takes one** - its exact value, half to even -
 wherever one is made: a row, its index keys, a relationship's check, a property, an import ([#65]). Measured with
 ACE 16 and DAO, which write alike through every path tried: the double 0.03125 is 0.0312, the double 0.00015 -
 just under the half it is written as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346.
-Text and a `bool` are taken as every number column takes them - text read in the current culture, a `bool` as 1 or
-0 - and the number they make is taken to four places so; Access reads text by the machine's locale and writes
-True as -1. A date, a `Guid`, bytes or a `char` is refused with `ArgumentException`, and text that reads as no
-number with `FormatException`. NaN, an infinity and a number past -922,337,203,685,477.5808 to
+Text, a `bool` and a date are taken as every number column takes them
+([A bool, text or a date for a number](#a-bool-text-or-a-date-for-a-number)) and the number they make is taken to
+four places so. A `Guid`, bytes or a `char` is refused with `ArgumentException`, and text that reads as no number
+with `FormatException`. NaN, an infinity and a number past -922,337,203,685,477.5808 to
 922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"), and
 writes NaN as the least Currency, which this library does not. How a caller's number is taken to one when it is
 looked for: [Currency](cursors-and-rows.md#currency).
@@ -67,6 +96,15 @@ The [CHANGELOG's breaking changes](../CHANGELOG.md#breaking-changes-to-the-publi
 
 ## Decimal
 
+- **A number with more places than the column holds is stored as ACE stores it** ([#80]): the places past the
+  column's scale are cut off, toward zero - 1.015 is 1.01 in a column of scale 2, -2.5 is -2 in one of scale 0 - and
+  a negative number cut to nothing is a negative zero, as ACE writes it; a zero given, of either sign, has no sign.
+  The same on every runtime. Measured with ACE 16 for 5,080 numbers - typed Decimal, Double, Single and text
+  parameters, every scale from 0 to 28, both signs, in an `.mdb` and an `.accdb` (`tools/ace-decimal-places.ps1`).
+  DAO refuses every one of them ("Scaling of decimal value resulted in data truncation"); ACE is the referee here,
+  as for every value written. Earlier versions rounded half away from zero. A lookup compares the number given with
+  the one stored exactly ([Double, Single and Decimal](cursors-and-rows.md#double-single-and-decimal)), and the
+  importer, which takes only a value a column holds exactly, refuses such a number, as DAO does.
 - **Decimal values an earlier version wrote read back as different numbers.** A Decimal is stored as four
   32-bit words; earlier versions (the `JackcessDotNet` package up to 1.2.2 among them:
   [Which files](earlier-versions.md#which-files)) wrote and read sixteen bytes in the other order, so they and
@@ -149,3 +187,5 @@ are each refused with `NotSupportedException`.
 [#63]: https://github.com/markmario/jackcess-dotnet/issues/63
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65
+[#75]: https://github.com/markmario/jackcess-dotnet/issues/75
+[#80]: https://github.com/markmario/jackcess-dotnet/issues/80

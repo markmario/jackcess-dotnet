@@ -166,7 +166,16 @@ and the two definitions hold the same index slots.
   page it fills, and Access then opens nothing of the file; here Access is followed.
 - **Usage maps.** A new index's pages, and a new Memo or OLE column's, are listed in usage maps on a page of
   their own - 4 KB each - as for a table this library creates; Access finds room on the table's usage-map page
-  first.
+  first. Measured ([#37]): DAO and ACE's DDL alike put a table's Memo and OLE columns' maps, and a later index's, as
+  rows on the table's usage-map page, when they make the table and when they add to it. DAO adds and deletes
+  columns and indexes on this library's tables, its own and this library's index among them, ACE writes to them,
+  and DAO compacts them whole.
+- **The bytes of a column's definition are DAO's.** A column that is not Text has zeros where DAO writes zeros and
+  ACE's DDL writes the database's sort order (DAO writes the sort order for Text only; this library for Text and
+  Memo, as ACE's DDL does for a Memo). A Date/Time Extended column has 00 00 for its precision and scale, as DAO
+  writes them, where ACE's DDL writes 09 00 (and, by an earlier report, Access's table designer 09 07). Measured
+  ([#37], [#38]), with nothing found that depends on either: DAO's design changes and compaction, and what ACE and
+  DAO store and find in a Date/Time Extended column, seven places of its seconds among it, are the same with each.
 - **Permissions.** A new table or relationship has, in `MSysACEs`, the entries its container passes on, its
   owner's among them, as Access gives them: without the owner's, Access in an `.mdb` would not change what
   this library made.
@@ -196,8 +205,9 @@ is the only referee, and what it refuses is refused:
 - **Renaming** a column changes its name in the definition, in its relationships and in its properties; an
   index's, in the definition, where its slot moves to where the new name sorts; a table's, in the catalog and
   in its relationships. A name Access does not allow, or that is taken, is refused; one that is one only with
-  the object's own name - in another case, say - is taken. A saved query goes on naming a column or table by the name it had, as it does when Access's
-  engine renames one. A relationship's index keeps its name, and a system table its own.
+  the object's own name - in another case, say - is taken. A saved query goes on naming a column or table by the
+  name it had, as it does when Access's engine renames one. A relationship's index keeps its name, and a system
+  table its own.
 - **Pages given back** are free in the database's own map of its pages, with their bytes left as they were, as
   Access leaves them: Access uses them again, and compacting the file removes them. This library adds pages
   at the end of the file and does not itself take a freed one ([How a file grows](storage.md#how-a-file-grows)).
@@ -205,4 +215,5 @@ is the only referee, and what it refuses is refused:
 [Back to contents](README.md)
 
 [#37]: https://github.com/markmario/jackcess-dotnet/issues/37
+[#38]: https://github.com/markmario/jackcess-dotnet/issues/38
 [#63]: https://github.com/markmario/jackcess-dotnet/issues/63

@@ -134,7 +134,7 @@ public sealed class CurrencyValueTests : IDisposable
         {
             Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartEntry = new object[] { "0.03125" }, EndEntry = new object[] { "0.03125" } }));
             Assert.Equal(1.2346m, table.CreateIndexCursor("ByC").FindClosestRowByEntry("1.23465")!["C"]);
-            Assert.Equal(1.2345m, table.CreateIndexCursor("ByC").FindClosestRowByEntry(true)!["C"]);
+            Assert.Equal(0.0001m, table.CreateIndexCursor("ByC").FindClosestRowByEntry(true)!["C"]);   // true is -1 (#75)
             Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByEntry("0.0312"));
             Assert.Null(table.CreateCursor().FindRow("C", "0.0312"));
             Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new object[] { "abc" } }));
@@ -144,7 +144,7 @@ public sealed class CurrencyValueTests : IDisposable
         // A value no Currency holds, or one of a kind no number is made of, is not one the column holds.
         var cursor = table.CreateIndexCursor("ByC");
         Assert.NotNull(cursor.FindRowByEntry(0.0312m));
-        foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 922337203685477.625, 1e20, 922337203685477.5808m, 'x', new DateTime(2026, 1, 1) })
+        foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 922337203685477.625, 1e20, 922337203685477.5808m, 'x', Guid.Empty })
         {
             Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new[] { bad } }));
             Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { EndEntry = new[] { bad } }));
@@ -178,8 +178,8 @@ public sealed class CurrencyValueTests : IDisposable
             row["C"] = "0,09375";
             table.Update(row);
 
-            // A Double keeps the number Convert makes of the value; a Currency takes it to four places, half to even.
-            Assert.Equal(new[] { "1: 0.0938 0.03125", "2: 15 15", "3: 1 1", "4: 1 1", "5: 1.5 1.5" },
+            // A Double keeps the number the value stands for (true is -1, #75); a Currency takes it to four places, half to even.
+            Assert.Equal(new[] { "1: 0.0938 0.03125", "2: 15 15", "3: -1 -1", "4: 1 1", "5: 1.5 1.5" },
                 table.Rows.OrderBy(r => (int)r["Id"]!).Select(r =>
                     $"{r["Id"]}: {((decimal)r["C"]!).ToString(CultureInfo.InvariantCulture)} {((double)r["D"]!).ToString("R", CultureInfo.InvariantCulture)}"));
 
@@ -204,7 +204,7 @@ public sealed class CurrencyValueTests : IDisposable
             double.NaN, double.PositiveInfinity, double.NegativeInfinity, float.NaN, 922337203685477.625, -922337203685477.625,
             1e20, 922337203685477.5808m, -922337203685477.58095m, 922337203685478L, ulong.MaxValue,
         };
-        object[] noKindOfNumber = { 'x', new DateTime(2026, 11, 20), Guid.NewGuid(), new byte[] { 1 } };
+        object[] noKindOfNumber = { 'x', Guid.NewGuid(), new byte[] { 1 } };   // a date is its day number (#75)
         object[] noNumberText = { "", "abc", "-" };
         using (var db = Database.Open(_file!))
         {

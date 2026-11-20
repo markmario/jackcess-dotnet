@@ -1,0 +1,289 @@
+# culture en-AU; Microsoft.ACE.OLEDB.16.0; who	type	kind	given	stored or refused
+ace	Byte	bool	True	255
+ace	Byte	bool	False	0
+ace	Byte	text	12	12
+ace	Byte	text	1,5	15
+ace	Byte	text	1.5	2
+ace	Byte	text	2.5	2
+ace	Byte	text	 7 	7
+ace	Byte	text	-3	253
+ace	Byte	text	1e2	100
+ace	Byte	text	$5	5
+ace	Byte	text	(5)	251
+ace	Byte	text	True	refused: Data type mismatch in criteria expression.
+ace	Byte	text	abc	refused: Data type mismatch in criteria expression.
+ace	Byte	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Byte	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Byte	date	2020-01-02 12:00	56
+ace	Byte	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Byte	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Integer	bool	True	-1
+ace	Integer	bool	False	0
+ace	Integer	text	12	12
+ace	Integer	text	1,5	15
+ace	Integer	text	1.5	2
+ace	Integer	text	2.5	2
+ace	Integer	text	 7 	7
+ace	Integer	text	-3	-3
+ace	Integer	text	1e2	100
+ace	Integer	text	$5	5
+ace	Integer	text	(5)	-5
+ace	Integer	text	True	refused: Data type mismatch in criteria expression.
+ace	Integer	text	abc	refused: Data type mismatch in criteria expression.
+ace	Integer	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Integer	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Integer	date	2020-01-02 12:00	refused: Overflow
+ace	Integer	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Integer	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Long	bool	True	-1
+ace	Long	bool	False	0
+ace	Long	text	12	12
+ace	Long	text	1,5	15
+ace	Long	text	1.5	2
+ace	Long	text	2.5	2
+ace	Long	text	 7 	7
+ace	Long	text	-3	-3
+ace	Long	text	1e2	100
+ace	Long	text	$5	5
+ace	Long	text	(5)	-5
+ace	Long	text	True	refused: Data type mismatch in criteria expression.
+ace	Long	text	abc	refused: Data type mismatch in criteria expression.
+ace	Long	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Long	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Long	date	2020-01-02 12:00	43832
+ace	Long	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Long	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	bool	True	-1
+ace	LargeNumber	bool	False	0
+ace	LargeNumber	text	12	12
+ace	LargeNumber	text	1,5	15
+ace	LargeNumber	text	1.5	2
+ace	LargeNumber	text	2.5	2
+ace	LargeNumber	text	 7 	7
+ace	LargeNumber	text	-3	-3
+ace	LargeNumber	text	1e2	100
+ace	LargeNumber	text	$5	5
+ace	LargeNumber	text	(5)	-5
+ace	LargeNumber	text	True	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	text	abc	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	text	1 000	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	date	2020-01-02 12:00	43832
+ace	LargeNumber	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	LargeNumber	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Single	bool	True	-1
+ace	Single	bool	False	0
+ace	Single	text	12	12
+ace	Single	text	1,5	15
+ace	Single	text	1.5	1.5
+ace	Single	text	2.5	2.5
+ace	Single	text	 7 	7
+ace	Single	text	-3	-3
+ace	Single	text	1e2	100
+ace	Single	text	$5	5
+ace	Single	text	(5)	-5
+ace	Single	text	True	refused: Data type mismatch in criteria expression.
+ace	Single	text	abc	refused: Data type mismatch in criteria expression.
+ace	Single	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Single	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Single	date	2020-01-02 12:00	43832.5
+ace	Single	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Single	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Double	bool	True	-1
+ace	Double	bool	False	0
+ace	Double	text	12	12
+ace	Double	text	1,5	15
+ace	Double	text	1.5	1.5
+ace	Double	text	2.5	2.5
+ace	Double	text	 7 	7
+ace	Double	text	-3	-3
+ace	Double	text	1e2	100
+ace	Double	text	$5	5
+ace	Double	text	(5)	-5
+ace	Double	text	True	refused: Data type mismatch in criteria expression.
+ace	Double	text	abc	refused: Data type mismatch in criteria expression.
+ace	Double	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Double	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Double	date	2020-01-02 12:00	43832.5
+ace	Double	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Double	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Currency	bool	True	-1
+ace	Currency	bool	False	0.0000
+ace	Currency	text	12	12
+ace	Currency	text	1,5	15
+ace	Currency	text	1.5	1.5
+ace	Currency	text	2.5	2.5
+ace	Currency	text	 7 	7
+ace	Currency	text	-3	-3
+ace	Currency	text	1e2	100
+ace	Currency	text	$5	5
+ace	Currency	text	(5)	-5
+ace	Currency	text	True	refused: Data type mismatch in criteria expression.
+ace	Currency	text	abc	refused: Data type mismatch in criteria expression.
+ace	Currency	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Currency	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Currency	date	2020-01-02 12:00	43832.5
+ace	Currency	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Currency	bytes	0x0102	refused: Data type mismatch in criteria expression.
+ace	Decimal	bool	True	-1.0000
+ace	Decimal	bool	False	0.0000
+ace	Decimal	text	12	12.0000
+ace	Decimal	text	1,5	15.0000
+ace	Decimal	text	1.5	1.5000
+ace	Decimal	text	2.5	2.5000
+ace	Decimal	text	 7 	7.0000
+ace	Decimal	text	-3	-3.0000
+ace	Decimal	text	1e2	100.0000
+ace	Decimal	text	$5	5.0000
+ace	Decimal	text	(5)	-5.0000
+ace	Decimal	text	True	refused: Data type mismatch in criteria expression.
+ace	Decimal	text	abc	refused: Data type mismatch in criteria expression.
+ace	Decimal	text	(empty)	refused: Data type mismatch in criteria expression.
+ace	Decimal	text	1 000	refused: Data type mismatch in criteria expression.
+ace	Decimal	date	2020-01-02 12:00	43832.5000
+ace	Decimal	guid	{guid}	refused: Data type mismatch in criteria expression.
+ace	Decimal	bytes	0x0102	refused: Data type mismatch in criteria expression.
+dao	Byte	bool	True	refused: Data type conversion error.
+dao	Byte	bool	False	0
+dao	Byte	text	12	12
+dao	Byte	text	1,5	15
+dao	Byte	text	1.5	2
+dao	Byte	text	2.5	2
+dao	Byte	text	 7 	7
+dao	Byte	text	-3	refused: Data type conversion error.
+dao	Byte	text	1e2	100
+dao	Byte	text	$5	5
+dao	Byte	text	(5)	refused: Data type conversion error.
+dao	Byte	text	True	refused: Data type conversion error.
+dao	Byte	text	abc	refused: Data type conversion error.
+dao	Byte	text	(empty)	refused: Data type conversion error.
+dao	Byte	text	1 000	refused: Data type conversion error.
+dao	Byte	date	2020-01-02 12:00	refused: Data type conversion error.
+dao	Byte	guid	{guid}	refused: Data type conversion error.
+dao	Byte	bytes	0x0102	2
+dao	Integer	bool	True	-1
+dao	Integer	bool	False	0
+dao	Integer	text	12	12
+dao	Integer	text	1,5	15
+dao	Integer	text	1.5	2
+dao	Integer	text	2.5	2
+dao	Integer	text	 7 	7
+dao	Integer	text	-3	-3
+dao	Integer	text	1e2	100
+dao	Integer	text	$5	5
+dao	Integer	text	(5)	-5
+dao	Integer	text	True	refused: Data type conversion error.
+dao	Integer	text	abc	refused: Data type conversion error.
+dao	Integer	text	(empty)	refused: Data type conversion error.
+dao	Integer	text	1 000	refused: Data type conversion error.
+dao	Integer	date	2020-01-02 12:00	refused: Data type conversion error.
+dao	Integer	guid	{guid}	refused: Data type conversion error.
+dao	Integer	bytes	0x0102	2
+dao	Long	bool	True	-1
+dao	Long	bool	False	0
+dao	Long	text	12	12
+dao	Long	text	1,5	15
+dao	Long	text	1.5	2
+dao	Long	text	2.5	2
+dao	Long	text	 7 	7
+dao	Long	text	-3	-3
+dao	Long	text	1e2	100
+dao	Long	text	$5	5
+dao	Long	text	(5)	-5
+dao	Long	text	True	refused: Data type conversion error.
+dao	Long	text	abc	refused: Data type conversion error.
+dao	Long	text	(empty)	refused: Data type conversion error.
+dao	Long	text	1 000	refused: Data type conversion error.
+dao	Long	date	2020-01-02 12:00	43832
+dao	Long	guid	{guid}	refused: Data type conversion error.
+dao	Long	bytes	0x0102	2
+dao	LargeNumber	bool	True	-1
+dao	LargeNumber	bool	False	0
+dao	LargeNumber	text	12	12
+dao	LargeNumber	text	1,5	15
+dao	LargeNumber	text	1.5	2
+dao	LargeNumber	text	2.5	2
+dao	LargeNumber	text	 7 	7
+dao	LargeNumber	text	-3	-3
+dao	LargeNumber	text	1e2	100
+dao	LargeNumber	text	$5	5
+dao	LargeNumber	text	(5)	-5
+dao	LargeNumber	text	True	refused: Data type conversion error.
+dao	LargeNumber	text	abc	refused: Data type conversion error.
+dao	LargeNumber	text	(empty)	refused: Data type conversion error.
+dao	LargeNumber	text	1 000	refused: Data type conversion error.
+dao	LargeNumber	date	2020-01-02 12:00	43832
+dao	LargeNumber	guid	{guid}	refused: Data type conversion error.
+dao	LargeNumber	bytes	0x0102	2
+dao	Single	bool	True	-1
+dao	Single	bool	False	0
+dao	Single	text	12	12
+dao	Single	text	1,5	15
+dao	Single	text	1.5	1.5
+dao	Single	text	2.5	2.5
+dao	Single	text	 7 	7
+dao	Single	text	-3	-3
+dao	Single	text	1e2	100
+dao	Single	text	$5	5
+dao	Single	text	(5)	-5
+dao	Single	text	True	refused: Data type conversion error.
+dao	Single	text	abc	refused: Data type conversion error.
+dao	Single	text	(empty)	refused: Data type conversion error.
+dao	Single	text	1 000	refused: Data type conversion error.
+dao	Single	date	2020-01-02 12:00	43832.5
+dao	Single	guid	{guid}	refused: Data type conversion error.
+dao	Single	bytes	0x0102	2
+dao	Double	bool	True	-1
+dao	Double	bool	False	0
+dao	Double	text	12	12
+dao	Double	text	1,5	15
+dao	Double	text	1.5	1.5
+dao	Double	text	2.5	2.5
+dao	Double	text	 7 	7
+dao	Double	text	-3	-3
+dao	Double	text	1e2	100
+dao	Double	text	$5	5
+dao	Double	text	(5)	-5
+dao	Double	text	True	refused: Data type conversion error.
+dao	Double	text	abc	refused: Data type conversion error.
+dao	Double	text	(empty)	refused: Data type conversion error.
+dao	Double	text	1 000	refused: Data type conversion error.
+dao	Double	date	2020-01-02 12:00	43832.5
+dao	Double	guid	{guid}	refused: Data type conversion error.
+dao	Double	bytes	0x0102	2
+dao	Currency	bool	True	-1
+dao	Currency	bool	False	0.0000
+dao	Currency	text	12	12
+dao	Currency	text	1,5	15
+dao	Currency	text	1.5	1.5
+dao	Currency	text	2.5	2.5
+dao	Currency	text	 7 	7
+dao	Currency	text	-3	-3
+dao	Currency	text	1e2	100
+dao	Currency	text	$5	5
+dao	Currency	text	(5)	-5
+dao	Currency	text	True	refused: Data type conversion error.
+dao	Currency	text	abc	refused: Data type conversion error.
+dao	Currency	text	(empty)	refused: Data type conversion error.
+dao	Currency	text	1 000	refused: Data type conversion error.
+dao	Currency	date	2020-01-02 12:00	43832.5
+dao	Currency	guid	{guid}	refused: Data type conversion error.
+dao	Currency	bytes	0x0102	2
+dao	Decimal	bool	True	-1.0000
+dao	Decimal	bool	False	0.0000
+dao	Decimal	text	12	12.0000
+dao	Decimal	text	1,5	15.0000
+dao	Decimal	text	1.5	1.5000
+dao	Decimal	text	2.5	2.5000
+dao	Decimal	text	 7 	7.0000
+dao	Decimal	text	-3	-3.0000
+dao	Decimal	text	1e2	100.0000
+dao	Decimal	text	$5	5.0000
+dao	Decimal	text	(5)	-5.0000
+dao	Decimal	text	True	refused: Data type conversion error.
+dao	Decimal	text	abc	refused: Data type conversion error.
+dao	Decimal	text	(empty)	refused: Data type conversion error.
+dao	Decimal	text	1 000	refused: Data type conversion error.
+dao	Decimal	date	2020-01-02 12:00	43832.5000
+dao	Decimal	guid	{guid}	refused: Data type conversion error.
+dao	Decimal	bytes	0x0102	2.0000
