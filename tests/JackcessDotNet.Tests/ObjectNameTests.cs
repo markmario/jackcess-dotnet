@@ -34,14 +34,13 @@ public sealed class ObjectNameTests : IDisposable
     private static string Unhex(string hex)
         => new(hex.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(h => (char)Convert.ToInt32(h, 16)).ToArray());
 
-    // The rule for each kind of name - a field's, a table's, an index's - in a database of each order: a table's name by
-    // the order its catalog sorts in, a field's and an index's by General - Legacy's, which Access compares them by in a
-    // database that sorts in General too; in an Access 97 file a table's by Access 97's order, and a field's and an
-    // index's by that and General - Legacy's.
+    // The rule for each kind of name - a field's, a table's, an index's - in a database of each order: General - Legacy's
+    // keys in a database that sorts in General - Legacy; General's and General - Legacy's in one that sorts in General; in
+    // an Access 97 file a table's by Access 97's order, and a field's and an index's by that and General - Legacy's.
     private static readonly (string Order, ObjectNames[] Rules)[] Orders =
     {
         ("General - Legacy", new[] { ObjectNames.GeneralLegacy,  ObjectNames.GeneralLegacy, ObjectNames.GeneralLegacy }),
-        ("General",          new[] { ObjectNames.GeneralLegacy,  ObjectNames.General,       ObjectNames.GeneralLegacy }),
+        ("General",          new[] { ObjectNames.General,        ObjectNames.General,       ObjectNames.General }),
         ("Access 97",        new[] { ObjectNames.Access97Columns, ObjectNames.Access97,     ObjectNames.Access97Columns }),
     };
 
@@ -52,7 +51,7 @@ public sealed class ObjectNameTests : IDisposable
     [Fact]
     public void Every_pair_DAO_was_asked_about_is_one_name_or_two_as_Access_takes_it()
     {
-        int asked = 0, one = 0, apart = 0, onPurpose = 0;
+        int asked = 0, one = 0, apart = 0, withMarks = 0, inGeneral = 0;
         var wrong = new List<string>();
         foreach (string line in File.ReadLines(ProtectedFileTests.Asset("dao-object-names.tsv")))
         {
@@ -76,7 +75,8 @@ public sealed class ObjectNameTests : IDisposable
                     {
                         apart++;
                         if (!same) continue;
-                        if (TakenAsOneOnPurpose(a, b, o, k)) onPurpose++;
+                        if ((a + b).Any(IsMark)) withMarks++;
+                        else if (Orders[o].Order == "General") inGeneral++;
                         else wrong.Add($"{parts[0]} / {parts[1]} ({parts[2]}), {Kinds[k]} in {Orders[o].Order}: two to Access, one here");
                     }
                 }
@@ -84,17 +84,13 @@ public sealed class ObjectNameTests : IDisposable
         Assert.True(wrong.Count == 0, $"{wrong.Count} verdicts this library does not give:\n" + string.Join("\n", wrong.Take(100)));
         // The file is whole: 108,795 verdicts, 18,590 of them one.
         Assert.True(asked > 100_000 && one > 15_000 && apart > 80_000, $"{asked} verdicts, {one} one, {apart} two");
-        // Of the names Access keeps apart, few are taken as one, and each on purpose: 106 verdicts.
-        Assert.True(onPurpose < 200, $"{onPurpose} of Access's verdicts of two are one here");
+        // Of the names Access keeps apart, those taken as one here are so on purpose (ObjectNames): a name with a mark
+        // Access keys by the characters around it (ー, 々, ゝ, the shadda), any of whose readings is one with the other;
+        // and a name in a database that sorts in General, compared there by General's keys and by General - Legacy's.
+        // Access compares a table's name there by the one in its catalog and the other in its lookups, and a field's by
+        // the other or the one as its process has used such a database before. 47 and 3,739 verdicts of the 90,205.
+        Assert.True(withMarks < 100 && inGeneral < 4_000, $"{withMarks} verdicts of two with marks and {inGeneral} in General are one here");
     }
-
-    // Where this library takes as one two names Access keeps apart, on purpose (ObjectNames): a name with a mark Access
-    // keys by the characters around it (ー, 々, ゝ, the shadda), any of whose readings is one with the other name; and a
-    // table's name in a database that sorts in General, compared by General - Legacy's keys as well as General's, as
-    // DAO's own lookups compare some names there.
-    private static bool TakenAsOneOnPurpose(string a, string b, int order, int kind)
-        => (a + b).Any(IsMark)
-        || (Orders[order].Order == "General" && Kinds[kind] == "tables" && ObjectNames.GeneralLegacy.Same(a, b));
 
     private static bool IsMark(char c) => TextIndexCodes.GeneralLegacy.IsContextDependent(c) || TextIndexCodes.General.IsContextDependent(c);
 
@@ -201,10 +197,11 @@ public sealed class ObjectNameTests : IDisposable
     }
 
     // A table made with the two names as columns, and a table given the second as a column added to the first: each
-    // keeps its own value, written and read by each column's name.
+    // keeps its own value, written and read by each column's name. In an Access 2007 file, which sorts in General -
+    // Legacy, as the pairs were measured.
     private void AreTwoColumns(string first, string second)
     {
-        using (var db = Database.Create(_path, FileFormat.Access2010))
+        using (var db = Database.Create(_path, FileFormat.Access2007))
         {
             db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), Text(first), Text(second) }, "Id")
               .Insert(new Row { ["Id"] = 1, [first] = "one", [second] = "two" });
@@ -247,28 +244,43 @@ public sealed class ObjectNameTests : IDisposable
         Unchanged<InvalidOperationException>(db => db.CreateTable("T" + second, new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"), _mdb);
     }
 
-    // A table's name is compared by the order its catalog sorts in: in a database that sorts in General, as an Access
-    // 2010 file this library creates does, by General's keys - which take U+0180 and U+0243 as one, where General -
-    // Legacy's keep them apart - and by General - Legacy's. DAO refused the second as a table's name there, and made it
-    // as a field's.
+    // In a database that sorts in General, as an Access 2010 file this library creates does, a table's, a column's and an
+    // index's name is compared by General's keys - which take U+0180 and U+0243 as one, where General - Legacy's keep
+    // them apart - and by General - Legacy's, which take U+0224 and U+0225 as one, where General's keep them apart. DAO
+    // refused U+0243 as a table's name beside U+0180, and made it as a field's, which ACE then took for the other in a
+    // process that had used such a database through DAO before; it made U+0225 as a table beside U+0224, and then took
+    // either for the other. In a database that sorts in General - Legacy, the first pair are two.
     [Fact]
-    public void A_table_s_name_is_compared_by_the_order_its_catalog_sorts_in()
+    public void A_name_in_a_database_that_sorts_in_general_is_compared_by_general_s_keys_and_general_legacy_s()
     {
         using (var db = Database.Create(_path, FileFormat.Access2010))
-            db.CreateTable(X(0x180), new[] { new ColumnDefinition("Id", DataType.Int32), Text(X(0x180)) }, "Id");
-        Unchanged<InvalidOperationException>(db => db.CreateTable(X(0x243), new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"));
-        using (var db = Database.Open(_path))
-            db.GetTable(X(0x180)).AddColumn(Text(X(0x243)));
-        using (var reopen = Database.Open(_path))
         {
-            Assert.Equal(X(0x180), reopen.GetTable(X(0x243)).Name);
-            Assert.Equal(new[] { "Id", X(0x180), X(0x243) }, reopen.GetTable(X(0x180)).Columns.Select(c => c.Name));
-        }
-        // A table's name General - Legacy's keys take as one with another's, and General's keep apart, is refused there
-        // too: DAO makes the two tables (U+0224 and U+0225), and its lookups then take them as one.
-        using (var db = Database.Open(_path))
+            db.CreateTable(X(0x180), new[] { new ColumnDefinition("Id", DataType.Int32), Text(X(0x180)), Text(X(0x224)), new ColumnDefinition("N", DataType.Int32) },
+                           new[] { "Id" }, new[] { new IndexDefinition(X(0x180), "N"), new IndexDefinition(X(0x224), "Id") });
             db.CreateTable(X(0x224), new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id");
-        Unchanged<InvalidOperationException>(db => db.CreateTable(X(0x225), new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"));
+        }
+        foreach (var given in new[] { X(0x243), X(0x225) })
+        {
+            Unchanged<InvalidOperationException>(db => db.CreateTable(given, new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"));
+            Unchanged(db => db.GetTable(X(0x180)).AddColumn(Text(given)));
+            Unchanged(db => db.GetTable(X(0x180)).AddIndex(new IndexDefinition(given, "Id")));
+        }
+        using (var reopen = Database.Open(_path))
+            Assert.Equal(X(0x180), reopen.GetTable(X(0x243)).Name);
+        // The table CreateTable gives back compares new names as the database does.
+        using (var db = Database.Open(_path))
+        {
+            var made = db.CreateTable("Made", new[] { new ColumnDefinition("Id", DataType.Int32), Text(X(0x180)) },
+                                      new[] { "Id" }, new[] { new IndexDefinition(X(0x180), "Id") });
+            Assert.Throws<ArgumentException>(() => made.AddIndex(new IndexDefinition(X(0x243), "Id")));
+            Assert.Throws<ArgumentException>(() => made.AddColumn(Text(X(0x243))));
+        }
+
+        using (var db = Database.Create(_mdb))
+            db.CreateTable(X(0x180), new[] { new ColumnDefinition("Id", DataType.Int32), Text(X(0x180)) }, "Id")
+              .AddColumn(Text(X(0x243)));
+        using var legacy = Database.Open(_mdb);
+        Assert.Equal(new[] { "Id", X(0x180), X(0x243) }, legacy.GetTable(X(0x180)).Columns.Select(c => c.Name));
     }
 
     [Theory]

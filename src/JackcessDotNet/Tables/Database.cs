@@ -898,6 +898,7 @@ public sealed class Database : IDisposable
             UmapPageNumber = umapPage,
             OwnedPagesRow  = 0,
             FreeSpaceRow   = 1,
+            Names          = ColumnNames,
         };
         foreach (var kvp in lvalUmaps)
             tableDef.LvalColumnUmapPages[kvp.Key] = kvp.Value;
@@ -1116,7 +1117,7 @@ public sealed class Database : IDisposable
             try { properties = PropertyMapReader.Read(readProperties!(), _file.Format); }
             catch (Exception e) when (e is IOException or ArgumentException or IndexOutOfRangeException) { }
 
-            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum), owningDb: this, properties);
+            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum, ColumnNames), owningDb: this, properties);
             _tables[tdefPageNum] = table;
         }
         return true;
@@ -1125,9 +1126,10 @@ public sealed class Database : IDisposable
     /// <summary>
     /// The definition of table <paramref name="name"/> as its definition page, <paramref name="tdefPageNum"/>, now
     /// holds it: what <see cref="GetTable"/> opens a table with, and what a <see cref="Table"/> reads again after
-    /// the table has been given a column or an index.
+    /// the table has been given a column or an index. Its columns' and indexes' names are compared by
+    /// <paramref name="columnNames"/>, the database's rule for them (<see cref="ColumnNames"/>).
     /// </summary>
-    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum)
+    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum, ObjectNames columnNames)
     {
         var format   = file.Format;
         var tdefPage = TdefBuffer.Read(file, tdefPageNum, out _, out bool isBroken);
@@ -1145,7 +1147,7 @@ public sealed class Database : IDisposable
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns || isBroken,
-            Names             = ObjectNames.ForColumns(file.Format),
+            Names             = columnNames,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)
@@ -1346,14 +1348,14 @@ public sealed class Database : IDisposable
     internal SystemCatalog Catalog => _catalog;
 
     /// <summary>How the names of a table's columns and indexes are one to Access in this file (<see cref="ObjectNames"/>).</summary>
-    internal ObjectNames ColumnNames => ObjectNames.ForColumns(_file.Format);
+    internal ObjectNames ColumnNames => _catalog.ColumnNames;
 
     /// <summary>
     /// The definition of the table the catalog lists as <paramref name="listedName"/> at <paramref name="tdefPage"/>:
     /// the open table's, or read from its pages - with no reading of the catalog, which listed it.
     /// </summary>
     internal TableDefinition DefinitionAt(string listedName, int tdefPage)
-        => _tables.TryGetValue(tdefPage, out var open) ? open.Definition : ReadDefinition(_file, listedName, tdefPage);
+        => _tables.TryGetValue(tdefPage, out var open) ? open.Definition : ReadDefinition(_file, listedName, tdefPage, ColumnNames);
 
     /// <summary>
     /// Refuses, before anything is written, <paramref name="newName"/> for a column, an index or a relationship in a

@@ -104,10 +104,20 @@ internal sealed class SystemCatalog
     /// by the order the catalog keeps them in, Access 97's own in a Jet3 file. In an order this library makes no keys
     /// for, by General - Legacy's: a lookup's best guess, and no name is added to such a catalog.
     /// </summary>
-    internal ObjectNames Names => NamesOf(BuildCatalogTableDef());
+    internal ObjectNames Names => _names ??= NamesOf(BuildCatalogTableDef());
 
-    /// <summary>The order the catalog keeps names in, as its Name column's definition gives it: Access 97's own in a Jet3 file.</summary>
-    internal SortOrder NameOrder => NameOrderOf(BuildCatalogTableDef());
+    /// <summary>
+    /// The order the catalog keeps names in, as its Name column's definition gives it: Access 97's own in a Jet3 file.
+    /// Read once: the catalog's columns do not change.
+    /// </summary>
+    internal SortOrder NameOrder => _nameOrder ??= NameOrderOf(BuildCatalogTableDef());
+
+    /// <summary>How the names of the database's tables' columns and indexes are one to Access (<see cref="ObjectNames.ForColumns"/>).</summary>
+    internal ObjectNames ColumnNames => _columnNames ??= ObjectNames.ForColumns(_format, NameOrder);
+
+    private ObjectNames? _names;
+    private SortOrder? _nameOrder;
+    private ObjectNames? _columnNames;
 
     private static SortOrder NameOrderOf(TableDefinition catalogDef)
         => catalogDef.Columns.FirstOrDefault(c => c.Name == ColName)?.SortOrder ?? SortOrder.GeneralLegacy;
@@ -847,7 +857,9 @@ internal sealed class SystemCatalog
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns,
-            Names             = ObjectNames.ForColumns(_format),
+            // A system table's columns, of ASCII names, by General - Legacy's keys: the catalog's own order is read from
+            // a definition this builds.
+            Names             = ObjectNames.ForColumns(_format, SortOrder.GeneralLegacy),
         };
         // Where a long value of each column goes: a new table's properties (LvProp) can be longer than a row keeps.
         foreach (var kvp in info.LvalColumnUmapPages)

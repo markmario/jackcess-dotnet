@@ -11,11 +11,13 @@ namespace JackcessDotNet;
 /// with another.
 /// <para>
 /// The order: a table's or a relationship's name - which the catalog keeps under an index - by the order its catalog
-/// sorts in; a column's or an index's by General - Legacy's in a Jet4 or ACE file, which Access compares them by in a
-/// database that sorts in General as well. In a database that sorts in General, a table's name is compared by General -
-/// Legacy's keys too: DAO makes two tables of names General's keys keep apart and General - Legacy's take as one (Ȥ
-/// and ȥ), and then cannot tell them apart by name. That also takes as one some names Access keeps apart there - Ü
-/// and U with a combining diaeresis, "x" and "x" with a character General - Legacy has no code for (U+03F3, U+FEFF).
+/// sorts in, and a column's or an index's by General - Legacy's keys in a Jet4 or ACE file. In a database that sorts in
+/// General, each is compared by General's keys and General - Legacy's: DAO makes two tables of names General's keys keep
+/// apart and General - Legacy's take as one (Ȥ and ȥ), and then cannot tell them apart by name; and it makes two
+/// fields of names General's keys take as one (ƀ and Ƀ), which ACE then took as one - refusing the second as a field
+/// already there, and finding the first by the name of the second - in a process that had used such a database through
+/// DAO before. That also takes as one some names Access keeps apart there - Ü and U with a combining diaeresis, "x"
+/// and "x" with a character General - Legacy has no code for (U+03F3, U+FEFF).
 /// In an Access 97 file, which this library only reads, a table's name is compared by the index keys of Access 97's
 /// General order alone - DAO keeps apart there a name ending in a space and one ending in a no-break space, whose whole
 /// keys are equal - and a column's or an index's by those and by General - Legacy's keys, by which DAO's Fields and
@@ -64,8 +66,13 @@ internal sealed class ObjectNames
          : order.IsAccess97General ? Access97
          : null;
 
-    /// <summary>The rule for the names of a table's columns and indexes in a file of <paramref name="format"/>.</summary>
-    internal static ObjectNames ForColumns(JetFormat format) => format.SizeSortOrder < 4 ? Access97Columns : GeneralLegacy;
+    /// <summary>
+    /// The rule for the names of a table's columns and indexes in a file of <paramref name="format"/> whose catalog sorts
+    /// in <paramref name="catalogOrder"/>: General - Legacy's keys; in a database that sorts in General, General's as well,
+    /// as its tables' names are compared there; in an Access 97 file, Access 97's and General - Legacy's.
+    /// </summary>
+    internal static ObjectNames ForColumns(JetFormat format, SortOrder catalogOrder)
+        => format.SizeSortOrder < 4 ? Access97Columns : catalogOrder.IsGeneral ? General : GeneralLegacy;
 
     /// <summary>
     /// Whether this library compares the names of a table's columns and indexes as Access does in a database whose

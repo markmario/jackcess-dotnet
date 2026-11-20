@@ -212,7 +212,7 @@ internal static class SchemaChange
     private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
                                      byte flags, byte indexType, Func<Index, bool> shares, int alsoIndexes = 0)
     {
-        if (ObjectNames.ForColumns(file.Format).OneWith(table.Indexes.Select(ix => ix.Name), name) is { } taken)
+        if (table.Names.OneWith(table.Indexes.Select(ix => ix.Name), name) is { } taken)
             throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken, name)}. Nothing was changed.");
         if (table.Indexes.Count + alsoIndexes >= IndexDefinition.MaxIndexesPerTable)
             throw new ArgumentException(
