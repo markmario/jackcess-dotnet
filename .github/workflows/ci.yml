@@ -299,13 +299,12 @@ jobs:
       # its own, and waited for before the tests: it takes about as long as the
       # checkout and the download, and neither needs the other.
       #
-      # The download has been cut off by the remote host, which failed a shard
-      # before any test ran (#102). It is tried up to four times, 15 s apart, and
-      # the installer is run only when it is whole: as long as the server said,
-      # and signed by Microsoft, which a file cut short or changed in transit is
-      # not. The signature is checked, not a pinned hash: Microsoft has published
-      # this file again at the same address (last modified 2025-02-13), and a
-      # pinned hash would fail every run the next time it does. Each shard
+      # A download can be cut off by the remote host, so it is tried up to four
+      # times, 15 s apart, and the installer is run only when it is whole: as
+      # long as the server said, and signed by Microsoft, which a file cut short
+      # or changed in transit is not. The signature is checked, not a pinned
+      # hash: Microsoft publishes a new file at the same address from time to
+      # time, and a pinned hash would fail every run from then on. Each shard
       # downloads its own: the download takes seconds and overlaps the checkout,
       # where handing 83 MB on from access-build would lengthen that job and
       # start the install only after an artifact's download.
