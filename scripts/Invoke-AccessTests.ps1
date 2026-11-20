@@ -177,7 +177,7 @@ $pieces = @{
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 120
+        FileSharingInAccessTests = 530
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 41; Access97InAccessTests = 3; CorpusInAccessTests = 12; 'CorpusInAccessTests.ReadsAccdb' = 129
@@ -200,7 +200,7 @@ $table = @{
     }
     full = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 120
+        FileSharingInAccessTests = 530
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 28; Access97InAccessTests = 2; CorpusInAccessTests = 24; 'CorpusInAccessTests.ReadsAccdb' = 131
