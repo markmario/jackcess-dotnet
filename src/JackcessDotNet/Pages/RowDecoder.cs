@@ -73,9 +73,9 @@ internal sealed class RowDecoder
 
         switch (col.DataType)
         {
-            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format);
+            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format, col.IsCompressedUnicode);
             case DataType.Binary: return rowBytes.Slice(start, start + length);
-            case DataType.Memo:   return DecodeMemoLvRef(rowBytes, start, length);
+            case DataType.Memo:   return DecodeMemoLvRef(col, rowBytes, start, length);
             case DataType.OleObject:    return DecodeOleLvRef (rowBytes, start, length);
         }
 
@@ -285,12 +285,15 @@ internal sealed class RowDecoder
     /// (single chunk), 0x00000000 OTHER_PAGES (chunk chain).
     /// Returns null when the ref cannot be decoded.
     /// </summary>
-    private byte[]? ReadLvalBytes(byte[] row, int start, int len)
+    private byte[]? ReadLvalBytes(byte[] row, int start, int len) => ReadLvalBytes(row, start, len, out _);
+
+    private byte[]? ReadLvalBytes(byte[] row, int start, int len, out uint type)
     {
+        type = 0;
         if (len < 12) return null;
         int  lengthWithFlags = ByteUtil.GetInt(row, start);
         int  dataLen = lengthWithFlags & LvalWriter.LvalLengthMask;
-        uint type    = (uint)lengthWithFlags & 0xC0000000u;
+        type         = (uint)lengthWithFlags & 0xC0000000u;
 
         if (type == 0x80000000u)   // THIS_PAGE inline
         {
@@ -309,10 +312,13 @@ internal sealed class RowDecoder
         return _lvalReader.Read(lvalPage, lvalRow, dataLen, chained);
     }
 
-    private string? DecodeMemoLvRef(byte[] row, int start, int len)
+    // ACE reads a Memo value's bytes as compressed text when they are kept in the row, or in one long-value row of a
+    // column with Unicode compression; in one of a column without it, and in a chain, they are UTF-16LE (#93).
+    private string? DecodeMemoLvRef(Column col, byte[] row, int start, int len)
     {
-        var data = ReadLvalBytes(row, start, len);
-        return data is null ? null : ByteUtil.DecodeText(data, 0, data.Length, _format);
+        var data = ReadLvalBytes(row, start, len, out uint type);
+        bool mayBeCompressed = type == 0x80000000u || type == 0x40000000u && col.IsCompressedUnicode;
+        return data is null ? null : ByteUtil.DecodeText(data, 0, data.Length, _format, mayBeCompressed);
     }
 
     private byte[]? DecodeOleLvRef(byte[] row, int start, int len)

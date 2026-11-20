@@ -444,11 +444,16 @@ internal sealed class RowEncoder
     ///         character outside 0x01 to 0xFF - is UTF-16LE.</item>
     /// </list>
     /// ACE also compresses text mixing such characters with others, in runs; this library writes that text as UTF-16LE,
-    /// which ACE reads the same.
+    /// which ACE reads the same. Text that begins with U+FEFF, whose UTF-16LE begins 0xFF 0xFE like compressed text, is
+    /// compressed in runs where ACE compresses it (#93): where that is shorter, in a column with Unicode compression up
+    /// to 1,908 characters, and in a column without it when its UTF-16LE is short enough to stay in the row.
     /// </summary>
     internal static byte[] EncodeMemo(Column col, string text)
     {
         if (text.Length == 0) return Array.Empty<byte>();
+        if (Util.ByteUtil.BeginsWithMarker(text)
+            && (col.IsCompressedUnicode ? text.Length <= MaxCompressedMemoChars : 2 * text.Length <= InlineLvalThreshold))
+            return Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: false) ?? Util.ByteUtil.EncodeUtf16(text);
         bool compress = col.IsCompressedUnicode && text.Length >= 3 && text.Length <= MaxCompressedMemoChars;
         for (int i = 0; compress && i < text.Length; i++)
             compress = text[i] >= 0x01 && text[i] <= 0xFF;

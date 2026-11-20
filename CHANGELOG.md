@@ -736,6 +736,20 @@ changes with them.
 
 ### Fixed
 
+- **Text whose bytes begin 0xFF is read and written as Access reads and writes it** (#93). 0xFF 0xFE is the mark of
+  compressed text, and the UTF-16LE of U+FEFF is 0xFF 0xFE too. Text that begins with U+FEFF is written as ACE
+  writes it, compressed in runs where that is no longer than UTF-16LE in a Text column with Unicode compression,
+  and where it is shorter in a Memo; `"\uFEFFabQ1Z"` was UTF-16LE, which ACE read back as `"abQ1Z"`. Bytes that
+  begin 0xFF 0xFE are read as ACE reads them, measured with Microsoft 365's ACE 16 and DAO: as compressed text in
+  a Text column with Unicode compression, in a Memo kept in the row and in a Memo in one long-value row of a column
+  with Unicode compression, two bytes at a time after a switch to UTF-16LE; and as UTF-16LE in a Text column
+  without it, on a long-value page of such a column and in a chain. 0xFF and another byte were read as the mark of
+  text a byte a character, which no version of this repository wrote: `"\u01FFab"`, stored as
+  `FF 01 61 00 62 00`, read as other characters. Text Access itself does not keep - U+FEFF alone, or followed by
+  three Latin characters or fewer, or mostly by other characters, where Access writes UTF-16LE and reads
+  compressed text - is written and read as Access writes and reads it. Compressed text an earlier version wrote
+  into a column without Unicode compression reads as Access reads it, as UTF-16LE. Measured by
+  `tools/ace-text-marker.ps1`.
 - **A lookup of a date through a Date/Time index ends in a 32-bit .NET Framework process** (#98). The stored numbers
   a date's lookup finds were worked out by halving the distance between a number that reads as the date and one that
   does not, until the middle came out equal to an end. Where something in the process had left the x87 unit computing

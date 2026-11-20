@@ -159,6 +159,11 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
   [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows).
 - **Rows in Access 97 files** that Access 97's format does not have:
   [Access 97 files are read-only](file-formats.md#access-97-files-are-read-only).
+- **Compressed text in a column without Unicode compression**: earlier versions compressed every Text value of
+  characters 0x01 to 0xFF, whatever the column, the names in the system catalog among them. ACE reads such a value
+  as UTF-16LE, as other characters, and so does this library ([Text and Memo](data-types.md#text-and-memo));
+  only writing the right text over it mends it. A table such a
+  version created had its name written that way, and Access did not list it.
 - **Tables without properties**, so with no Required or Allow Zero Length to hold rows to:
   [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 
