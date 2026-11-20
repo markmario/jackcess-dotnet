@@ -52,6 +52,14 @@ millions of rows with long text keys takes no more memory than a small one; the 
 `BulkInsert`. An index adds to the file what its keys take: 22% for that export, 77% when every row has a text
 key of 510 bytes ([How a file grows](storage.md#how-a-file-grows)).
 
+## The count of an index's keys
+
+Access keeps in a table's definition, for each tree, a count of the keys its rows were entered under (Java
+Jackcess's `uniqueEntryCount`): one more when a row is entered under a key no other row has, nothing taken away
+when a row goes. It is what Access plans a query by. This library keeps it the same way, built whole or row by
+row: beside ACE's twin of an export the counts are equal in every index (ExportMdb.Interop's
+`IndexedExportTwinAuditTests`).
+
 ## An index is trusted
 
 An index is trusted to hold every row of its table, as Access and Java Jackcess trust one: rows are found through

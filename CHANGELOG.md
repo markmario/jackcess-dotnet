@@ -19,6 +19,12 @@ changed since 1.2.2.
   `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
   that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
   17 map pages, about 2.28 GB.
+- **Each index's count of its keys is kept, as Access keeps it** (#82). Access counts, in the table's definition
+  (bytes 4-7 of each tree's block of counts, Java Jackcess's `uniqueEntryCount`), the keys rows were entered under:
+  one more for each key no row had, nothing taken away when a row goes. The engine left it as it was, so every
+  index it filled was one Access took to have no keys. Measured beside ACE's twin of an export: the counts are now
+  equal in all 35 of the template's indexes, built whole or row by row. It costs a row inserted one by one a read
+  and a write of the definition's first page.
 - **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
   noted the header's and the global usage map's pages as they were at every write of them, and the global usage
   map is written for every page a change adds: a batch of a million rows held a copy of it for each page it

@@ -287,6 +287,44 @@ public sealed class BulkInsertTests : IDisposable
         Assert.Equal(expected.OrderBy(e => e).ToList(), read.OrderBy(e => e).ToList());
     }
 
+    // The count Access keeps of a tree's keys: bytes 4-7 of the tree's block of counts, after the definition's header.
+    private static int KeyCount(Database db, string index)
+    {
+        var ix = db.GetTable("Rows").Indexes.Single(i => i.Name == index);
+        var page = db.File.ReadPage(IndexChecks.TdefOf(db, "Rows"));
+        return BitConverter.ToInt32(page, db.File.Format.SizeTdefHeader + ix.IndexDataNumber * db.File.Format.SizeIndexDefinition + 4);
+    }
+
+    [Fact]
+    public void Each_tree_counts_its_keys_as_access_does_built_whole_or_row_by_row()
+    {
+        // Measured in ExportMdb's twin audit: ACE counts in each index the keys rows were entered under, one for each
+        // key no row had, and takes nothing away when a row goes.
+        using (var db = Create(_path))
+        {
+            var table = db.GetTable("Rows");
+            table.BulkInsert(Enumerable.Range(1, 3_000).Select(RowOf));
+            Assert.Equal(3_000, KeyCount(db, "ByCode"));
+            Assert.Equal(3_000, KeyCount(db, "PrimaryKey"));
+            int labels = Enumerable.Range(1, 3_000).Select(i => (string)RowOf(i)["Label"]!).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            Assert.Equal(labels, KeyCount(db, "ByLabel"));
+            // 13 groups; the rows with none are in no entry of a tree that ignores nulls.
+            Assert.Equal(13, KeyCount(db, "ByGroupIgnoringNulls"));
+
+            var fresh = RowOf(3_001);
+            fresh["Label"] = "a label of its own";
+            table.Insert(fresh);                                          // a new label: one more
+            var again = RowOf(3_002);
+            again["Label"] = RowOf(5)["Label"];
+            table.Insert(again);                                          // a label already there: none
+            Assert.Equal(labels + 1, KeyCount(db, "ByLabel"));
+            Assert.Equal(3_002, KeyCount(db, "ByCode"));
+
+            table.Delete(table.FindRowByPrimaryKey(1)!);                 // a row that goes takes nothing away
+            Assert.Equal(3_002, KeyCount(db, "ByCode"));
+        }
+    }
+
     [Fact]
     public void A_file_is_not_grown_past_the_most_an_access_file_can_be_and_the_change_is_taken_back()
     {

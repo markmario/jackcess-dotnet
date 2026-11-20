@@ -495,15 +495,19 @@ internal sealed class TableIndexes
         if (entries.Count == 0) return;
         writer ??= new IndexWriter(_file, _allocator);
         TakeOutEntriesSeenToBeNoRows(writer);
+        var newKeys = new Dictionary<int, int>();
         foreach (var entry in entries)
         {
             // Another entry under the key of a row a unique index compares points at no row, or - the index
             // verified - is another row's wrong one, or the row would have been refused: it goes
             // (TakeOutIfNoRows), or Access would not find the row through the index.
             bool another = writer.Insert(entry.Tree.Target, entry.Key, rowPointer);
+            if (!another) newKeys[entry.Tree.Number] = 1;
             if (ComparesRows(entry) && (another || entry.IsCut))
                 TakeOutEntriesOfNoRow(writer, entry, rowPointer);
         }
+        // A key no other row has is one more in the count Access keeps of each tree's keys.
+        AddToKeyCounts(newKeys);
     }
 
     /// <summary>
@@ -605,18 +609,44 @@ internal sealed class TableIndexes
                     entries.Add(EntryOf(tree, values, nulls > 0).Key, RowPointer.Pack(pageNumber, r), nulls > 0);
                 }
             }
-            writer.Build(tree.Target, Checked(tree, entries.Sorted()));
+            var keys = new int[1];
+            writer.Build(tree.Target, Checked(tree, entries.Sorted(), keys));
+            AddToKeyCounts(new Dictionary<int, int> { [tree.Number] = keys[0] });
         }
     }
 
-    // The entries of a tree being built, in order, refusing the second of two under one key in a unique tree.
+    /// <summary>
+    /// Adds to the count Access keeps, in the table's definition, of the keys each tree has had: bytes 4 to 7 of the
+    /// tree's block of counts (Java Jackcess's <c>uniqueEntryCount</c>). Access adds one when it enters a row under a
+    /// key no other row has, and takes nothing away when a row goes (measured: ACE's export of 142 documents counts
+    /// 142 in the index on Document_ID and 7 in the one on Document_Date, the dates they have). It is what Access
+    /// plans a query by; an index whose count is 0 is one it takes to be empty.
+    /// </summary>
+    internal void AddToKeyCounts(IReadOnlyDictionary<int, int> added)
+    {
+        if (added.Count == 0 || added.Values.All(n => n == 0)) return;
+        var format = _file.Format;
+        byte[] page = _file.ReadPage(_table.TdefPageNumber);
+        foreach (var pair in added)
+        {
+            if (pair.Value == 0) continue;
+            int at = format.SizeTdefHeader + pair.Key * format.SizeIndexDefinition + 4;
+            ByteUtil.PutInt(page, at, unchecked(ByteUtil.GetInt(page, at) + pair.Value));
+        }
+        _file.WritePage(_table.TdefPageNumber, page);
+    }
+
+    // The entries of a tree being built, in order, refusing the second of two under one key in a unique tree, and
+    // counting the keys in keys[0].
     // Entries under one key are in row-pointer order, and a bulk insert's rows are in the order they were inserted.
-    private IEnumerable<(byte[] Key, int RowPointer)> Checked(Tree tree, IEnumerable<EntrySorter.Item> sorted)
+    private IEnumerable<(byte[] Key, int RowPointer)> Checked(Tree tree, IEnumerable<EntrySorter.Item> sorted, int[] keys)
     {
         EntrySorter.Item? previous = null;
         foreach (var item in sorted)
         {
-            if (tree.IsUnique && previous is { } before && !before.HasNull && !item.HasNull && before.Key.AsSpan().SequenceEqual(item.Key))
+            bool sameKey = previous is { } last && last.Key.AsSpan().SequenceEqual(item.Key);
+            if (!sameKey) keys[0]++;
+            if (tree.IsUnique && sameKey && !previous!.Value.HasNull && !item.HasNull)
             {
                 var shown = ValuesAt(tree, item.RowPointer, out _);
                 throw new BuildRefusal(item.RowPointer, new ConstraintViolationException(
