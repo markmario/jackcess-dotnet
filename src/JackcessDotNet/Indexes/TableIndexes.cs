@@ -540,8 +540,9 @@ internal sealed class TableIndexes
             throw new NotSupportedException(
                 $"{_table.Name}'s {Describe(entry.Tree)} does not hold the row under its key, " +
                 $"{string.Join(", ", entry.Tree.Columns.Select((c, i) => $"{Shown(entry.Values[i])} for {c.Column.Name}"))}: " +
-                "the index is damaged, and Access refuses the change as this library does (\"The search key was not found in any " +
-                "record\"). Opening the database with Database.VerifyIndexes set makes the change and mends the index. Nothing was changed.");
+                "the index is damaged, or an earlier version of this library left the row out of it, and Access refuses the change as " +
+                "this library does (\"The search key was not found in any record\"). Setting Database.VerifyIndexes makes the change " +
+                "and mends the index. Nothing was changed.");
         }
         return writer;
     }
@@ -580,12 +581,13 @@ internal sealed class TableIndexes
                 // for there. A row whose key this library may not make as Access does - one cut in an index of
                 // columns the cut was not measured in - can be under a key this library does not make: when its entry
                 // is not under its own key, its entries are found by the row they point at, every leaf of the index
-                // read, so that none is left pointing where the row was. Any other row with no entry - one an earlier
-                // version of this library wrote without keeping the index - has nothing to take out, and that is no
-                // error: the row is gone and the index holds nothing of it, which is what a delete is for. Where the
-                // index was not taken at its word (EnsureHeld refuses the change otherwise), the row can have an entry
-                // under another key all the same (#81): the index is looked at, once in the session, and the entries it
-                // holds that are no row's - this row's wrong one among them, the row being gone or rewritten - go.
+                // read, so that none is left pointing where the row was. Any other row has no entry under its key only
+                // where the index is not taken at its word (Database.VerifyIndexes): with the index trusted, EnsureHeld
+                // refused the change before anything was written, as Access refuses it (#81) - a row an earlier version
+                // of this library wrote without keeping the index among them. Verified, such a row may have no entry at
+                // all, which leaves nothing to take out, or one under another key: the index is looked at, once in the
+                // session, and the entries it holds that are no row's - this row's wrong one among them, the row being
+                // gone or rewritten - go.
                 bool removed = RemoveAsEarlierVersionsKeyedIt(writer, entry, rowPointer);
                 if (!removed && !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
                     RemoveByPointer(writer, entry.Tree, rowPointer);

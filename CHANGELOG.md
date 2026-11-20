@@ -597,6 +597,12 @@ changes with them.
   (above): `true` is -1 where it was 1, so a row written with `true` holds -1 and a Byte refuses `true` with
   `OverflowException`; a `DateTime` is its day number where it was refused; and text such as "$5", "(5)" or "2.5"
   for a whole-number column is a number where it was refused with `FormatException`.
+- **A row an earlier version left out of an index cannot be deleted, nor its key in that index changed, unless the
+  database is opened with `Database.VerifyIndexes`** (#81). Versions up to 1.2.2 kept a table's primary key and no
+  other index, so a file they wrote rows into can hold rows with no entry in an index. Such a delete or key change
+  went through, and now throws `NotSupportedException` before anything is written, as Access refuses it ("The
+  search key was not found in any record"); its message says that `VerifyIndexes` makes the change and mends the
+  index. Compacting the file in Access rebuilds its indexes, after which nothing is refused.
 
 ### Added
 

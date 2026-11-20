@@ -36,7 +36,12 @@ With such a file, and by default, this library does what Access does with it:
   compacted Access cannot build that index, and leaves the table without it, or without its primary key.
 
 **Set `db.VerifyIndexes = true` for a file one of those versions wrote rows into and that has not been compacted
-in Access since.** Compacting rebuilds the indexes, and the option is then needless. With it set:
+in Access since.** Compacting rebuilds the indexes, and the option is then needless. **Without it, a row such a
+version left out of an index cannot be deleted, nor its key in that index changed**: the change is refused with
+`NotSupportedException` before anything is written, as Access refuses it on the same file ("The search key was not
+found in any record", [#81]). This library cannot tell an entry that is missing from one under another key without
+reading the whole index, and with the index taken at its word it does not. In the files the released 1.2.1 and 1.2.2
+wrote to, in the tests, that is three rows in each. Every other change of such a row is made. With it set:
 
 - **The first change that looks for rows through an index reads its table once**, while the database is open, and
   compares the two row by row: every row's key must be in the index, pointing at that row. For a unique index

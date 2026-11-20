@@ -171,6 +171,73 @@ public sealed class DamagedIndexTests : IDisposable
     }
 
     /// <summary>
+    /// Files the released 1.2.1 and 1.2.2 engine (3ad3aed) wrote to hold rows with no entry in some of their indexes.
+    /// With the indexes trusted, a delete of such a row is refused, as Access refuses it, with nothing changed and a
+    /// message that names <see cref="Database.VerifyIndexes"/>; with them verified it is made, and every index of the
+    /// table holds its rows afterwards. Every row of every table is tried, each in a fresh copy: three rows of each
+    /// file are refused, and no other.
+    /// </summary>
+    [Theory]
+    [InlineData("engine-3ad3aed-rows-in-access-tables.mdb")]
+    [InlineData("engine-3ad3aed-rows-in-unique-indexes.mdb")]
+    public void A_row_an_earlier_release_left_out_of_an_index_is_deleted_only_with_the_indexes_verified(string asset)
+    {
+        string source = Path.Combine(AppContext.BaseDirectory, "Assets", asset);
+        var rows = new List<(string Table, int Pointer)>();
+        using (var db = Database.Open(source, new DatabaseOpenOptions { ReadOnly = true }))
+            foreach (string name in db.GetTableNames())
+            {
+                var cursor = db.GetTable(name).CreateCursor();
+                while (cursor.MoveNext()) rows.Add((name, cursor.CurrentRowPointer));
+            }
+
+        static void DeleteAt(Database db, string name, int pointer)
+        {
+            var cursor = db.GetTable(name).CreateCursor();
+            while (cursor.MoveNext() && cursor.CurrentRowPointer != pointer) { }
+            cursor.DeleteCurrentRow();
+        }
+
+        var refused = new List<(string Table, int Pointer)>();
+        foreach (var (name, pointer) in rows)
+        {
+            string copy = Path.Combine(Path.GetTempPath(), $"left_out_{Guid.NewGuid():N}.mdb");
+            File.Copy(source, copy);
+            try
+            {
+                using var db = Database.Open(copy);
+                db.EnforceForeignKeys = false;   // the index's refusal alone, not a relationship's
+                var before = IndexChecks.AllPages(db);
+                var e = Record.Exception(() => DeleteAt(db, name, pointer));
+                if (e is null) continue;
+                Assert.IsType<NotSupportedException>(e);
+                Assert.Contains("Database.VerifyIndexes", e.Message);
+                IndexChecks.AssertUnchanged(before, db);
+                refused.Add((name, pointer));
+            }
+            finally { File.Delete(copy); }
+        }
+        Assert.True(refused.Count == 3, $"{refused.Count} rows refused: {string.Join(", ", refused)}");
+
+        // Verified, the three are deleted, and every index of their tables then holds the tables' rows.
+        string verified = Path.Combine(Path.GetTempPath(), $"left_out_{Guid.NewGuid():N}.mdb");
+        File.Copy(source, verified);
+        try
+        {
+            using (var db = Database.Open(verified))
+            {
+                db.EnforceForeignKeys = false;
+                db.VerifyIndexes = true;
+                foreach (var (name, pointer) in refused) DeleteAt(db, name, pointer);
+            }
+            using var read = Database.Open(verified);
+            foreach (string name in refused.Select(r => r.Table).Distinct())
+                IndexChecks.AssertEveryIndexHoldsTheRows(read, name);
+        }
+        finally { File.Delete(verified); }
+    }
+
+    /// <summary>
     /// In a sound index the check costs no page: the pages the update's and the delete's removal go down are the ones
     /// it read, kept by its writer. The counts are those of a primary key three levels deep, measured on the engine
     /// before the check (2bc4307): an update of the key, an update of another column, and a delete found by reading
