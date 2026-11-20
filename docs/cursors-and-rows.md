@@ -39,6 +39,11 @@ catch (BatchInsertException e) { Console.WriteLine($"row {e.RowIndex}: {e.InnerE
   ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)) - refuses an
   update of the row with `ColumnValueTooLongException`, naming that column and saying the value is the stored
   one, until the update gives that column a value that fits.
+- **Room a delete or an update leaves is used again where Access uses it** ([#58]; see
+  [Where a new row goes](storage.md#where-a-new-row-goes)). A deleted row's bytes leave its page and the rows
+  after them close up; its slot stays, marked deleted: a `Row`, a cursor or a savepoint that read the row finds no
+  row there, and an update or a delete through it is refused with `InvalidOperationException`, however the page is
+  used again.
 
 ## Cursors
 
@@ -63,6 +68,13 @@ var here = cursor.GetSavepoint();               // ... and later: cursor.Restore
   giving again the rows it passed but not the row it is on; a savepoint keeps what the cursor had given, kept up
   as rows move. A cursor is told of a change once it is in the file for good, and holds a few stretches of its
   index however many rows it moves.
+- **A scan in a table's own order gives the rows the table had when it began** - `Table.Rows`, and a cursor from
+  when it lists the table's pages, which it does again each time it is put before the first row or after the last.
+  A row inserted while it goes is not given, whichever page the row goes to: a new one, or one where a delete or an
+  update left room, which can be a page the scan has still to come to. A row deleted while it goes is passed.
+  These two are of changes made through the `Database` being read. Another program's are told to no cursor or scan:
+  what a `ReadOnly` database gives while one writes is under
+  [Reading beside a writer](sharing.md#reading-beside-a-writer).
 
 ## Index cursors and joins
 
@@ -155,17 +167,23 @@ its stored number, as Access's join does, unless the row has been given a date i
 
 ### Date/Time Extended
 
-A Date/Time Extended is the 42 bytes the row stores, which Access keys and orders a value by ([#51]): its
-`INSERT` writes a date in one form, and its SQL `UPDATE` and DAO's `AddNew` and `Edit` on a dynaset in another,
-the time of day in whole seconds (measured; on a table-type recordset the two write a layout of their own, which
-is read as null: [#64]). A `DateTime` finds every row whose bytes say that date: through an index under the key
-of each form, where Access's own `=` through an index finds the first form alone (measured; without an index it
-finds both). A value in a form that reads as its date and that Access was not seen to write - a space or a plus
-sign among its digits - is found by a cursor over the table, and not through an index, which holds it under a key
-of its own. In a range's entry and given to `FindClosestRowByEntry`, a `DateTime` is the first form's key and a
-row is put against it by its key, as Access's `BETWEEN` through an index puts it (measured): a row in the second
-form is where its bytes are. A `Joiner` joins a row that was read on its stored bytes, as a relationship does,
-unless the row has been given a date in that column since.
+A Date/Time Extended is the 42 bytes the row stores, which Access keys and orders a value by ([#51]), and reads as
+Access reads them ([Large Number and Date/Time Extended](data-types.md#large-number-and-datetime-extended)). Access
+writes a date in three layouts (measured): its `INSERT` in one; its SQL `UPDATE`, DAO's `AddNew` and `Edit` on a
+dynaset, and its own forms and datasheets in another, the time of day in whole seconds; and DAO's `AddNew` and
+`Edit` on a table-type recordset - what DAO's `OpenRecordset` gives a table when it is asked for no other kind - in
+a third, the day in fifteen digits and four bytes after the value that are whatever DAO's buffer held ([#64]). A
+`DateTime` finds every row whose bytes say that date: through an index under the key of each of the first two and
+among the keys that begin with the third's other bytes, where Access's own `=` through an index finds the first
+alone (measured; without an index it finds all three). A value in a shape that reads as its date and that Access
+was not seen to write - a space or a plus sign among its digits, fewer digits, a count other than 7 or 0 - is found
+by a cursor over the table, and not through an index, which holds it under a key of its own. In a range's entry and
+given to `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
+Access's `BETWEEN` through an index puts it (measured): a row in another layout is where its bytes are. A row in the
+third comes after every row of the other two from the year 2 on in an ascending index (before them in a descending
+one), so ACE's own `K > '2020-01-02 03:04:05'` through an ascending index gives the rows in the third layout of that
+very date and of earlier ones, which without an index it does not (measured). A `Joiner` joins a row that was read
+on its stored bytes, as a relationship does, unless the row has been given a date in that column since.
 
 ### Null
 
@@ -203,11 +221,11 @@ longer than an entry holds ([Keys longer than 510 bytes](indexes.md#keys-longer-
 ## What cursors do not do
 
 Column matchers of a caller's own (Jackcess's `ColumnMatcher`); and a null is not found by looking for null,
-where Jackcess finds one. The room an emptied overflow slot or a deleted row leaves on a page is not used again:
-[Where a new row goes](storage.md#where-a-new-row-goes).
+where Jackcess finds one.
 
 [Back to contents](README.md)
 
 [#51]: https://github.com/markmario/jackcess-dotnet/issues/51
+[#58]: https://github.com/markmario/jackcess-dotnet/issues/58
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65

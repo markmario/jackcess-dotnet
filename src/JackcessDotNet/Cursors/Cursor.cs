@@ -17,8 +17,17 @@ namespace JackcessDotNet;
 /// <see cref="Table.Update"/> and <see cref="Table.Delete"/> do. It holds no handle and needs no disposing; like
 /// the <see cref="Database"/> it reads, it is for one thread at a time.
 /// <para>
-/// It lists the table's pages when it is created, and again each time it is put before the first row or after
-/// the last: rows on pages the table gains in between are not visited.
+/// It lists the table's pages the first time it moves or is asked where it is, and again each time it is put before
+/// the first row or after the last, and gives the rows they hold then: a row inserted in between is not visited,
+/// whichever page it goes to - one the table gains, or one where a delete or an update left room - and a row deleted
+/// in between is passed.
+/// </para>
+/// <para>
+/// Over a database opened only to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be
+/// writing to, it reads the pages a move needs at that move, keeping none from one move to the next. It is not told
+/// of the rows that program inserts, as it is of its own database's: one inserted on a page it listed, where it has
+/// still to come, is visited. <see cref="DatabaseOpenOptions.ReadOnly"/> says what a reading beside a writer can and
+/// cannot give.
 /// </para>
 /// </summary>
 public class Cursor : IEnumerable<Row>
@@ -27,8 +36,10 @@ public class Cursor : IEnumerable<Row>
     private readonly TableDefinition _definition;
     private readonly Table           _table;
     private readonly RowDecoder      _decoder;
-    // The table's pages, listed when the cursor first needs them: a cursor over an index never does.
+    // The table's pages, listed when the cursor first needs them - a cursor over an index never does - and what it
+    // gives of them: the rows they held then (TableScan).
     private List<int>?               _pages;
+    private TableScan?               _scan;
     private List<int>                _ownedPages => _pages ??= OwnedPages();
 
     internal PageFile        File       => _file;
@@ -40,7 +51,8 @@ public class Cursor : IEnumerable<Row>
     private int  _rowIndex;
     private Row? _currentRow;
 
-    // The page last read, kept while nothing has been written to the file.
+    // The page last read, kept while nothing has been written to the file - and, when another program may write to
+    // it, for one move only (BeginMoving).
     private byte[]? _page;
     private int     _pageNumber = -1;
     private long    _pageStamp;
@@ -59,7 +71,11 @@ public class Cursor : IEnumerable<Row>
     }
 
     private List<int> OwnedPages()
-        => UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, _file.Format, _file);
+    {
+        var pages = UsageMap.GetOwnedPages(_file.ReadPage(_definition.UmapPageNumber), _definition.OwnedPagesRow, _file.Format, _file);
+        (_scan ??= _file.TableScans.Begin(_definition.TdefPageNumber)).Restart(pages);
+        return pages;
+    }
 
     /// <summary>The table whose rows the cursor reads.</summary>
     public Table Table => _table;
@@ -150,9 +166,18 @@ public class Cursor : IEnumerable<Row>
     /// </summary>
     private protected object BeginMoving()
     {
+        // Another program may write to a file opened only to be read, between two moves: what the cursor kept of its
+        // pages at the last is read again at this one (#62). Within a move, it is kept.
+        if (_moving == 0 && _file.SharedWithWriters) ForgetKeptPages();
         _moving++;
         return Place();
     }
+
+    /// <summary>
+    /// Lets go of the pages the cursor keeps from one move to the next - the data page it is on, and an index cursor's
+    /// leaf - so that the next move reads them from the file again.
+    /// </summary>
+    private protected virtual void ForgetKeptPages() => _page = null;
 
     /// <summary>
     /// Ends what <see cref="BeginMoving"/> began: the cursor is put back to <paramref name="restoreTo"/>, or, when
@@ -252,9 +277,13 @@ public class Cursor : IEnumerable<Row>
         }
     }
 
-    // The slots a pointer can name on a page: Jet addresses a row on its page with one byte.
+    // The slots of a page the cursor gives rows from: those the page had when the cursor listed the table's pages, of
+    // which a pointer can name 256 - Jet addresses a row on its page with one byte.
     private int SlotsOn(int pageNumber)
-        => Math.Min((int)ByteUtil.GetShort(PageAt(pageNumber), _file.Format.OffsetDataNumRows), 256);
+    {
+        int slots = ByteUtil.GetShort(PageAt(pageNumber), _file.Format.OffsetDataNumRows);
+        return Math.Min(_scan?.Slots(pageNumber, slots) ?? slots, 256);
+    }
 
     /// <summary>Where the cursor is, to come back to (<see cref="Restore"/>).</summary>
     private protected virtual object Place()
@@ -519,13 +548,14 @@ public class Cursor : IEnumerable<Row>
     /// whose number reads as that, so the date read from a row, or written to it, finds the row again; and a
     /// <see cref="double"/> the row that stores exactly that number (<see cref="GetCurrentRowDateNumber"/> gives
     /// a row's), so two dates less than a millisecond apart are told apart. A Date/Time Extended is the 42 bytes the
-    /// row stores, which Access writes a date in two forms of - one by its <c>INSERT</c>, one by its SQL
-    /// <c>UPDATE</c> and DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset - and a <see cref="DateTime"/> finds every
-    /// row whose bytes say that date, in either form. A null is never a match: a row with no value in a column is not
-    /// found by looking for null. A cursor over a table and one over an index find the same rows, but for a Date/Time
-    /// Extended value in a form that reads as its date and that Access was not seen to write - a space or a plus sign
-    /// among its digits - which only a cursor over the table finds by its date: an index holds it under a key of its
-    /// own.
+    /// row stores, which Access writes a date in three layouts of - one by its <c>INSERT</c>, one by its SQL
+    /// <c>UPDATE</c>, DAO's <c>AddNew</c> and <c>Edit</c> on a dynaset and its own forms and datasheets, and one by DAO's
+    /// <c>AddNew</c> and <c>Edit</c> on a table-type recordset - and a <see cref="DateTime"/> finds every row whose
+    /// bytes say that date, read as Access reads them, in whichever layout. A null is never a match: a row with no value
+    /// in a column is not found by looking for null. A cursor over a table and one over an index find the same rows, but
+    /// for a Date/Time Extended value in a shape that reads as its date and that Access was not seen to write - a space
+    /// or a plus sign among its digits, fewer digits, a count other than 7 or 0 - which only a cursor over the table
+    /// finds by its date: an index holds it under a key of its own.
     /// </para>
     /// </summary>
     /// <param name="columnName">The name of the column to look in, whatever the case of its letters.</param>
@@ -718,6 +748,8 @@ public class Cursor : IEnumerable<Row>
         if (!ReferenceEquals(savepoint.Cursor, this))
             throw new ArgumentException("The savepoint was taken from another cursor.", nameof(savepoint));
         RestorePosition(savepoint.Place);
+        // The row as the file has it now: beside a writer, not as the page kept from the last move has it (#62).
+        if (_file.SharedWithWriters) ForgetKeptPages();
         _currentRow = PointerAt() is { } pointer ? ReadRow(pointer) : null;
     }
 

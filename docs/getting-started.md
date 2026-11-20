@@ -54,15 +54,16 @@ What a build from source writes, and the version it has: [Building](building-and
 
 - `Database.Open(path)` opens an `.mdb` or an `.accdb`, of whichever format its header says
   ([What a file is](file-formats.md#what-a-file-is)). `Database.Open(path, new DatabaseOpenOptions { ... })`
-  gives the password of a protected file ([Protected files](protected-files.md)) and the format to read a file as
-  when its header does not say.
+  gives the password of a protected file ([Protected files](protected-files.md)), the format to read a file as
+  when its header does not say, and `ReadOnly`, which opens the file only to read it.
 - `Database.Create(path)` makes an Access 2000-2003 `.mdb`, and `Database.Create(path, format)` an `.accdb` of
   Access 2007's, 2010's, 2016's or 2019's format ([Creating a file](file-formats.md#creating-a-file)).
-- `Database.IsReadOnly` says whether a database can be written to: an Access 97 file, for one, is only read
-  ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)).
+- `Database.IsReadOnly` says whether a database can be written to: one opened `ReadOnly` cannot, and an Access 97
+  file, for one, is only read ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)).
 - `db.GetTable(name)` gives a table. `Database.TryGetTable` asks for a table without an exception when there is
   none.
-- While a `Database` has a file open, Access should not be given it:
-  [Sharing a file with Access](sharing.md).
+- While a `Database` has a file open to be written, no other program or `Database` writes to it, and a file another
+  program has open for writing is refused with `DatabaseInUseException`; a file opened `ReadOnly` opens beside
+  Access: [Sharing a file with Access](sharing.md).
 
 [Back to contents](README.md)

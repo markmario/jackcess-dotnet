@@ -333,7 +333,8 @@ internal sealed class TableIndexes
     /// A row a version from db6f93b entered under the key of the first form of the date it read
     /// (<see cref="EarlierVersionsEntriesOf"/>) is among them, and so is any other row under that key: as every row
     /// given, it is the caller's to read and compare. The key of no value, which versions from 2930d3f made of
-    /// Access's second form, is not looked under: every row with no value is under it, and each would be read.
+    /// Access's second form and every version that keyed the date it read made of the third layout, is not looked
+    /// under: every row with no value is under it, and each would be read.
     /// </summary>
     internal IEnumerable<int>? RowPointersFor(Entry entry)
     {
@@ -553,6 +554,7 @@ internal sealed class TableIndexes
     /// they are not under <paramref name="entry"/>'s key: those of a row with a Date/Time Extended value in another
     /// form than the first. Those versions keyed the date they read, in the first form: from 2930d3f they read Access's
     /// second form as no value, and from db6f93b as its date (<see cref="StoredExtendedDate.DateAsEarlierVersionsRead"/>).
+    /// Each of them read the layout a DAO table-type recordset writes as no value.
     /// An index or a primary key they added over such a row, and a row they rewrote, is under that key
     /// (tools/earlier-extended-date-keys.ps1). None for values in the first form, which they keyed as this library
     /// does; the key of the date read; and, with <paramref name="asFrom2930d3f"/>, the key of no value too. The key of

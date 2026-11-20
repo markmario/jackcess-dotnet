@@ -164,24 +164,31 @@ internal sealed class LvalWriter
     /// </summary>
     internal const int MinListedFreeSpace = 258;
 
+    /// <summary>
+    /// The first look in a session at the column's free-space map: the pages it lists are read, once, for the room
+    /// each has - a page Access or an earlier session left with room, or emptied - and noted. After it, every page's
+    /// room is known, to a value of one chunk and to a chain alike: a chain's pages are the emptied ones it lists.
+    /// </summary>
+    private void LookAtTheMapOnce()
+    {
+        var notes = _file.FreedLvalPages;
+        if (_umap.FreePage <= 0 || !notes.FirstLookFor(_umap.OwnedPage, _umap.OwnedRow)) return;
+        foreach (int listed in UsageMap.GetOwnedPages(_file.ReadPage(_umap.FreePage), _umap.FreeRow, _format, _file))
+        {
+            notes.SetListed(_umap.OwnedPage, _umap.OwnedRow, listed, true);
+            if (notes.TryGetRoom(_umap.OwnedPage, _umap.OwnedRow, listed, out _)) continue;
+            if (RoomOn(listed) is { } has && has >= MinListedFreeSpace)
+                notes.Set(_umap.OwnedPage, _umap.OwnedRow, listed, has);
+            else
+                Forget(listed);   // not this column's, or without the room: it leaves the map
+        }
+    }
+
     /// <summary>A page with room for a row of <paramref name="needed"/> bytes among other one-chunk values.</summary>
     private int PageOfSingleChunks(int needed)
     {
         var notes = _file.FreedLvalPages;
-        // The first look in a session reads the pages the column's free-space map lists, once, for the room each
-        // has: a page Access or an earlier session left with room. After it, every page's room is known.
-        if (_umap.FreePage > 0 && notes.FirstLookFor(_umap.OwnedPage, _umap.OwnedRow))
-        {
-            foreach (int listed in UsageMap.GetOwnedPages(_file.ReadPage(_umap.FreePage), _umap.FreeRow, _format, _file))
-            {
-                notes.SetListed(_umap.OwnedPage, _umap.OwnedRow, listed, true);
-                if (notes.TryGetRoom(_umap.OwnedPage, _umap.OwnedRow, listed, out _)) continue;
-                if (RoomOn(listed) is { } has && has >= MinListedFreeSpace)
-                    notes.Set(_umap.OwnedPage, _umap.OwnedRow, listed, has);
-                else
-                    Forget(listed);   // not this column's, or without the room: it leaves the map
-            }
-        }
+        LookAtTheMapOnce();
 
         // The page with the least room that will do, the lowest of them: found by its room, so no page known to
         // have too little is looked at, however many there are. What is noted is checked against the page itself.
@@ -202,10 +209,14 @@ internal sealed class LvalWriter
         UsageMap.AddPage(_file, _allocator, _umap.OwnedPage, _umap.OwnedRow, page);
         return page;
     }
-    /// <summary>A page for one chunk of a chain and nothing else: one this session saw emptied, or a new one.</summary>
+    /// <summary>
+    /// A page for one chunk of a chain and nothing else: an emptied one - the column's free-space map lists such a page,
+    /// so one emptied in an earlier session is found too (#58) - or a new one.
+    /// </summary>
     private int PageOfItsOwn()
     {
         var notes = _file.FreedLvalPages;
+        LookAtTheMapOnce();
         while (notes.TryFindWithExactly(_umap.OwnedPage, _umap.OwnedRow, _format.DataPageInitialFreeSpace, out int candidate))
         {
             notes.CandidatesVisited++;
@@ -554,7 +565,14 @@ internal sealed class LvalReader
     /// <paramref name="lvalRow"/>). For OTHER_PAGE (<paramref name="chained"/>
     /// false) the single chunk row IS the data; for OTHER_PAGES each chunk row
     /// is [nextRow:1][nextPage:3][payload] with nextPage == 0 ending the chain.
+    /// <para>
+    /// A value that is not where its reference says does not read: a page that is not a data page, a row the page
+    /// does not have or has deleted, one chunk shorter than the value, a chain that ends before it. Such a reference
+    /// is one a reader held while another program changed the file (#62) - the row read a moment before the change -
+    /// or a damaged file's, and was read as another value's bytes, the old bytes of one deleted, or zeros.
+    /// </para>
     /// </summary>
+    /// <exception cref="InvalidDataException">The value is not where its reference says.</exception>
     public byte[] Read(int lvalPage, int lvalRow, int totalLen, bool chained)
     {
         var result = new byte[totalLen];
@@ -566,25 +584,32 @@ internal sealed class LvalReader
 
         while (written < totalLen)
         {
-            byte[] page     = _file.ReadPage(curPage);
-            int    rowCount = ByteUtil.GetShort(page, _format.OffsetDataNumRows);
+            if (curPage <= 0 || curPage >= _file.PageCount)
+                throw NotWhereItSays(lvalPage, lvalRow, $"it goes on to page {curPage}, which the file does not have");
+            byte[] page = _file.ReadPage(curPage);
+            if (page[0] != JetFormat.PageTypeData)
+                throw NotWhereItSays(lvalPage, lvalRow, $"page {curPage} is not a page of values");
+            int rowCount = ByteUtil.GetShort(page, _format.OffsetDataNumRows);
 
             if (curRow >= rowCount)
-                throw new InvalidOperationException(
-                    $"LVAL page {curPage} has {rowCount} rows; requested row {curRow}.");
+                throw NotWhereItSays(lvalPage, lvalRow, $"page {curPage} has {rowCount} rows, and row {curRow} is asked for");
+            if ((ByteUtil.GetUShort(page, _format.OffsetDataRowTable + curRow * JetFormat.SizeRowEntry) & JetFormat.DeletedRowFlag) != 0)
+                throw NotWhereItSays(lvalPage, lvalRow, $"row {curRow} of page {curPage} has been deleted");
 
             (int rowStart, int rowEnd) = GetRowBounds(page, curRow, rowCount);
             int rowLen = rowEnd - rowStart;
 
             if (!chained)
             {
-                Array.Copy(page, rowStart, result, 0, Math.Min(rowLen, totalLen));
+                if (rowLen < totalLen)
+                    throw NotWhereItSays(lvalPage, lvalRow, $"its row holds {Math.Max(rowLen, 0)} bytes of a value of {totalLen}");
+                Array.Copy(page, rowStart, result, 0, totalLen);
                 break;
             }
 
             if (rowLen < 4)
-                throw new InvalidOperationException(
-                    $"LVAL chain row [{curPage},{curRow}] is only {rowLen} bytes (minimum 4 required).");
+                throw NotWhereItSays(lvalPage, lvalRow,
+                    $"row {curRow} of page {curPage}, a piece of its chain, is {Math.Max(rowLen, 0)} bytes, fewer than the 4 that say where the next piece is");
 
             int nextRow  = page[rowStart];
             int nextPage = page[rowStart + 1] | (page[rowStart + 2] << 8) | (page[rowStart + 3] << 16);
@@ -592,13 +617,22 @@ internal sealed class LvalReader
             Array.Copy(page, rowStart + 4, result, written, copyLen);
             written += copyLen;
 
-            if (nextPage == 0) break;
+            if (nextPage == 0)
+            {
+                if (written < totalLen)
+                    throw NotWhereItSays(lvalPage, lvalRow, $"its chain ends after {written} bytes of a value of {totalLen}");
+                break;
+            }
             curPage = nextPage;
             curRow  = nextRow;
         }
 
         return result;
     }
+
+    private static InvalidDataException NotWhereItSays(int page, int row, string why)
+        => new($"The long value at row {row} of page {page} is not where its reference says: {why}. A database opened only to be read " +
+               "reads a row as another program changes it, and can hold a reference that is no longer the row's; otherwise the file is damaged.");
 
     private (int start, int end) GetRowBounds(byte[] page, int rowIndex, int rowCount)
     {

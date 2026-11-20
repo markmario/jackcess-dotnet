@@ -32,8 +32,14 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
   Access's does, up to the 2 GB a Jet file can be. Before, a file could not be written past about 2 MB
   ([How a file grows](storage.md#how-a-file-grows)).
-- **Inserts cost the same however large the table.** A row goes to the table's last data page, so rows
-  also stay in insertion order. A page holds at most 255 rows ([Where a new row goes](storage.md#where-a-new-row-goes)).
+- **Rows go where Access puts them, and finding room costs no more as a table grows.** A row goes to the
+  lowest page the table's free-space map lists with room for it, as in Access - in a table only inserted into, as
+  an export is, its last page, so rows stay in insertion order - and room a delete or an update frees is used
+  again as Access uses it ([#58]): after a delete, or an update that moves a row's values to another page and back,
+  a row can go to an earlier page. A listed page tried without room for the row leaves the map, so a run of
+  inserts tries at most as many pages as it has inserts and the map lists pages, at any size of table; one insert
+  can try every listed page, when none has room for it, as Access's can
+  ([Where a new row goes](storage.md#where-a-new-row-goes)). A page holds at most 255 rows.
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit. The engine kept up
   to 1,024 bytes there, and Access showed `#Error` for those values ([Long values](storage.md#long-values)).
 - **Text index keys are the ones Access writes**, for the General - Legacy sort order (Access 2000-2007),
@@ -67,6 +73,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **Protected files open as Access opens them**: an .mdb's database password is checked, an encoded .mdb is
   read and written with the key its header holds, and every kind of protection Access makes is tested against a
   file it made. See [Protected files](protected-files.md).
+- **A file open to be written is kept from Access**, which opened it beside the library and wrote over it; a file
+  opened only to be read opens beside Access. See [Sharing a file with Access](sharing.md).
 - **The test corpus is in the repository**, pinned by checksum. See [tests/corpus](../tests/corpus/README.md).
 
 What this fork does not do yet, and its limits: [What is and is not supported](supported-features.md).
@@ -98,6 +106,10 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   in the table ([CHANGELOG](../CHANGELOG.md#added)).
 - **Cursors** have no column matchers of a caller's own (Jackcess's `ColumnMatcher`), and do not find a null by
   looking for null, where Jackcess finds one ([What cursors do not do](cursors-and-rows.md#what-cursors-do-not-do)).
+- **A file open to be written** is kept from other writers by the file's sharing, where Java Jackcess takes no lock
+  and says a file must not be written by two programs at once; both open a file read-only when asked, and Java
+  Jackcess also opens one it cannot write to read-only without being asked, which this library leaves to the
+  caller ([Compared with Java Jackcess](sharing.md#compared-with-java-jackcess)).
 
 And where the two agree: an Access 97 file is only read, as in Jackcess
 ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)); `EnforceForeignKeys` is on by
@@ -108,3 +120,5 @@ an import makes a Large Number only in a format that has one, as Java Jackcess d
 ([Type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet)).
 
 [Back to contents](README.md)
+
+[#58]: https://github.com/markmario/jackcess-dotnet/issues/58

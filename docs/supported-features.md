@@ -14,6 +14,8 @@ it does not do. Work not yet done is tracked in this repository's
 | Create new `.accdb` files (Access 2007, 2010, 2016, 2019) | ✅ `FileFormat.Access2007`, `Access2010`, `Access2016`, `Access2019` | [Creating a file](file-formats.md#creating-a-file) |
 | Large Number (`DataType.Int64`) and Date/Time Extended (`DataType.DateTimeExtended`) columns | ✅ Read, written, created and indexed; `.accdb` only | [Data types](data-types.md#large-number-and-datetime-extended) |
 | Create or write Jet 3 (Access 97) files | ❌ Read-only, as in Jackcess | [Access 97 files are read-only](file-formats.md#access-97-files-are-read-only) |
+| Open a file only to read it (`DatabaseOpenOptions.ReadOnly`), while Access has it open | ✅ Nothing written; every change refused | [Sharing a file with Access](sharing.md#opening-a-file-to-write-or-only-to-read) |
+| Keep Access and other writers out while a file is open to be written | ✅ By the file's sharing; Access's lock file is neither made nor read | [Sharing a file with Access](sharing.md#what-each-open-does) |
 | Row CRUD + primary-key B-tree index | ✅ | [Rows and cursors](cursors-and-rows.md) |
 | Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change | [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows) |
 | Batch insert, all rows or none (`Table.InsertRange`) | ✅ | [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows) |
@@ -49,7 +51,12 @@ it does not do. Work not yet done is tracked in this repository's
 - **Access 97 (Jet 3) files are read and not written**, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`:
   [Access 97 files are read-only](file-formats.md#access-97-files-are-read-only).
-- **One writer at a time**: [Sharing a file with Access](sharing.md).
+- **One writer at a time.** This library takes none of Access's locks, so a file it has open to be written is kept
+  from every other writer - Access says it is "already in use" - and it does not open a file another program or
+  `Database` has open for writing (`DatabaseInUseException`). Readers - Access read-only, a `Database` opened
+  `ReadOnly` - share it with a writer, and a reading made while the writer writes can miss rows, give a row twice or
+  with a value of another row's, or fail; one that agrees with itself needs no writer while it is made. See
+  [Sharing a file with Access](sharing.md).
 - **A Large Number or Date/Time Extended column is for an `.accdb`**, and makes an older `.accdb` one of a later
   format, which older versions of Access do not open:
   [A column that changes a file's format](file-formats.md#a-column-that-changes-a-files-format).
@@ -75,12 +82,10 @@ it does not do. Work not yet done is tracked in this repository's
   [Tables and schema changes](tables-and-schema.md).
 - A column's default value is not filled in: [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 - Column matchers of a caller's own, and looking for a null: [What cursors do not do](cursors-and-rows.md#what-cursors-do-not-do).
-- The room a deleted row or an emptied overflow slot leaves on a page is not used again
-  ([#58]; [Where a new row goes](storage.md#where-a-new-row-goes)).
-- No lock is taken on a file ([#62]; [Sharing a file with Access](sharing.md)).
+- Access's lock file (`.ldb`, `.laccdb`) is neither made nor read: a file is kept from other writers by its own
+  sharing, and a reading beside a writer is not kept from the writer's changes
+  ([Sharing a file with Access](sharing.md)).
 
 [Back to contents](README.md)
 
 [#26]: https://github.com/markmario/jackcess-dotnet/issues/26
-[#58]: https://github.com/markmario/jackcess-dotnet/issues/58
-[#62]: https://github.com/markmario/jackcess-dotnet/issues/62

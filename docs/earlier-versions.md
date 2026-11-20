@@ -110,8 +110,9 @@ library either way: each row found is read and compared.
 
 **A row whose Date/Time Extended value is in another form than the one this library writes** may have its entry
 where a version of this library before [#51] put it, when such a version added the index or rewrote the row: under
-the key of the date it read, in the first form, or of no value - for Access's second form, before db6f93b. When
-the row is deleted or its date rewritten and it has no entry under the key of its bytes, the entry is looked for
+the key of the date it read, in the first form, or of no value - for Access's second form, before db6f93b, and for
+the layout DAO's table-type recordset writes, which every such version read as no value ([#64]). When the row is
+deleted or its date rewritten and it has no entry under the key of its bytes, the entry is looked for
 under each of those keys, one way down the tree each to the key and the row, and taken out when it points at the
 row. A relationship's search for such a row, a unique index's for its duplicate, and a `Joiner`'s by its bytes
 look under the first form's key too, and read each row found there - the row looked for only when it has the very
@@ -119,11 +120,13 @@ bytes, the others the rows with the date in the first form - and a `DateTime` lo
 looked for under that key, which is its first form's. No search looks under the key of no value: every row with
 no value is under it, as an index that does not ignore nulls holds them (Access's default for a unique index and a
 relationship's), and each would be read. So a row the versions from 2930d3f to db6f93b entered there - ten hours
-of `main`, never released - is found when it is deleted or its date rewritten, and with `VerifyIndexes`, which
-reads the table when an index holds a row under another key than its own; trusting the index, a relationship, a
-unique index and a `Joiner` do not find it, as Access does not. With `VerifyIndexes`, in an index it looks at (a
-unique index, or a relationship's), such an entry is the row's wrong one, and is moved to the key of the row's
-bytes. How Access keys a Date/Time Extended value: [How keys are matched](relationships.md#how-keys-are-matched).
+of `main`, never released - and a row in the table-type layout that any of those versions keyed, is found when it
+is deleted or its date rewritten, and with `VerifyIndexes`, which reads the table when an index holds a row under
+another key than its own; trusting the index, a relationship, a unique index and a `Joiner` do not find it, as
+Access does not. Nor does a lookup by a date through an index cursor, which trusts its index whether or not
+`VerifyIndexes` is set. With `VerifyIndexes`, in an index it looks at (a unique index, or a relationship's), such an
+entry is the row's wrong one, and is moved to the key of the row's bytes, as it is in every index when the row is
+rewritten. How Access keys a Date/Time Extended value: [How keys are matched](relationships.md#how-keys-are-matched).
 
 ## Other things an earlier version wrote
 
@@ -135,6 +138,9 @@ bytes. How Access keys a Date/Time Extended value: [How keys are matched](relati
   of which are not found by the number they were written from: [Currency](data-types.md#currency).
 - **Rows deleted with one flag bit**, which stay deleted for this library and for Access:
   [Rows on a page](storage.md#rows-on-a-page).
+- **Tables whose free-space map is empty**: earlier versions left it so, and Access added a page for the first row
+  it wrote to a table they had filled. Where a row goes, as the map has it:
+  [Where a new row goes](storage.md#where-a-new-row-goes).
 - **Long values whose last chunk shares a page with other values**, which Access must not be given to edit, and
   which `Database.ShareLongValuePages` keeps: [Long values](storage.md#long-values).
 - **Memo and OLE values kept in the row past Access's 64 bytes**, up to 1,024, which Access shows as `#Error`
@@ -156,10 +162,14 @@ library then wrote to at 3ad3aed, before it kept every index, made by `tools/leg
 `tools/legacy-unique-indexes.ps1`. `ace-extended-date-forms.accdb` holds Date/Time Extended values in every form
 Access reads a date from, with indexes ACE made over them (`tools/ace-extended-date-forms.ps1`);
 `engine-913240c-extended-date-keys.accdb` and `engine-c89bfe4-extended-date-keys.accdb` are copies of it that
-this library changed at those commits (`tools/earlier-extended-date-keys.ps1`). The files of long keys are listed
-under [Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes).
+this library changed at those commits (`tools/earlier-extended-date-keys.ps1`). `ace-extended-date-table-type.accdb`
+holds values in the layout DAO's table-type recordset writes, beside the other two, keyed by ACE as DAO added them
+(`tools/ace-extended-date-table-type.ps1`), and `engine-c89bfe4-table-type-keys.accdb` is a copy c89bfe4 changed
+(`tools/earlier-extended-date-table-type-keys.ps1`). The files of long keys are listed under
+[Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes).
 
 [Back to contents](README.md)
 
 [#36]: https://github.com/markmario/jackcess-dotnet/issues/36
 [#51]: https://github.com/markmario/jackcess-dotnet/issues/51
+[#64]: https://github.com/markmario/jackcess-dotnet/issues/64

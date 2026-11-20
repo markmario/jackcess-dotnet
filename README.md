@@ -89,6 +89,8 @@ people.Update(read);
   Length are held to.
 - **Protected files.** An `.mdb` with a database password or encoded by Access, and an `.accdb` encrypted with
   a password.
+- **Sharing.** A file open to be written keeps Access and other writers out; one opened `ReadOnly` opens beside
+  Access.
 - **Import and export.** `DataTable`, `DataSet` and `IEnumerable<T>`.
 - **Not yet.** Saved queries are not read, and a few things are refused rather than written as Access would not
   write them: the list is in

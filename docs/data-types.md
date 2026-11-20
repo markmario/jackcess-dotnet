@@ -20,8 +20,17 @@ Large Number and Date/Time Extended columns (Access 2016 and 2019) are read, wri
 Large Number is a `long`. A Date/Time Extended is a `DateTime`: Access keeps the years 1 to 9999 to 100
 nanoseconds, which is a `DateTime`'s own range and tick, so the value comes back to the tick; it has no time
 zone, and is read with `DateTimeKind.Unspecified`. Its index key is made of the 42 bytes the row stores, in
-whichever form Access wrote them, as Access makes it. A value DAO stored through a table-type recordset
-(`dbOpenTable`), whose `AddNew` and `Edit` write a layout of their own, is read as null ([#64]).
+whichever form Access wrote them, as Access makes it. The bytes are read as Access reads them, not as fields at
+fixed places, so a value DAO stored through a table-type recordset (`dbOpenTable`), whose `AddNew` and `Edit`
+write a layout of their own, is read as its date ([#64]). Measured with DAO 16 and ACE 16, on bytes changed in a
+file Access made: the value ends at its first zero byte; the day is read from its start, the time of day after the
+first colon and the count of the fraction's digits after the last, and fewer than two colons are an error; a number
+begins with a digit, white space or a plus sign - anything else there, or nothing, is an error - and its digits are
+read up to the first byte that is not one, to 64 bits; the day and the count are taken to their low 32 bits, and a
+count of 10 or more is an error; the time divided by 10 to the count is in seconds, and the remainder in units of
+100 nanoseconds whatever the count. An error is read as null, and so is a value no `DateTime` holds, which Access
+does not show as a date of its own: a day after 31 December 9999, a time of day of a day or more, a remainder of
+more than seven digits.
 
 Either column is for an `.accdb`, and a table with one makes an older `.accdb` one of a later format:
 [A column that changes a file's format](file-formats.md#a-column-that-changes-a-files-format). How a Date/Time

@@ -142,8 +142,8 @@ public sealed class Joiner
         // A date is joined on the number its row stores, as Access joins it, and not on the DateTime it was read
         // as, which is that number rounded: a row that was read from the table is asked for the number of each
         // such column it has not been given a value in since; one it has is joined on the value given. An extended
-        // date joined to another is joined on its row's bytes, as Access's relationship joins it (#51): the two
-        // forms Access writes a date in are two keys.
+        // date joined to another is joined on its row's bytes, as Access's relationship joins it (#51): each layout
+        // Access writes a date in is a key of its own (#64).
         if (fromRow is Row read && ReferenceEquals(read.Source, FromTable))
         {
             var dates = FromTable.Columns

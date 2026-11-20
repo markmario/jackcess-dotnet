@@ -21,9 +21,53 @@ have been deleted - and a row Access moved to another page is read where its poi
 
 ## Where a new row goes
 
-Inserts cost the same however large the table. A row goes to the table's last data page, so rows also stay in
-insertion order. The room an emptied overflow slot or a deleted row leaves on a page is not used again, so a row
-updated back and forth past its page's room makes the file grow until Access compacts it ([#58]).
+Rows go where Access puts them, and finding room costs no more as a table grows. A row goes to the lowest page the
+table's free-space map lists with room for it, as in Access - in a table only inserted into, as an export is, its
+last page, so rows stay in insertion order - and room a delete or an update frees is used again as Access uses it
+([#58]): after a delete, or an update that moves a row's values to another page and back, a row can go to an
+earlier page. What a `Row`, a cursor or a savepoint that read a deleted row finds then is in
+[Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows).
+
+**Where a row goes, and the room a delete or an update leaves, are Access's** ([#58]), as measured with DAO 16 and
+ACE 16 in `.mdb` and `.accdb` files, on tables Access made and tables this library made, in one session or many.
+ExportMdb.Interop's suite has Access place the same rows and compares every page's room and slots, and the map:
+
+- A new row - and the values of a row an update makes too long for its page - goes to the lowest page the
+  table's free-space map lists (the second usage map of its definition). A listed page without room for the row
+  and its slot, or with 255 rows, leaves the map and the next is tried: a page leaves the map so, never because a
+  row filled it. With none, the row goes to a new page, which the map lists only when it has room, the row on it,
+  for another row of the same size: a page a row of more than half a page began is not listed, so the next row,
+  however small, goes to another page - a new one when no other is listed - in Access as here.
+- A delete takes the row's bytes off its page - the rows after them close up - and leaves its slot, marked
+  deleted and empty; a new row takes a slot of its own, not a deleted row's. The page is listed when, before the
+  delete, it had no room for the row it lost and a slot, whatever room the delete leaves it (to the byte, for rows
+  of 101 to 401 bytes). A page a delete leaves with no row stays the table's.
+- An update that fits where the row is lists nothing. A row that comes home lists the page its values leave by the
+  same rule as a delete; values that move on to another page do not list the page they leave.
+- Access gives back to the file a page an update leaves with no row - out of the table's maps - and takes it again
+  for the next page it needs, its slots begun again from the first: a row updated back and forth past its page's
+  room adds a page to Access's file at most when each change is a session of its own (one in 3,000 such cycles,
+  measured). In one session Access did not take such pages back: its file grew by about three pages in four cycles
+  (26 to 774 pages in 1,000), its table keeping its 4. This library adds every page at the end of the file and takes
+  none back from it, so it keeps such a page for the table, begun again and listed: the next row, or values moved,
+  go to it. Every slot on such a page was a deleted one - values moved there and gone again, or a row deleted with
+  its index entries. A row deleted in the session is still named by what read it, a `Row`, a cursor or a savepoint,
+  so until the session ends the page keeps that row's slot, deleted, with the slots before it, and is begun again
+  after them: a slot number is used again only where nothing names it, and what read a deleted row finds no row in
+  its slot. So the file grows by a page at most from one session to the next, and in one session while no row is
+  deleted from that page; rows inserted and deleted on it in one session fill it with kept slots, up to 255, and the
+  table then takes a new page. Over 3,000 such cycles in one session, each also inserting and deleting a small row
+  on that page, this library's file went from 64 to 76 pages, and Access's from 64 to 8,931, its table keeping its 4
+  pages (from 64 to 2,804 without the small row).
+- Finding a page reads the pages tried and no other: the map is read once a session, and kept. A page tried
+  without room for the row leaves the map, as in Access, so each listed page is tried once while it is listed: a
+  run of inserts tries at most as many pages as it has inserts and the map lists pages, a few pages read for each,
+  however large the table. One insert tries every listed page when none has room for it - a row larger than the
+  room any delete left - and takes each off the map, about three pages read and one written for each (2,000 pages
+  listed, a row of 1,039 bytes: 3,012 read, 1,008 written), so that the inserts after it try none of them again.
+- Where Access does not use room, this library does not either: a page with 255 slots takes no more rows, however
+  many of them are deleted ones; a row that shrinks where it is, or whose values move to another page, lists no
+  page. Compacting the file in Access gives all of it back.
 
 ## Long values
 
@@ -38,8 +82,10 @@ updated back and forth past its page's room makes the file grow until Access com
 - **A value of one chunk goes to the page with the least room that will take it**, found by its room: an insert
   looks at no page that cannot take the value, however many the column has. A page is listed in the column's
   free-space map while it has 258 bytes or more free, which is where ACE lists one (it lists none with 257 or
-  fewer), and only once a value is on it. The first long value written to a column in a session
-  reads the pages its map lists, once.
+  fewer), and only once a value is on it. The first long value written to a column in a session, of one chunk or
+  a chain, reads the pages its map lists, once: a chain's chunks go to pages emptied in an earlier session too ([#58]).
+  A value made longer and shorter again and again adds a page to its file at most, as in Access; when each change
+  was a session of its own, every chain a session wrote first went to new pages.
 
 ## How a file grows
 

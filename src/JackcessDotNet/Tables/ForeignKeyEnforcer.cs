@@ -486,7 +486,7 @@ internal sealed class ForeignKeyEnforcer
     /// <see cref="RowDecoder.DecodeForKey"/> reads back - a number in the column's own type, a Currency taken to its
     /// four places as Access takes it (<see cref="Util.CurrencyRounding"/>), a Date/Time as its double, a Date/Time
     /// Extended as its 42 bytes (a caller's
-    /// <see cref="DateTime"/> in the form Access's <c>INSERT</c> writes, which a parent keyed in Access's other form
+    /// <see cref="DateTime"/> in the form Access's <c>INSERT</c> writes, which a parent keyed in another layout
     /// is not: Access refuses such a child), and a Yes/No as the true or false it stands for, by the one reading of a
     /// caller's value that rows and keys are made from (<see cref="RowValues"/>): the column holds no null, and no
     /// value is No. A value the column cannot hold is left as it is, for the row encoder to refuse.

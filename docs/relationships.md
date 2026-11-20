@@ -64,9 +64,12 @@ Keys are matched as Access matches them - as its indexes hold them:
   and the next Double after it. A Date/Time by the double the row stores, which a `DateTime` does not always hold.
 - **A Date/Time Extended by the 42 bytes the row stores**, as Access matches it ([#51]). Access writes a date in
   more than one form - its `INSERT` with the time of day in 100-nanosecond units, its SQL `UPDATE` and DAO's
-  `AddNew` and `Edit` on a dynaset in whole seconds - and a child whose bytes are another form of its parent's
-  date has no parent: Access refuses its insert, and a relationship created over it. A `DateTime` a caller gives
-  is the form `INSERT` writes, which is the form this library writes.
+  `AddNew` and `Edit` on a dynaset in whole seconds, DAO's table-type recordset with four bytes after the value that
+  are whatever its buffer held ([#64]) - and a child whose bytes are another form of its parent's date has no
+  parent: Access refuses its insert, and a relationship created over it. Beside a parent whose key DAO's table-type
+  recordset wrote, Access refuses every child but a copy of the parent's bytes (`INSERT ... SELECT`), whatever way
+  in - an `INSERT`, a dynaset's `AddNew`, or a table-type recordset's own, whose four bytes are its own (measured).
+  A `DateTime` a caller gives is the form `INSERT` writes, which is the form this library writes.
 - **A Yes/No holds no null.** A null given it is stored No and checked as No: refused when no parent's key is No.
   A cascade-to-null of a Yes/No foreign key leaves the row No, as Access leaves it, parent or no parent.
 
@@ -115,3 +118,4 @@ dropping a table takes with it, is in [Dropping and renaming](tables-and-schema.
 [Back to contents](README.md)
 
 [#51]: https://github.com/markmario/jackcess-dotnet/issues/51
+[#64]: https://github.com/markmario/jackcess-dotnet/issues/64
