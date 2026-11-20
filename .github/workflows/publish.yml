@@ -9,6 +9,10 @@ name: Release
 #                        Release is marked a pre-release. Its X.Y.Z must still be above every release so far.
 #   anything else     -> a rehearsal (a run by hand too, even from a tag): the guard is run against the next version, and the package is packed and checked
 #                        at <next>-ci.<run>. Nothing is published. ci.yml runs the tests for these.
+#   a run by hand with check-trusted-publishing ticked
+#                     -> the rehearsal, and the trusted-publishing-check job: once someone approves the `nuget`
+#                        environment, it logs in to nuget.org as the publish job does and stops there. Nothing is
+#                        pushed. The environment takes only v* tags, so run it from a release tag.
 #
 # nuget.org is reached through Trusted Publishing: NuGet/login trades this run's GitHub OIDC token for a key that
 # lasts an hour. There is no API key in the repository's secrets, and the nuget.org policy names this file, so the
@@ -21,13 +25,20 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      check-trusted-publishing:
+        description: Also check Trusted Publishing - log in to nuget.org through the nuget environment, and push nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # A tag's run is never cancelled: it is the release. A newer push to a branch makes its older rehearsal redundant.
+# The event is part of the group, so a run by hand is in a group of its own: started from a release tag, as the
+# Trusted Publishing check is, it would otherwise share that tag's group and cancel the release while it runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
 
 env:
@@ -254,3 +265,31 @@ jobs:
             --notes "https://www.nuget.org/packages/$PACKAGE_ID/$VERSION - see CHANGELOG.md for what changed." \
             --generate-notes \
             --verify-tag "${prerelease[@]}"
+
+  # Shows that the nuget.org policy, the `nuget` environment and NUGET_USER agree, without a release: the publish
+  # job's login, with the same approval, and nothing after it. The key nuget.org issues is never printed or used,
+  # and it lapses within the hour. A login does not make a policy that nuget.org lists as temporarily active a
+  # permanent one: its documentation says a successful publish does.
+  trusted-publishing-check:
+    name: Check Trusted Publishing (pushes nothing)
+    if: github.event_name == 'workflow_dispatch' && inputs.check-trusted-publishing
+    runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      id-token: write   # Trusted Publishing
+    steps:
+      - name: Log in to nuget.org
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: nuget.org issued a key
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::NuGet/login returned no key"
+            exit 1
+          fi
+          echo "nuget.org issued this run a key through Trusted Publishing. Nothing was pushed."

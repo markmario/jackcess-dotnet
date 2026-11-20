@@ -48,6 +48,23 @@ raises `MinimumReleaseVersion` to the next major in the same pull request.
 are absolute (`https://github.com/markmario/jackcess-dotnet/blob/main/...`). The pages under `docs/` are not in
 the package, and link to each other relatively.
 
+## Checking Trusted Publishing without a release
+
+A run by hand can show that the nuget.org policy, the `nuget` environment and `NUGET_USER` still agree, and publish
+nothing: Actions → Release → Run workflow, choose a release tag under **Use workflow from**, and tick
+**check-trusted-publishing**. Beside the rehearsal, the run starts the `trusted-publishing-check` job, which waits
+for approval of the `nuget` environment, logs in to nuget.org as the publish job does, and stops. The key nuget.org
+issues is not printed or used, and it lapses within the hour.
+
+- The environment takes only `v*` tags, and a run uses the workflow of the commit it starts from, so start it from
+  a release tag made after the check was added.
+- It is for after a change to the policy, the environment or the workflow's path. A release shows the same thing:
+  its publish job logs in the same way.
+- A login does not make a policy that nuget.org lists as temporarily active a permanent one. Its documentation says
+  a [successful publish](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing#policies-pending-full-activation)
+  does.
+- The run is in a concurrency group of its own, so it leaves a release of the same tag alone.
+
 ## The retired workflow
 
 **`.github/workflows/nuget-publish.yml` stays disabled** in the repository's Actions settings: never enable it,
