@@ -87,6 +87,48 @@ public sealed class ReaderBesideWriterTests : IDisposable
         Assert.Equal(1_000_000, given[given.Count - 1]);
     }
 
+    // A date looked for in a Date/Time Extended index is looked for among the keys of every layout Access writes it in,
+    // the one DAO's table-type recordset writes among them, by the keys that begin with its known bytes (#64;
+    // ExtendedDateTableTypeTests, whose file this is). A cursor of a database opened only to be read finds the rows of
+    // that layout by their date too, through an index on the date alone and through one with a column before it, and
+    // looks in the index as the file has it at each search: rows the writer gives another date, or deletes, between
+    // two searches are found where they are then.
+    [Fact]
+    public void A_read_only_index_cursor_finds_a_date_in_every_layout_as_the_file_has_it_at_each_search()
+    {
+        string path = NewPath(FileFormat.Access2010);
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", "ace-extended-date-table-type.accdb"), path, overwrite: true);
+        File.SetAttributes(path, FileAttributes.Normal);
+        var d0 = new DateTime(2020, 1, 2, 3, 4, 5);
+        var d1 = d0.AddTicks(1234567);
+        static int[] Ids(IEnumerable<Row> rows) => rows.Select(r => (int)r["Id"]!).ToArray();
+        // An index with a column before the date, as ExtendedDateTableTypeTests adds it, keyed from the rows' bytes.
+        using (var db = Database.Open(path))
+            db.GetTable("T").AddIndex(new IndexDefinition("HowK", "How", "K"));
+
+        using var reader = Database.Open(path, ReadOnly);
+        var byDate = reader.GetTable("T").CreateIndexCursor("KAsc");
+        var byHowAndDate = reader.GetTable("T").CreateIndexCursor("HowK");
+        // Rows 1 to 3 in the two forms Access's SQL writes, 4 to 6 in the table-type layout; 7 in it too, of d1.
+        Assert.Equal(new[] { 2, 3, 1, 6, 5, 4 }, Ids(byDate.FindRowsByEntry(d0)));
+        Assert.Equal(new[] { 7 }, Ids(byHowAndDate.FindRowsByEntry("AddNew, table-type", d1)));
+
+        using (var writer = Database.Open(path))
+        {
+            var t = writer.GetTable("T");
+            var pointers = new Dictionary<int, int>();
+            var rows = t.CreateCursor();
+            while (rows.MoveNext()) pointers[(int)rows.Current!["Id"]!] = rows.CurrentRowPointer;
+            t.RewriteRowAt(pointers[4], new Row { ["K"] = d0.AddDays(1) });
+            t.DeleteRowAt(pointers[5]);
+            t.DeleteRowAt(pointers[7]);
+        }
+
+        Assert.Equal(new[] { 2, 3, 1, 6 }, Ids(byDate.FindRowsByEntry(d0)));
+        Assert.Equal(new[] { 4 }, Ids(byDate.FindRowsByEntry(d0.AddDays(1))));
+        Assert.Empty(byHowAndDate.FindRowsByEntry("AddNew, table-type", d1));
+    }
+
     // ── A row with another row's long value ──────────────────────────────────
 
     // A reader's cursor is on row 1; the writer gives row 5 a short memo, kept in its row, which frees row 5's long
