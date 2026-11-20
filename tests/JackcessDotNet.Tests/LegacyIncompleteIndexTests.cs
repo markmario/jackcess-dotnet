@@ -102,8 +102,13 @@ public sealed class LegacyIncompleteIndexTests : IDisposable
     [Fact]
     public void a_cascade_delete_takes_a_child_the_earlier_release_inserted()
     {
+        // Nothing now forbids deleting parent 2, or 1. Its index on K has no entry for the row, so the delete is made
+        // with the indexes verified: taken at its word, the index is damaged, and the delete refused as Access refuses it (#81).
         using (var db = Database.Open(_path))
-            db.GetTable("Holders").DeleteRow("Id", 5);   // nothing now forbids deleting parent 2, or 1
+        {
+            db.VerifyIndexes = true;
+            db.GetTable("Holders").DeleteRow("Id", 5);
+        }
 
         using (var db = OpenEnforcing())
             db.GetTable("Parent").DeleteRow("K", 1);

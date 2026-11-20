@@ -22,11 +22,10 @@ namespace JackcessDotNet.Util;
 /// no Currency, as an infinity and a number past the range are not, which Access refuses ("Overflow").
 /// </para>
 /// <para>
-/// A value that is not one of .NET's numbers is taken as every number column takes it (<see cref="NumberOf"/>): text
-/// read in the current culture, a <see cref="bool"/> as 1 or 0. Access reads text by the machine's locale and writes
-/// True as -1; how text and a Yes/No are taken is a question for every number type alike, and here only the number
-/// they make is taken to four places by this rule. A lookup for one row by its value does not take them for numbers,
-/// as it does not for any number column.
+/// A value that is not one of .NET's numbers is taken as every number column takes it (<see cref="NumberOf"/>, #75):
+/// text read in the current culture, a <see cref="bool"/> as -1 or 0, a date as its day number, as Access takes each;
+/// here only the number they make is taken to four places by this rule. A lookup for one row by its value does not
+/// take them for numbers, as it does not for any number column.
 /// </para>
 /// </summary>
 internal static class CurrencyRounding
@@ -37,16 +36,30 @@ internal static class CurrencyRounding
 
     /// <summary>
     /// The number a value that is not one of .NET's numbers (<see cref="IsNumber"/>) stands for when a row is written
-    /// with it, or a range or the closest row is looked for by it, as every number column takes such a value: what
-    /// <see cref="Convert.ToDecimal(object, IFormatProvider)"/> makes of it in the current culture - text read as a
-    /// number, a <see cref="bool"/> as 1 or 0, an enum as its own number.
+    /// with it, or a range or the closest row is looked for by it, as every number column takes such a value
+    /// (<see cref="RowValues.NumberOf"/>): text read in the current culture, a <see cref="bool"/> as -1 or 0, a date as
+    /// its day number, an enum as its own number.
     /// </summary>
     /// <exception cref="FormatException"><paramref name="value"/> is text that does not read as a number.</exception>
     /// <exception cref="InvalidCastException">
-    /// <paramref name="value"/> is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a <see cref="char"/>.
+    /// <paramref name="value"/> is of a kind no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>.
     /// </exception>
     /// <exception cref="OverflowException"><paramref name="value"/> is text of a number past what a decimal holds.</exception>
-    internal static decimal NumberOf(object value) => Convert.ToDecimal(value, CultureInfo.CurrentCulture);
+    internal static object NumberOf(object value) => RowValues.NumberOf(DataType.Currency, value);
+
+    /// <summary>A number column's type as a message names it: "Long Integer", "Currency".</summary>
+    internal static string Describe(DataType type) => type switch
+    {
+        DataType.Byte     => "Byte",
+        DataType.Int16    => "Integer",
+        DataType.Int32    => "Long Integer",
+        DataType.Int64    => "Large Number",
+        DataType.Single   => "Single",
+        DataType.Double   => "Double",
+        DataType.Currency => "Currency",
+        DataType.Decimal  => "Decimal",
+        _                 => type.ToString(),
+    };
 
     /// <summary>
     /// The ten-thousandths <paramref name="value"/> is taken to, half to even; false for a value that is not a number
