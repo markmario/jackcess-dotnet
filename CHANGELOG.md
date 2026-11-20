@@ -19,12 +19,13 @@ changed since 1.2.2.
   `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
   that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
   17 map pages, about 2.28 GB.
-- **Each index's count of its keys is kept, as Access keeps it** (#82). Access counts, in the table's definition
-  (bytes 4-7 of each tree's block of counts, Java Jackcess's `uniqueEntryCount`), the keys rows were entered under:
-  one more for each key no row had, nothing taken away when a row goes. The engine left it as it was, so every
-  index it filled was one Access took to have no keys. Measured beside ACE's twin of an export: the counts are now
-  equal in all 35 of the template's indexes, built whole or row by row. It costs a row inserted one by one a read
-  and a write of the definition's first page.
+- **Each index's count of its keys is written** (#82). Access keeps, in the table's definition (bytes 4-7 of each
+  tree's block of counts, Java Jackcess's `uniqueEntryCount`), a count of keys it plans queries by. The engine left
+  it as it was, so every index it filled was one Access took to have no keys. It now writes, for a tree built whole,
+  the number of its keys, and adds one for each row inserted under a key no row had, in the write of the definition
+  an insert makes anyway: no page more. An update or delete changes nothing. Beside ACE's twin of an export the
+  counts are equal in all 35 of the template's indexes; Access's own updates and deletes move them in ways not fully
+  measured.
 - **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
   noted the header's and the global usage map's pages as they were at every write of them, and the global usage
   map is written for every page a change adds: a batch of a million rows held a copy of it for each page it
@@ -588,12 +589,13 @@ changes with them.
   sorted, and written leaf after leaf as Access builds an index when it compacts a file. `Table.AddIndex` builds
   its tree the same way. Keeping every index row by row cost an export of 13 rows a document into a template with
   35 indexes 11.5 ms a document; loaded so it costs 0.6 ms, against 0.46 ms for the same rows with no index. A
-  duplicate in a unique index or primary key is refused when the trees are built, with the later of the two rows
-  named, and nothing written. While a batch is going in the table's indexes hold none of its rows, so a sequence
+  duplicate in a unique index or primary key is refused when the trees are built, naming the row row by row would
+  name - the earliest that duplicates one before it - and nothing written; a row refused for something else is named
+  ahead of it. A failure while the trees are built that is no row's is thrown as itself, an `IOException`. While a batch is going in the table's indexes hold none of its rows, so a sequence
   of rows that looks in the table through an index does not find them; a table that has rows, a table in an
   enforced relationship and one with an index cursor open are filled row by row as before. Keys past 64 MB are
-  sorted in runs in temporary files, so building the trees of a table of millions of rows with long text keys
-  takes no more memory than a small one.
+  sorted in runs in temporary files; the last entry of each page written is held for the levels above, about 75
+  bytes a row with 510-byte keys (measured live: 34 MB at 50,000 rows, 91 MB at 450,000).
 - **`Table.BulkInsert(rows)`** (#82) inserts rows all or none, as `InsertRange` does, going through them once and
   holding none of them, for loading many rows. A refused batch leaves the rows inserted before the refusal
   holding the AutoNumber values they were given; `InsertRange`, which holds every row, gives them back as they
