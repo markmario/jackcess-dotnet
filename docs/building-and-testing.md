@@ -1,7 +1,8 @@
 # Building and testing
 
 What a build from source needs, how the tests run on every framework and against the `netstandard2.0` assembly,
-the test corpus, and where to report a problem. How a release is made is in [Releasing](releasing.md).
+the Access referee tests, the test corpus, and where to report a problem. How a release is made is in
+[Releasing](releasing.md).
 
 ## Building
 
@@ -31,8 +32,47 @@ A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a rel
   [Supported frameworks](getting-started.md#supported-frameworks).
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
-- The engine's tests read back what the engine wrote. Whether Access accepts a file is tested where ACE
-  is installed, in ExportMdb.Interop's suite.
+- The engine's tests read back what the engine wrote. Whether Access accepts a file is what the
+  [Access referee tests](#the-access-referee-tests) are for.
+
+## The Access referee tests
+
+`tests/JackcessDotNet.AccessTests` has Microsoft Access's own engine referee this library: ACE, through OLE DB, and
+DAO read what the library wrote - by scan, through its indexes, and after DAO has compacted the file - write to it
+and change it in turn, and the library reads what Access wrote. They run on .NET Framework 4.8 in a 64-bit process,
+on Windows, and need one of:
+
+- the [Access Database Engine 2016 redistributable](https://www.microsoft.com/download/details.aspx?id=54920), x64
+  (what CI installs: `accessdatabaseengine_X64.exe /quiet`), or
+- Access itself, 64-bit (Microsoft 365's, say).
+
+```
+dotnet build tests/JackcessDotNet.AccessTests --configuration Release
+pwsh ./scripts/Invoke-AccessTests.ps1 -Parallel 2
+```
+
+`Invoke-AccessTests.ps1` runs each test class in a process of its own (two at a time here), checks that every test
+listed ran, and prints the seconds each took. One class runs as any other test project:
+`dotnet test --project tests/JackcessDotNet.AccessTests --configuration Release --filter-class "*CutKeysInAccessTests"`.
+Run the tests one process at a time: ACE fails when two connections are opened at once in one process, so the test
+project runs its tests one after another.
+
+- **Without ACE and DAO** every test is skipped, saying what is missing. `JACKCESS_ACCESS_REQUIRED=1` makes that a
+  failure instead; CI sets it, so a broken install cannot pass unrefereed.
+- **The full sweeps.** A few tests sweep many values or rows and take minutes. Without `JACKCESS_FULL_SWEEPS=1` each
+  runs a sample chosen so that a change to what the sweep proves still fails it; with it, every case. CI runs the
+  samples on a pull request and the full sweeps on a push to `main`, every night, and in a run by hand that asks.
+  The full sweeps take over an hour of test processes.
+- **What the redistributable lacks.** Tests of Large Number and Date/Time Extended columns need an ACE that makes
+  them (Access 2016 and 2019 and later); with the 2016 redistributable they are skipped, saying so.
+- **Access 97 files** open in 32-bit ACE only, so their tests are skipped in the 64-bit process.
+- `JACKCESS_ACE_PROVIDER` names another OLE DB provider than `Microsoft.ACE.OLEDB.12.0` (`Microsoft.ACE.OLEDB.16.0`,
+  say).
+
+The redistributable has crashed a test process from a thread of its own (exit code -1073740771, or an
+`AccessViolationException` under `System.Data.OleDb` with no test failed), and has failed a statement with a message
+whose text is missing (" in query expression '?'"). `Invoke-AccessTests.ps1` runs such a process again, and nothing
+else; neither has been seen with Access itself.
 
 ## The test corpus
 
