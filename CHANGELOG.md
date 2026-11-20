@@ -51,6 +51,10 @@ changed since 1.2.2.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
   `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
   by side, and checks the packages each target of the package depends on.
+- **The Access referee tests are in this repository** (`tests/JackcessDotNet.AccessTests`): Access's own engine,
+  ACE and DAO, reads, queries, writes to and compacts what this library writes. CI installs the Access Database
+  Engine 2016 redistributable and runs them in shards on every pull request; on a machine without Access they are
+  skipped, saying why. See [Building and testing](https://github.com/markmario/jackcess-dotnet/blob/main/docs/building-and-testing.md#the-access-referee-tests).
 - **Files Access accepts.** Every change listed under
   [What this fork changes](https://github.com/markmario/jackcess-dotnet/blob/main/docs/differences.md#what-this-fork-changes):
   files up to the format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
