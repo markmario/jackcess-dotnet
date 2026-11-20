@@ -12,6 +12,9 @@ internal sealed class EntrySorter : IDisposable
     /// <summary>The bytes of entries held in memory before they go to a run on disk: keys and what holding one costs.</summary>
     internal static long Budget { get; set; } = 64L * 1024 * 1024;
 
+    /// <summary>The folder the runs go to: the system's temporary folder unless a test names another.</summary>
+    internal static string? Folder { get; set; }
+
     // What one entry costs held, besides its key's bytes: the array's header and the list's slot.
     private const int EntryOverhead = 48;
 
@@ -40,18 +43,28 @@ internal sealed class EntrySorter : IDisposable
     private void Spill()
     {
         _held.Sort(Compare);
-        var run = new FileStream(Path.Combine(Path.GetTempPath(), "jackcess-index-" + Guid.NewGuid().ToString("N") + ".run"),
-                                 FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.DeleteOnClose);
-        _runs.Add(run);
-        using (var writer = new BinaryWriter(run, System.Text.Encoding.UTF8, leaveOpen: true))
-            foreach (var item in _held)
-            {
-                writer.Write(item.Key.Length);
-                writer.Write(item.Key);
-                writer.Write(item.RowPointer);
-                writer.Write(item.HasNull);
-            }
-        run.Flush();
+        string folder = Folder ?? Path.GetTempPath();
+        try
+        {
+            var run = new FileStream(Path.Combine(folder, "jackcess-index-" + Guid.NewGuid().ToString("N") + ".run"),
+                                     FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.DeleteOnClose);
+            _runs.Add(run);
+            using (var writer = new BinaryWriter(run, System.Text.Encoding.UTF8, leaveOpen: true))
+                foreach (var item in _held)
+                {
+                    writer.Write(item.Key.Length);
+                    writer.Write(item.Key);
+                    writer.Write(item.RowPointer);
+                    writer.Write(item.HasNull);
+                }
+            run.Flush();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // No row's failure: the load is taken back and this goes to the caller as it is.
+            throw new IOException(
+                $"The temporary folder '{folder}' could not be used to sort an index's keys while its tree was built: {e.Message}", e);
+        }
         _held.Clear();
         _heldBytes = 0;
     }

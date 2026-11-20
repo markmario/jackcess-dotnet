@@ -180,22 +180,25 @@ public sealed class CurrencyRoundingTests
     [Fact]
     public void Text_and_a_bool_are_taken_for_the_number_every_number_column_takes_them_for()
     {
-        // Convert's reading, in the current culture, as a Double column takes text (Convert.ToDouble); only the
-        // rounding of the number it makes is the Currency's own. Access reads text by the machine's locale and writes
-        // True as -1, a question for every number type alike.
+        // Text read in the current culture, as every number column reads it, and as Access reads it by the machine's
+        // settings; True as -1 and a date as its day number, as Access takes them (#75). Only the rounding of the
+        // number they make is the Currency's own.
         Assert.Equal(312, InCulture("en-US", () => CurrencyRounding.Units("0.03125")));
         Assert.Equal(-12346, InCulture("en-US", () => CurrencyRounding.Units(" -1.23465 ")));
         Assert.Equal(150_000, InCulture("en-US", () => CurrencyRounding.Units("1,5")));
         Assert.Equal(15.0, InCulture("en-US", () => Convert.ToDouble("1,5")));
         Assert.Equal(15_000, InCulture("de-DE", () => CurrencyRounding.Units("1,5")));
         Assert.Equal(312, InCulture("de-DE", () => CurrencyRounding.Units("0,03125")));
-        Assert.Equal(10_000, CurrencyRounding.Units(true));
+        Assert.Equal(-10_000, CurrencyRounding.Units(true));
+        Assert.Equal(50_000, InCulture("en-US", () => CurrencyRounding.Units("$5")));
+        Assert.Equal(-50_000, InCulture("en-US", () => CurrencyRounding.Units("(5)")));
+        Assert.Equal(438_325_000, CurrencyRounding.Units(new DateTime(2020, 1, 2, 12, 0, 0)));
         Assert.Equal(0, CurrencyRounding.Units(false));
         Assert.Equal(10_000, CurrencyRounding.Units(DayOfWeek.Monday));
 
         Assert.Throws<FormatException>(() => InCulture("en-US", () => CurrencyRounding.Units("abc")));
         Assert.Throws<FormatException>(() => CurrencyRounding.Units(""));
-        foreach (object value in new object[] { 'x', DateTime.Now, Guid.Empty, new byte[] { 1 } })
+        foreach (object value in new object[] { 'x', Guid.Empty, new byte[] { 1 } })
             Assert.Throws<InvalidCastException>(() => CurrencyRounding.Units(value));
         Assert.Throws<OverflowException>(() => InCulture("en-US", () => CurrencyRounding.Units("79228162514264337593543950336")));
         Assert.Throws<OverflowException>(() => InCulture("en-US", () => CurrencyRounding.Units("922337203685477.5808")));

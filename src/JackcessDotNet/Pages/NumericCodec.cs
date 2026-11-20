@@ -76,7 +76,8 @@ internal static class NumericCodec
 
     /// <summary>
     /// <paramref name="value"/> as a column of <paramref name="precision"/> digits, <paramref name="scale"/> of
-    /// them after the point, holds it: rounded to the scale, half away from zero.
+    /// them after the point, holds it: the places past the scale cut off, toward zero, and the sign kept
+    /// (<see cref="AsStored"/>).
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The number has more digits than the column holds.</exception>
     public static byte[] Encode(decimal value, int precision, int scale, string columnName)
@@ -87,8 +88,10 @@ internal static class NumericCodec
                 $"{value} has more digits than the Decimal column '{columnName}' holds ({precision}, {scale} of them after the point).");
 
         var bytes = new byte[Size];
-        // A number that rounds to nothing at the column's scale is zero, and zero has no sign.
-        bytes[0] = value < 0m && !unscaled.IsZero ? NegativeSign : (byte)0;
+        // The number's sign, as ACE writes it: a negative number cut to nothing is a negative zero (#80). A zero a
+        // caller gives has none once a row takes it (AsStored), and a negative zero read from a row is written back
+        // as the row stores it.
+        bytes[0] = decimal.GetBits(value)[3] < 0 ? NegativeSign : (byte)0;
         for (int word = 3; word >= 0; word--)
         {
             ByteUtil.PutInt(bytes, 1 + word * 4, unchecked((int)(uint)(unscaled & uint.MaxValue)));
@@ -97,13 +100,34 @@ internal static class NumericCodec
         return bytes;
     }
 
-    /// <summary>|<paramref name="value"/>| rounded to <paramref name="scale"/> places, without its decimal point.</summary>
+    /// <summary>
+    /// <paramref name="value"/> as a Decimal column of <paramref name="scale"/> places stores it, and reads it back:
+    /// the places past the scale cut off, toward zero, as ACE stores such a number (#80; measured with ACE 16 for
+    /// typed Decimal, Double, Single and text parameters, scales 0 to 28, both signs, in an .mdb and an .accdb). A
+    /// negative number cut to nothing is a negative zero, as ACE stores it; a zero given, of either sign, is ACE's
+    /// zero, which has none. Any other number with no more places than the scale is returned as it is. The digits
+    /// are worked on as an integer, so every runtime cuts alike.
+    /// </summary>
+    public static decimal AsStored(decimal value, int scale)
+    {
+        int[] bits = decimal.GetBits(value);
+        int ownScale = (bits[3] >> 16) & 0xFF;
+        if (ownScale <= scale || scale > 28) return value == 0m ? new decimal(0, 0, 0, false, (byte)ownScale) : value;
+        var cut = Magnitude(bits) / BigInteger.Pow(10, ownScale - scale);
+        return ToDecimal(cut, value < 0m, scale)!.Value;
+    }
+
+    /// <summary>|<paramref name="value"/>| cut to <paramref name="scale"/> places, toward zero, without its decimal point.</summary>
     private static BigInteger Unscaled(decimal value, int scale)
     {
-        decimal rounded = scale <= 28 ? Math.Round(Math.Abs(value), scale, MidpointRounding.AwayFromZero) : Math.Abs(value);
-        int[] bits = decimal.GetBits(rounded);
+        int[] bits = decimal.GetBits(value);
         int ownScale = (bits[3] >> 16) & 0xFF;
-        var integer = new BigInteger((uint)bits[2]) << 64 | new BigInteger((uint)bits[1]) << 32 | new BigInteger((uint)bits[0]);
-        return integer * BigInteger.Pow(10, scale - ownScale);
+        var integer = Magnitude(bits);
+        if (scale > 28) return integer * BigInteger.Pow(10, scale - ownScale);
+        return ownScale <= scale ? integer * BigInteger.Pow(10, scale - ownScale) : integer / BigInteger.Pow(10, ownScale - scale);
     }
+
+    // A decimal's digits without its point and its sign, from its bits.
+    private static BigInteger Magnitude(int[] bits)
+        => new BigInteger((uint)bits[2]) << 64 | new BigInteger((uint)bits[1]) << 32 | new BigInteger((uint)bits[0]);
 }
