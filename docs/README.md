@@ -44,7 +44,7 @@ every change.
   and what is not done.
 - [Differences from Java Jackcess and from upstream](differences.md): where this started, what this fork
   changes, and where it follows Access rather than Jackcess.
-- [Building and testing](building-and-testing.md): the SDK, the tests and their five configurations, the Access
+- [Building and testing](building-and-testing.md): the SDK, the tests and their six configurations, the Access
   referee tests, the test corpus, and reporting a problem.
 - [Releasing](releasing.md): the release tag, the workflow that publishes it, and what it checks.
 - [CHANGELOG](../CHANGELOG.md): every change, with the breaking changes to the public API since 1.2.2.

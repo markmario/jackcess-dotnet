@@ -37,8 +37,8 @@ more versions of Windows and the code is the same. The public API is the same in
 
 ## Referencing the source
 
-It can also be referenced from source. QCAT's ExportMdb.Interop takes this repository as a git submodule,
-references `src/JackcessDotNet/JackcessDotNet.csproj`, and merges the built assembly into its own:
+It can also be referenced from source, by a project that builds it with its own: take this repository as a git
+submodule and reference `src/JackcessDotNet/JackcessDotNet.csproj`:
 
 ```
 git submodule add https://github.com/markmario/jackcess-dotnet.git ext/jackcess-dotnet
