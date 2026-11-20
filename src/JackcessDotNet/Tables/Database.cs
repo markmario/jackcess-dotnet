@@ -115,14 +115,15 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// An index is trusted to hold every row of its table, as Access trusts one. A file a version of this library
-    /// before it kept every index wrote to (those in ExportMdb.Interop up to 2.1.2) can have rows that are in
-    /// their table's primary key and in no other index - not in the one on their foreign key, so that through it
-    /// they are not found as children, and their parent is deleted or re-keyed from under them, as Access itself
-    /// does with such a file (qcatco/exportmdb.interop#64). For such a file set <see cref="VerifyIndexes"/> as
-    /// well: the first change that looks for rows through an index, while the database is open, then reads that
-    /// index and its table once and compares them row by row, and the changes after it find rows through the
-    /// index, or, while it does not hold every row, by reading the table as for a table with no index. An entry
-    /// whose row has gone does no harm either way: each row found is read and compared.
+    /// before it kept every index wrote to (the <c>JackcessDotNet</c> package up to 1.2.2, and builds of this
+    /// repository before a427b84) can have rows that are in their table's primary key and in no other index - not
+    /// in the one on their foreign key, so that through it they are not found as children, and their parent is
+    /// deleted or re-keyed from under them, as Access itself does with such a file. For such a file set
+    /// <see cref="VerifyIndexes"/> as well: the first change that looks for rows through an index, while the
+    /// database is open, then reads that index and its table once and compares them row by row, and the changes
+    /// after it find rows through the index, or, while it does not hold every row, by reading the table as for a
+    /// table with no index. An entry whose row has gone does no harm either way: each row found is read and
+    /// compared.
     /// </para>
     /// <para>
     /// Keys are matched as Access matches them, which is as its indexes hold them. A null matches a null: a parent
@@ -135,13 +136,14 @@ public sealed class Database : IDisposable
     /// key leaves the row No, as Access leaves it, whether or not a parent's key is No.
     /// </para>
     /// <para>
-    /// Only relationships are kept. A column's Required property is not: a caller's own update may null a column
-    /// Access would require a value for, as it may with enforcement off. (A cascade may not.)
+    /// A column's Required property is held to whether or not relationships are: a row with no value in a required
+    /// column is refused on insert, an update is checked in the columns it gives a value, and a cascade that would
+    /// leave a required column with no value is refused whole, parent and all, as Access refuses it.
     /// </para>
     /// <para>
     /// Where no index on the columns can be searched - a table made without one on its foreign key, an index
     /// whose keys this library does not write, a parent key that is null, a key this library may not make as Access
-    /// does (a Date/Time Extended one, which ACE can store in a second form keyed otherwise, #51) - the table is
+    /// does (one cut at 510 bytes in an index of several columns other than Text and Long ones) - the table is
     /// read from end to end,
     /// once in the change, and all its rows are held until the change is written: the row's place and the columns
     /// its indexes and relationships name, some 200 bytes a row with numeric keys (about 60 MB and a second for a
@@ -169,16 +171,16 @@ public sealed class Database : IDisposable
     /// entry for a key means no row refers to it - and nothing is read but the index.
     /// <para>
     /// <b>When to turn it on:</b> for a file that a version of this library before it kept every index wrote
-    /// rows into - any up to the one in ExportMdb.Interop 2.1.2 - in a table Access made with indexes, and that
-    /// has not been compacted in Access since. Those versions kept a table's primary key and no other index: a
-    /// row one of them inserted is in no other index, and a row one of them updated is in each where it was
-    /// before. They kept the primary key under the value a row was found by, so a row whose key they changed is
-    /// in the key under the value it had. Nothing in a file says that one of them wrote to it. With such a file
-    /// and the default, this library does what Access does: it takes a second row with the values of a row a
-    /// unique index does not hold - after which Access cannot compact the file without dropping that index, or
-    /// the primary key - and, enforcing foreign keys, deletes or re-keys a parent from under a child the index
-    /// on its foreign key does not hold. Compacting the file in Access rebuilds its indexes and makes the
-    /// option needless.
+    /// rows into - the <c>JackcessDotNet</c> package up to 1.2.2, or a build of this repository before a427b84 -
+    /// in a table Access made with indexes, and that has not been compacted in Access since. Those versions kept
+    /// a table's primary key and no other index: a row one of them inserted is in no other index, and a row one
+    /// of them updated is in each where it was before. They kept the primary key under the value a row was found
+    /// by, so a row whose key they changed is in the key under the value it had. Nothing in a file says that one
+    /// of them wrote to it. With such a file and the default, this library does what Access does: it takes a
+    /// second row with the values of a row a unique index does not hold - after which Access cannot compact the
+    /// file without dropping that index, or the primary key - and, enforcing foreign keys, deletes or re-keys a
+    /// parent from under a child the index on its foreign key does not hold. Compacting the file in Access
+    /// rebuilds its indexes and makes the option needless.
     /// </para>
     /// <para>
     /// <b>What it does:</b> the first time a session compares a row with a table's unique indexes
@@ -187,9 +189,10 @@ public sealed class Database : IDisposable
     /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
     /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows
     /// is not searched for a relationship - the table is read instead - until this library has rewritten or
-    /// deleted them. A row whose key this library may not make as Access does - a Date/Time Extended value, which
-    /// ACE can store in a second form keyed otherwise (#51) - is one the index lacks unless its entry is under the
-    /// key this library makes. Set it before the first change; an index is looked at once.
+    /// deleted them. A row whose key this library may not make as Access does - one cut at 510 bytes in an index
+    /// of several columns other than Text and Long ones - is one the index lacks unless its entry is under the key
+    /// this library makes. So is a Date/Time Extended row an earlier version entered under another key than the
+    /// one of its bytes (#51). Set it before the first change; an index is looked at once.
     /// </para>
     /// <para>
     /// <b>What it costs:</b> one reading of the table, and of the indexes' leaf pages, for the first such change
@@ -210,10 +213,11 @@ public sealed class Database : IDisposable
     /// With the option, every entry an index was seen to hold that points at no row is taken out when the table's
     /// indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where
     /// that key is one this library makes as Access does, is the row's wrong one: a row with the entry's key is
-    /// taken, the entry goes, and the row is entered under its own key. Where this library's key for a row may not
-    /// be Access's - a Date/Time Extended column (#51), or a key cut at 510 bytes in an index of several columns
-    /// other than Text and Long ones - the entry is believed with the option too. A row with no entry at all is
-    /// not given one: compacting the file in Access rebuilds its indexes.
+    /// taken, the entry goes, and the row is entered under its own key. A Date/Time Extended row's key is made of
+    /// the bytes its row stores, as Access makes it (#51), so an entry an earlier version made of another form of
+    /// its date is moved this way. Where this library's key for a row may not be Access's - a key cut at 510 bytes
+    /// in an index of several columns other than Text and Long ones - the entry is believed with the option too. A
+    /// row with no entry at all is not given one: compacting the file in Access rebuilds its indexes.
     /// </para>
     /// </summary>
     public bool VerifyIndexes
