@@ -29,7 +29,8 @@ public sealed class SmokeTests : IDisposable
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     // A file a database has open for writing is refused to a second opener, with options or without, and is left as it
-    // was: this library takes no lock on a file, so a second writer would overwrite what the first wrote.
+    // was: this library takes none of Access's locks, so a second writer would overwrite what the first wrote. The
+    // refusal is the file's own (#62): DatabaseInUseException, an IOException.
     [Fact]
     public void A_file_a_database_has_open_is_refused_to_a_second_opener_and_left_as_it_was()
     {
@@ -39,9 +40,9 @@ public sealed class SmokeTests : IDisposable
         people.Insert(new Row { ["Id"] = 1, ["Name"] = "first", ["Age"] = (short)30 });
         byte[] before = Shared(_path);
 
-        Assert.Throws<IOException>(() => Database.Open(_path).Dispose());
-        Assert.Throws<IOException>(() => Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }).Dispose());
-        Assert.Throws<IOException>(() => Database.Open(_path, new DatabaseOpenOptions { Password = "not looked at" }).Dispose());
+        Assert.Throws<DatabaseInUseException>(() => Database.Open(_path).Dispose());
+        Assert.Throws<DatabaseInUseException>(() => Database.Open(_path, new DatabaseOpenOptions { FallbackFormat = FileFormat.Access2000 }).Dispose());
+        Assert.Throws<DatabaseInUseException>(() => Database.Open(_path, new DatabaseOpenOptions { Password = "not looked at" }).Dispose());
         Assert.Equal(before, Shared(_path));
 
         // The first goes on as it was.
