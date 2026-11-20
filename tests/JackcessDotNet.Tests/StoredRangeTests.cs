@@ -39,7 +39,7 @@ public sealed class StoredRangeTests
 
     [Theory]
     [MemberData(nameof(Dates))]
-    public void each_end_of_a_date_s_range_is_the_last_double_that_reads_as_it(DateTime date)
+    public async Task each_end_of_a_date_s_range_is_the_last_double_that_reads_as_it(DateTime date)
     {
         (double Least, double Greatest) range = default;
         DateTime stored = default;
@@ -47,7 +47,7 @@ public sealed class StoredRangeTests
         // On a thread of its own, so that a halving that does not end fails the test rather than hold the run. What
         // a number reads as is asked in the same state of the unit as the range was found in: in a 32-bit process
         // the reading of a number within a millisecond's rounding of the next can differ between the two states.
-        var found = Task.Run(() => WithX87At64Bits(() =>
+        var found = await EndsInTime(() =>
         {
             range = ValueMatch.StoredRange(date);
             stored = ValueMatch.AsStored(date);
@@ -55,7 +55,7 @@ public sealed class StoredRangeTests
             greatest = ValueMatch.ReadsAs(range.Greatest);
             belowLeast = ValueMatch.ReadsAs(Down(range.Least));
             aboveGreatest = ValueMatch.ReadsAs(Up(range.Greatest));
-        })).Wait(TimeSpan.FromSeconds(20));
+        });
         Assert.True(found, "StoredRange(" + date.ToString("o") + ") did not end in 20 seconds");
 
         double exact = stored.ToOADate();
@@ -67,7 +67,7 @@ public sealed class StoredRangeTests
     }
 
     [Fact]
-    public void a_lookup_through_a_date_time_index_on_the_first_and_the_last_day_ends()
+    public async Task a_lookup_through_a_date_time_index_on_the_first_and_the_last_day_ends()
     {
         var path = Path.Combine(Path.GetTempPath(), $"stored_range_{Guid.NewGuid():N}.mdb");
         try
@@ -85,11 +85,11 @@ public sealed class StoredRangeTests
             {
                 var table = db.GetTable("E");
                 object? one = null, two = null;
-                var found = Task.Run(() => WithX87At64Bits(() =>
+                var found = await EndsInTime(() =>
                 {
                     one = table.CreateIndexCursor("ByD").FindRowByEntry(first.AddHours(6))?["Id"];
                     two = table.CreateIndexCursor("ByD").FindRowByEntry(last)?["Id"];
-                })).Wait(TimeSpan.FromSeconds(20));
+                });
                 Assert.True(found, "the lookups did not end in 20 seconds");
                 Assert.Equal(1, one);
                 Assert.Equal(2, two);
@@ -99,6 +99,17 @@ public sealed class StoredRangeTests
         {
             if (File.Exists(path)) File.Delete(path);
         }
+    }
+
+    // Runs 'action' on a thread of its own, with the x87 unit as ACE leaves it (WithX87At64Bits), and says whether it
+    // ended within 20 seconds; an exception it throws is thrown here.
+    private static async Task<bool> EndsInTime(Action action)
+    {
+        var cancel = TestContext.Current.CancellationToken;
+        var work = Task.Run(() => WithX87At64Bits(action), cancel);
+        if (await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(20), cancel)) != work) return false;
+        await work;
+        return true;
     }
 
     // In a 32-bit process, runs 'action' with this thread's x87 unit computing with 64 bits of precision, as ACE leaves
