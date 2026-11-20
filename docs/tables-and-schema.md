@@ -139,8 +139,10 @@ and the two definitions hold the same index slots.
   order's own rule, which this library does not have: it makes names Access refuses there, as those above, and
   refuses some Access makes. .NET Framework takes fewer characters for another's case than .NET does - the micro
   sign and mu are one on .NET and two on .NET Framework - so such a name is refused on the one and made on the
-  other. In Swedish, Czech, French and Japanese DAO gave every pair of names of printable ASCII it was asked about -
-  in another case, with punctuation or spaces among its letters - the verdict General - Legacy gives. No table is
+  other. In Swedish, Czech, French and Japanese DAO gave the pairs of names of printable ASCII it was first asked
+  about - in another case, with punctuation or spaces among its letters - the verdict General - Legacy gives; but
+  even such names are not compared there quite as General - Legacy compares them: in Czech DAO keeps `xch` and `xcH`
+  apart, which General - Legacy's keys take as one, so the second is refused here where Access makes it. No table is
   created or renamed there, and no column Access keeps properties for is renamed or dropped: the catalog's keys are
   not made. The database's tables, columns and indexes are found by name as in any other.
 - **A lookup finds the name given exactly first.** `GetTable`, `TryGetTable`, a table's columns and indexes, a
