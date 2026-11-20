@@ -128,6 +128,10 @@ $pieces = @{
         @{ Name = 'Renames'; Methods = @(
             'columns_indexes_and_tables_the_engine_renames_are_named_as_the_ones_dao_renames'
             'a_new_name_dao_refuses_is_refused_by_the_engine_with_the_file_as_it_was') }
+        @{ Name = 'Names'; Methods = @(
+            'a_name_dao_takes_as_one_with_another_the_engine_refuses_and_one_it_keeps_apart_the_engine_makes'
+            'names_the_engine_makes_that_access_keeps_apart_dao_lists_and_finds_and_ace_reads_writes_and_compacts'
+            'a_row_given_a_value_for_each_of_four_fields_dao_made_writes_each_to_its_own_as_ace_reads_them') }
     )
     ForeignKeysInAccessTests = @(
         @{ Name = 'Cascades'; Methods = @(
