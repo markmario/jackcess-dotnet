@@ -21,7 +21,7 @@ namespace JackcessDotNet.AccessTests
     /// <c>&gt;=</c> it, as it finds its own - and read and find them again once DAO has compacted the file. The engine,
     /// the other way, finds the rows ACE wrote by the same numbers, through ACE's index, in a range and as the closest
     /// row. What a write refuses, ACE refuses too, but for NaN, which ACE writes as the least Currency. Text and a Yes/No
-    /// both take as numbers - the engine as it takes them for every number column, True as 1 where ACE writes -1.
+    /// both take as numbers, the engine as it takes them for every number column: True as -1, as ACE writes it (#75).
     /// </summary>
     public class CurrencyInAccessTests : IDisposable
     {
@@ -360,19 +360,18 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal(-922337203685477.5808m, db.GetTable("A").FindRowByPrimaryKey(0)["C"]);
                 Assert.Empty(db.GetTable("A").CreateIndexCursor("ByCA").FindRowsByEntry(double.NaN));
 
-                // The engine takes text and a Yes/No for a Currency as it takes them for every number column - text in
-                // the current culture, True as 1 - and Access reads its rows as written: the text agrees with ACE's, and
-                // True is 1 where ACE writes -1, a question for every number type alike.
+                // The engine takes text and a Yes/No for a Currency as it takes them for every number column, and as
+                // ACE takes them: the text as a number, True as -1 (#75). Access reads its rows as written.
                 var table = db.GetTable("E");
                 table.Insert(new Row { ["Id"] = 1, ["C"] = "2" });
                 table.Insert(new Row { ["Id"] = 2, ["C"] = true });
             }
-            Assert.Equal(new[] { 1.5m, 2m, 1m }, AceCurrencies(path, "E").OrderBy(p => p.Key).Select(p => p.Value));
+            Assert.Equal(new[] { 1.5m, 2m, -1m }, AceCurrencies(path, "E").OrderBy(p => p.Key).Select(p => p.Value));
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
             {
                 connection.Open();
                 Assert.Equal(new[] { 1 }, AceIds(connection, "SELECT Id FROM E WHERE C = ?", 2));
-                Assert.Equal(new[] { 2 }, AceIds(connection, "SELECT Id FROM E WHERE C = ?", 1));
+                Assert.Equal(new[] { 2 }, AceIds(connection, "SELECT Id FROM E WHERE C = ?", -1));
             }
         }
 
