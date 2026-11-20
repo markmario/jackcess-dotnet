@@ -18,12 +18,28 @@ orders.Delete(order);
 // A batch goes in whole or not at all.
 try { people.InsertRange(rows); }
 catch (BatchInsertException e) { Console.WriteLine($"row {e.RowIndex}: {e.InnerException!.Message}"); }
+
+// Many rows - an export of millions - go in once, all or none, without being held. Every set of duplicates a
+// unique index would refuse can be found first.
+foreach (var duplicate in people.FindDuplicates(rows)) Console.WriteLine(duplicate);   // "ByEmail: rows 3, 17"
+int loaded = people.BulkInsert(ReadRowsFromSomewhere());
 ```
 
 - **A row a caller makes holds each value under the name given**, exactly: `row["Name"]` and `row["NAME"]` are two
   entries. An insert, an update and `Validate` give each name the column of exactly that name, or else the one a
   lookup of it finds, and refuse two names that go to one column with `ArgumentException` before anything is
   written ([Names](tables-and-schema.md#names)).
+- **Into a table with no rows, a batch's indexes are built once its rows are in** (`InsertRange` and
+  `BulkInsert`), as [Indexes built page after page](indexes.md#indexes-built-page-after-page) describes.
+  `BulkInsert` goes through the rows once and holds none of them; `InsertRange` holds them all, so that a refused
+  batch can give each back as it came. A refused `BulkInsert` leaves a row inserted before the refusal holding
+  the AutoNumber values it was given, though none of the rows is in the table.
+- **`FindDuplicates(rows)`** names every set of rows a unique index or primary key would refuse - two or more of
+  them under one key, or one with a row already in the table - by the index's key, as Access compares: text that
+  differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter or
+  digit, "ß" and "ss", "æ" and "ae") is one key; a leading space, an accent or other punctuation is another.
+  `Validate` looks at one row against the table; this looks at a batch.
+
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
   other rows moved up or down around it; one that no longer fits goes to another page, and its slot is left

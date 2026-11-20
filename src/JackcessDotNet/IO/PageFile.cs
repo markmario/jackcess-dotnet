@@ -330,6 +330,9 @@ internal sealed class PageFile : IDisposable
         return (byte[])page.Clone();
     }
 
+    /// <summary>The longest the file may grow to: 2 GB, the most an Access file can be. Lower only in a test.</summary>
+    internal long MaxLength { get; set; } = 1L << 31;
+
     public void WritePage(int pageNumber, byte[] data)
     {
         ThrowIfDisposed();
@@ -347,9 +350,14 @@ internal sealed class PageFile : IDisposable
             WritesBeforeFailure = left - 1;
         }
 
-        byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
         long requiredLength = offset + _format.PageSize;
+        // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused,
+        // and so is any write to a file already past it - one an earlier version of this library wrote - which is
+        // read whole and left as it is.
+        if (requiredLength > MaxLength || _stream.Length > MaxLength)
+            throw new DatabaseFullException(_path, MaxLength, _stream.Length);
+        byte[] encoded = Codec.EncodePage(data, pageNumber);
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
         ChangeStamp++;
@@ -362,7 +370,10 @@ internal sealed class PageFile : IDisposable
         if (_kept.TryGetValue(pageNumber, out var was))
         {
             _kept[pageNumber] = (byte[])data.Clone();
-            Journal(() => _kept[pageNumber] = was);
+            // A change kept for undoing notes the page as it was before the change's first write of it, once: taken
+            // back, the change puts that back. Noted at every write, a load of a million rows held a copy of the global
+            // usage map for every page it added (#82).
+            if (_undo is null || _undo.FirstWriteOfKept(pageNumber)) Journal(() => _kept[pageNumber] = was);
         }
     }
 
@@ -490,6 +501,15 @@ internal sealed class PageFile : IDisposable
 
         /// <summary>Whether the change has written a page yet.</summary>
         internal bool HasWritten => _wrote;
+
+        // The pages the file keeps (ReadKeptPage) that the change has written: how each was before is noted once.
+        private readonly HashSet<int> _keptWritten = new();
+
+        /// <summary>True the first time the change writes <paramref name="pageNumber"/>, a page the file keeps.</summary>
+        internal bool FirstWriteOfKept(int pageNumber) => _keptWritten.Add(pageNumber);
+
+        /// <summary>How many things the change has noted to take back (<see cref="Remember"/>): for tests of what a long change holds.</summary>
+        internal int NotedCount => _journal?.Count ?? 0;
 
         /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
         internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);
