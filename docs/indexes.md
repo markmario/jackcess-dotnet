@@ -64,7 +64,10 @@ against the tree. This library writes, for a tree built whole, the number of its
 inserted under a key no other row had, in the write of the table's definition the insert makes anyway; an update
 or a delete changes nothing. Beside ACE's twin of an export the counts are equal in every index (ExportMdb.Interop's
 `IndexedExportTwinAuditTests`). Access's own updates and deletes move it in ways not fully measured: after ACE
-deleted rows of a table, one count went from 5,000 to 2,833 with 4,333 rows left.
+deleted rows of a table, one count went from 5,000 to 2,833 with 4,333 rows left. In another, of 3,000 rows whose
+trees this library built whole, each count was the one Access gives the tree it builds again when DAO compacts the
+file (`BulkIndexesInAccessTests`); then ACE's delete of one row took no key off, its update to a new value added
+none, and an insert it refused as a duplicate added one to the primary key's.
 
 ## An index is trusted
 
