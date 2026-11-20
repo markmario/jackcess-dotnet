@@ -131,18 +131,42 @@ internal static class ValueMatch
         return (Edge(exact, exact - twoMilliseconds, date), Edge(exact, exact + twoMilliseconds, date));
     }
 
-    // The double furthest from 'inside' towards 'outside' that still reads as the date.
+    // The double furthest from 'inside' towards 'outside' that still reads as the date. What is halved is the doubles'
+    // places in order (Place), not the doubles: two places one apart are two doubles with none between, so the end is
+    // the last place that reads as the date. Halving the doubles themselves ended only when a middle came out equal
+    // to an end, which in a 32-bit .NET Framework process it never did once something in the process - ACE's OLE DB
+    // provider does - had left the x87 unit computing with 64 bits of precision: the middle of two neighbours was a
+    // number between them, and the halving went on for ever (#98). Integers halve alike on every runtime and in
+    // every state of the unit, and the halving ends within 64 steps.
     private static double Edge(double inside, double outside, DateTime date)
     {
         if (ReadsAs(outside) == date) return outside;
-        while (true)
+        long at = Place(inside), past = Place(outside);
+        while (Distance(at, past) > 1)
         {
-            double middle = inside + (outside - inside) / 2;
-            if (middle == inside || middle == outside) return inside;
-            if (ReadsAs(middle) == date) inside = middle;
-            else outside = middle;
+            ulong half = Distance(at, past) / 2;
+            long middle = at < past ? at + (long)half : at - (long)half;
+            if (ReadsAs(FromPlace(middle)) == date) at = middle;
+            else past = middle;
         }
+        return FromPlace(at);
     }
+
+    // Where a double is among all doubles, in order: neighbours are one apart, a negative number's place is negative,
+    // and 0 and -0 are both at 0. A positive double's bits count up with it; a negative one's count up with its
+    // magnitude, so their negation counts up with the number. A Date/Time a row stores is a finite number.
+    private static long Place(double value)
+    {
+        long bits = BitConverter.DoubleToInt64Bits(value);
+        return bits < 0 ? -(bits & long.MaxValue) : bits;
+    }
+
+    private static double FromPlace(long place)
+        => BitConverter.Int64BitsToDouble(place < 0 ? -place | long.MinValue : place);
+
+    // How far apart two places are, as an unsigned number: the places of two numbers either side of 0 can be further
+    // apart than a long holds.
+    private static ulong Distance(long a, long b) => unchecked(a < b ? (ulong)(b - a) : (ulong)(a - b));
 
     /// <summary>
     /// Whether <paramref name="given"/> is the value <paramref name="read"/>, one a row was read with

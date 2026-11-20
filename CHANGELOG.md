@@ -734,6 +734,17 @@ changes with them.
 - XML documentation in the package, `JackcessDotNet.xml` beside each assembly, so an editor shows it. Every
   public type and member has it, and the build fails on one that does not (CS1591).
 
+### Fixed
+
+- **A lookup of a date through a Date/Time index ends in a 32-bit .NET Framework process** (#98). The stored numbers
+  a date's lookup finds were worked out by halving the distance between a number that reads as the date and one that
+  does not, until the middle came out equal to an end. Where something in the process had left the x87 unit computing
+  with 64 bits of precision - ACE's OLE DB provider leaves the thread that ran a statement so (measured with Microsoft
+  365's ACE, 32-bit: 53 bits before an INSERT, 64 after it) - the middle of two neighbouring doubles was a number
+  between them, and the halving never ended: FindRowByEntry, a range or a join on a Date/Time spun for ever. The
+  halving is now of the doubles' places in order, integers, and ends within 64 steps on every runtime. The tests run
+  in a 32-bit process too (-p:TestX86=true, and a CI job).
+
 ## [1.2.2]
 
 ### Added
