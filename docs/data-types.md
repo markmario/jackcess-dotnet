@@ -59,6 +59,9 @@ alike - Byte, Integer, Long Integer, Large Number, Single, Double, Currency and 
 - **A `Guid`, bytes, a `char` or any other kind is refused** with `ArgumentException`, naming the column, before
   anything is written. Access refuses a GUID and bytes.
 
+**Where Access differs:** ACE reads the text "&H10" as 16, a hexadecimal number in Visual Basic's form; this library
+does not read that form, and refuses such text with `FormatException`.
+
 A range or the closest row through an index takes these values the same way; an equality takes text and a `bool`
 for no number ([Numbers](cursors-and-rows.md#numbers)). The importer keeps its own rule: only a value a column holds
 exactly ([type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet)).
