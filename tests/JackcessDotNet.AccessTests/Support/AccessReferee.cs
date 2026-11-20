@@ -431,6 +431,41 @@ namespace JackcessDotNet.AccessTests.Support
                     + "so there is no referee here for this case: " + _whyNo2010);
         }
 
+        private static int? _aceVersion;
+
+        /// <summary>
+        /// The major version of the ACE OLE DB provider this process uses, from its DLL's file version: 16 for
+        /// Microsoft 365's Access and the Access Database Engine 2016 redistributable, 12 for Access 2007's, which is
+        /// the 32-bit ACE beside a 64-bit ACE 16 on some machines. A test that pins what one version does pins the
+        /// version here (#101). 0 when the provider is not registered, which the tests' own check reports.
+        /// </summary>
+        public static int AceVersion
+        {
+            get
+            {
+                if (_aceVersion == null)
+                {
+                    _aceVersion = 0;
+                    using (var clsidKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(AceVerification.ProviderName + @"\CLSID"))
+                    {
+                        var clsid = clsidKey?.GetValue(null) as string;
+                        var view = Environment.Is64BitProcess ? Microsoft.Win32.RegistryView.Registry64 : Microsoft.Win32.RegistryView.Registry32;
+                        using (var server = clsid == null ? null : Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.ClassesRoot, view)
+                            .OpenSubKey(@"CLSID\" + clsid + @"\InprocServer32"))
+                        {
+                            var dll = server?.GetValue(null) as string;
+                            if (dll != null)
+                            {
+                                dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
+                                if (File.Exists(dll)) _aceVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).FileMajorPart;
+                            }
+                        }
+                    }
+                }
+                return _aceVersion.Value;
+            }
+        }
+
         /// <summary>
         /// A Date/Time Extended value as it is compared: to its last tick. (A Date/Time is compared to the
         /// millisecond, which is as far as the engine reads one.)

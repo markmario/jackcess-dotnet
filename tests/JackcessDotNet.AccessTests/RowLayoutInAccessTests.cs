@@ -155,6 +155,10 @@ namespace JackcessDotNet.AccessTests
             // Two tables of the same columns, one row each of the same values: ACE's, and the engine's. A table with
             // no variable-length column has at least two bytes of fixed-length values, which Access writes for a
             // table of a single Yes/No or Byte column too.
+            // The bytes pinned are ACE 16's. ACE 12 writes a row that has a Yes/No and no variable-length column with
+            // 28 00 where ACE 16 writes 00 00, after the column count (#101): there the case is ACE 16's alone.
+            if (AceVersion < 16 && columns.Contains("YESNO") && !columns.Contains("TEXT"))
+                Assert.Skip("The row's bytes are ACE 16's, and ACE here is " + AceVersion + ", which writes this row otherwise.");
             var path = AceMade("CREATE TABLE ByAce (" + columns + ")", "CREATE TABLE ByEngine (" + columns + ")",
                                "INSERT INTO ByAce (a) VALUES (1)");
             using (var db = Database.Open(path))

@@ -349,11 +349,20 @@ namespace JackcessDotNet.AccessTests
                     Assert.True(e is OleDbException, Show(past[i]) + ": ACE " + (e == null ? "wrote it" : e.GetType().Name + " " + e.Message));
                     Assert.Contains("Overflow", e.Message);
                 }
-                // ACE writes NaN as the least Currency, and its = finds that row for NaN; it reads text as a number, by the
-                // machine's locale (text of a whole number reads alike in every one), and a Yes/No's True as -1.
-                AceWrites(path, "A", new object[] { double.NaN, "2", true });
+                // ACE 16 writes NaN as the least Currency, and its = finds that row for NaN. ACE 12 says "Overflow" to it,
+                // as the engine refuses it (#101), and the least Currency is then written as itself. ACE reads text as a
+                // number, by the machine's locale (text of a whole number reads alike in every one), and a Yes/No's True
+                // as -1.
+                if (AceVersion >= 16) AceWrites(path, "A", new object[] { double.NaN, "2", true });
+                else
+                {
+                    var nan = Record.Exception(() => AceWrites(path, "A", new object[] { double.NaN }));
+                    Assert.True(nan is OleDbException && nan.Message.Contains("Overflow"), "NaN: ACE " + AceVersion + " "
+                        + (nan == null ? "wrote it" : nan.GetType().Name + " " + nan.Message));
+                    AceWrites(path, "A", new object[] { -922337203685477.5808m, "2", true });
+                }
                 Assert.Equal(new[] { -922337203685477.5808m, 2m, -1m }, AceCurrencies(path, "A").OrderBy(p => p.Key).Select(p => p.Value));
-                Assert.Equal(new[] { 0 }, AceIds(connection, "SELECT Id FROM A WHERE C = ?", double.NaN));
+                if (AceVersion >= 16) Assert.Equal(new[] { 0 }, AceIds(connection, "SELECT Id FROM A WHERE C = ?", double.NaN));
             }
             using (var db = Database.Open(path))
             {
