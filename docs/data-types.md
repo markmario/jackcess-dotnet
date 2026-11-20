@@ -54,6 +54,8 @@ alike - Byte, Integer, Long Integer, Large Number, Single, Double, Currency and 
   2020 12:00 is 43832.5 in a Double, and 43832 in a Long Integer.
 - **A number the column does not hold is refused** with `OverflowException`: `true`, which is -1, and a date in a
   Byte, a date in an Integer. DAO refuses them too; ACE wraps a negative number into a Byte (-1 is 255).
+- **A number past what a Single holds is refused** with `OverflowException`, as ACE refuses it ("Overflow"): a finite
+  number, or text of one, whose nearest Single is not finite - 1e39, 3.5e38. It was stored as an infinity.
 - **A `Guid`, bytes, a `char` or any other kind is refused** with `ArgumentException`, naming the column, before
   anything is written. Access refuses a GUID and bytes.
 

@@ -134,6 +134,36 @@ public sealed class NumberKindsTests : IDisposable
         Assert.Equal(0, table.RowCount);
     }
 
+    /// <summary>
+    /// A finite number whose nearest Single is not finite is refused, as ACE refuses it ("Overflow", measured for a
+    /// Double and a text parameter): 1e39, 3.5e38 and 3.4028236e38, which is past the greatest Single by more than half
+    /// its last place. One that rounds to the greatest Single is it. Converted, each was an infinity on .NET, and text
+    /// an <see cref="OverflowException"/> of .NET Framework's parse only.
+    /// </summary>
+    [Fact]
+    public void A_number_past_what_a_Single_holds_is_refused_as_ACE_refuses_it()
+    {
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("S", DataType.Single) }, new[] { "Id" });
+        var culture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = Invariant;
+        try
+        {
+            foreach (object past in new object[] { 1e39, -1e39, 3.5e38, 3.4028236e38, "1e39", "3.5e38", "-1e39" })
+            {
+                var refused = Assert.Throws<OverflowException>(() => table.Insert(new Row { ["Id"] = 1, ["S"] = past }));
+                Assert.Contains("'S'", refused.Message);
+            }
+            Assert.Equal(0, table.RowCount);
+
+            table.Insert(new Row { ["Id"] = 1, ["S"] = 3.4028235e38 });
+            table.Insert(new Row { ["Id"] = 2, ["S"] = "3.40282356e38" });
+            table.Insert(new Row { ["Id"] = 3, ["S"] = 1e-50 });
+            Assert.Equal(new[] { float.MaxValue, float.MaxValue, 0f }, table.Rows.OrderBy(r => (int)r["Id"]!).Select(r => (float)r["S"]!));
+        }
+        finally { CultureInfo.CurrentCulture = culture; }
+    }
+
     // A bool and a date are keyed as the row is written with them.
     [Fact]
     public void A_row_written_with_true_is_found_by_minus_one_through_its_index()

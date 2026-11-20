@@ -448,6 +448,10 @@ changed since 1.2.2.
   - **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
     2020 12:00 is 43832.5 in a Double, a Single, a Currency or a Decimal, and 43832 in a Long Integer or a Large
     Number; an Integer and a Byte refuse it with `OverflowException`, as Access does (ACE wraps it into a Byte).
+  - **A number past what a Single holds is refused** with `OverflowException`, naming the column, as ACE refuses it
+    ("Overflow", measured for a Double and a text parameter): a finite number whose nearest Single is not finite, such
+    as 1e39 or 3.5e38, given as a number or as text. A `double` was stored as an infinity on every runtime, and text
+    on .NET; .NET Framework's parse refused text.
   - A range or the closest row looked for through an index of a number column takes these values the same way. A
     lookup for one row by its value still takes text and a `bool` for no number, as before. The importer keeps its
     own rule: it takes only a value a column holds exactly, text read in the invariant culture, and no `bool`.

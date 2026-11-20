@@ -56,6 +56,7 @@ internal static class RowValues
                 : value is null || !IsNumberType(column.DataType) ? value
                 : column.DataType == DataType.Currency ? AsCurrency(column, value)
                 : column.DataType == DataType.Decimal ? AsDecimal(column, AsNumber(column, value))
+                : column.DataType == DataType.Single ? AsSingle(column, AsNumber(column, value))
                 : AsNumber(column, value);
             if (ReferenceEquals(normal, value)) continue;
             written ??= new Row(row);
@@ -99,6 +100,23 @@ internal static class RowValues
                 $"Column '{column.Name}' is a Currency, and {Util.CurrencyRounding.NotHeld(number)}. Nothing was written.");
         decimal stored = Util.CurrencyRounding.ToDecimal(units);
         return value is decimal given && given == stored ? value : stored;
+    }
+
+    /// <summary>
+    /// <paramref name="number"/>, given for the Single column <paramref name="column"/>, refused when it is finite and
+    /// its nearest Single is not - past 3.4028235E+38 by half a Single's last place or more - as ACE refuses it
+    /// ("Overflow", measured for a Double, a Decimal and text parameter). Converted, it was an infinity. The number
+    /// itself otherwise.
+    /// </summary>
+    /// <exception cref="OverflowException"><paramref name="number"/> is past what a Single holds.</exception>
+    public static object AsSingle(Column column, object number)
+    {
+        if (number is float) return number;
+        double value = Convert.ToDouble(number, CultureInfo.InvariantCulture);
+        if (float.IsInfinity((float)value) && !double.IsInfinity(value))
+            throw new OverflowException(
+                $"Column '{column.Name}' is a Single, and {ExactNumber.Text(value)} is past what a Single holds, -3.4028235E+38 to 3.4028235E+38. Nothing was written.");
+        return number;
     }
 
     /// <summary>Whether a column of <paramref name="type"/> holds a number: Byte to Large Number, Single, Double, Currency, Decimal.</summary>
