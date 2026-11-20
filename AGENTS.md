@@ -17,7 +17,13 @@ release 1.2.2 of `mehran-ghanizadeh/jackcess-dotnet` and maintained on its own.
 - The standard it is held to: a file it writes is one Access opens, reads, queries through its indexes, writes
   to and compacts. Being right by Access comes before speed and before new features.
 - The repository is public. Work is based on `main` and merged to `main`, and a merged pull request's branch is
-  deleted. The other branches on the remote are from before this work: leave them as they are.
+  deleted.
+- One branch besides `main` stays on the remote: `upstream-pr`, the head of the pull request that offers this
+  repository's first Access fixes to `mehran-ghanizadeh/jackcess-dotnet`. Leave it as it is: deleting it closes
+  that pull request. The tag `archive/release-3.0.0` keeps a line of work from before this one, which `main` did
+  not take. It is there to be read, for complex columns
+  ([#24](https://github.com/markmario/jackcess-dotnet/issues/24)) among other things, and nothing is merged from
+  it. Only a tag that begins with `v` releases anything.
 
 ## How work is done here
 

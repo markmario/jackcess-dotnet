@@ -59,20 +59,26 @@ namespace JackcessDotNet.AccessTests.Support
         /// <summary>Every row ACE reads with <paramref name="sql"/>, a null for a null.</summary>
         public static List<Values> AceRows(string path, string sql)
         {
-            var rows = new List<Values>();
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
-            using (var command = new OleDbCommand(sql, connection))
             {
                 connection.Open();
-                using (var reader = command.ExecuteReader())
-                    while (reader.Read())
-                    {
-                        var row = new Values();
-                        for (var i = 0; i < reader.FieldCount; i++)
-                            row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                        rows.Add(row);
-                    }
+                return AceRows(connection, sql);
             }
+        }
+
+        /// <summary>Every row ACE reads with <paramref name="sql"/> on <paramref name="connection"/>, open, a null for a null.</summary>
+        public static List<Values> AceRows(OleDbConnection connection, string sql)
+        {
+            var rows = new List<Values>();
+            using (var command = new OleDbCommand(sql, connection))
+            using (var reader = command.ExecuteReader())
+                while (reader.Read())
+                {
+                    var row = new Values();
+                    for (var i = 0; i < reader.FieldCount; i++)
+                        row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    rows.Add(row);
+                }
             return rows;
         }
 
@@ -233,13 +239,21 @@ namespace JackcessDotNet.AccessTests.Support
             AssertSame(written, Written(aceRows), table + " as ACE reads it " + when);
             AssertSame(written, Written(EngineTable(path, table)), table + " as the engine reads it " + when);
 
-            Assert.Equal(rows.Count, Convert.ToInt32(Scalar(path, "SELECT COUNT(*) FROM [" + table + "]")));
-            foreach (var row in rows)
-                foreach (var where in new[] { "[" + key + "] = ", "[" + key + "] + 0 = " })
-                {
-                    var found = AceRows(path, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
-                    AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
-                }
+            // The count and every lookup on one connection. On a CI runner a connection costs about 65 ms to open and
+            // close, most of it in the close, and a lookup about 2 ms: a connection to each lookup is 130 s of
+            // connections for a table of 1,000 rows.
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                using (var count = new OleDbCommand("SELECT COUNT(*) FROM [" + table + "]", connection))
+                    Assert.Equal(rows.Count, Convert.ToInt32(count.ExecuteScalar()));
+                foreach (var row in rows)
+                    foreach (var where in new[] { "[" + key + "] = ", "[" + key + "] + 0 = " })
+                    {
+                        var found = AceRows(connection, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
+                        AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
+                    }
+            }
 
             var compacted = Compact(path);
             try { AssertSame(written, Written(AceTable(compacted, table)), table + " after DAO compacted the file, " + when); }
