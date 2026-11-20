@@ -43,7 +43,7 @@ internal static class SchemaRemoval
         EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
-        var index = table.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase))
+        var index = table.FindIndex(name)
             ?? throw new ArgumentException($"Table '{table.Name}' has no index named '{name}'. Nothing was changed.", nameof(name));
         if (index.IsForeignKey)
             throw new InvalidOperationException(
@@ -101,7 +101,7 @@ internal static class SchemaRemoval
         EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
-        var column = table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
+        var column = table.FindColumn(name)
             ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'. Nothing was changed.", nameof(name));
         if (table.Columns.Count == 1)
             throw new NotSupportedException(
@@ -116,7 +116,7 @@ internal static class SchemaRemoval
             throw new InvalidOperationException(
                 $"Column '{column.Name}' of '{table.Name}' is part of the index '{index.Name}': drop the index first. Nothing was changed.");
         // Access: "Cannot delete field. It is part of one or more relationships." - with or without referential integrity.
-        if (RelationshipOn(db, table.Name, column.Name) is { } relationship)
+        if (RelationshipOn(db, table, column) is { } relationship)
             throw new InvalidOperationException(
                 $"Column '{column.Name}' of '{table.Name}' is part of the relationship '{relationship}': drop the relationship first. " +
                 "Nothing was changed.");
@@ -152,18 +152,33 @@ internal static class SchemaRemoval
         Dropped(db, file, table.TdefPageNumber);
     }
 
-    /// <summary>The name of a relationship that has column <paramref name="column"/> of <paramref name="table"/> on either side, or null.</summary>
-    private static string? RelationshipOn(Database db, string table, string column)
+    /// <summary>
+    /// The name of a relationship that has column <paramref name="column"/> of <paramref name="table"/> on either side,
+    /// or null: one whose table and column names a lookup finds them by (<see cref="ObjectNames.Find"/>).
+    /// </summary>
+    private static string? RelationshipOn(Database db, TableDefinition table, Column column)
     {
+        var lookup = TableLookup(db);
         foreach (var relationship in db.GetRelationships())
         {
-            bool from = string.Equals(relationship.FromTableName, table, StringComparison.OrdinalIgnoreCase)
-                        && relationship.FromColumnNames.Contains(column, StringComparer.OrdinalIgnoreCase);
-            bool to   = string.Equals(relationship.ToTableName, table, StringComparison.OrdinalIgnoreCase)
-                        && relationship.ToColumnNames.Contains(column, StringComparer.OrdinalIgnoreCase);
+            bool from = lookup(relationship.FromTableName) == table.Name
+                        && relationship.FromColumnNames.Any(name => table.FindColumn(name) == column);
+            bool to   = lookup(relationship.ToTableName) == table.Name
+                        && relationship.ToColumnNames.Any(name => table.FindColumn(name) == column);
             if (from || to) return relationship.Name;
         }
         return null;
+    }
+
+    /// <summary>
+    /// What a lookup of a name among the catalog's tables finds, as the catalog spells it: the table of exactly that
+    /// name, or else the first whose name Access takes as one with it; null for a name no table has.
+    /// </summary>
+    private static Func<string, string?> TableLookup(Database db)
+    {
+        var tables = db.Catalog.GetTableNames(includeSystem: true);
+        var names  = db.Catalog.Names;
+        return name => names.Find(tables, name) is >= 0 and var at ? tables[at] : null;
     }
 
     // ── A relationship ───────────────────────────────────────────────────────
@@ -211,10 +226,14 @@ internal static class SchemaRemoval
     private static PlannedRemoval? PlanRelationship(Database db, PageFile file, string name)
     {
         if (!db.TryGetTable(SchemaChange.RelationshipsTable, out var relationships)) return null;
-        var rows = RowsOf(file, relationships, "szRelationship", "szObject", "szReferencedObject", "grbit")
-            .Where(r => string.Equals(r.Values["szRelationship"] as string, name, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (rows.Count == 0) return null;
+        var all = RowsOf(file, relationships, "szRelationship", "szObject", "szReferencedObject", "grbit");
+        // The relationship a lookup of the name finds: of exactly that name, or else the first whose name Access takes
+        // as one with it (ObjectNames.Find); its rows are those of exactly its name.
+        var relationshipNames = all.Select(r => r.Values["szRelationship"]).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        int found = db.Catalog.Names.Find(relationshipNames, name);
+        if (found < 0) return null;
+        string relationshipName = relationshipNames[found];
+        var rows = all.Where(r => r.Values["szRelationship"] as string == relationshipName).ToList();
 
         var planned = new PlannedRemoval
         {
@@ -228,7 +247,7 @@ internal static class SchemaRemoval
         var catalog = db.GetTable(CatalogTable);
         var entries = RowsOf(file, catalog, "Id", "Name", "Type")
             .Where(r => r.Values["Type"] is short type && type == CatalogTypeRelationship
-                     && string.Equals(r.Values["Name"] as string, name, StringComparison.OrdinalIgnoreCase))
+                     && r.Values["Name"] as string == planned.Name)
             .ToList();
         if (entries.Count > 0)
         {
@@ -251,8 +270,9 @@ internal static class SchemaRemoval
             for (int i = 0; i < childEditor.SlotCount; i++)
             {
                 var reference = childEditor.SlotReference(i);
+                // The relationship's own index on the referring table has its name, as Access gives it.
                 if (reference.IndexType != TdefEditor.IndexTypeForeignKey || reference.Side != TdefEditor.ForeignKeySecondaryTable
-                    || !string.Equals(childEditor.SlotNames[i], planned.Name, StringComparison.OrdinalIgnoreCase))
+                    || !child.Definition.Names.Same(childEditor.SlotNames[i], planned.Name))
                     continue;
                 planned.Slots.Add((child.Definition.TdefPageNumber, child.Name, childEditor.SlotNames[i]));
 
@@ -317,14 +337,15 @@ internal static class SchemaRemoval
 
         // Access drops a table with the relationships it refers to others by - and to itself by - and refuses
         // to drop one another table refers to ("It is either the current index or is used in a relationship").
+        // A relationship's tables are those a lookup of the names it holds finds (ObjectNames.Find).
         var relationships = db.GetRelationships();
-        if (relationships.FirstOrDefault(r => string.Equals(r.FromTableName, table.Name, StringComparison.OrdinalIgnoreCase)
-                                           && !string.Equals(r.ToTableName, table.Name, StringComparison.OrdinalIgnoreCase)) is { } referring)
+        var lookup = TableLookup(db);
+        if (relationships.FirstOrDefault(r => lookup(r.FromTableName) == table.Name && lookup(r.ToTableName) != table.Name) is { } referring)
             throw new InvalidOperationException(
                 $"Table '{table.Name}' is referred to by '{referring.ToTableName}' in the relationship '{referring.Name}': drop the " +
                 "relationship first. Nothing was changed.");
         var removals = relationships
-            .Where(r => string.Equals(r.ToTableName, table.Name, StringComparison.OrdinalIgnoreCase))
+            .Where(r => lookup(r.ToTableName) == table.Name)
             .Select(r => PlanRelationship(db, file, r.Name))
             .OfType<PlannedRemoval>()
             .ToList();
@@ -405,17 +426,23 @@ internal static class SchemaRemoval
     /// </summary>
     internal static void EnsureNotSystemTable(Database db, string table)
     {
-        if (db.GetSystemTableNames().Contains(table, StringComparer.OrdinalIgnoreCase))
+        // The table's name as the catalog spells it, so a system table's exactly: no other table's name is one with a
+        // system table's to Access, which refuses to make one.
+        if (db.GetSystemTableNames().Contains(table, StringComparer.Ordinal))
             throw new NotSupportedException(
                 $"Table '{table}' is one of the database's own: nothing is dropped from a system table or renamed in it, " +
                 "and it is neither dropped nor renamed. Nothing was changed.");
     }
 
-    /// <summary>Where <paramref name="name"/> is among <paramref name="names"/>, whatever the case of its letters.</summary>
+    /// <summary>
+    /// Where <paramref name="name"/>, a name a table's definition was read to have, is among
+    /// <paramref name="names"/>, the definition's as its editor reads them: exactly, as two of a table's names can be
+    /// one to Access (<see cref="ObjectNames"/>).
+    /// </summary>
     internal static int PositionOf(IReadOnlyList<string> names, string name)
     {
         for (int i = 0; i < names.Count; i++)
-            if (string.Equals(names[i], name, StringComparison.OrdinalIgnoreCase)) return i;
+            if (names[i] == name) return i;
         throw new NotSupportedException($"A table's definition has no '{name}' where it was read to have one. Nothing was changed.");
     }
 

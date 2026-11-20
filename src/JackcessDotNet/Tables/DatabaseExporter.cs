@@ -167,10 +167,10 @@ public static class DatabaseExporter
         }
     }
 
+    // Each property to the column a lookup of its column's name finds: of exactly that name, or else of one Access
+    // takes as one with it (ObjectNames), by the table's own spelling of it.
     private static List<(string ColumnName, PropertyInfo Property)> BuildPropertyBindings<T>(Table table)
     {
-        var columnNames = new HashSet<string>(
-            table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
         var bindings = new List<(string, PropertyInfo)>();
 
         foreach (var p in typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance))
@@ -180,8 +180,8 @@ public static class DatabaseExporter
             if (p.GetCustomAttribute<NotMappedAttribute>() is not null) continue;
 
             string colName = p.GetCustomAttribute<ColumnAttribute>()?.Name ?? p.Name;
-            if (columnNames.Contains(colName))
-                bindings.Add((colName, p));
+            if (table.Definition.FindColumn(colName) is { } column)
+                bindings.Add((column.Name, p));
         }
         return bindings;
     }

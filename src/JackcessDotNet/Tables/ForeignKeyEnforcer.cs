@@ -65,12 +65,37 @@ internal sealed class ForeignKeyEnforcer
     internal ForeignKeyEnforcer(Database database)
     {
         _database = database;
-        var tables = new HashSet<string>(database.Catalog.GetTableNames(includeSystem: true), StringComparer.OrdinalIgnoreCase);
+        var tables = database.Catalog.TableEntries(out var names);
+        var tableNames = tables.Select(t => t.Name).ToList();
         // One whose child table is gone has no rows to keep. One whose parent table is gone is kept: nothing can
         // satisfy it, as before.
         _relationships = database.GetRelationships()
-            .Where(r => r.HasReferentialIntegrity && r.ColumnPairs.Count > 0 && tables.Contains(r.ToTableName))
+            .Where(r => r.HasReferentialIntegrity && r.ColumnPairs.Count > 0)
+            .Select(r => AsNamed(database, r, tables, tableNames, names))
+            .OfType<Relationship>()
             .ToList();
+    }
+
+    /// <summary>
+    /// <paramref name="relationship"/> as the database's objects are named: its tables as the catalog spells them and
+    /// its columns as their tables do, each found by the name the relationship holds exactly or else by one Access
+    /// takes as one with it (#63). From then on a table or a column is compared with the relationship's by its name
+    /// exactly, so a relationship is never taken for another table's whose name is one with its table's to .NET.
+    /// Null when its child table is gone; a parent table that is gone keeps the name the relationship holds.
+    /// </summary>
+    private static Relationship? AsNamed(Database database, Relationship relationship, IReadOnlyList<(string Name, int TdefPage)> tables,
+                                         IReadOnlyList<string> tableNames, ObjectNames names)
+    {
+        int child = names.Find(tableNames, relationship.ToTableName);
+        if (child < 0) return null;
+        int parent = names.Find(tableNames, relationship.FromTableName);
+        var fromTable = parent < 0 ? null : database.DefinitionAt(tables[parent].Name, tables[parent].TdefPage);
+        var toTable   = database.DefinitionAt(tables[child].Name, tables[child].TdefPage);
+        var pairs = relationship.ColumnPairs
+            .Select(pair => (fromTable?.FindColumn(pair.FromColumn)?.Name ?? pair.FromColumn, toTable.FindColumn(pair.ToColumn)?.Name ?? pair.ToColumn))
+            .ToList();
+        return new Relationship(relationship.Name, parent < 0 ? relationship.FromTableName : tables[parent].Name, tables[child].Name,
+                                relationship.Flags, pairs);
     }
 
     /// <summary>True when a relationship with referential integrity has <paramref name="table"/> on either side.</summary>
@@ -151,8 +176,8 @@ internal sealed class ForeignKeyEnforcer
         var row     = rows.At(pointer) ?? throw Table.NoRowAt(table.Name, pointer);
 
         // Everything given is written to the row; what the relationships and indexes care about is worked through first.
-        row.Changes = new Row(newValues);
-        var tracked = new Row(newValues.Where(v => rows.Tracks(v.Key)));
+        row.Changes = Row.Exactly(newValues, table.Definition.Names);
+        var tracked = Row.Exactly(newValues.Where(v => rows.Tracks(v.Key)), table.Definition.Names);
         Run(() => Change(changes, rows, row, tracked, cascade: null));
         changes.Write();
         return row.WrittenAt ?? pointer;
@@ -212,7 +237,7 @@ internal sealed class ForeignKeyEnforcer
     {
         // A value written again as it is changes nothing. Access compares what is stored: 'abc' to 'ABC' is a
         // change, and so is a Double to the next Double after it.
-        var changed = new Row(newValues.Where(v => !SameValue(rows.Value(row, v.Key), rows.Stored(v.Key, v.Value))));
+        var changed = Row.Exactly(newValues.Where(v => !SameValue(rows.Value(row, v.Key), rows.Stored(v.Key, v.Value))), rows.Table.Definition.Names);
         if (changed.Count == 0) yield break;
 
         if (cascade is not null)
@@ -272,8 +297,8 @@ internal sealed class ForeignKeyEnforcer
             foreach (var child in referring)
             {
                 if (!children.StillRefers(relationship, child, oldKey)) continue;   // a cascade got there first
-                var follow = new Row(relationship.ColumnPairs.Select(pair =>
-                    new KeyValuePair<string, object?>(pair.ToColumn, rows.Value(row, pair.FromColumn))));
+                var follow = Row.Exactly(relationship.ColumnPairs.Select(pair =>
+                    new KeyValuePair<string, object?>(pair.ToColumn, rows.Value(row, pair.FromColumn))), children.Table.Definition.Names);
                 yield return () => Change(changes, children, child, follow, relationship);
             }
         }
@@ -347,7 +372,7 @@ internal sealed class ForeignKeyEnforcer
                 }
                 else
                 {
-                    var nulls = new Row(relationship.ColumnPairs.Select(pair => new KeyValuePair<string, object?>(pair.ToColumn, null)));
+                    var nulls = Row.Exactly(relationship.ColumnPairs.Select(pair => new KeyValuePair<string, object?>(pair.ToColumn, null)), children.Table.Definition.Names);
                     yield return () => Change(changes, children, child, nulls, relationship);
                 }
             }
@@ -368,7 +393,9 @@ internal sealed class ForeignKeyEnforcer
     {
         var types = ParentColumns(relationship, parent);
         var childColumns = relationship.ColumnPairs
-            .Select(pair => child.Columns.First(c => c.Name.Equals(pair.ToColumn, StringComparison.OrdinalIgnoreCase)))
+            .Select(pair => child.Definition.FindColumn(pair.ToColumn)
+                ?? throw new InvalidOperationException(
+                    $"Relationship '{relationship.Name}' names column '{pair.ToColumn}', which '{child.Name}' does not have."))
             .ToList();
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -396,7 +423,7 @@ internal sealed class ForeignKeyEnforcer
     /// <summary>The parent table's columns of the relationship: both sides' values are compared as that column's type.</summary>
     private static IReadOnlyList<Column> ParentColumns(Relationship relationship, Table parent)
         => relationship.ColumnPairs
-            .Select(pair => parent.Columns.FirstOrDefault(c => c.Name.Equals(pair.FromColumn, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => parent.Definition.FindColumn(pair.FromColumn)
                 ?? throw new InvalidOperationException(
                     $"Relationship '{relationship.Name}' names column '{pair.FromColumn}', which '{parent.Name}' does not have."))
             .ToList();
@@ -522,7 +549,7 @@ internal sealed class ForeignKeyEnforcer
     private static object? StoredIn(Table table, Row row, string column)
     {
         row.TryGetValue(column, out var value);
-        return table.Columns.FirstOrDefault(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase)) is { } found
+        return table.Definition.FindColumn(column) is { } found
             ? Stored(found, value)
             : null;
     }
@@ -542,7 +569,8 @@ internal sealed class ForeignKeyEnforcer
         _                          => Equals(stored, given),
     };
 
-    private static bool IsTable(string name, string other) => string.Equals(name, other, StringComparison.OrdinalIgnoreCase);
+    // A relationship's table names are the catalog's (AsNamed), and a table's name is the catalog's: compared exactly.
+    private static bool IsTable(string name, string other) => name == other;
 
     // ── Messages ─────────────────────────────────────────────────────────────
 
@@ -561,8 +589,9 @@ internal sealed class ForeignKeyEnforcer
     private sealed class Changes
     {
         private readonly ForeignKeyEnforcer _enforcer;
-        private readonly Dictionary<string, Table> _tables = new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, TableRows> _rows = new(StringComparer.OrdinalIgnoreCase);
+        // By the tables' names as the catalog spells them, which the relationships hold (AsNamed).
+        private readonly Dictionary<string, Table> _tables = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TableRows> _rows = new(StringComparer.Ordinal);
         private readonly Dictionary<Relationship, IReadOnlyList<Column>> _parentColumns = new();
 
         internal Changes(ForeignKeyEnforcer enforcer) => _enforcer = enforcer;
@@ -598,7 +627,7 @@ internal sealed class ForeignKeyEnforcer
             _tables[table.Name] = table;
             // What a check looks at: the columns a relationship names on this table's side, and every column of an
             // index - the primary key's among them - for the row's entries in them.
-            var tracked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var tracked = new HashSet<string>(StringComparer.Ordinal);
             foreach (var index in table.Indexes)
                 foreach (var column in index.Columns)
                     tracked.Add(column.Column.Name);
@@ -689,7 +718,8 @@ internal sealed class ForeignKeyEnforcer
     private sealed class TableRows
     {
         private readonly Changes _changes;
-        private readonly Dictionary<string, int> _tracked = new(StringComparer.OrdinalIgnoreCase);
+        // By the columns' names as their table spells them.
+        private readonly Dictionary<string, int> _tracked = new(StringComparer.Ordinal);
         private readonly List<Column> _columns = new();
         private readonly Dictionary<int, TrackedRow> _read = new();
         private readonly Dictionary<object, Finder> _finders = new();
@@ -701,7 +731,7 @@ internal sealed class ForeignKeyEnforcer
             Table    = table;
             // Only the tracked columns are ever decoded: a row's other values, long ones among them, are not read.
             foreach (string name in tracked)
-                if (table.Columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } column)
+                if (table.Definition.FindColumn(name) is { } column && !_tracked.ContainsKey(column.Name))
                 {
                     _tracked[column.Name] = _columns.Count;
                     _columns.Add(column);
@@ -721,30 +751,29 @@ internal sealed class ForeignKeyEnforcer
         /// <summary>The row's tracked values as a <see cref="Row"/>: what its index entries are made of.</summary>
         internal Row RowOf(TrackedRow row)
         {
-            var values = new Row();
+            var values = new Row(_columns.Count, Table.Definition.Names, exactOnly: true);
             for (int i = 0; i < _columns.Count; i++)
                 if (row.Values[i] is { } value)
-                    values[_columns[i].Name] = value;
+                    values.Put(_columns[i].Name, value);
             return values;
         }
 
-        internal bool IsAutoNumber(string column)
-            => Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase)).IsAutoNumber;
+        private Column ColumnNamed(string column)
+            => Table.Definition.FindColumn(column)
+               ?? throw new InvalidOperationException($"Table '{Table.Name}' has no column named '{column}'.");
+
+        internal bool IsAutoNumber(string column) => ColumnNamed(column).IsAutoNumber;
 
         /// <summary>
         /// Whether the column must have a value. Access records that as the column's Required property, not in the
         /// table definition, so a column of a table read from a file is asked there.
         /// </summary>
-        internal bool IsRequired(string column)
-        {
-            var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
-            return asked.IsRequired;
-        }
+        internal bool IsRequired(string column) => ColumnNamed(column).IsRequired;
 
         /// <summary>Whether the column is Text or Memo and its Allow Zero Length property says no.</summary>
         internal bool RefusesZeroLength(string column)
         {
-            var asked = Table.Columns.First(c => c.Name.Equals(column, StringComparison.OrdinalIgnoreCase));
+            var asked = ColumnNamed(column);
             return asked.DataType is DataType.Text or DataType.Memo && !asked.AllowZeroLength;
         }
 
@@ -843,7 +872,7 @@ internal sealed class ForeignKeyEnforcer
 
         internal void Change(TrackedRow row, Row newValues)
         {
-            row.Changes ??= new Row();
+            row.Changes ??= new Row(0, Table.Definition.Names, exactOnly: true);
             foreach (var value in newValues)
             {
                 // Tracked as the row will store it; written as it was given.

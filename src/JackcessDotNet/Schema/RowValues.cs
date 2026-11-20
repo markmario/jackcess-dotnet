@@ -32,28 +32,67 @@ internal static class RowValues
     };
 
     /// <summary>
-    /// <paramref name="row"/> as it will be written to a table of <paramref name="columns"/>: no
-    /// <see cref="DBNull"/> (a column without a value has none), a Yes/No column's value as the
-    /// <see cref="bool"/> it stands for, and a Currency column's as the <see cref="decimal"/> the row stores
-    /// (<see cref="AsCurrency"/>). The row itself when it is already so; otherwise a copy - the caller's row is not
-    /// changed.
+    /// <paramref name="row"/> as it will be written to <paramref name="table"/>: an entry for each column it gives a
+    /// value, by the column's own name; no <see cref="DBNull"/> (a column without a value has none), a Yes/No
+    /// column's value as the <see cref="bool"/> it stands for, and a Currency column's as the <see cref="decimal"/>
+    /// the row stores (<see cref="AsCurrency"/>). Each value goes to one column: the column of exactly its name, or
+    /// else the first whose name Access takes as one with it and that no other value is for (<see cref="ObjectNames"/>)
+    /// - so a table with two columns whose names are one to Access, which a file can have, takes a value in each. A
+    /// value no column is for is left out. The row itself when it is already so; otherwise a copy - the caller's row
+    /// is not changed.
     /// </summary>
     /// <exception cref="ArgumentException">A Currency column's value is of a kind no number is made of.</exception>
     /// <exception cref="FormatException">A Currency column's value is text that does not read as a number.</exception>
     /// <exception cref="OverflowException">A Currency column's value is a number no Currency holds.</exception>
-    public static Row AsWritten(Row row, IReadOnlyList<Column> columns)
+    public static Row AsWritten(Row row, TableDefinition table)
     {
-        Row? written = null;
+        var columns = table.Columns;
+        var exact   = table.ColumnNameSet;
+        List<KeyValuePair<string, object?>>? loose = null;
+        foreach (var entry in row)
+            if (!exact.Contains(entry.Key)) (loose ??= new()).Add(entry);
+
+        // The values given by a name of another spelling, each for the first column whose name Access takes as one
+        // with it that is neither given a value by its exact name nor taken by an earlier such value.
+        Dictionary<string, object?>? byRule = null;
+        if (loose is not null)
+        {
+            var columnKeys = new ObjectNames.NameKey?[columns.Count];
+            foreach (var entry in loose)
+            {
+                var key = table.Names.KeyOf(entry.Key);
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    string name = columns[i].Name;
+                    if (row.HasExactly(name) || byRule?.ContainsKey(name) == true) continue;
+                    if (!key.IsOneWith(columnKeys[i] ??= table.Names.KeyOf(name))) continue;
+                    (byRule ??= new Dictionary<string, object?>(StringComparer.Ordinal)).Add(name, entry.Value);
+                    break;
+                }
+            }
+        }
+
+        // A row written from has its columns' names exactly. A row of another spelling, and any row for a table with
+        // two columns whose names are one to Access, is copied into one that finds names only exactly: there a column
+        // the row gives no value has none, where the rule would find the other column's.
+        Row? written = loose is null && !table.HasColumnsThatAreOne ? null : new Row(columns.Count, table.Names, exactOnly: true);
         foreach (var column in columns)
         {
-            if (!row.TryGetValue(column.Name, out var value)) continue;
+            object? value;
+            if (row.HasExactly(column.Name)) value = row[column.Name];
+            else if (byRule is not null && byRule.TryGetValue(column.Name, out var given)) value = given;
+            else continue;
+
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
                 : column.DataType == DataType.Currency && value is not null ? AsCurrency(column, value)
                 : value;
-            if (ReferenceEquals(normal, value)) continue;
-            written ??= new Row(row);
-            written[column.Name] = normal;
+            if (written is null)
+            {
+                if (ReferenceEquals(normal, value)) continue;
+                written = new Row(row);
+            }
+            written.Put(column.Name, normal);
         }
         return written ?? row;
     }

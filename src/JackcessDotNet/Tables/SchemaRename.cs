@@ -30,11 +30,15 @@ internal static class SchemaRename
         SchemaRemoval.EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
-        var column = table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
+        var column = table.FindColumn(name)
             ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "a column", nameof(newName));
-        if (table.Columns.FirstOrDefault(c => c != column && ObjectNames.Same(c.Name, newName)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken.Name, newName)}. Nothing was changed.", nameof(newName));
+        SchemaChange.EnsureNewName(newName, "column", nameof(newName));
+        db.EnsureNamesCompared($"Column '{column.Name}' of '{table.Name}' was not renamed");
+        // The new name is compared with every other column's: the column is left out by what it is, so it may be given
+        // a name Access takes as one with its own (another case, say), as Access renames one.
+        if (db.ColumnNames.OneWith(table.Columns.Where(c => c != column).Select(c => c.Name), newName) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken, newName)}. Nothing was changed.", nameof(newName));
         if (column.DataType == DataType.Complex)
             throw new NotSupportedException(
                 $"Column '{column.Name}' of '{table.Name}' is a complex one (attachments or several values), whose values are " +
@@ -44,17 +48,20 @@ internal static class SchemaRename
         var editor = TdefEditor.Load(file, table.TdefPageNumber, table.Name);
         int position = SchemaRemoval.PositionOf(editor.ColumnNames, column.Name);
 
-        // The rows of MSysRelationships that name the column, on the side of the relationship it is on.
+        // The rows of MSysRelationships that name the column, on the side of the relationship it is on: those whose
+        // table and column names a lookup finds this table and this column by.
         var changes = new List<(int RowPointer, Row Change)>();
         Table? relationships = null;
         if (db.TryGetTable(SchemaChange.RelationshipsTable, out var found))
         {
             relationships = found;
+            var names = TableLookup(db);
+            bool NamesColumn(object? named) => named is string columnName && table.FindColumn(columnName) == column;
             foreach (var (pointer, row) in SchemaRemoval.RowsOf(file, found, "szObject", "szColumn", "szReferencedObject", "szReferencedColumn"))
             {
                 var change = new Row();
-                if (Same(row["szObject"], table.Name) && Same(row["szColumn"], column.Name)) change["szColumn"] = newName;
-                if (Same(row["szReferencedObject"], table.Name) && Same(row["szReferencedColumn"], column.Name)) change["szReferencedColumn"] = newName;
+                if (names(row["szObject"]) == table.Name && NamesColumn(row["szColumn"])) change["szColumn"] = newName;
+                if (names(row["szReferencedObject"]) == table.Name && NamesColumn(row["szReferencedColumn"])) change["szReferencedColumn"] = newName;
                 if (change.Count > 0) changes.Add((pointer, change));
             }
             if (changes.Count > 0) SchemaRemoval.EnsureRowsCanBeChanged(found);
@@ -81,11 +88,13 @@ internal static class SchemaRename
         SchemaRemoval.EnsureNotSystemTable(db, table.Name);
         SchemaChange.EnsureReadWhole(table);
 
-        var index = table.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, name, StringComparison.OrdinalIgnoreCase))
+        var index = table.FindIndex(name)
             ?? throw new ArgumentException($"Table '{table.Name}' has no index named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "an index", nameof(newName));
-        if (table.Indexes.FirstOrDefault(ix => ix != index && ObjectNames.Same(ix.Name, newName)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken.Name, newName)}. Nothing was changed.", nameof(newName));
+        SchemaChange.EnsureNewName(newName, "index", nameof(newName));
+        db.EnsureNamesCompared($"Index '{index.Name}' of '{table.Name}' was not renamed");
+        if (db.ColumnNames.OneWith(table.Indexes.Where(ix => ix != index).Select(ix => ix.Name), newName) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken, newName)}. Nothing was changed.", nameof(newName));
         if (index.IsForeignKey)
             throw new InvalidOperationException(
                 $"Index '{index.Name}' of '{table.Name}' is kept for a relationship, and has the name Access gave it for that. Nothing was changed.");
@@ -118,12 +127,13 @@ internal static class SchemaRename
         int tdefPage   = table.Definition.TdefPageNumber;
         SchemaRemoval.EnsureNotSystemTable(db, oldName);
         EnsureNewName(newName, "a table", nameof(newName));
+        SchemaChange.EnsureNewName(newName, "table", nameof(newName));
         if (oldName == newName) return tdefPage;
 
-        // A name another object has is refused, and one no catalog key is made for: what refuses a new table. Every
-        // object but this table is compared, and the table is left out by what it is - its definition's page - not by
-        // its name: Access keeps apart names this library takes as one without regard to case (ObjectNames), and a
-        // table renamed to the name of another, one with its own in that sense, would be the other's twin.
+        // A name another object has is refused - one Access takes as one with it (ObjectNames) - and one no catalog key
+        // is made for: what refuses a new table. Every object but this table is compared, and the table is left out by
+        // what it is - its definition's page - not by its name: a file can hold two names Access takes as one, and a
+        // table renamed to the name of another would be the other's twin.
         try { db.Catalog.EnsureCanRename(tdefPage, newName); }
         catch (InvalidOperationException e) { throw new ArgumentException(e.Message + " Nothing was changed.", nameof(newName)); }
 
@@ -135,12 +145,11 @@ internal static class SchemaRename
             throw new NotSupportedException($"Table '{oldName}' is not renamed: the catalog has no entry of a table for it. Nothing was changed.");
         SchemaRemoval.EnsureRowsCanBeChanged(catalog);
 
-        // The rows of MSysRelationships that name the table: by its name as the catalog has it, or by one equal to that
-        // without regard to case which is not exactly another object's name - never a table that only shares its
-        // name in that sense.
-        var others = new HashSet<string>(
-            catalogRows.Where(r => r.RowPointer != entry.RowPointer).Select(r => r.Values["Name"]).OfType<string>(), StringComparer.Ordinal);
-        bool NamesTable(object? value) => value is string named && (named == oldName || Same(named, oldName) && !others.Contains(named));
+        // The rows of MSysRelationships that name the table: those whose name a lookup among the catalog's tables finds
+        // this table by - its name as the catalog has it, or else one Access takes as one with it that is no other
+        // table's - never a table whose name is only one with this one's.
+        var lookup = TableLookup(db);
+        bool NamesTable(object? value) => lookup(value) == oldName;
 
         var changes = new List<(int RowPointer, Row Change)>();
         Table? relationships = null;
@@ -167,7 +176,27 @@ internal static class SchemaRename
         return tdefPage;
     }
 
-    private static bool Same(object? value, string name) => string.Equals(value as string, name, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// What a lookup of a name among the catalog's tables finds, as the catalog spells it - the table of exactly that
+    /// name, or else the first whose name Access takes as one with it (<see cref="ObjectNames.Find"/>) - or null for a
+    /// name no table has, or no name.
+    /// </summary>
+    private static Func<object?, string?> TableLookup(Database db)
+    {
+        var tables = db.Catalog.GetTableNames(includeSystem: true);
+        var names  = db.Catalog.Names;
+        var found  = new Dictionary<string, string?>(StringComparer.Ordinal);
+        return value =>
+        {
+            if (value is not string name) return null;
+            if (!found.TryGetValue(name, out var listed))
+            {
+                int at = names.Find(tables, name);
+                found[name] = listed = at < 0 ? null : tables[at];
+            }
+            return listed;
+        };
+    }
 
     /// <summary>Refuses a name Access would not take for a column, an index or a table.</summary>
     private static void EnsureNewName(string newName, string ofWhat, string parameter)

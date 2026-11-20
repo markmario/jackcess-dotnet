@@ -623,9 +623,11 @@ public sealed class Database : IDisposable
         //   icolumn                 - 0-based pair index within the relationship
         //   ccolumn                 - total pair count
         //   grbit                   - flags (one-to-one, cascade, joins)
+        // The rows of one relationship have its name exactly; two relationships whose names are one to Access are
+        // two, as the catalog lists them.
         var byName = new Dictionary<string, (string from, string to, int flags,
                                              List<(int idx, string fromCol, string toCol)> pairs)>(
-                                             StringComparer.OrdinalIgnoreCase);
+                                             StringComparer.Ordinal);
         var names = new List<string>();
 
         foreach (var r in rows)
@@ -773,12 +775,13 @@ public sealed class Database : IDisposable
             throw new ArgumentException("Table name must not be empty.", nameof(name));
         if (columns is null || columns.Count == 0)
             throw new ArgumentException("At least one column is required.", nameof(columns));
-        for (int i = 1; i < columns.Count; i++)
-            for (int j = 0; j < i; j++)
-                if (ObjectNames.Same(columns[j].Name, columns[i].Name))
-                    throw new ArgumentException(
-                        $"Table '{name}' is given two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names are one without regard to case. Nothing was created.",
-                        nameof(columns));
+        SchemaChange.EnsureNewName(name, "table", nameof(name));
+        foreach (var column in columns) SchemaChange.EnsureNewName(column.Name, "column", nameof(columns));
+        foreach (var index in secondary.Where(ix => ix is not null)) SchemaChange.EnsureNewName(index.Name, "index", "indexes");
+        if (ColumnNames.FirstTwoThatAreOne(columns.Select(c => c.Name).ToList()) is (var first, var second))
+            throw new ArgumentException(
+                $"Table '{name}' is given two columns, '{first}' and '{second}', whose names are one to Access. Nothing was created.",
+                nameof(columns));
         _file.EnsureWritable();
 
         var format = _file.Format;
@@ -791,7 +794,7 @@ public sealed class Database : IDisposable
 
         // Everything that can refuse the table does so before a page is added: its indexes, the
         // definition (laid out once with no pages), the name and the catalog.
-        var planned = PlanIndexes(name, columns, pkColumns, secondary);
+        var planned = PlanIndexes(name, columns, pkColumns, secondary, ColumnNames);
         new TableDefinition(name, columns)
         {
             Indexes = BuildIndexes(planned, planned.Select(_ => (Page: 0, Row: 0)).ToList(), rootPages: planned.Select(_ => 1).ToList()),
@@ -833,8 +836,7 @@ public sealed class Database : IDisposable
 
         // 3. Allocate a LVAL usage-map page for each Memo/OLE column (must happen before
         //    Serialize so the page numbers can be embedded in the TDEF).
-        var lvalUmaps = new System.Collections.Generic.Dictionary<string, LvalUmapRef>(
-            System.StringComparer.OrdinalIgnoreCase);
+        var lvalUmaps = new System.Collections.Generic.Dictionary<string, LvalUmapRef>(System.StringComparer.Ordinal);
         foreach (var col in columns)
             if (col.DataType.IsLongValue())
             {
@@ -947,17 +949,19 @@ public sealed class Database : IDisposable
     /// </summary>
     private static List<PlannedIndex> PlanIndexes(string table, IReadOnlyList<Column> columns,
                                                   IReadOnlyList<string>? pkColumns,
-                                                  IReadOnlyList<IndexDefinition> secondary)
+                                                  IReadOnlyList<IndexDefinition> secondary, ObjectNames names)
     {
         for (short i = 0; i < columns.Count; i++)
             columns[i].Ordinal = i;
+        var columnNames = columns.Select(c => c.Name).ToList();
 
         // A key's or an index's columns come in the call that names the table's columns: one that is not among
-        // them is a fault in the arguments.
+        // them is a fault in the arguments. A column is found by its name, or by one Access takes as one with it.
         Column Find(string column, string what, bool ofPrimaryKey = false)
         {
-            var found = columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))
-                ?? throw new ArgumentException($"{what} column '{column}' not found in table '{table}'.", ofPrimaryKey ? "primaryKey" : "indexes");
+            int at = names.Find(columnNames, column);
+            var found = at >= 0 ? columns[at]
+                : throw new ArgumentException($"{what} column '{column}' not found in table '{table}'.", ofPrimaryKey ? "primaryKey" : "indexes");
             if (!IndexKeys.CanEncode(found))
                 throw new NotSupportedException(
                     $"{what} on '{column}' is not supported: {IndexKeys.WhyNot(found)}, " +
@@ -986,10 +990,10 @@ public sealed class Database : IDisposable
                 throw new ArgumentException(
                     $"Index '{index.Name}' is a primary key: a table is created with its primary key by naming the key's columns, " +
                     "not by an index definition.", nameof(secondary));
-            if (planned.FirstOrDefault(p => ObjectNames.Same(p.Name, index.Name)) is { } taken)
-                throw new ArgumentException($"Table '{table}' is given two indexes, '{taken.Name}' and '{index.Name}', whose names are one without regard to case.", nameof(secondary));
+            if (names.OneWith(planned.Select(p => p.Name), index.Name) is { } taken)
+                throw new ArgumentException($"Table '{table}' is given two indexes, '{taken}' and '{index.Name}', whose names are one to Access.", nameof(secondary));
             foreach (string descending in index.DescendingColumns)
-                if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
+                if (names.OneWith(index.Columns, descending) is null)
                     throw new ArgumentException(
                         $"Index '{index.Name}' sorts '{descending}' descending, which is not one of its columns.", nameof(secondary));
 
@@ -1001,7 +1005,7 @@ public sealed class Database : IDisposable
                 index.Name,
                 index.Columns.Select(c => new IndexColumn(
                     Find(c, $"Index '{index.Name}'"),
-                    index.DescendingColumns.Contains(c, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList(),
+                    names.OneWith(index.DescendingColumns, c) is not null ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList(),
                 flags,
                 indexType: 0));
         }
@@ -1094,6 +1098,7 @@ public sealed class Database : IDisposable
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns || isBroken,
+            Names             = ObjectNames.ForColumns(file.Format),
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)
@@ -1292,6 +1297,33 @@ public sealed class Database : IDisposable
 
     /// <summary>The catalog, for a change to the schema that registers an object in it.</summary>
     internal SystemCatalog Catalog => _catalog;
+
+    /// <summary>How the names of a table's columns and indexes are one to Access in this file (<see cref="ObjectNames"/>).</summary>
+    internal ObjectNames ColumnNames => ObjectNames.ForColumns(_file.Format);
+
+    /// <summary>
+    /// The definition of the table the catalog lists as <paramref name="listedName"/> at <paramref name="tdefPage"/>:
+    /// the open table's, or read from its pages - with no reading of the catalog, which listed it.
+    /// </summary>
+    internal TableDefinition DefinitionAt(string listedName, int tdefPage)
+        => _tables.TryGetValue(tdefPage, out var open) ? open.Definition : ReadDefinition(_file, listedName, tdefPage);
+
+    /// <summary>
+    /// Refuses, before anything is written, a name given to a column, an index or a relationship in a database whose
+    /// text sorts in an order Access may compare such names in otherwise than General - Legacy's keys
+    /// (<see cref="ObjectNames.ComparesColumnsAsGeneralLegacy"/>): in a database that sorts in Turkish, an index named
+    /// "xİ" is one with "xi", which General - Legacy keeps apart (#63). A table is not created or renamed in a database
+    /// whose order this library makes no keys for already: its catalog's keys are not made.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The database's text sorts in such an order. Nothing is changed.</exception>
+    internal void EnsureNamesCompared(string whatWasNotDone)
+    {
+        var order = _catalog.NameOrder;
+        if (!ObjectNames.ComparesColumnsAsGeneralLegacy(order))
+            throw new NotSupportedException(
+                $"{whatWasNotDone}: the database's text sorts in {order}, an order in which Access may take as one names " +
+                "this library takes as two, and which it has not been measured to compare names in. Nothing was changed.");
+    }
 
     /// <summary>What appends pages to the file, for a change to the schema.</summary>
     internal PageAllocator Allocator => _allocator;

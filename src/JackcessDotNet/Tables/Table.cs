@@ -307,10 +307,11 @@ public sealed class Table
                         // Deleted rows are passed; an overflow row is read where its pointer leads.
                         if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
 
-                        // Every column has its entry, in the table's order: null for a column with no value.
-                        var row = new Row(definition.Columns.Count);
+                        // Every column has its entry, in the table's order: null for a column with no value - two
+                        // columns whose names Access takes as one too, each by its own name.
+                        var row = new Row(definition.Columns.Count, definition.Names);
                         foreach (var col in definition.Columns)
-                            row[col.Name] = decoder.Decode(rowBytes, col);
+                            row.Put(col.Name, decoder.Decode(rowBytes, col));
                         // (A row past the 256th of its page has no address: Jet names a row on its page with one byte.)
                         if (r <= 0xFF) row.ReadFrom(this, RowPointer.Pack(pageNum, r));
                         yield return row;
@@ -390,7 +391,7 @@ public sealed class Table
     private Index IndexNamed(string indexName)
     {
         if (indexName is null) throw new ArgumentNullException(nameof(indexName));
-        return _definition.Indexes.FirstOrDefault(ix => string.Equals(ix.Name, indexName, StringComparison.OrdinalIgnoreCase))
+        return _definition.FindIndex(indexName)
             ?? throw new ArgumentException($"Table '{Name}' has no index named '{indexName}'.", nameof(indexName));
     }
 
@@ -429,9 +430,9 @@ public sealed class Table
             && keyIndex.Columns.Count == keyColumns.Count)
             return new IndexCursor(this, _file, definition, keyIndex, range: null, watched: false).FindRowByEntry(primaryKey);
 
-        var pattern = new Row();
+        var pattern = new Row(keyColumns.Count, definition.Names);
         for (int i = 0; i < keyColumns.Count; i++)
-            pattern[keyColumns[i]] = primaryKey[i];
+            pattern.Put(keyColumns[i], primaryKey[i]);
         return new Cursor(this, _file, definition).FindRow(pattern);
     }
 
@@ -517,7 +518,7 @@ public sealed class Table
 
                 // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
                 // bool it stands for - read once, for the row's bytes and its index entries alike.
-                var written = RowValues.AsWritten(row, _definition.Columns);
+                var written = RowValues.AsWritten(row, _definition);
                 EnsureColumnRules(written, assignedOnly: false);
                 _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
@@ -643,7 +644,7 @@ public sealed class Table
             asWritten = new Row(row);
             FillAutoNumbers(asWritten);
         }
-        asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        asWritten = RowValues.AsWritten(asWritten, _definition);
         EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
@@ -901,33 +902,32 @@ public sealed class Table
     {
         EnsureRowsCanChange();
 
-        // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for.
-        var newValues = RowValues.AsWritten(values, _definition.Columns);
+        // The new values as they will be written: DBNull no value, a Yes/No the bool it stands for - each by its
+        // column's own name (RowValues.AsWritten).
+        var newValues = RowValues.AsWritten(values, _definition);
 
         // What the columns' properties refuse, of the columns the update gives a value - the value the row has
         // already among them, which Access refuses too: Access does not look at the others, so a row that already
         // breaks a rule in one of them is still updated. (An AutoNumber is the table's to give, and is not looked
         // at.)
-        EnsureColumnRules(new Row(newValues.Where(v => !_autoNumberColumns.Any(c =>
-            c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase)))), assignedOnly: true);
+        EnsureColumnRules(Row.Of(newValues.Where(v => !_autoNumberColumns.Any(c => c.Name == v.Key)), newValues), assignedOnly: true);
 
         // What the row holds now for the columns named, as a caller reads them: a value given as the file has it
         // is not a change, and is left as it is. A long value is not read to see: one that is given is written.
-        var named = _definition.Columns.Where(c => newValues.ContainsKey(c.Name) && !c.DataType.IsLongValue()).ToList();
+        var named = _definition.Columns.Where(c => newValues.HasExactly(c.Name) && !c.DataType.IsLongValue()).ToList();
         var held  = _dataWriter.ReadRowAsReadAt(_definition, rowPtr, named) ?? throw NoRowAt(Name, rowPtr);
-        newValues = new Row(newValues.Where(v => !held.TryGetValue(v.Key, out var has) || !ValueMatch.IsAsRead(has, v.Value)));
+        newValues = Row.Of(newValues.Where(v => !held.TryGetExactly(v.Key, out var has) || !ValueMatch.IsAsRead(has, v.Value)), newValues);
 
         int? highestGiven = null;
-        if (_autoNumberColumns.Any(c => newValues.ContainsKey(c.Name)))
+        if (_autoNumberColumns.Any(c => newValues.HasExactly(c.Name)))
         {
             // A null, or DBNull, is not a number to bring: the column keeps the one it has, whether or not a row
             // may bring its own. Access holds no AutoNumber as null.
             bool allowed = AutoNumberInsertAllowed;
-            newValues = new Row(newValues.Where(v => (allowed && !RowValues.IsNull(v.Value)) || !_autoNumberColumns.Any(c =>
-                c.Name.Equals(v.Key, StringComparison.OrdinalIgnoreCase))));
+            newValues = Row.Of(newValues.Where(v => (allowed && !RowValues.IsNull(v.Value)) || !_autoNumberColumns.Any(c => c.Name == v.Key)), newValues);
             if (allowed)
                 highestGiven = _autoNumberColumns
-                    .Where(c => c.DataType == DataType.Int32 && newValues.ContainsKey(c.Name))
+                    .Where(c => c.DataType == DataType.Int32 && newValues.HasExactly(c.Name))
                     .Select(c => (int?)Convert.ToInt32(newValues[c.Name], System.Globalization.CultureInfo.InvariantCulture))
                     .Max();
         }
@@ -1143,7 +1143,7 @@ public sealed class Table
         var format  = _file.Format;
         var decoder = new RowDecoder(format, _definition.Columns);
         var keys    = _definition.EffectivePrimaryKeyColumns
-            .Select(name => _definition.Columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            .Select(name => _definition.FindColumn(name))
             .OfType<Column>()
             .ToList();
 
@@ -1166,9 +1166,9 @@ public sealed class Table
                     var unscaled = NumericCodec.Unscaled(stored, 0);
                     if (unscaled < System.Numerics.BigInteger.Pow(10, column.Precision)) continue;
 
-                    var key = new Row();
+                    var key = new Row(keys.Count, _definition.Names);
                     foreach (var keyColumn in keys)
-                        key[keyColumn.Name] = decoder.Decode(rowBytes, keyColumn);
+                        key.Put(keyColumn.Name, decoder.Decode(rowBytes, keyColumn));
                     bool negative = NumericCodec.IsNegative(stored, 0);
                     yield return new DecimalBeyondPrecision(Name, column, rowIndex, key,
                         NumericCodec.Decode(stored, 0, column.Scale), isCut: unscaled >> 96 != 0,
@@ -1211,7 +1211,7 @@ public sealed class Table
     {
         if (column is null) throw new ArgumentNullException(nameof(column));
         string name = SchemaChange.AddColumn(Owner(), _file, _definition, column.ToColumn(nameof(column)));
-        return Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+        return Columns.First(c => c.Name == name);
     }
 
     /// <summary>
@@ -1248,7 +1248,7 @@ public sealed class Table
     {
         if (index is null) throw new ArgumentNullException(nameof(index));
         SchemaChange.AddIndex(Owner(), _file, _definition, index);
-        return Indexes.First(ix => string.Equals(ix.Name, index.Name, StringComparison.OrdinalIgnoreCase));
+        return Indexes.First(ix => ix.Name == index.Name);
     }
 
     /// <summary>

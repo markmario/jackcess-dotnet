@@ -160,7 +160,7 @@ internal sealed class IndexWriter
         if (pk is not null && pk.Columns.Count > 0) return pk.Columns;
         return table.EffectivePrimaryKeyColumns
             .Select(name => new IndexColumn(
-                table.Columns.First(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)), 0x01))
+                table.FindColumn(name) ?? throw new InvalidOperationException($"Primary key column '{name}' not found in table '{table.Name}'."), 0x01))
             .ToList();
     }
 

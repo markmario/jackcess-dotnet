@@ -100,6 +100,21 @@ internal sealed class SystemCatalog
     }
 
     /// <summary>
+    /// How the catalog's names - of tables, queries and relationships - are one to Access (<see cref="ObjectNames"/>):
+    /// by the order the catalog keeps them in, Access 97's own in a Jet3 file. In an order this library makes no keys
+    /// for, by General - Legacy's: a lookup's best guess, and no name is added to such a catalog.
+    /// </summary>
+    internal ObjectNames Names => NamesOf(BuildCatalogTableDef());
+
+    /// <summary>The order the catalog keeps names in, as its Name column's definition gives it: Access 97's own in a Jet3 file.</summary>
+    internal SortOrder NameOrder => NameOrderOf(BuildCatalogTableDef());
+
+    private static SortOrder NameOrderOf(TableDefinition catalogDef)
+        => catalogDef.Columns.FirstOrDefault(c => c.Name == ColName)?.SortOrder ?? SortOrder.GeneralLegacy;
+
+    private static ObjectNames NamesOf(TableDefinition catalogDef) => ObjectNames.ForCatalog(NameOrderOf(catalogDef)) ?? ObjectNames.GeneralLegacy;
+
+    /// <summary>
     /// Registers a new user table: its MSysObjects row and index entries, and its
     /// permissions in MSysACEs (see the class summary). Refuses what
     /// <see cref="EnsureCanRegister"/> refuses, before writing anything.
@@ -208,18 +223,35 @@ internal sealed class SystemCatalog
     /// As <see cref="FindTable(string, out string?)"/>, with what reads the table's properties - the LvProp of
     /// its row - in <paramref name="readProperties"/>: from the row as this pass read it, so reading them reads
     /// no page again, and only the pages of a value too long for its row. The scan stops at the table: the table of
-    /// exactly that name, and when there is none, a second scan for one without regard to case.
+    /// exactly that name, and when there is none, a second scan for one whose name Access takes as one with it
+    /// (<see cref="ObjectNames.Find"/>).
     /// </summary>
     internal int FindTable(string tableName, out string? listedName, out Func<byte[]?>? readProperties)
     {
-        // A name given exactly is its table's, though another's is the same without regard to case: Access keeps
-        // apart names .NET takes as one (ObjectNames).
+        // A name given exactly is its table's, though another's is one with it to Access: a file can hold both.
         var row = FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable && name == tableName)
-               ?? FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable
-                                                 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase));
+               ?? FindByRule(tableName);
         listedName     = row?.Name;
         readProperties = row?.ReadProperties;
         return row?.Id ?? -1;
+    }
+
+    // The table whose name Access takes as one with tableName, for a name no table has exactly: the first by the
+    // catalog's index key, and then the first at all (ObjectNames.Find).
+    private CatalogRow? FindByRule(string tableName)
+    {
+        var names = Names;
+        var key   = names.KeyOf(tableName);
+        string? firstOneWith = null;
+        return FindRow((_, name, _, type) =>
+               {
+                   if (type != JetFormat.CatalogTypeTable || name is null) return false;
+                   var other = names.KeyOf(name);
+                   if (key.HasIndexKeyOf(other)) return true;
+                   if (firstOneWith is null && key.IsOneWith(other)) firstOneWith = name;
+                   return false;
+               })
+            ?? (firstOneWith is null ? null : FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable && name == firstOneWith));
     }
 
     // A row of the catalog as a scan found it; ReadProperties reads its LvProp from the bytes the scan read.
@@ -309,10 +341,14 @@ internal sealed class SystemCatalog
             ?? throw new NotSupportedException("The database has no Relationships container to register a relationship in. Nothing was changed.");
         int containerId = (int)Value(container, ColId)!;
 
-        if (catalog.Any(r => Value(r, ColType) is short type && type == CatalogTypeRelationship
-                          && Value(r, ColName) is string existing
-                          && ObjectNames.Same(existing, name)))
-            throw new InvalidOperationException($"There is already a relationship named '{name}' in this database. Nothing was changed.");
+        var names = NamesOf(catalogDef);
+        var key   = names.KeyOf(name);
+        if (catalog.FirstOrDefault(r => Value(r, ColType) is short type && type == CatalogTypeRelationship
+                                     && Value(r, ColName) is string existing
+                                     && (existing == name || key.IsOneWith(names.KeyOf(existing))))
+            is { } taken)
+            throw new InvalidOperationException(
+                $"There is already a relationship named {ObjectNames.Taken((string)Value(taken, ColName)!, name)} in this database. Nothing was changed.");
 
         // The ids Access gives objects that have no page count up from int.MinValue: the next is one past the
         // highest negative id there is.
@@ -362,9 +398,16 @@ internal sealed class SystemCatalog
                                        CreatorOwner(ReadRows(entry.Catalog, ColName, ColType, ColOwner)));
     }
 
-    /// <summary>The name the catalog has for table <paramref name="name"/>, as it spells it, or null when there is no such table.</summary>
+    /// <summary>
+    /// The name the catalog has for table <paramref name="name"/>, as it spells it - the table of exactly that name, or
+    /// else of a name Access takes as one with it - or null when there is no such table.
+    /// </summary>
     internal string? TableNameAsListed(string name)
-        => GetTableNames(includeSystem: true).FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+    {
+        var tables = GetTableNames(includeSystem: true);
+        int at = Names.Find(tables, name);
+        return at < 0 ? null : tables[at];
+    }
 
     /// <summary>
     /// The Admin user's SID, which Access makes a new table's owner. A file keeps its
@@ -416,14 +459,19 @@ internal sealed class SystemCatalog
         int tablesId = (int)Value(tables, ColId)!;
 
         // A table's name is any object's in the Tables container, and any table's: versions of this
-        // library before 2.1.1 registered tables with ParentId 0, outside the container.
-        if (catalog.Any(r => Value(r, ColName) is string name
-                          && ObjectNames.Same(name, tableName)
-                          && !(renamedTdef is int renamed && Value(r, ColId) is int id && id == renamed
-                               && Value(r, ColType) is short renamedType && renamedType == JetFormat.CatalogTypeTable)
-                          && (Value(r, ColParentId) is int parent && parent == tablesId
-                              || Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable)))
-            throw new InvalidOperationException($"An object named '{tableName}' already exists in this database.");
+        // library before 2.1.1 registered tables with ParentId 0, outside the container. Names are one as Access
+        // takes them (ObjectNames).
+        var names = NamesOf(catalogDef);
+        var key   = names.KeyOf(tableName);
+        if (catalog.FirstOrDefault(r => Value(r, ColName) is string name
+                                     && !(renamedTdef is int renamed && Value(r, ColId) is int id && id == renamed
+                                          && Value(r, ColType) is short renamedType && renamedType == JetFormat.CatalogTypeTable)
+                                     && (Value(r, ColParentId) is int parent && parent == tablesId
+                                         || Value(r, ColType) is short type && type == JetFormat.CatalogTypeTable)
+                                     && (name == tableName || key.IsOneWith(names.KeyOf(name))))
+            is { } taken)
+            throw new InvalidOperationException(
+                $"An object named {ObjectNames.Taken((string)Value(taken, ColName)!, tableName)} already exists in this database.");
 
         int acesTdef = FindTableTdefPage("MSysACEs");
         var acesDef  = acesTdef >= 0 ? BuildTableDef("MSysACEs", acesTdef) : null;
@@ -479,7 +527,7 @@ internal sealed class SystemCatalog
                 if (rowBytes is null) continue;
                 var row = new Row();
                 foreach (var column in wanted)
-                    row[column.Name] = decoder.Decode(rowBytes, column);
+                    row.Put(column.Name, decoder.Decode(rowBytes, column));
                 rows.Add(row);
             }
         }
@@ -704,36 +752,37 @@ internal sealed class SystemCatalog
     /// <summary>
     /// As <see cref="FindTableTdefPage"/>, with the table's name as the catalog spells it in
     /// <paramref name="listedName"/> (null when there is no such table). The table of exactly that name, when there
-    /// is one; otherwise the first of that name without regard to case.
+    /// is one; otherwise the first whose name Access takes as one with it (<see cref="ObjectNames.Find"/>).
     /// </summary>
     public int FindTable(string tableName, out string? listedName)
     {
-        int found = -1, exact = -1;
-        string? listed = null;
-        ForEachTableEntry((name, tdefPage, _) =>
-        {
-            if (exact < 0 && name == tableName)
-            {
-                exact  = tdefPage;
-                listed = name;
-            }
-            else if (exact < 0 && found < 0 && string.Equals(name, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                found  = tdefPage;
-                listed = name;
-            }
-        });
-        listedName = listed;
-        return exact >= 0 ? exact : found;
+        var entries = TableEntries(out var rule);
+        int at = rule.Find(entries.Select(e => e.Name).ToList(), tableName);
+        listedName = at < 0 ? null : entries[at].Name;
+        return at < 0 ? -1 : entries[at].TdefPage;
+    }
+
+    /// <summary>
+    /// Every table the catalog lists - its name as the catalog spells it and its definition's page - and how the
+    /// catalog's names are compared (<see cref="Names"/>), from one reading of the catalog.
+    /// </summary>
+    internal List<(string Name, int TdefPage)> TableEntries(out ObjectNames names)
+    {
+        var catalogDef = BuildCatalogTableDef();
+        names = NamesOf(catalogDef);
+        var entries = new List<(string Name, int TdefPage)>();
+        ForEachTableEntry(catalogDef, (name, tdefPage, _) => entries.Add((name, tdefPage)));
+        return entries;
     }
 
     /// <summary>
     /// Iterates every Type=1 row in MSysObjects and invokes <paramref name="visit"/>
     /// with (name, tdefPageNumber, flags). Used by both FindTableTdefPage and GetTableNames.
     /// </summary>
-    private void ForEachTableEntry(Action<string, int, int> visit)
+    private void ForEachTableEntry(Action<string, int, int> visit) => ForEachTableEntry(BuildCatalogTableDef(), visit);
+
+    private void ForEachTableEntry(TableDefinition catalogDef, Action<string, int, int> visit)
     {
-        var catalogDef = BuildCatalogTableDef();
         var columns    = catalogDef.Columns;
         var decoder    = new RowDecoder(_format, columns);
 
@@ -798,6 +847,7 @@ internal sealed class SystemCatalog
             MaxColumnCount    = info.MaxColumnCount,
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns,
+            Names             = ObjectNames.ForColumns(_format),
         };
         // Where a long value of each column goes: a new table's properties (LvProp) can be longer than a row keeps.
         foreach (var kvp in info.LvalColumnUmapPages)

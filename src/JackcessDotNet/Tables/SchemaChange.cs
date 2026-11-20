@@ -37,8 +37,10 @@ internal static class SchemaChange
 
         if (string.IsNullOrWhiteSpace(given.Name) || given.Name.Length > MaxNameLength)
             throw new ArgumentException($"A column's name is 1 to {MaxNameLength} characters; '{given.Name}' is not.", nameof(given));
-        if (table.Columns.FirstOrDefault(c => ObjectNames.Same(c.Name, given.Name)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken.Name, given.Name)}. Nothing was changed.", nameof(given));
+        EnsureNewName(given.Name, "column", nameof(given));
+        db.EnsureNamesCompared($"Column '{given.Name}' was not added to '{table.Name}'");
+        if (db.ColumnNames.OneWith(table.Columns.Select(c => c.Name), given.Name) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken, given.Name)}. Nothing was changed.", nameof(given));
         if (table.Columns.Count >= MaxColumns)
             throw new ArgumentException($"Table '{table.Name}' has {MaxColumns} columns, the most a table has. Nothing was changed.", nameof(given));
         if (given.DataType == DataType.Complex || given.IsCalculated || !Enum.IsDefined(typeof(DataType), given.DataType))
@@ -131,8 +133,11 @@ internal static class SchemaChange
         if (index.Name.Length > MaxNameLength)
             throw new ArgumentException($"An index's name is at most {MaxNameLength} characters; '{index.Name}' is longer.", nameof(index));
         EnsureValidName(index.Name, "an index", nameof(index));
+        EnsureNewName(index.Name, "index", nameof(index));
+        db.EnsureNamesCompared($"Index '{index.Name}' was not added to '{table.Name}'");
+        var names = db.ColumnNames;
         foreach (string descending in index.DescendingColumns)
-            if (!index.Columns.Contains(descending, StringComparer.OrdinalIgnoreCase))
+            if (names.OneWith(index.Columns, descending) is null)
                 throw new ArgumentException(
                     $"Index '{index.Name}' sorts '{descending}' descending, which is not one of its columns.", nameof(index));
 
@@ -157,7 +162,7 @@ internal static class SchemaChange
 
         var columns = index.Columns.Select(name => new IndexColumn(
             ColumnOf(table, name, $"Index '{index.Name}'"),
-            index.DescendingColumns.Contains(name, StringComparer.OrdinalIgnoreCase) ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList();
+            names.OneWith(index.DescendingColumns, name) is not null ? (byte)0 : TableDefinition.AscendingColumnFlag)).ToList();
 
         // An index like one the table has - the same columns, each sorted the same way, and the same flags -
         // shares its tree, as Jackcess shares it.
@@ -207,8 +212,8 @@ internal static class SchemaChange
     private static PlannedIndex Plan(PageFile file, TableDefinition table, string name, IReadOnlyList<IndexColumn> columns,
                                      byte flags, byte indexType, Func<Index, bool> shares, int alsoIndexes = 0)
     {
-        if (table.Indexes.FirstOrDefault(ix => ObjectNames.Same(ix.Name, name)) is { } taken)
-            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken.Name, name)}. Nothing was changed.");
+        if (ObjectNames.ForColumns(file.Format).OneWith(table.Indexes.Select(ix => ix.Name), name) is { } taken)
+            throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken, name)}. Nothing was changed.");
         if (table.Indexes.Count + alsoIndexes >= IndexDefinition.MaxIndexesPerTable)
             throw new ArgumentException(
                 $"Table '{table.Name}' has {table.Indexes.Count + alsoIndexes} indexes; a table has at most {IndexDefinition.MaxIndexesPerTable}. Nothing was changed.");
@@ -412,7 +417,9 @@ internal static class SchemaChange
             ?? throw new ArgumentException($"Table '{definition.ToTableName}' was not found in this database. Nothing was changed.", nameof(definition));
         var parent = db.GetTable(fromName);
         var child  = db.GetTable(toName);
-        bool sameTable = string.Equals(fromName, toName, StringComparison.OrdinalIgnoreCase);
+        // A database has one Table for a table (GetTable), so a relationship of a table to itself has the same one on
+        // both sides, whatever names it was asked for by.
+        bool sameTable = ReferenceEquals(parent, child);
 
         var fromColumns = definition.ColumnPairs.Select(p => ColumnOf(parent.Definition, p.FromColumn, "A relationship's")).ToList();
         var toColumns   = definition.ColumnPairs.Select(p => ColumnOf(child.Definition, p.ToColumn, "A relationship's")).ToList();
@@ -444,27 +451,35 @@ internal static class SchemaChange
             throw new NotSupportedException($"The database has no {RelationshipsTable} table to hold a relationship. Nothing was changed.");
         if (relationships.InsertRefusal is { } refusal) throw new NotSupportedException(refusal);
 
-        // The name: the one asked for, which must be free, or one made of the tables' names and made free.
-        var taken = new HashSet<string>(db.GetRelationships().Select(r => r.Name).Concat(db.Catalog.RelationshipNames()),
-                                        StringComparer.OrdinalIgnoreCase);
-        if (enforced)
-            foreach (var index in child.Indexes) taken.Add(index.Name);
+        // The name: the one asked for, which must be free, or one made of the tables' names and made free. It is a
+        // name of the catalog, and with referential integrity an index's name on the referring table too: taken when
+        // Access takes it as one with a relationship's or that table's index's (ObjectNames).
+        var relationshipNames = db.GetRelationships().Select(r => r.Name).Concat(db.Catalog.RelationshipNames()).ToList();
+        var indexNames        = enforced ? child.Indexes.Select(ix => ix.Name).ToList() : new List<string>();
+        var catalogNames      = db.Catalog.Names;
+        bool Taken(string candidate)
+            => catalogNames.OneWith(relationshipNames, candidate) is not null || db.ColumnNames.OneWith(indexNames, candidate) is not null;
         string name;
         if (definition.Name is { } asked)
         {
             if (string.IsNullOrWhiteSpace(asked) || asked.Length > MaxNameLength)
                 throw new ArgumentException($"A relationship's name is 1 to {MaxNameLength} characters; '{asked}' is not.", nameof(definition));
             EnsureValidName(asked, "a relationship", nameof(definition));
-            if (taken.Contains(asked))
+            EnsureNewName(asked, "relationship", nameof(definition));
+            db.EnsureNamesCompared($"Relationship '{asked}' was not created");
+            if (Taken(asked))
                 throw new InvalidOperationException(
-                    $"There is already a relationship named '{asked}' in this database, or an index of that name on '{toName}'. Nothing was changed.");
+                    $"There is already a relationship named '{asked}' in this database, or an index of that name on '{toName}', " +
+                    "or one whose name is one with it to Access. Nothing was changed.");
             name = asked;
         }
         else
         {
+            db.EnsureNamesCompared("A relationship was not created");
             // Made of the tables' names, which this library lets hold what a name may not: then one must be given.
-            name = FreeName(fromName, toName, taken);
+            name = FreeName(fromName, toName, Taken);
             EnsureValidName(name, "a relationship (made of the tables' names: give it one of its own)", nameof(definition));
+            EnsureNewName(name, "relationship (made of the tables' names: give it one of its own)", nameof(definition));
         }
         var entry = db.Catalog.PrepareRelationship(name);
 
@@ -573,13 +588,13 @@ internal static class SchemaChange
     /// </summary>
     private static string PrimaryIndexName(TableDefinition table, int numbersTaken)
     {
-        var taken = new HashSet<string>(table.Indexes.Select(ix => ix.Name), StringComparer.OrdinalIgnoreCase);
+        var indexNames = table.Indexes.Select(ix => ix.Name).ToList();
         int number = LowestFree(table.Indexes.Select(ix => ix.IndexNumber), skip: numbersTaken);
         for (int n = number; ; n++)
         {
             char letter = n < 26 ? (char)('A' + n) : (char)('a' + (n - 26) % 26);
             string name = ".r" + letter + (n < 52 ? "" : (n / 52).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            if (!taken.Contains(name)) return name;
+            if (ObjectNames.GeneralLegacy.OneWith(indexNames, name) is null) return name;
         }
     }
 
@@ -603,7 +618,7 @@ internal static class SchemaChange
     /// Relationships window names one, kept to what an index's name can be (Jackcess's limits), with a number
     /// after it when a relationship - or an index of the referring table - has it already.
     /// </summary>
-    private static string FreeName(string fromTable, string toTable, HashSet<string> taken)
+    private static string FreeName(string fromTable, string toTable, Func<string, bool> taken)
     {
         int limit = MaxNameLength / 2 - 3;
         string name = (fromTable.Length > limit ? fromTable.Substring(0, limit) : fromTable) + toTable;
@@ -611,9 +626,29 @@ internal static class SchemaChange
         if (name.Length > limit) name = name.Substring(0, limit);
 
         string free = name;
-        for (int i = 1; taken.Contains(free); i++)
+        for (int i = 1; taken(free); i++)
             free = name + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return free;
+    }
+
+    /// <summary>
+    /// Refuses a new name with half of a surrogate pair alone in it. Access keeps such a name as it is given, and
+    /// this library, which writes a name as Unicode text, would write U+FFFD in its place: a name the caller did not
+    /// ask for (#63). A name already in a file with one is read as it is, and compared and found like any other.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The name has such a character. Nothing is changed.</exception>
+    internal static void EnsureNewName(string name, string ofWhat, string parameter)
+    {
+        for (int i = 0; i < name.Length; i++)
+        {
+            char c = name[i];
+            bool paired = char.IsHighSurrogate(c) ? i + 1 < name.Length && char.IsLowSurrogate(name[++i])
+                        : !char.IsLowSurrogate(c);
+            if (!paired)
+                throw new NotSupportedException(
+                    $"A {ofWhat} is not named '{name}': it has half of a surrogate pair alone in it, which this library would " +
+                    $"write as U+FFFD, and so not as given ({parameter}). Nothing was changed.");
+        }
     }
 
     // ── Shared ───────────────────────────────────────────────────────────────
@@ -632,7 +667,7 @@ internal static class SchemaChange
     }
 
     private static Column ColumnOf(TableDefinition table, string name, string what)
-        => table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
+        => table.FindColumn(name)
             ?? throw new ArgumentException($"{what} column '{name}' was not found in table '{table.Name}'. Nothing was changed.");
 
     /// <summary>

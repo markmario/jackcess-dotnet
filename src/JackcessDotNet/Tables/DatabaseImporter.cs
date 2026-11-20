@@ -109,10 +109,11 @@ public static class DatabaseImporter
     /// table numbers later rows on from the highest. Rows the source has marked deleted are not imported.
     /// </para>
     /// <para>
-    /// When the database has a table of that name already - compared without regard to case - and
-    /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
-    /// changed: a source column is matched to the table's column of the same name, whatever its case, and each of
-    /// its values is converted to that column's type when the column holds it exactly
+    /// When the database has a table of that name already - of exactly that name, or of one Access takes as one with it
+    /// - and <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
+    /// changed: a source column is matched to the table's column of the same name - exactly, or else as Access takes
+    /// two names as one, in another case or width, say - and each of its values is converted to that column's type
+    /// when the column holds it exactly
     /// (<see cref="ImportOptions.AppendIfExists"/> says which conversions those are); a source column the table does
     /// not have is left out, and a column of the table the source does not have is null in the added rows.
     /// <see cref="ImportOptions.PrimaryKey"/> is not used. <see cref="ImportOptions.KeepIdentity"/> says whether
@@ -293,10 +294,11 @@ public static class DatabaseImporter
     /// that is 0 is numbered by the table, past every value the objects bring.
     /// </para>
     /// <para>
-    /// When the database has a table of that name already - compared without regard to case - and
-    /// <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
-    /// changed: a property is matched to the table's column of the same name, whatever its case, and each of its
-    /// values is converted to that column's type when the column holds it exactly; a property the table has no
+    /// When the database has a table of that name already - of exactly that name, or of one Access takes as one with it
+    /// - and <see cref="ImportOptions.AppendIfExists"/> is set, the rows are added to it and nothing of the table is
+    /// changed: a property is matched to the table's column of the same name - exactly, or else as Access takes two
+    /// names as one, in another case or width, say - and each of its values is converted to that column's type when
+    /// the column holds it exactly; a property the table has no
     /// column for is left out, and a column no property matches is null in the added rows.
     /// <see cref="ImportOptions.PrimaryKey"/> is not used. <see cref="ImportOptions.KeepIdentity"/> says whether
     /// the rows keep the objects' AutoNumber values.
@@ -419,10 +421,11 @@ public static class DatabaseImporter
                 throw new InvalidOperationException(
                     $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
             var existing = db.GetTable(name);
-            var targetByName = existing.Columns.ToDictionary(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
+            // Each source column goes to the column a lookup of its name finds: of exactly that name, or else of one
+            // Access takes as one with it (ObjectNames).
             var pairs = new List<(DataColumn Source, Column Target)>();
             foreach (DataColumn dc in table.Columns)
-                if (targetByName.TryGetValue(dc.ColumnName, out var target))
+                if (existing.Definition.FindColumn(dc.ColumnName) is { } target)
                     pairs.Add((dc, target));
             if (pairs.Count == 0)
                 throw new InvalidOperationException(
@@ -432,12 +435,12 @@ public static class DatabaseImporter
             var appended = new List<Row>(sourceRows.Count);
             foreach (var (dr, index) in sourceRows)
             {
-                var row = new Row();
+                var row = new Row(pairs.Count, existing.Definition.Names, exactOnly: true);
                 foreach (var (source, target) in pairs)
                 {
                     // The table numbers every row when the import does not keep the source's numbers.
                     if (target.IsAutoNumber && !options.KeepIdentity) continue;
-                    row[target.Name] = Converted(AsText(Cell(dr, source), target, options), target, Where(index), paramName);
+                    row.Put(target.Name, Converted(AsText(Cell(dr, source), target, options), target, Where(index), paramName));
                 }
                 appended.Add(row);
             }
@@ -485,12 +488,12 @@ public static class DatabaseImporter
         var rows = new List<Row>(sourceRows.Count);
         foreach (var (dr, index) in sourceRows)
         {
-            var row = new Row();
+            var row = new Row(columns.Count, ObjectNames.GeneralLegacy, exactOnly: true);
             for (int i = 0; i < columns.Count; i++)
             {
                 object? raw = Cell(dr, sources[i].Source);
                 if (sources[i].AsText && raw is not null) raw = raw.ToString();
-                row[columns[i].Name] = Converted(raw, columns[i], Where(index), paramName);
+                row.Put(columns[i].Name, Converted(raw, columns[i], Where(index), paramName));
             }
             rows.Add(row);
         }
@@ -518,7 +521,7 @@ public static class DatabaseImporter
         var objects = items.Select((item, index) => (Item: item, Index: index)).Where(x => x.Item is not null).ToList();
         object?[] ValuesOf(PropertyInfo property) => objects.Select(o => property.GetValue(o.Item)).ToArray();
 
-        // Pre-existing target: append rows; bind T's properties to the existing schema by name (case-insensitive).
+        // Pre-existing target: append rows; bind T's properties to the existing schema by name (ObjectNames).
         // Source properties that don't have a matching target column are silently skipped.
         if (TableExists(db, name))
         {
@@ -526,10 +529,11 @@ public static class DatabaseImporter
                 throw new InvalidOperationException(
                     $"Table '{name}' already exists. Set ImportOptions.AppendIfExists = true to append rows to it.");
             var existing = db.GetTable(name);
-            var targetByName = existing.Columns.ToDictionary(c => c.Name, c => c, StringComparer.OrdinalIgnoreCase);
+            // Each property goes to the column a lookup of its column's name finds (ObjectNames).
             var matched = properties.Select(p => (Name: ColumnNameOf(p), Property: p))
-                                    .Where(m => targetByName.ContainsKey(m.Name))
-                                    .Select(m => (m.Name, m.Property, Target: targetByName[m.Name]))
+                                    .Select(m => (m.Name, m.Property, Found: existing.Definition.FindColumn(m.Name)))
+                                    .Where(m => m.Found is not null)
+                                    .Select(m => (m.Name, m.Property, Target: m.Found!))
                                     .ToList();
             if (matched.Count == 0)
                 throw new InvalidOperationException(
@@ -540,14 +544,14 @@ public static class DatabaseImporter
             var appended = new List<Row>(objects.Count);
             for (int r = 0; r < objects.Count; r++)
             {
-                var row = new Row();
+                var row = new Row(pairs.Count, existing.Definition.Names, exactOnly: true);
                 foreach (var (values, target) in pairs)
                 {
                     object? raw = values[r];
                     // An identity property still at 0 is an object the database has yet to number; and the table
                     // numbers every row when the import does not keep the source's numbers.
                     if (target.IsAutoNumber && (IsUnnumbered(raw) || !options.KeepIdentity)) continue;
-                    row[target.Name] = Converted(AsText(raw, target, options), target, Where(objects[r].Index), paramName);
+                    row.Put(target.Name, Converted(AsText(raw, target, options), target, Where(objects[r].Index), paramName));
                 }
                 appended.Add(row);
             }
@@ -609,13 +613,13 @@ public static class DatabaseImporter
         var rows = new List<Row>(objects.Count);
         for (int r = 0; r < objects.Count; r++)
         {
-            var row = new Row();
+            var row = new Row(columns.Count, ObjectNames.GeneralLegacy, exactOnly: true);
             for (int i = 0; i < columns.Count; i++)
             {
                 object? raw = cells[i].Values[r];
                 if (columns[i].IsAutoNumber && IsUnnumbered(raw)) continue;
                 if (cells[i].AsText && raw is not null) raw = raw.ToString();
-                row[columns[i].Name] = Converted(raw, columns[i], Where(objects[r].Index), paramName);
+                row.Put(columns[i].Name, Converted(raw, columns[i], Where(objects[r].Index), paramName));
             }
             rows.Add(row);
         }
@@ -624,16 +628,14 @@ public static class DatabaseImporter
 
     private static string ColumnNameOf(PropertyInfo property) => property.GetCustomAttribute<ColumnAttribute>()?.Name ?? property.Name;
 
-    // Two columns whose names are one without regard to case - "A" and "a" of a case-sensitive DataTable - would be one
-    // column of the table: refused before anything is written, as CreateTable refuses them (ObjectNames).
+    // Two columns whose names are one to Access - "A" and "a" of a case-sensitive DataTable, "Straße" and "STRASSE" -
+    // would be one column of the table: refused before anything is written, as CreateTable refuses them (ObjectNames).
     private static void EnsureNamesApart(IReadOnlyList<Column> columns, string source, string paramName)
     {
-        for (int i = 1; i < columns.Count; i++)
-            for (int j = 0; j < i; j++)
-                if (ObjectNames.Same(columns[j].Name, columns[i].Name))
-                    throw new ArgumentException(
-                        $"{source} has two columns, '{columns[j].Name}' and '{columns[i].Name}', whose names are one without regard to case: " +
-                        "a table has one column of a name. Nothing was imported.", paramName);
+        if (ObjectNames.GeneralLegacy.FirstTwoThatAreOne(columns.Select(c => c.Name).ToList()) is (var first, var second))
+            throw new ArgumentException(
+                $"{source} has two columns, '{first}' and '{second}', whose names are one to Access: " +
+                "a table has one column of a name. Nothing was imported.", paramName);
     }
 
     // A key on a Decimal column is refused before anything is written, as CreateTable refuses one: this library writes
@@ -642,8 +644,9 @@ public static class DatabaseImporter
     private static void EnsureKeysWritten(IReadOnlyList<Column> columns, IReadOnlyList<string>? key, string source)
     {
         if (key is null) return;
+        var names = columns.Select(c => c.Name).ToList();
         foreach (string name in key)
-            if (columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is { DataType: DataType.Decimal } column)
+            if (ObjectNames.GeneralLegacy.Find(names, name) is >= 0 and var at && columns[at] is { DataType: DataType.Decimal } column)
                 throw new NotSupportedException(
                     $"{source} has its key on '{column.Name}', a Decimal column, whose index keys this library does not write. " +
                     "A long or a uint is a Decimal in a file before Access 2016's format, which has no Large Number, and a Large " +
@@ -725,18 +728,10 @@ public static class DatabaseImporter
     // ── Append-into-existing-table helpers ───────────────────────────────────
 
     /// <summary>
-    /// Case-insensitive check for whether <paramref name="db"/> already has a
-    /// table named <paramref name="name"/>. <see cref="Database.GetTableNames"/>
-    /// already returns the case as it appears in MSysObjects, so we compare
-    /// with <see cref="StringComparison.OrdinalIgnoreCase"/>.
+    /// Whether <paramref name="db"/> already has one of its own tables named <paramref name="name"/>: of exactly that
+    /// name, or of one Access takes as one with it (<see cref="ObjectNames"/>).
     /// </summary>
-    private static bool TableExists(Database db, string name)
-    {
-        foreach (var existing in db.GetTableNames())
-            if (string.Equals(existing, name, StringComparison.OrdinalIgnoreCase))
-                return true;
-        return false;
-    }
+    private static bool TableExists(Database db, string name) => db.Catalog.Names.Find(db.GetTableNames(), name) >= 0;
 
     /// <summary>
     /// Inserts the rows of one import. For as long as it takes, the table itself says whether a row may bring its
@@ -797,7 +792,7 @@ public static class DatabaseImporter
         if (supplied.Count == 0) return;
 
         var key = target.Definition.EffectivePrimaryKeyColumns;
-        if (key.Count == 1 && string.Equals(key[0], identity.Name, StringComparison.OrdinalIgnoreCase))
+        if (key.Count == 1 && key[0] == identity.Name)
         {
             var seen = new HashSet<int>();
             foreach (int number in supplied)
