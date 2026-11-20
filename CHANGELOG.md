@@ -578,8 +578,9 @@ changes with them.
   and `Validate` give each name the column of exactly that name, and otherwise the one a lookup of it finds, and
   refuse two names that go to one column with `ArgumentException`, naming both and the column, before anything is
   written. Such a row kept the value set last: `new Row { ["Id"] = 1, ["ID"] = 2 }` inserted 2, and now throws. An
-  AutoNumber is given back under the row's name for its column. A row read from a table finds a name as it did, and
-  given a value by the name of one of the table's columns it was not read with, gives that column the value.
+  AutoNumber is given back under the row's name for its column, by `InsertRange` and `BulkInsert` too. A row read
+  from a table sends a name of another spelling to the column a lookup of it finds in the table, as an insert does,
+  whichever columns it was read with.
 - **`DataType` members are renamed** (their values are not): `Int` is `Int16`, `Long` is `Int32`, `BigInt` is
   `Int64`, `Float` is `Single`, `Numeric` is `Decimal`, `ShortDateTime` is `DateTime`, `Money` is `Currency`,
   `Ole` is `OleObject`, `ExtendedDateTime` is `DateTimeExtended`.

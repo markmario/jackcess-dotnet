@@ -629,6 +629,35 @@ public sealed class ObjectNameTests : IDisposable
         Assert.Equal(new[] { (1, 7), (2, 8) }, reopen.GetTable("T").Rows.Select(row => ((int)row["x"]!, (int)row["x  "]!)));
     }
 
+    // A row read with only "x  " of the four columns x, "x  ", xµ and xμ, given a value by "X": the name goes where it
+    // goes from a whole row and from an insert - to x, the first column a lookup of it finds - and not to the entry of
+    // "x  " the row holds. Before it is given one, the row has no value for "X".
+    [Fact]
+    public void A_row_read_with_some_of_the_columns_sends_a_name_of_another_spelling_where_a_whole_row_does()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("Dup", new[] { Long("x"), Long("y  "), Long(X(0xB5)), Long(X(0x3BC)) });
+        RenameInDefinition(_mdb, "Dup", "y  ", "x  ");
+        using (var db = Database.Open(_mdb))
+        {
+            var table = db.GetTable("Dup");
+            table.Insert(new Row { ["x"] = 1, ["x  "] = 2, [X(0xB5)] = 3, [X(0x3BC)] = 4 });
+            var cursor = table.CreateCursor();
+            cursor.ColumnNames = new[] { "x  " };
+            Assert.True(cursor.MoveNext());
+            var row = cursor.Current!;
+            Assert.False(row.TryGetValue("X", out _));
+            row["X"] = 777;
+            Assert.Equal((777, 2), ((int)row["X"]!, (int)row["x  "]!));
+            Assert.Equal(new[] { "x  ", "x" }, row.Keys);
+            table.Update(row);
+        }
+        using var reopen = Database.Open(_mdb);
+        var read = reopen.GetTable("Dup").Rows.Single();
+        Assert.Equal(new object?[] { 777, 2, 3, 4 }, new[] { "x", "x  ", X(0xB5), X(0x3BC) }.Select(name => read[name]));
+        Assert.Equal(777, read["X"]);
+    }
+
     // A row read without column "x  ", beside x: given a value by the name of the column it was not read with, it gives
     // that column the value, not x, whose name is one with it.
     [Fact]

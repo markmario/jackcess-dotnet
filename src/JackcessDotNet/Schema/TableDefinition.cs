@@ -126,9 +126,12 @@ internal sealed class TableDefinition
     {
         for (int i = 0; i < Columns.Count; i++)
             if (Columns[i].Name == name) return Columns[i];
-        int at = Names.Find(Columns.Select(c => c.Name).ToList(), name);
+        int at = Names.Find(_columnNames ??= Columns.Select(c => c.Name).ToList(), name);
         return at < 0 ? null : Columns[at];
     }
+
+    // The columns' names in their order, for a lookup by a name of another spelling: a row a table gave looks up so.
+    private List<string>? _columnNames;
 
     /// <summary>The index a lookup of <paramref name="name"/> finds, as <see cref="FindColumn"/> finds a column; null when there is none.</summary>
     internal Index? FindIndex(string name)

@@ -165,8 +165,9 @@ and the two definitions hold the same index slots.
   other. So a table with two columns whose names are one keeps a value, a map and a relationship of each: a row
   given `x`, `x  ` (two spaces), `xµ` and `xμ` for a table DAO made with those four fields writes each value to its
   own, and ACE reads the four back. A row a table gives has an entry for each column it was read with, under the
-  column's name, and finds a name as a lookup does; given a value by the name of one of the table's columns, it
-  gives that column the value, though it was read without it.
+  column's name, and a name of another spelling goes to the column a lookup of it finds in the table, where an
+  insert sends it: a row read with some of the columns reads and sets it as a whole row does, and given a value for
+  a column it was read without, adds it under the column's name.
 - **The comparison throws for no name**, and a name already in a file stands in the way only of a new name that
   is one with it. Half of a surrogate pair alone in a name, which Access keeps as it is given, is read as the file
   holds it and found by that name; a new name with one is refused with `NotSupportedException`. What is renamed is
