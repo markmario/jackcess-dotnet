@@ -341,14 +341,21 @@ public sealed class CreateTableUndoTests : IDisposable
     {
         _file = _path + ".mdb";
         var file = new PageFile(_file, JetFormat.For(FileFormat.Access2000), FileMode.Create) { WritesBeforeFailure = 3 };
-        // Another handle on the file, opened without FileShare.Delete: the incomplete file cannot be removed.
-        using (var other = new FileStream(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        // The file made read-only while it is being written: the incomplete file cannot be removed. (No other handle
+        // can hold it meanwhile: a file made anew is shared with no one until it is closed, as DAO holds a database
+        // it creates - #62. An attribute is set without one.)
+        File.SetAttributes(_file, FileAttributes.ReadOnly);
+        try
         {
             var left = Assert.Throws<IOException>(() => Database.CreateIn(file));
             Assert.Contains($"'{_file}' could not be written, and the incomplete file it left there could not be removed", left.Message);
             var failure = Assert.IsType<IOException>(left.InnerException);
             Assert.Contains("a test asked for the write to fail", failure.Message);
-            Assert.Equal(3 * 4096, other.Length);   // what was written before the failure
+            Assert.Equal(3 * 4096, new FileInfo(_file).Length);   // what was written before the failure
+        }
+        finally
+        {
+            File.SetAttributes(_file, FileAttributes.Normal);
         }
         // The file is the caller's to delete, and nothing of this library holds it.
         Assert.True(File.Exists(_file));
