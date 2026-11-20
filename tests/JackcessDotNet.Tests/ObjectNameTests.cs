@@ -10,8 +10,8 @@ namespace JackcessDotNet.Tests;
 /// compares them by (<see cref="ObjectNames"/>), the same on every target. A table, column, index or relationship is
 /// refused a name that is one with another of its kind, before anything is written, and a name is looked up exactly
 /// first. The pairs are those DAO 16 and Jet 4.0 were asked about, as field, table and index names, in databases that
-/// sort in General - Legacy and General and in an Access 97 file (Assets/dao-object-names.tsv, which
-/// tools/dao-object-names.ps1 makes). A name already in a file, whatever it holds, stands in the way of nothing but a
+/// sort in General - Legacy and General and in an Access 97 file: 743 of the 18,140 swept (Assets/dao-object-names.tsv,
+/// which tools/dao-object-names.ps1 makes). A name already in a file, whatever it holds, stands in the way of nothing but a
 /// new name it is one with (Assets/dao-odd-names.accdb, which tools/odd-names-fixture.ps1 makes).
 /// </summary>
 public sealed class ObjectNameTests : IDisposable
@@ -82,14 +82,15 @@ public sealed class ObjectNameTests : IDisposable
                 }
         }
         Assert.True(wrong.Count == 0, $"{wrong.Count} verdicts this library does not give:\n" + string.Join("\n", wrong.Take(100)));
-        // The file is whole: 108,795 verdicts, 18,590 of them one.
-        Assert.True(asked > 100_000 && one > 15_000 && apart > 80_000, $"{asked} verdicts, {one} one, {apart} two");
+        // The file is whole: 4,689 verdicts, 3,145 of them one.
+        Assert.True(asked > 4_000 && one > 3_000 && apart > 1_500, $"{asked} verdicts, {one} one, {apart} two");
         // Of the names Access keeps apart, those taken as one here are so on purpose (ObjectNames): a name with a mark
         // Access keys by the characters around it (ー, 々, ゝ, the shadda), any of whose readings is one with the other;
         // and a name in a database that sorts in General, compared there by General's keys and by General - Legacy's.
         // Access compares a table's name there by the one in its catalog and the other in its lookups, and a field's by
-        // the other or the one as its process has used such a database before. 47 and 3,739 verdicts of the 90,205.
-        Assert.True(withMarks < 100 && inGeneral < 4_000, $"{withMarks} verdicts of two with marks and {inGeneral} in General are one here");
+        // the other or the one as its process has used such a database before. 41 and 164 of the file's 1,544 verdicts of
+        // two; 47 and 3,739 of the 90,205 in the whole sweep.
+        Assert.True(withMarks < 60 && inGeneral < 250, $"{withMarks} verdicts of two with marks and {inGeneral} in General are one here");
     }
 
     private static bool IsMark(char c) => TextIndexCodes.GeneralLegacy.IsContextDependent(c) || TextIndexCodes.General.IsContextDependent(c);

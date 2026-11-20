@@ -108,13 +108,13 @@ and the two definitions hold the same index slots.
     order, and a column's or an index's by those and General - Legacy's, by which DAO's Fields and Indexes take
     some names as one there (`xÞ` and `xTH`).
 - **Measured.** DAO 16 and Jet 4.0 were asked about 18,140 pairs of names, as field, table and index names, in a
-  database of each of those orders (`tests/JackcessDotNet.Tests/Assets/dao-object-names.tsv`, which
-  `tools/dao-object-names.ps1` makes): each character of the BMP that has another form - its other case, its
-  canonical and compatibility forms and their case, its other kana, the letters it sorts as - after an `x`,
-  against that form; trailing and inner spaces, and the characters General - Legacy has no code for; the names of
-  code page 1252 against their letters without an accent; and names with the marks below. Every pair DAO takes as
-  one, or makes as two and then confuses, is one here. Of the 90,205 verdicts in which DAO keeps two names apart
-  and tells them apart, 3,786 are one here, each for one of the two reasons that follow.
+  database of each of those orders, by `tools/dao-object-names.ps1`; the engine's tests hold 743 of them
+  (`tests/JackcessDotNet.Tests/Assets/dao-object-names.tsv`). The pairs: each character of the BMP that has another
+  form - its other case, its canonical and compatibility forms and their case, its other kana, the letters it sorts
+  as - after an `x`, against that form; trailing and inner spaces, and the characters General - Legacy has no code
+  for; the names of code page 1252 against their letters without an accent; and names with the marks below. Every
+  pair DAO takes as one, or makes as two and then confuses, is one here. Of the 90,205 verdicts in which DAO keeps
+  two names apart and tells them apart, 3,786 are one here, each for one of the two reasons that follow.
 - **Names Access allows that are refused**, so that no name made here is one Access's lookups take for another:
   - In a database that sorts in General, a name that one of the two orders' keys takes as one with another's of
     its kind, which the other's keep apart and DAO made beside it in its own process: 3,739 of the verdicts, most of

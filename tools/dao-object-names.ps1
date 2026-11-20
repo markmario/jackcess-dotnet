@@ -28,14 +28,17 @@
     a table it then appends, two tables, two indexes of a table. It reads the pairs from -Pairs - the asset's first
     three columns - and rewrites the order's column, leaving the others as they are.
 
-    The pairs were made from every character of the BMP from U+0020 that has another form on .NET 10 or .NET Framework
-    4.8 (its upper and lower case, its NFC, NFD, NFKC and NFKD forms and their case, its other kana, the letters it
-    sorts as) as "x" + c and "x" + form, each pair once; the names of code page 1252 against their letters without an
-    accent, for the Access 97 order; trailing and inner spaces and the characters General - Legacy has no codes for;
-    and names with the marks Access keys by the characters around them (ー, 々, ゝ, the shadda).
+    The sweep's pairs were made from every character of the BMP from U+0020 that has another form on .NET 10 or .NET
+    Framework 4.8 (its upper and lower case, its NFC, NFD, NFKC and NFKD forms and their case, its other kana, the
+    letters it sorts as) as "x" + c and "x" + form, each pair once; the names of code page 1252 against their letters
+    without an accent, for the Access 97 order; trailing and inner spaces and the characters General - Legacy has no
+    codes for; and names with the marks Access keys by the characters around them (ー, 々, ゝ, the shadda).
 
     Measured with DAO 16 (Microsoft 365) and Jet 4.0, 2026-11: 18,140 pairs, 18,065 of them asked in each Jet4 order
-    and 135 in Access 97's, about an hour an order.
+    and 135 in Access 97's, about an hour an order; the pull request of markmario/jackcess-dotnet#63 has the results.
+    The asset keeps 743 of them, which this script asks about again in seconds: every pair DAO's lookups confused,
+    every pair asked in Access 97, every pair of spaces, marks and letters, and a sample of the rest. Give -Pairs a
+    file of the whole sweep's pairs to ask about it all.
 
 .EXAMPLE
     pwsh tools/dao-object-names.ps1 -Order GeneralLegacy
