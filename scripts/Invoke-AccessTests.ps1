@@ -161,8 +161,13 @@ $pieces = @{
         @{ Name = 'Mdb'; Method = 'ace_reads_every_long_value_the_engine_writes_in_a_table_ace_made'; Cases = 'extension: ".mdb")' }
         @{ Name = 'Accdb'; Method = 'ace_reads_every_long_value_the_engine_writes_in_a_table_ace_made'; Cases = 'extension: ".accdb")' }
     )
-    # Seven minutes a case on CI, where a read-only open reads the index again at each of 3,000 moves; 25 s with Access.
+    # Ten to twenty times as long on CI as with Access on a workstation, where its whole class takes two minutes.
     FileSharingInAccessTests = @(
+        @{ Name = 'SecondDatabase'; Methods = 'a_second_database_is_not_opened_to_write_a_file_and_the_first_loses_nothing' }
+        @{ Name = 'WhileAceWrites'; Methods = 'while_ace_or_dao_writes_to_a_file_the_engine_does_not_write_to_it_and_nothing_is_lost' }
+        @{ Name = 'WhileEngineWrites'; Methods = 'while_the_engine_has_a_file_open_to_write_ace_and_dao_cannot_write_to_it_and_nothing_is_lost' }
+        @{ Name = 'OpenReadOnly'; Methods = 'the_engine_opens_to_write_a_file_ace_and_dao_have_open_read_only' }
+        @{ Name = 'Exclusive'; Methods = 'a_file_ace_or_dao_has_open_exclusively_is_not_opened_by_the_engine_at_all' }
         @{ Name = 'AheadMdb'; Method = 'a_read_only_index_cursor_gives_once_a_row_ace_moves_ahead_of_it'; Cases = 'extension: ".mdb")' }
         @{ Name = 'AheadAccdb'; Method = 'a_read_only_index_cursor_gives_once_a_row_ace_moves_ahead_of_it'; Cases = 'extension: ".accdb")' }
     )
@@ -183,6 +188,8 @@ $table = @{
     samples = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
         FileSharingInAccessTests = 60; 'FileSharingInAccessTests.AheadMdb' = 430; 'FileSharingInAccessTests.AheadAccdb' = 430
+        'FileSharingInAccessTests.SecondDatabase' = 400; 'FileSharingInAccessTests.WhileAceWrites' = 250
+        'FileSharingInAccessTests.WhileEngineWrites' = 400; 'FileSharingInAccessTests.OpenReadOnly' = 220; 'FileSharingInAccessTests.Exclusive' = 180
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 41; Access97InAccessTests = 3; CorpusInAccessTests = 12; 'CorpusInAccessTests.ReadsAccdb' = 129
@@ -206,6 +213,8 @@ $table = @{
     full = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
         FileSharingInAccessTests = 60; 'FileSharingInAccessTests.AheadMdb' = 430; 'FileSharingInAccessTests.AheadAccdb' = 430
+        'FileSharingInAccessTests.SecondDatabase' = 400; 'FileSharingInAccessTests.WhileAceWrites' = 250
+        'FileSharingInAccessTests.WhileEngineWrites' = 400; 'FileSharingInAccessTests.OpenReadOnly' = 220; 'FileSharingInAccessTests.Exclusive' = 180
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 28; Access97InAccessTests = 2; CorpusInAccessTests = 24; 'CorpusInAccessTests.ReadsAccdb' = 131
