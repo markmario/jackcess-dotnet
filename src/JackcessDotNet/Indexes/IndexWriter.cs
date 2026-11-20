@@ -238,6 +238,193 @@ internal sealed class IndexWriter
     }
 
     /// <summary>
+    /// Whether the tree of <paramref name="target"/> holds no entry: its root is a leaf with none, as an index Access
+    /// made for a table with no rows has it.
+    /// </summary>
+    internal bool IsEmpty(Target target)
+    {
+        var root = Read(target.RootPage);
+        return root.IsLeaf && root.Entries.Count == 0;
+    }
+
+    /// <summary>
+    /// Writes the whole tree of an index whose tree holds no entry (<see cref="IsEmpty"/>) from
+    /// <paramref name="sorted"/>, its entries in key order and, under one key, in row-pointer order - as Access
+    /// builds a tree when it compacts a file, page after page, not entry after entry. Each leaf takes entries until
+    /// the next does not fit it; each node above takes, for every child but its last, a copy of the last entry
+    /// under that child, its tail leading to the last; every level is chained through prev/next, each page names
+    /// its height above the leaves and the table's TDEF, and every page but the root, which stays on its page, is
+    /// added to the index's usage map. The rules are those <see cref="Insert"/> keeps, so the tree is one Access
+    /// reads and adds to, and this writer goes on adding to.
+    /// <para>
+    /// The entries are gone through once and only a leaf's worth is held, with the last entry of each leaf written
+    /// for the nodes: the leaves are written as they fill, each when the one after it is begun.
+    /// </para>
+    /// </summary>
+    internal void Build(Target target, IEnumerable<(byte[] Key, int RowPointer)> sorted)
+    {
+        var root = ReadFor(target, target.RootPage);
+        if (!root.IsLeaf || root.Entries.Count > 0)
+            throw new InvalidOperationException($"Index page {target.RootPage} holds entries: only a tree that holds none is built whole.");
+
+        int room = _format.PageSize - EntriesStart;
+        var leaves = new List<(int Number, Entry Last)>();
+        var current = new List<Entry>();
+        int keyBytes = 0, prefix = 0;
+        List<Entry>? pending = null;      // the leaf closed last, written when the next one is numbered
+        int pendingNumber = 0, pendingPrev = 0;
+
+        void Close(List<Entry> entries)
+        {
+            int number = _allocator.AllocatePage();
+            if (pending is not null) WriteLeaf(pending, pendingNumber, pendingPrev, number, target);
+            pendingPrev   = pending is null ? 0 : pendingNumber;
+            pending       = entries;
+            pendingNumber = number;
+            leaves.Add((number, entries[^1]));
+        }
+
+        foreach (var (key, rowPointer) in sorted)
+        {
+            var e = new Entry(key, rowPointer, 0);
+            if (current.Count > 0)
+            {
+                int shared = Shared(current[0].Key, key, current.Count == 1 ? int.MaxValue : prefix);
+                int size = keyBytes + key.Length + (current.Count + 1) * LeafTrailerLen - current.Count * shared;
+                if (size > room)
+                {
+                    Close(current);
+                    current = new List<Entry>();
+                    keyBytes = 0;
+                    prefix = 0;
+                }
+                else prefix = shared;
+            }
+            current.Add(e);
+            keyBytes += key.Length;
+        }
+        if (current.Count == 0) return;
+
+        if (leaves.Count == 0)
+        {
+            // One leaf holds them all: the root.
+            var leaf = new IndexPage(root.Number, isLeaf: true, root.Raw) { Tdef = target.TdefPage };
+            leaf.Entries.AddRange(current);
+            Write(leaf);
+            return;
+        }
+        Close(current);
+        WriteLeaf(pending!, pendingNumber, pendingPrev, 0, target);
+
+        // Each level of nodes above, until one page holds a level: the root, which stays on its page.
+        var children = leaves;
+        for (int height = 1; ; height++)
+        {
+            var nodes = PackNodes(children);
+            if (nodes.Count == 1)
+            {
+                var top = new IndexPage(root.Number, isLeaf: false, root.Raw) { Tdef = target.TdefPage, Level = height, Tail = nodes[0].Tail };
+                top.Entries.AddRange(nodes[0].Entries);
+                Write(top);
+                return;
+            }
+            WriteLevel(nodes, target, isLeaf: false, height);
+            children = nodes.Select(n => (n.Number, n.Last)).ToList();
+        }
+    }
+
+    private void WriteLeaf(List<Entry> entries, int number, int prev, int next, Target target)
+    {
+        var page = new IndexPage(number, isLeaf: true, raw: null) { Tdef = target.TdefPage, Prev = prev, Next = next };
+        page.Entries.AddRange(entries);
+        Write(page);
+        Own(target, number);
+    }
+
+    /// <summary>The entries of one page of a tree being built, and the last entry under it, which its parent holds.</summary>
+    private sealed class Packed
+    {
+        public List<Entry> Entries = new();
+        public int Tail;
+        public Entry Last;
+        public int Number;
+    }
+
+    // Nodes over the pages of the level below, in order: each holds, for every child but its last, a copy of the
+    // last entry under the child with the child's page, and its tail is its last child. A node is never left with
+    // its tail alone: the node before gives it a child.
+    private List<Packed> PackNodes(List<(int Number, Entry Last)> children)
+    {
+        var nodes = new List<Packed>();
+        Packed? current = null;
+        (int Number, Entry Last) pending = default;
+        foreach (var child in children)
+        {
+            if (current is null)
+            {
+                current = new Packed();
+                pending = child;
+                continue;
+            }
+            current.Entries.Add(new Entry(pending.Last.Key, pending.Last.RowPtr, pending.Number));
+            if (!Fits(false, current.Entries) && current.Entries.Count > 1)
+            {
+                // The entry for the child before does not fit: that child is this node's tail, and a new node begins.
+                current.Entries.RemoveAt(current.Entries.Count - 1);
+                current.Tail = pending.Number;
+                current.Last = pending.Last;
+                nodes.Add(current);
+                current = new Packed();
+            }
+            pending = child;
+        }
+        current!.Tail = pending.Number;
+        current.Last  = pending.Last;
+        nodes.Add(current);
+
+        if (nodes.Count > 1 && nodes[^1].Entries.Count == 0)
+        {
+            // The last node has its tail alone: the node before gives up its own tail to it.
+            var before = nodes[^2];
+            var last   = nodes[^1];
+            var moved  = before.Entries[^1];
+            last.Entries.Add(new Entry(before.Last.Key, before.Last.RowPtr, before.Tail));
+            before.Tail = moved.SubPage;
+            before.Last = new Entry(moved.Key, moved.RowPtr, 0);
+            before.Entries.RemoveAt(before.Entries.Count - 1);
+        }
+        return nodes;
+    }
+
+    // Gives each page of a level a new page, chains them, writes them and adds them to the index's usage map.
+    private void WriteLevel(List<Packed> pages, Target target, bool isLeaf, int height)
+    {
+        foreach (var p in pages) p.Number = _allocator.AllocatePage();
+        for (int i = 0; i < pages.Count; i++)
+        {
+            var page = new IndexPage(pages[i].Number, isLeaf, raw: null)
+            {
+                Tdef  = target.TdefPage,
+                Level = height,
+                Prev  = i > 0 ? pages[i - 1].Number : 0,
+                Next  = i < pages.Count - 1 ? pages[i + 1].Number : 0,
+                Tail  = isLeaf ? 0 : pages[i].Tail,
+            };
+            page.Entries.AddRange(pages[i].Entries);
+            Write(page);
+            Own(target, page.Number);
+        }
+    }
+
+    // How many bytes a and b begin with alike, up to limit.
+    private static int Shared(byte[] a, byte[] b, int limit)
+    {
+        int n = Math.Min(Math.Min(a.Length, b.Length), limit), shared = 0;
+        while (shared < n && a[shared] == b[shared]) shared++;
+        return shared;
+    }
+
+    /// <summary>
     /// Whether the entry at <paramref name="before"/> or at <paramref name="after"/> in a leaf's
     /// <paramref name="entries"/> has <paramref name="key"/>. Entries are in key order, so another entry under a
     /// key is beside it. The entry before a leaf's first is the last under the leaf before, which the nearest node
@@ -397,6 +584,25 @@ internal sealed class IndexWriter
             }
         }
         return another;
+    }
+
+    /// <summary>
+    /// Whether the tree holds the entry (<paramref name="key"/>, <paramref name="rowPointer"/>), found one way down
+    /// as <see cref="Remove(Target, byte[], int, out bool)"/> goes, the same pages read and nothing written; null
+    /// when a node on the way is in the form earlier versions of this library wrote, without a tail, which only a
+    /// change brings to the form the way down is decided by.
+    /// </summary>
+    internal bool? Holds(Target target, byte[] key, int rowPointer)
+    {
+        var entry = new Entry(key, rowPointer, 0);
+        var page = Read(target.RootPage);
+        while (!page.IsLeaf)
+        {
+            if (page.Tail <= 0) return page.Entries.Count == 0 ? false : null;
+            int slot = FirstAtLeast(page.Entries, entry);
+            page = Read(slot >= 0 ? page.Entries[slot].SubPage : page.Tail);
+        }
+        return page.Entries.Exists(e => Compare(e, entry) == 0);
     }
 
     /// <summary>

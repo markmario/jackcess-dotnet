@@ -327,8 +327,8 @@ internal static class SchemaChange
             umapPage = db.Allocator.AllocateUmapPage(rows: 1);
             UsageMap.AddPage(file, db.Allocator, umapPage, 0, root);
             var target = new IndexWriter.Target(table.TdefPageNumber, root, umapPage, 0);
-            foreach (var (key, rowPointer) in planned.Entries)
-                writer.Insert(target, key, rowPointer);
+            // The entries are in key order: the tree is written page after page, as Access builds one.
+            writer.Build(target, planned.Entries);
             data = -1;
         }
 

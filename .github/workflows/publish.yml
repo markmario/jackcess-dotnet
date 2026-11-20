@@ -5,6 +5,8 @@ name: Release
 #   a vX.Y.Z tag      -> the tag is checked (scripts/Assert-ReleaseTag.ps1), the tests run, the package is packed at
 #                        X.Y.Z and checked, and - once someone approves the `nuget` environment - it is pushed to
 #                        nuget.org and a GitHub Release is made.
+#   a vX.Y.Z-suffix tag -> the same, as a pre-release (v2.0.0-preview.1): nuget.org lists it as one, and the GitHub
+#                        Release is marked a pre-release. Its X.Y.Z must still be above every release so far.
 #   anything else     -> a rehearsal (a run by hand too, even from a tag): the guard is run against the next version, and the package is packed and checked
 #                        at <next>-ci.<run>. Nothing is published. ci.yml runs the tests for these.
 #   a run by hand with check-trusted-publishing ticked
@@ -33,8 +35,10 @@ permissions:
   contents: read
 
 # A tag's run is never cancelled: it is the release. A newer push to a branch makes its older rehearsal redundant.
+# The event is part of the group, so a run by hand is in a group of its own: started from a release tag, as the
+# Trusted Publishing check is, it would otherwise share that tag's group and cancel the release while it runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
 
 env:
@@ -83,8 +87,9 @@ jobs:
             10.0.x
             11.0.x
 
-      # A tag is checked before anything is built: a plain vX.Y.Z on main's own line (the merge commit), above every
-      # release so far, at or above the csproj's MinimumReleaseVersion, and not already released.
+      # A tag is checked before anything is built: vX.Y.Z, or vX.Y.Z-suffix for a pre-release, on main's own line (the
+      # merge commit), its X.Y.Z above every release so far and at or above the csproj's MinimumReleaseVersion, and
+      # not already released.
       - name: Check the release tag
         id: tag
         if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -94,7 +99,7 @@ jobs:
           SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = ./scripts/Assert-ReleaseTag.ps1 -Tag $env:REF_NAME -Sha $env:SHA -DefaultBranch main -FloorFile $env:PROJECT
+          $version = ./scripts/Assert-ReleaseTag.ps1 -Tag $env:REF_NAME -Sha $env:SHA -DefaultBranch main -AllowPrerelease -FloorFile $env:PROJECT
           "version=$version" >> $env:GITHUB_OUTPUT
 
       # Every untagged run exercises the guard the way a tag run would, against the next patch of the latest release
@@ -119,6 +124,11 @@ jobs:
           $printed = ./scripts/Assert-ReleaseTag.ps1 -Tag "$prefix$next" -Sha (git rev-parse "origin/$branch") -DefaultBranch $branch -TagPrefix $prefix -FloorFile $env:PROJECT
           if ("$printed" -ne "$next") { throw "The guard printed '$printed' for $prefix$next" }
           "The guard accepts $prefix$next on $branch"
+          # A pre-release of that version, as a tag run asks for it.
+          $pre = "$next-rehearsal.1"
+          $printed = ./scripts/Assert-ReleaseTag.ps1 -Tag "$prefix$pre" -Sha (git rev-parse "origin/$branch") -DefaultBranch $branch -TagPrefix $prefix -AllowPrerelease -FloorFile $env:PROJECT
+          if ("$printed" -ne "$pre") { throw "The guard printed '$printed' for $prefix$pre" }
+          "The guard accepts $prefix$pre on $branch"
           "version=$next-ci.$env:RUN" >> $env:GITHUB_OUTPUT
 
       - name: Version
@@ -239,23 +249,27 @@ jobs:
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
-      # The guard refuses a tag that has a GitHub Release, so the release marks the version as published.
+      # The guard refuses a tag that has a GitHub Release, so the release marks the version as published. A version
+      # with a suffix is a pre-release: its GitHub Release is marked one, and so is never shown as the latest.
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.pack.outputs.version }}
         run: |
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$TAG" artifacts/*.nupkg artifacts/*.snupkg \
             --repo "$GITHUB_REPOSITORY" \
             --title "$PACKAGE_ID $VERSION" \
             --notes "https://www.nuget.org/packages/$PACKAGE_ID/$VERSION - see CHANGELOG.md for what changed." \
             --generate-notes \
-            --verify-tag
+            --verify-tag "${prerelease[@]}"
 
   # Shows that the nuget.org policy, the `nuget` environment and NUGET_USER agree, without a release: the publish
   # job's login, with the same approval, and nothing after it. The key nuget.org issues is never printed or used,
-  # and it lapses within the hour. The policy's first login also locks it to this repository's GitHub IDs.
+  # and it lapses within the hour. A login does not make a policy that nuget.org lists as temporarily active a
+  # permanent one: its documentation says a successful publish does.
   trusted-publishing-check:
     name: Check Trusted Publishing (pushes nothing)
     if: github.event_name == 'workflow_dispatch' && inputs.check-trusted-publishing

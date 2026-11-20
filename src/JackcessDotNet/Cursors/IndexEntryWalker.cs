@@ -5,7 +5,8 @@ namespace JackcessDotNet;
 /// <see cref="IndexCursor"/>. A place in the index is an entry's key and row pointer, not a page and a slot, so it
 /// stays good however the tree is changed between two moves: each move finds its entry again from the place it
 /// is given. The leaf last read is kept and used while nothing has been written to the file
-/// (<see cref="PageFile.ChangeStamp"/>), so walking an index that is not being changed reads each leaf once.
+/// (<see cref="PageFile.ChangeStamp"/>), so walking an index that is not being changed reads each leaf once - unless
+/// its cursor lets go of it (<see cref="Forget"/>), as one over a file another program may write to does at each move.
 /// </summary>
 internal sealed class IndexEntryWalker
 {
@@ -93,6 +94,9 @@ internal sealed class IndexEntryWalker
     }
 
     private bool IsKept => _leaf is not null && _stamp == _file.ChangeStamp;
+
+    /// <summary>Lets go of the leaf last read: the next place is found from the index's root, as the file has it then.</summary>
+    internal void Forget() => _leaf = null;
 
     private IndexWriter.Leaf Keep(IndexWriter.Leaf leaf)
     {

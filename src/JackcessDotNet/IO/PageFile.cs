@@ -8,6 +8,7 @@ internal sealed class PageFile : IDisposable
     private readonly JetFormat _format;
     private readonly string _path;
     private readonly bool _readOnly;
+    private readonly bool _openedToRead;
 
     private bool _disposed;
 
@@ -16,10 +17,11 @@ internal sealed class PageFile : IDisposable
     public int PageCount { get { ThrowIfDisposed(); return (int)(_stream.Length / _format.PageSize); } }
 
     /// <summary>
-    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read, or
-    /// one protected by a codec that writes nothing (<see cref="ICodecHandler.WriteRefusal"/>).
+    /// Whether the file is only read (<see cref="ReadOnlyRefusal"/> says why): one in a format that is only read, one
+    /// opened only to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), or one protected by a codec that writes
+    /// nothing (<see cref="ICodecHandler.WriteRefusal"/>).
     /// </summary>
-    internal bool IsReadOnly => _readOnly || Codec.WriteRefusal is not null;
+    internal bool IsReadOnly => _readOnly || _openedToRead || Codec.WriteRefusal is not null;
 
     private void ThrowIfDisposed()
     {
@@ -44,10 +46,19 @@ internal sealed class PageFile : IDisposable
     internal long UndoReadCount { get; private set; }
 
     /// <summary>
-    /// A number that changes whenever the file's pages may have: when one is written, and when a change is taken
-    /// back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by.
+    /// A number that changes whenever this handle writes the file's pages: when one is written, and when a change is
+    /// taken back. What a reader that keeps a page it has read - a cursor - knows a kept page is still good by, when
+    /// no one else writes to the file (<see cref="SharedWithWriters"/>).
     /// </summary>
     internal long ChangeStamp { get; private set; }
+
+    /// <summary>
+    /// Whether another program, or another <see cref="Database"/>, may write to the file while this one has it open:
+    /// a file held only to be read shares writing (the constructor). Its pages can change between two readings though
+    /// nothing is written here, so <see cref="ChangeStamp"/> says nothing of them, and a reader keeps a page no longer
+    /// than one move of a cursor (#62).
+    /// </summary>
+    internal bool SharedWithWriters => _openedToRead || _readOnly;
 
     /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written
@@ -118,11 +129,26 @@ internal sealed class PageFile : IDisposable
         : this(path, format, mode, FileAccess.ReadWrite) { }
 
     /// <summary>
-    /// Opens the underlying file. <paramref name="access"/> should be
-    /// <see cref="FileAccess.Read"/> when the caller will not mutate pages
-    /// (read-only access avoids contending with other readers for write locks
-    /// on corpus files mounted from read-only filesystems or git checkouts).
+    /// Opens the underlying file. <paramref name="access"/> is <see cref="FileAccess.Read"/> for a file that is only
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>): nothing is written to it, and every change is refused
+    /// before anything happens (<see cref="ReadOnlyRefusal"/>).
+    /// <para>
+    /// The file is shared as Access shares a database (#62). Opened to be written, it is shared for reading only:
+    /// while it is open no other program or <see cref="Database"/> opens it for writing - ACE and DAO, which ask to
+    /// write in every mode but a read-only one, are refused ("file already in use") - and one that has it open for
+    /// writing already keeps it from being opened here. This library takes none of Access's locks, so a second writer
+    /// would write over pages this one keeps track of, and this one over its. Opened only to be read, it is shared
+    /// for reading and writing, as Access shares a database it opens read-only: a writer, Access or a
+    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out. Made anew
+    /// (<see cref="FileMode.Create"/>, <see cref="FileMode.Truncate"/>), it is shared with no one: it is replaced only
+    /// when no one has it open, and no one opens it until it is closed.
+    /// </para>
     /// </summary>
+    /// <exception cref="DatabaseInUseException">
+    /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
+    /// open for writing, or not shared for writing, when this one would write; not shared for reading - Access
+    /// holding it exclusively - when this one would only read. Nothing is created or changed.
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// <paramref name="format"/> is one this library only reads (<see cref="JetFormat.IsReadOnly"/>: Access 97's)
     /// and <paramref name="mode"/> would create or empty the file. Nothing is created or changed.
@@ -143,6 +169,7 @@ internal sealed class PageFile : IDisposable
         if (mode is FileMode.Truncate or FileMode.Append && File.Exists(path) && FormatOf(path) is { IsReadOnly: true })
             throw ReadOnlyFormat($"'{path}' was not changed.");
 
+        _openedToRead = access == FileAccess.Read;
         bool opensWhatIsThere = mode is FileMode.Open or FileMode.OpenOrCreate;
         _readOnly = format.IsReadOnly || (opensWhatIsThere && FormatOf(path) is { IsReadOnly: true });
         if (_readOnly)
@@ -150,8 +177,55 @@ internal sealed class PageFile : IDisposable
             mode   = FileMode.Open;
             access = FileAccess.Read;
         }
-        _stream = new FileStream(path, mode, access, FileShare.ReadWrite);
+        _stream = OpenShared(path, mode, access);
     }
+
+    /// <summary>
+    /// The file's handle, shared as the constructor says: for reading only by a writer, for reading and writing by a
+    /// reader, and with no one by a file made anew. A sharing violation is the file being in use, and is thrown as
+    /// <see cref="DatabaseInUseException"/>.
+    /// </summary>
+    private static FileStream OpenShared(string path, FileMode mode, FileAccess access)
+    {
+        // A mode that empties a file that is there replaces it whole, which a reader sharing it for writing would not
+        // keep out: such a handle shares nothing, so it is refused while anyone has the file open, and no one opens the
+        // file while it is held - the new database's whole life, as DAO holds a database it creates. Windows checks a
+        // handle's sharing before it creates or empties the file, in the one call, so a file in use is refused
+        // unchanged, and there is no moment between the check and the emptying for anyone to open the file in (a
+        // check made with a handle of its own, closed before the file was emptied, left one).
+        FileShare share = mode is FileMode.Create or FileMode.Truncate ? FileShare.None
+                        : access == FileAccess.Read ? FileShare.ReadWrite
+                        : FileShare.Read;
+        try
+        {
+            // No buffer of the stream's own (a size of 1 is none): every page is read and written whole, and a page
+            // read again is read from the file. With the default buffer of 4,096 bytes, reading one of an Access 97
+            // file's pages of 2,048 read the next into it too, and on .NET that page, read again, came from there -
+            // as it was, whatever another program had written to it since (#62).
+            return new FileStream(path, mode, access, share, bufferSize: 1);
+        }
+        catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
+        {
+            throw InUse(path, mode, access, e);
+        }
+    }
+
+    /// <summary>
+    /// What refuses a file that another program, or another <see cref="Database"/>, has open in a way that does not
+    /// let an open with <paramref name="mode"/> and <paramref name="access"/> in: <paramref name="e"/>, the sharing
+    /// violation Windows gave, said in terms of what was not done.
+    /// </summary>
+    internal static DatabaseInUseException InUse(string path, FileMode mode, FileAccess access, IOException e)
+        => new(access == FileAccess.Read
+                ? $"'{path}' is in use: another program has it open without sharing it - Access, with the database " +
+                  "open exclusively. It was not opened."
+                : mode is FileMode.Open or FileMode.OpenOrCreate
+                    ? $"'{path}' is in use: another program, or another Database, has it open for writing - Access, while " +
+                      "the database is open in it - or without sharing it. It was not opened for writing, as two writers " +
+                      "would write over each other's pages; open it with DatabaseOpenOptions.ReadOnly to read it meanwhile."
+                    : $"'{path}' is in use: another program, or another Database, has it open. It was not replaced, and is " +
+                      "as it was.",
+            e);
 
     /// <summary>
     /// The format of the file at <paramref name="path"/>, as its header says: the signature at offset 4 and the
@@ -182,11 +256,14 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Refuses a change to a file this library only reads: one opened in a format that is only read
-    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one, or one protected by a codec that
-    /// writes nothing (ECMA Standard Encryption). Every operation that writes calls it before it does anything else,
-    /// so a refused one leaves the file, and what the caller gave it, as they were.
+    /// (<see cref="JetFormat.IsReadOnly"/>), or whose own header says it is in one, one opened only to be read
+    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), or one protected by a codec that writes nothing (ECMA Standard
+    /// Encryption). Every operation that writes calls it before it does anything else, so a refused one leaves the
+    /// file, and what the caller gave it, as they were.
     /// </summary>
-    /// <exception cref="NotSupportedException">The file is an Access 97 one, or an .accdb in ECMA Standard Encryption.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The file is an Access 97 one, was opened read-only, or is an .accdb in ECMA Standard Encryption.
+    /// </exception>
     internal void EnsureWritable()
     {
         if (ReadOnlyRefusal is { } why) throw new NotSupportedException(why);
@@ -198,6 +275,7 @@ internal sealed class PageFile : IDisposable
     /// </summary>
     internal string? ReadOnlyRefusal
         => _readOnly ? ReadOnlyFormat($"'{_path}' was not changed.").Message
+         : _openedToRead ? $"'{_path}' was opened read-only (DatabaseOpenOptions.ReadOnly), and nothing is written to it: it was not changed."
          : Codec.WriteRefusal is { } why ? $"{why} '{_path}' was not changed."
          : null;
 
@@ -236,9 +314,9 @@ internal sealed class PageFile : IDisposable
     /// <summary>
     /// As <see cref="ReadPage"/>, for a page every page appended consults (the header,
     /// the global usage map): read from the file once, then kept as written here. The
-    /// copy returned is the caller's to change. A file has one writer: like the rest of
-    /// this library, it does not see what another handle on the file writes - another
-    /// Database open on it, in this process or another - while it is open.
+    /// copy returned is the caller's to change. Only a file opened to be written is
+    /// written to, and nothing else writes to it while it is open (see the constructor),
+    /// so what is kept stays what the file holds.
     /// </summary>
     internal byte[] ReadKeptPage(int pageNumber)
     {
@@ -251,6 +329,9 @@ internal sealed class PageFile : IDisposable
         }
         return (byte[])page.Clone();
     }
+
+    /// <summary>The longest the file may grow to: 2 GB, the most an Access file can be. Lower only in a test.</summary>
+    internal long MaxLength { get; set; } = 1L << 31;
 
     public void WritePage(int pageNumber, byte[] data)
     {
@@ -269,9 +350,14 @@ internal sealed class PageFile : IDisposable
             WritesBeforeFailure = left - 1;
         }
 
-        byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
         long requiredLength = offset + _format.PageSize;
+        // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused,
+        // and so is any write to a file already past it - one an earlier version of this library wrote - which is
+        // read whole and left as it is.
+        if (requiredLength > MaxLength || _stream.Length > MaxLength)
+            throw new DatabaseFullException(_path, MaxLength, _stream.Length);
+        byte[] encoded = Codec.EncodePage(data, pageNumber);
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
         ChangeStamp++;
@@ -284,7 +370,10 @@ internal sealed class PageFile : IDisposable
         if (_kept.TryGetValue(pageNumber, out var was))
         {
             _kept[pageNumber] = (byte[])data.Clone();
-            Journal(() => _kept[pageNumber] = was);
+            // A change kept for undoing notes the page as it was before the change's first write of it, once: taken
+            // back, the change puts that back. Noted at every write, a load of a million rows held a copy of the global
+            // usage map for every page it added (#82).
+            if (_undo is null || _undo.FirstWriteOfKept(pageNumber)) Journal(() => _kept[pageNumber] = was);
         }
     }
 
@@ -412,6 +501,15 @@ internal sealed class PageFile : IDisposable
 
         /// <summary>Whether the change has written a page yet.</summary>
         internal bool HasWritten => _wrote;
+
+        // The pages the file keeps (ReadKeptPage) that the change has written: how each was before is noted once.
+        private readonly HashSet<int> _keptWritten = new();
+
+        /// <summary>True the first time the change writes <paramref name="pageNumber"/>, a page the file keeps.</summary>
+        internal bool FirstWriteOfKept(int pageNumber) => _keptWritten.Add(pageNumber);
+
+        /// <summary>How many things the change has noted to take back (<see cref="Remember"/>): for tests of what a long change holds.</summary>
+        internal int NotedCount => _journal?.Count ?? 0;
 
         /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
         internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);

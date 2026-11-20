@@ -274,7 +274,10 @@ public sealed class Table
     /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
     /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
     /// are those of the pages as they were listed, and of each page as it was when it was reached, without a row
-    /// inserted since the enumeration began, whichever page it went to: take the list first.
+    /// inserted since the enumeration began, whichever page it went to: take the list first. A database opened only
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to, reads each
+    /// row from its page as the page is when the row is reached, and is not told of the rows that program inserts: one
+    /// inserted where the enumeration has still to come, on a page it listed, is given.
     /// </para>
     /// </summary>
     public IEnumerable<Row> Rows
@@ -292,7 +295,11 @@ public sealed class Table
             var    ownedList = UsageMap.GetOwnedPages(umapPage, definition.OwnedPagesRow, format, _file);
 
             // Each page is read once, and its rows given from that reading - those it held when the pages were listed:
-            // a row inserted since is not given, whichever page it goes to (TableScan).
+            // a row inserted since is not given, whichever page it goes to (TableScan). Unless another program may
+            // write to the file meanwhile (#62), which tells the scan nothing: then each row after the page's first is
+            // read from the page as it is when the row is reached, and a page that is no longer one of the table's
+            // gives no more rows.
+            bool shared = _file.SharedWithWriters;
             var scan = _file.TableScans.Begin(definition.TdefPageNumber);
             scan.Restart(ownedList);
             try
@@ -300,10 +307,18 @@ public sealed class Table
                 foreach (int pageNum in ownedList)
                 {
                     byte[] dp       = _file.ReadPage(pageNum);
+                    if (shared && !IsDataPageOf(dp, definition)) continue;
                     int    rowCount = scan.Slots(pageNum, ByteUtil.GetShort(dp, format.OffsetDataNumRows));
 
                     for (int r = 0; r < rowCount; r++)
                     {
+                        if (r > 0 && shared)
+                        {
+                            dp = _file.ReadPage(pageNum);
+                            if (!IsDataPageOf(dp, definition)) break;
+                            rowCount = scan.Slots(pageNum, ByteUtil.GetShort(dp, format.OffsetDataNumRows));
+                            if (r >= rowCount) break;
+                        }
                         // Deleted rows are passed; an overflow row is read where its pointer leads.
                         if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
 
@@ -323,6 +338,11 @@ public sealed class Table
             }
         }
     }
+
+    // Whether a page is a data page of the table: what a page the table's usage map listed is no longer, when another
+    // program has given it up since (Rows, beside a writer).
+    private static bool IsDataPageOf(byte[] page, TableDefinition definition)
+        => page[0] == JetFormat.PageTypeData && ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) == definition.TdefPageNumber;
 
     /// <summary>
     /// Creates a cursor over the table's rows in the order they are stored, which can move both ways. For a
@@ -463,17 +483,20 @@ public sealed class Table
     /// <para>
     /// A Currency column's number is taken to its four places as Access takes one: its exact value, half to even.
     /// The double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written as - 0.0001, and the
-    /// decimal 1.23465 1.2346. A lookup by the same number finds the row. Text and a <see cref="bool"/> are taken
-    /// as every number column takes them - text read in the current culture, a <see cref="bool"/> as 1 or 0 - and
-    /// the number they make is taken to four places so.
+    /// decimal 1.23465 1.2346. A lookup by the same number finds the row. A Decimal column's number has the places
+    /// past its scale cut off, toward zero, as ACE stores it.
+    /// </para>
+    /// <para>
+    /// A number column takes a value that is not one of .NET's numbers as Access stores it: a <see cref="bool"/>
+    /// as -1 or 0, text read in the current culture, a <see cref="DateTime"/> as its day number.
     /// </para>
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// A Currency column's value is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a
-    /// <see cref="char"/>. Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// A number column's value is of a kind no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>.
+    /// Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
-    /// A Currency column's value is text that does not read as a number in the current culture. Nothing of the row
+    /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
     /// is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="OverflowException">
@@ -523,14 +546,16 @@ public sealed class Table
 
                 // Everything an index can refuse the row for, before any of it is written.
                 entries = _indexes.EntriesFor(written, enforce: true);
-                var looked = _indexes.EnsureNoDuplicates(entries, forEntry: true);
+                // A bulk insert into a table with no rows builds the trees once its rows are in (BulkInsert): until
+                // then they hold nothing, and a duplicate is found when they are built.
+                var looked = _buildingIndexes ? null : _indexes.EnsureNoDuplicates(entries, forEntry: true);
 
                 rowPtr = _dataWriter.InsertRow(_definition, written);
+                var newKeys = _buildingIndexes ? null : _indexes.Add(entries, rowPtr, looked);
 
-                // The counter and the row count go to the definition together, once the row is on its page and
-                // before its index entries: a row in the file is always one the counter has passed.
-                _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
-                _indexes.Add(entries, rowPtr, looked);
+                // The counter, the row count and the count of each index's keys go to the definition in one write,
+                // once the row and its entries are in: all of it is taken back together if any of it fails.
+                _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber, newKeys);
                 undo?.Commit();
             }
             catch when (given is not null)
@@ -554,7 +579,7 @@ public sealed class Table
 
         // A cursor over an index is told of the row's entry in it, once the insert is in the file for good: when a
         // batch it is part of is committed, and not at all when the batch is taken back.
-        if (_indexCursors.Count > 0)
+        if (_indexCursors.Count > 0 && !_buildingIndexes)
             _file.WhenKept(() =>
             {
                 foreach (var entry in entries)
@@ -620,7 +645,7 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a Currency column's value that
+    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
     /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
     /// takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
@@ -635,7 +660,6 @@ public sealed class Table
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsureTakesRows();
-        new RowEncoder(_file.Format, _definition).Validate(row);
 
         var asWritten = row;
         if (_autoNumberColumns.Count > 0)
@@ -644,6 +668,7 @@ public sealed class Table
             FillAutoNumbers(asWritten);
         }
         asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        new RowEncoder(_file.Format, _definition).Validate(asWritten);
         EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
@@ -658,6 +683,21 @@ public sealed class Table
     /// A copy of each page the batch changes is held until the batch is in, so that it can be taken back: the
     /// pages a batch adds to the file cost nothing, the index pages it changes are what is held.
     /// </para>
+    /// <para>
+    /// Into a table with no rows whose indexes hold no entry - a table Access made and nothing has filled yet - the
+    /// rows go in with no index entries, and each index is then built from the table's rows, its entries sorted and
+    /// written page after page, as Access builds an index when it compacts a file: a few page writes for each
+    /// hundred rows, where keeping every index row by row costs several reads and writes for each row. Every index
+    /// holds every row, under the keys Access gives it, either way. What is different, and only while the batch is
+    /// going in: a duplicate in a unique index or primary key is found once every row is in, not at the row - the
+    /// row named is the earliest row of the batch that duplicates a row before it, in any unique index or the primary
+    /// key, as row by row; but every row is in before any duplicate is looked for, so a row refused for something
+    /// else - a value too long - is named ahead of a duplicate at an earlier row. And the table's indexes hold none of
+    /// the batch's rows until the batch is in, so that a sequence of rows that looks in the table through an index as
+    /// it is gone through does not find them. Not when a relationship the table is in is enforced
+    /// (<see cref="Database.EnforceForeignKeys"/>) or a cursor over its indexes is open: then each row gains its
+    /// entries as it goes in.
+    /// </para>
     /// </summary>
     /// <param name="rows">The rows to insert. They are gone through once.</param>
     /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
@@ -666,6 +706,11 @@ public sealed class Table
     /// A row was not inserted: <see cref="BatchInsertException.RowIndex"/> is its place among
     /// <paramref name="rows"/> and <see cref="Exception.InnerException"/> what <see cref="Insert"/> threw for it.
     /// Nothing of the batch is in the file.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// The file could not be written while the indexes were built, or the temporary folder the build sorts its keys in
+    /// could not be used: no row's failure, so none is named. Nothing of the batch is in the file, and the rows are
+    /// given back as they came.
     /// </exception>
     /// <exception cref="NotSupportedException">The table takes no row (<see cref="InsertRefusal"/>). Nothing is written.</exception>
     /// <exception cref="InvalidOperationException">
@@ -685,18 +730,9 @@ public sealed class Table
         // its rows back so.
         var given      = batch.Select(AutoNumberValuesIn).ToList();
         var identities = batch.Select(row => row.Identity).ToList();
-        int at = 0;
-        using var undo = _file.BeginUndo();
-        try
+        void GiveBack(int upTo)
         {
-            for (; at < batch.Count; at++)
-                Insert(batch[at]);
-            undo.Commit();
-        }
-        catch (Exception e) when (e is not (ObjectDisposedException or OutOfMemoryException))
-        {
-            undo.Dispose();
-            for (int i = 0; i <= at && i < batch.Count; i++)
+            for (int i = 0; i <= upTo && i < batch.Count; i++)
             {
                 if (given[i] is { } values)
                     foreach (var (name, had, value) in values)
@@ -706,9 +742,200 @@ public sealed class Table
                     }
                 batch[i].Identity = identities[i];
             }
-            throw new BatchInsertException(at, batch.Count, e);
+        }
+
+        int inserted, failedAt;
+        Exception? failure;
+        try
+        {
+            inserted = InsertInOneChange(batch, nameof(rows), out failedAt, out failure);
+        }
+        catch
+        {
+            // A failure that is no row's, while the trees were built: every row is given back, and it goes on as itself.
+            GiveBack(batch.Count - 1);
+            throw;
+        }
+        if (failure is null) return;
+        GiveBack(Math.Max(inserted, failedAt));
+        throw new BatchInsertException(failedAt, batch.Count, failure);
+    }
+
+    /// <summary>
+    /// Finds the rows among <paramref name="rows"/> that an insert of them all would be refused for as duplicates: for
+    /// each unique index and the primary key, each key that two or more of the rows would have, or that one of them
+    /// would have and a row of the table already has. What <see cref="Validate"/> does not do, which looks at one row
+    /// against the table. Rows are compared by the index's key, as Access compares them - so "ABC" and "abc" are one
+    /// key in an index on text, as are text with and without trailing spaces - and a row with a null in a column of an
+    /// index is no row's duplicate in it. Each row is taken as given: an AutoNumber column a row brings no value for is
+    /// a null, as the number it would be given is a new one. Nothing is written.
+    /// <para>
+    /// The rows are gone through once; the key of each row in each unique index is held until they all have been.
+    /// </para>
+    /// </summary>
+    /// <param name="rows">The rows to look at, as they would be given to <see cref="Insert"/>.</param>
+    /// <returns>Each set of duplicates, by index and then by the first row's place; empty when there are none.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
+    /// <exception cref="ArgumentException">One of <paramref name="rows"/> is null.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The table takes no row (<see cref="InsertRefusal"/>), or a row has a value in an indexed text column that no
+    /// key is made for, as <see cref="Insert"/> refuses it.
+    /// </exception>
+    public IReadOnlyList<DuplicateRows> FindDuplicates(IEnumerable<Row> rows)
+    {
+        if (rows is null) throw new ArgumentNullException(nameof(rows));
+        EnsureTakesRows();
+        var trees = _definition.Indexes.GroupBy(ix => ix.IndexDataNumber).ToDictionary(g => g.Key, g => g.ToList());
+        return _indexes.Duplicates(rows, RowCount > 0)
+            .Select(d => new DuplicateRows(
+                (trees[d.Tree.Number].FirstOrDefault(ix => ix.IsPrimaryKey) ?? trees[d.Tree.Number].First(ix => ix.IsUnique)).Name,
+                d.Places, d.InTable))
+            .OrderBy(d => d.IndexName, StringComparer.OrdinalIgnoreCase).ThenBy(d => d.RowIndexes[0])
+            .ToList();
+    }
+
+    // While a batch is putting rows into a table with no rows: index entries are not made row by row, and the trees
+    // are built once the rows are in (InsertInOneChange).
+    private bool _buildingIndexes;
+
+    /// <summary>
+    /// Inserts <paramref name="rows"/>, in their order, all of them or none, as <see cref="InsertRange"/> does, but
+    /// going through them once and holding none of them: for loading many rows - a whole export - with memory that
+    /// does not grow with their number. Each row is inserted as <see cref="Insert"/> inserts one, and holds its
+    /// AutoNumber values afterwards. Into a table with no rows the indexes are built once the rows are in, as for
+    /// <see cref="InsertRange"/>, which says what that changes.
+    /// <para>
+    /// What is held is a copy of each page the rows change that the file had before, so that they can be taken
+    /// back (the pages they add cost nothing), four bytes a row to name a refused one, and, while the indexes are
+    /// built, up to 64 MB of one index's keys - the rest in sorted runs in temporary files - and, as each tree is
+    /// written, the last entry of each of its pages: with keys of 510 bytes, about 75 bytes a row. Measured live, with
+    /// such keys: 34 MB at 50,000 rows, 76 MB at 150,000, 91 MB at 450,000.
+    /// </para>
+    /// <para>
+    /// The difference from <see cref="InsertRange"/>: that holds every row so that, when the batch is refused, it
+    /// can give each back as it came. Here a refused batch leaves a row inserted before the refusal holding the
+    /// AutoNumber values it was given and the place it was inserted at (<see cref="Row.Id"/>), though none of the
+    /// rows is in the table.
+    /// </para>
+    /// </summary>
+    /// <param name="rows">The rows to insert. They are gone through once.</param>
+    /// <returns>How many rows were inserted.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
+    /// <exception cref="BatchInsertException">
+    /// A row was not inserted, or one of the rows is null: <see cref="BatchInsertException.RowIndex"/> is its place
+    /// among <paramref name="rows"/> and <see cref="Exception.InnerException"/> what <see cref="Insert"/> threw for
+    /// it (an <see cref="ArgumentException"/> for a null row). Nothing of the rows is in the table. Into a table with no
+    /// rows, a duplicate is named as <see cref="InsertRange"/> says: the earliest row that duplicates one before it,
+    /// though a row refused for something else is named ahead of it.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// The file could not be written while the indexes were built, or the temporary folder the build sorts its keys in
+    /// could not be used: no row's failure, so none is named. Nothing of the rows is in the table.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The table takes no row (<see cref="InsertRefusal"/>). Nothing is written.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The call is made from inside another change that is being kept for undoing. Nothing is written.
+    /// </exception>
+    public int BulkInsert(IEnumerable<Row> rows)
+    {
+        if (rows is null) throw new ArgumentNullException(nameof(rows));
+        EnsureTakesRows();
+
+        int inserted = InsertInOneChange(rows, nameof(rows), out int failedAt, out var failure);
+        if (failure is not null) throw new BatchInsertException(failedAt, failure);
+        return inserted;
+    }
+
+    /// <summary>
+    /// Inserts <paramref name="rows"/> in one change kept for undoing, and returns how many went in. When one is
+    /// refused or cannot be written, or a tree being built refuses one, the change is taken back and
+    /// <paramref name="failure"/> is why, <paramref name="failedAt"/> the row's place among them.
+    /// <para>
+    /// When the table has no rows, its indexes hold no entry, no relationship it is in is enforced and no cursor
+    /// over its indexes is open, the rows go in with no index entries and each tree is then built from the table's
+    /// rows (<see cref="TableIndexes.BuildAll"/>): a duplicate in a unique index or primary key is found then, and
+    /// the row named is the earliest that duplicates a row before it. A failure while the trees are built that is no
+    /// row's - an I/O failure - is thrown as itself, the change taken back.
+    /// </para>
+    /// </summary>
+    private int InsertInOneChange(IEnumerable<Row> rows, string parameter, out int failedAt, out Exception? failure)
+    {
+        failedAt = -1;
+        failure  = null;
+        using var undo = _file.BeginUndo();
+        bool build = RowCount == 0 && !InEnforcedRelationship() && !HasOpenIndexCursors()
+                  && _indexes.Trees.Count > 0 && _indexes.AllEmpty();
+        // Where each row went, to name one a tree refuses: in the order they were inserted, which is the order of
+        // their pages and slots as rows go to a table's last page - searched in halves while that holds.
+        var pointers  = build ? new List<int>() : null;
+        bool inOrder  = true;
+        int  inserted = 0;
+        bool building = false;
+        // A row's place among the rows inserted, from where it went; int.MaxValue for none of them.
+        int PlaceOf(int pointer)
+        {
+            if (pointers is null) return int.MaxValue;
+            int place = inOrder ? pointers.BinarySearch(pointer, UnsignedOrder) : pointers.IndexOf(pointer);
+            return place < 0 ? int.MaxValue : place;
+        }
+        try
+        {
+            _buildingIndexes = build;
+            foreach (var row in rows)
+            {
+                if (row is null) throw new ArgumentException("A row to insert is null.", parameter);
+                Insert(row);
+                if (pointers is not null && row.Id is { } id)
+                {
+                    int pointer = RowPointer.Pack(id.PageNumber, id.RowNumber);
+                    if (pointers.Count > 0 && (uint)pointer <= (uint)pointers[^1]) inOrder = false;
+                    pointers.Add(pointer);
+                }
+                inserted++;
+            }
+            _buildingIndexes = false;
+            building = true;
+            if (build) _indexes.BuildAll(PlaceOf);
+            undo.Commit();
+            return inserted;
+        }
+        catch (TableIndexes.BuildRefusal refusal)
+        {
+            _buildingIndexes = false;
+            undo.Dispose();
+            failedAt = PlaceOf(refusal.RowPointer);
+            // Every row a tree holds is one of these: a refusal of no row of them is thrown as it is.
+            if (failedAt >= inserted) throw refusal.InnerException!;
+            failure  = refusal.InnerException!;
+            return inserted;
+        }
+        catch (Exception e) when (!building && e is not (ObjectDisposedException or OutOfMemoryException))
+        {
+            // A row's insert failed: that row is named. A failure while the trees are built - a file the sort could
+            // not use, a disk that filled - is no row's, and goes on as itself once the change is taken back.
+            _buildingIndexes = false;
+            undo.Dispose();
+            failedAt = inserted;
+            failure  = e;
+            return inserted;
+        }
+        finally
+        {
+            _buildingIndexes = false;
         }
     }
+
+    private static readonly IComparer<int> UnsignedOrder = Comparer<int>.Create((a, b) => ((uint)a).CompareTo((uint)b));
+
+    // Whether a relationship this table is in has its rules kept as rows change: its rows are then looked for
+    // through the indexes as they are inserted, and the indexes must hold them.
+    private bool InEnforcedRelationship()
+        => _owningDb is { } db && db.EnforceForeignKeys && db.GetRelationships().Any(r =>
+               string.Equals(r.FromTableName, Name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(r.ToTableName, Name, StringComparison.OrdinalIgnoreCase));
+
+    private bool HasOpenIndexCursors()
+        => _indexCursors.Any(reference => reference.TryGetTarget(out _));
 
     /// <summary>
     /// Updates <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or
@@ -744,11 +971,11 @@ public sealed class Table
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
-    /// table's. Or a value it assigns to a Currency column is of a kind no number is made of (<see cref="Insert"/>).
+    /// table's. Or a value it assigns to a number column is of a kind no number is made of (<see cref="Insert"/>).
     /// Nothing is written.
     /// </exception>
     /// <exception cref="FormatException">
-    /// A value <paramref name="row"/> assigns to a Currency column is text that does not read as a number
+    /// A value <paramref name="row"/> assigns to a number column is text that does not read as a number
     /// (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="OverflowException">
@@ -1039,7 +1266,17 @@ public sealed class Table
             _old = _indexes.EntriesFor(oldRow, enforce: false);
             _new = _indexes.EntriesFor(newRow, enforce: true);
             if (_refuseDuplicates) _indexes.EnsureNoDuplicates(_new, replacedRowPointer: oldPointer);
+            // An entry the update takes out must be there, under the row's key, in an index taken at its word: Access
+            // refuses the change otherwise, and the row would be in the index twice (#81). The row keeps its slot, so
+            // the entries taken out are those whose key changes (Follow).
+            _held = _indexes.EnsureHeld(_old.Where(o => !_new.Any(n => Same(o, n))).ToList(), oldPointer);
         }
+
+        // The writer that found the entries the update takes out, holding the pages it read (TableIndexes.EnsureHeld).
+        private IndexWriter? _held;
+
+        private static bool Same(TableIndexes.Entry a, TableIndexes.Entry b)
+            => ReferenceEquals(a.Tree, b.Tree) && !a.IsCut && !b.IsCut && a.Key.AsSpan().SequenceEqual(b.Key);
 
         internal void Follow(int oldPointer, int newPointer)
         {
@@ -1050,12 +1287,10 @@ public sealed class Table
             var now = _new;
             if (oldPointer == newPointer && !_table._file.VerifyIndexes)
             {
-                bool Same(TableIndexes.Entry a, TableIndexes.Entry b)
-                    => ReferenceEquals(a.Tree, b.Tree) && !a.IsCut && !b.IsCut && a.Key.AsSpan().SequenceEqual(b.Key);
                 old = _old.Where(o => !_new.Any(n => Same(o, n))).ToList();
                 now = _new.Where(n => !_old.Any(o => Same(o, n))).ToList();
             }
-            _indexes.Remove(old, oldPointer);
+            _indexes.Remove(old, oldPointer, oldPointer == newPointer ? _held : null);
             _indexes.Add(now, newPointer);
         }
 
@@ -1105,7 +1340,16 @@ public sealed class Table
     internal void DeleteRowAt(int rowPtr)
     {
         _file.EnsureWritable();
-        RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+        // The row's entries must be there, under its key, in an index taken at its word, before anything of it goes:
+        // Access refuses the delete otherwise (#81).
+        IReadOnlyList<TableIndexes.Entry> entries = Array.Empty<TableIndexes.Entry>();
+        IndexWriter? held = null;
+        _dataWriter.DeleteRowAt(_definition, rowPtr, values =>
+        {
+            entries = _indexes.EntriesFor(values, enforce: false);
+            held = _indexes.EnsureHeld(entries, rowPtr);
+        });
+        RecordDeleted(rowPtr, entries, held);
     }
 
     /// <summary>The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, or null when no row is there.</summary>
@@ -1118,12 +1362,12 @@ public sealed class Table
     internal TableIndexes IndexEntries => _indexes;
 
     /// <summary>What follows a row's deletion, however it was found: one row fewer, and its index entries gone.</summary>
-    private void RecordDeleted(int rowPtr, Row values)
+    private void RecordDeleted(int rowPtr, IReadOnlyList<TableIndexes.Entry> entries, IndexWriter? held)
     {
         _dataWriter.IncrementTdefRowCount(_definition.TdefPageNumber, -1);
 
         // Its index entries go with it: Access counts and finds rows through them.
-        _indexes.Remove(_indexes.EntriesFor(values, enforce: false), rowPtr);
+        _indexes.Remove(entries, rowPtr, held);
 
         // A cursor over an index holds nothing of a row it can no longer come to, once the delete is in for good.
         if (_indexCursors.Count > 0) _file.WhenKept(() => TellCursorsDeleted(rowPtr));

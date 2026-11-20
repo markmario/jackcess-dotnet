@@ -13,6 +13,29 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A memo's text is stored as Access stores it** (#87). It was UTF-16LE whenever it went to a long-value page,
+  and a zero-length memo the two-byte compression marker. Measured with ACE 16: no text is no bytes, 1 or 2
+  characters UTF-16LE, and 3 to 1,908 characters that are all 0x01 to 0xFF compressed, a byte a character after
+  0xFF 0xFE; longer text, or text with another character, UTF-16LE. A Latin memo of up to 1,908 characters is half
+  the bytes it was. Text mixing the two, which ACE compresses in runs, is still UTF-16LE.
+- **A file is not grown past 2 GB** (#82). Access reads a longer file this library wrote, and cannot write to
+  it: ACE refused an insert into one of 2,160,779,264 bytes, "Cannot open database ''... may be corrupt", and took
+  one into a file of 2,140,618,752. The page that would pass 2,147,483,648 bytes is refused with the new
+  `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
+  that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
+  17 map pages, about 2.28 GB.
+- **Each index's count of its keys is written** (#82). Access keeps, in the table's definition (bytes 4-7 of each
+  tree's block of counts, Java Jackcess's `uniqueEntryCount`), a count of keys it plans queries by. The engine left
+  it as it was, so every index it filled was one Access took to have no keys. It now writes, for a tree built whole,
+  the number of its keys, and adds one for each row inserted under a key no row had, in the write of the definition
+  an insert makes anyway: no page more. An update or delete changes nothing. Beside ACE's twin of an export the
+  counts are equal in all 35 of the template's indexes; Access's own updates and deletes move them in ways not fully
+  measured.
+- **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
+  noted the header's and the global usage map's pages as they were at every write of them, and the global usage
+  map is written for every page a change adds: a batch of a million rows held a copy of it for each page it
+  added, 300 MB for an export of 50,000 documents. It notes each as it was before the change first wrote it, which
+  is all taking the change back needs.
 - **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
 - **Targets `net10.0`, `net11.0`, `net48` and `netstandard2.0`** (it was `net8.0`, `net472` and
@@ -28,8 +51,9 @@ changed since 1.2.2.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
   `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
   by side, and checks the packages each target of the package depends on.
-- **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
-  format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
+- **Files Access accepts.** Every change listed under
+  [What this fork changes](https://github.com/markmario/jackcess-dotnet/blob/main/docs/differences.md#what-this-fork-changes):
+  files up to the format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
   Extended columns, and foreign keys enforced.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
@@ -127,17 +151,14 @@ changed since 1.2.2.
     `double` or `float` to a Currency column (`AppendIfExists`) takes the numbers it took and refuses those it
     refused, but each as the Currency Access makes of it: past 2^38 or so it took the number the round-trip form
     says, which can be another Currency (35184372088832.0078125 was 35184372088832.01; it is 35184372088832.0078).
-  - **Text and a `bool` are taken as before**, as every number column takes them - text read in the current
-    culture, a `bool` as 1 or 0 - and the number they make is taken to four places by the same rule. **A write
-    refuses, before anything is written,** NaN, the infinities and a number past the range once taken to four places
-    with `OverflowException`, as a number past the range was refused; a date, a `Guid`, bytes or a `char` with
-    `ArgumentException`, where it was an `InvalidCastException`; and text that reads as no number with
-    `FormatException`, as before, now naming the column.
+  - **Text, a `bool` and a date are taken as every number column takes them** (#75, below), and the number they
+    make is taken to four places by the same rule. **A write refuses, before anything is written,** NaN, the
+    infinities and a number past the range once taken to four places with `OverflowException`, as a number past the
+    range was refused; a `Guid`, bytes or a `char` with `ArgumentException`, where it was an `InvalidCastException`;
+    and text that reads as no number with `FormatException`, as before, now naming the column.
 
   Where Access differs: ACE and DAO write NaN as the least Currency (-922,337,203,685,477.5808), the integer a
-  processor makes of NaN, and their `=` finds that row for NaN; ACE reads text by the machine's locale and writes
-  True as -1, where this library, for a Currency as for every number column, reads text in the current culture and
-  takes True as 1; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
+  processor makes of NaN, and their `=` finds that row for NaN; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
   there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's index, its writes and
   DAO's take a decimal exactly, and so does this library, by a scan as through an index.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
@@ -221,7 +242,8 @@ changed since 1.2.2.
   made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
   German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
   General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
-  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  are written to, where they were refused. Every other order is refused as before;
+  [Indexes and keys](https://github.com/markmario/jackcess-dotnet/blob/main/docs/indexes.md#refused) lists the ones
   measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
   General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
   and ß among accented letters).
@@ -354,13 +376,42 @@ changed since 1.2.2.
   - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
     searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
     non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
-    "stale integrity hash" this README warned of does not arise.
+    "stale integrity hash" the README of 1.2.2 warned of does not arise.
+- **A file open to be written is kept from every other writer, and is not opened while another has it** (#62).
+  This library takes none of Access's locks. The file was shared for writing, so Access opened it to write while a
+  `Database` had it open and wrote over pages the `Database` kept track of: rows were lost and a primary key led to
+  other rows. It is shared for reading only, as Access shares a database it has open exclusively, but for readers:
+  Access opening it to write - shared or exclusively - is refused ("Could not use '...'; file already in use"), and
+  so is a second `Database`; Access read-only (ACE's `Mode=Read`, DAO's read-only) and a `Database` opened
+  `ReadOnly` open it and read it. **What a caller sees:** a program that opened, to write, a file a `Database` had
+  open is refused; and `Database.Open` of a file another program or `Database` has open to write throws
+  `DatabaseInUseException` - an `IOException` with a sharing violation's HResult, as the `IOException` it threw was -
+  where it was refused only because the file's header was read without sharing writing. Access's lock file (`.ldb`,
+  `.laccdb`) is neither made nor read, as Access makes none for a database it opens exclusively (measured with ACE 16,
+  DAO 16 and DAO 3.6).
+- **`Database.Create` replaces a file only when no one has it open** (#62), readers included: it emptied a file
+  Access had open, under Access. `DatabaseInUseException`, the file as it was. The new database has the file to
+  itself until it is disposed, as DAO's `CreateDatabase` holds one: no other program or `Database` opens it
+  meanwhile, even to read. Opened again with `Database.Open`, it is shared with readers.
+- **An Access 97 file opens while Access has it open** (#62). It is only read, and is opened as one opened
+  `ReadOnly` is; it was refused, as a file to be written is. DAO and ACE can write to it meanwhile, so it is read as a
+  `ReadOnly` database is, its pages read again at every move, whether `ReadOnly` is set or not, and costs what that
+  costs: over the ten Access 97 files of the test corpus, every table and index walked 20 times, 612,280 pages read
+  where 78,420 were - about 2.8 s where 0.55 s was on .NET 10, 6.9 s where 0.85 s was on .NET Framework (measured by
+  the review of #73).
+- **A Memo or OLE value that is not where its row's reference says is refused** (#62), with `InvalidDataException`
+  saying what does not fit: a page the file does not have or that holds no values, a row its page does not have or
+  has deleted, a place shorter than the value, a chain of pieces that ends before it. It was read from whatever the
+  place held - a deleted value's bytes, or a shorter value made up with zeros - and two such references were refused
+  with `InvalidOperationException`. A reading beside a writer meets one when the writer changes a row between the
+  reading of the row and of its value; so does a reading of a damaged file.
 - **Room on a table's pages is used again as Access uses it** (#58). A deleted row's bytes stayed on its page, and
   no row was put where a delete, or a row's values moving back from another page, had left room: a row updated back
   and forth past its page's room grew the file by a page every few hundred changes, without end - 13 pages in 3,000
   cycles, where Access's grew by one with each change a session of its own (in one session, by hundreds). This
   library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
-  and `.accdb`; the README's "Rows and long values" has the rules): a row goes to the lowest page the table's
+  and `.accdb`; [Storage](https://github.com/markmario/jackcess-dotnet/blob/main/docs/storage.md#where-a-new-row-goes)
+  has the rules): a row goes to the lowest page the table's
   free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
   another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
   for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
@@ -383,6 +434,51 @@ changed since 1.2.2.
   column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
   change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's
   grew by 3. It grows by a page at most.
+- **A change a damaged index cannot take is refused, as Access refuses it** (#81). When an index, taken at its word,
+  does not hold a row's entry under the row's key - an entry under another key, or none, as an earlier version of
+  this library or another program can leave - an update that changes the row's key in that index, and a delete of
+  the row, throw `NotSupportedException` before anything is written. Access refuses both on such a file ("The search
+  key was not found in any record") and changes nothing; it makes an update of the row's other columns, and so does
+  this library. The update was made: the row's new entry went in beside its wrong one, the row was in the index
+  twice, and DAO's compaction copied the row twice and dropped the primary key. With `Database.VerifyIndexes` the
+  change is made and mends the index: an update moves the row's entry to its new key, and a delete takes out the
+  entry the row had under another key, which it left pointing at no row. In a sound index the check reads no page
+  more: the pages it reads are the ones the entry's removal goes down.
+- **A Decimal with more places than its column holds is cut, as ACE cuts it** (#80). The places past the column's
+  scale are cut off toward zero, where they were rounded half away from zero: 1.015 is 1.01 in a column of scale 2
+  (it was 1.02), and 2.5 is 2 in a column of scale 0 (it was 3). A negative number cut to nothing is a negative zero,
+  as ACE stores it (-0.001 at scale 2); a zero given, of either sign, has no sign, as in ACE. ACE 16 was measured
+  for 5,080 numbers - typed Decimal, Double, Single and text parameters, every scale from 0 to 28, both signs, in an
+  .mdb and an .accdb - and cut every one (`tools/ace-decimal-places.ps1`, `Assets/ace-decimal-places.tsv`). DAO
+  refuses every one of them ("Scaling of decimal value resulted in data truncation"); ACE is the referee, as it is
+  for every value this library writes. An insert, an update, `Validate` and the relationships an insert or update
+  is checked against all take the number as the row stores it. A lookup is unchanged: it compares the number given
+  with the stored value exactly, as ACE's `=` does, so 1.015 finds no row of 1.01. A negative zero is zero to it, as
+  to ACE's `=` without an index; ACE's index tells -0.00 from 0.00, and `WHERE D = 0` through one finds only the row of
+  0.00. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
+  one, as DAO does.
+- **A `bool`, text and a date are taken for a number as Access takes them, by every number type alike** (#75).
+  Measured with ACE 16 (typed parameters) and DAO (`AddNew`) for Byte, Integer, Long Integer, Large Number, Single,
+  Double, Currency and Decimal (`tools/ace-number-kinds.ps1`, `Assets/ace-number-kinds.tsv`):
+  - **`true` is -1**, Access's value, and `false` 0. It was 1. A Byte, which holds no -1, refuses `true` with
+    `OverflowException`, as it refuses -1 and as DAO refuses it; ACE wraps every negative number into a Byte (-1 is
+    255, -3 is 253), which this library does not.
+  - **Text is read in the current culture**, as before and as Access reads it by the machine's settings, and now in
+    every form Access reads: a currency symbol ("$5" is 5 where the culture's symbol is "$"), parentheses for a
+    negative number ("(5)" is -5), an exponent ("1e2" is 100), group separators and spaces around it. A whole-number
+    column takes "2.5" as 2 and "1.5" as 2, half to even, as Access does; it refused them (`FormatException`). Text
+    is read as a `double` for a Single or a Double column and as a `decimal` for any other. Text that is no number
+    is refused with `FormatException`, naming the column, as Access refuses it ("Data type mismatch").
+  - **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
+    2020 12:00 is 43832.5 in a Double, a Single, a Currency or a Decimal, and 43832 in a Long Integer or a Large
+    Number; an Integer and a Byte refuse it with `OverflowException`, as Access does (ACE wraps it into a Byte).
+  - **A number past what a Single holds is refused** with `OverflowException`, naming the column, as ACE refuses it
+    ("Overflow", measured for a Double and a text parameter): a finite number whose nearest Single is not finite, such
+    as 1e39 or 3.5e38, given as a number or as text. A `double` was stored as an infinity on every runtime, and text
+    on .NET; .NET Framework's parse refused text.
+  - A range or the closest row looked for through an index of a number column takes these values the same way. A
+    lookup for one row by its value still takes text and a `bool` for no number, as before. The importer keeps its
+    own rule: it takes only a value a column holds exactly, text read in the invariant culture, and no `bool`.
 
 ### Breaking changes to the public API
 
@@ -516,6 +612,21 @@ changes with them.
   parent was written from 0.03125 (it holds 0.0313). A unique index refuses the number when its neighbour holds what
   it now makes, as 1.23465m beside the row of 1.234549999999999. **Find such rows by the value stored - as a row
   reads it back - and not by the number they were written from.**
+- **A value of a kind no number is made of, given for a number column, throws `ArgumentException`** naming the
+  column, in every number type (#75): a `Guid`, bytes, a `char`, a `TimeSpan` or any other. It threw
+  `InvalidCastException` from `Convert` in every number column but Currency. `ArgumentException` is the engine's
+  exception for a caller's bad argument; code that caught `InvalidCastException` for it catches `ArgumentException`.
+  `Insert`, `InsertRange` (inside its `BatchInsertException`), `Update`, a cursor's `UpdateCurrentRow` and
+  `Validate` all throw it, before anything is written. With it, what a number column makes of other values changes
+  (above): `true` is -1 where it was 1, so a row written with `true` holds -1 and a Byte refuses `true` with
+  `OverflowException`; a `DateTime` is its day number where it was refused; and text such as "$5", "(5)" or "2.5"
+  for a whole-number column is a number where it was refused with `FormatException`.
+- **A row an earlier version left out of an index cannot be deleted, nor its key in that index changed, unless the
+  database is opened with `Database.VerifyIndexes`** (#81). Versions up to 1.2.2 kept a table's primary key and no
+  other index, so a file they wrote rows into can hold rows with no entry in an index. Such a delete or key change
+  went through, and now throws `NotSupportedException` before anything is written, as Access refuses it ("The
+  search key was not found in any record"); its message says that `VerifyIndexes` makes the change and mends the
+  index. Compacting the file in Access rebuilds its indexes, after which nothing is refused.
 
 ### Added
 
@@ -535,6 +646,27 @@ changes with them.
   (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
+- **Indexes built once, page after page** (#82). `Table.InsertRange` into a table with no rows, and the new
+  `Table.BulkInsert`, put the rows in without index entries and then build each index from the table's rows:
+  sorted, and written leaf after leaf as Access builds an index when it compacts a file. `Table.AddIndex` builds
+  its tree the same way. Keeping every index row by row cost an export of 13 rows a document into a template with
+  35 indexes 11.5 ms a document; loaded so it costs 0.6 ms, against 0.46 ms for the same rows with no index. A
+  duplicate in a unique index or primary key is refused when the trees are built, naming the row row by row would
+  name - the earliest that duplicates one before it - and nothing written; a row refused for something else is named
+  ahead of it. A failure while the trees are built that is no row's is thrown as itself, an `IOException`. While a batch is going in the table's indexes hold none of its rows, so a sequence
+  of rows that looks in the table through an index does not find them; a table that has rows, a table in an
+  enforced relationship and one with an index cursor open are filled row by row as before. Keys past 64 MB are
+  sorted in runs in temporary files; the last entry of each page written is held for the levels above, about 75
+  bytes a row with 510-byte keys (measured live: 34 MB at 50,000 rows, 91 MB at 450,000).
+- **`Table.BulkInsert(rows)`** (#82) inserts rows all or none, as `InsertRange` does, going through them once and
+  holding none of them, for loading many rows. A refused batch leaves the rows inserted before the refusal
+  holding the AutoNumber values they were given; `InsertRange`, which holds every row, gives them back as they
+  came.
+- **`Table.FindDuplicates(rows)`** (#82) names every set of rows a unique index or primary key would refuse as
+  duplicates, of one another or of a row already in the table, by the index's key as Access compares them: text
+  that differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter,
+  "ß" and "ss", "æ" and "ae") is one key. `DuplicateRows` gives the index, the rows' places, and whether a row of
+  the table has the key. `Validate` looks at one row against the table; this looks at a batch.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
 - **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;
@@ -548,6 +680,24 @@ changes with them.
   whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
   are the database's own, read and written the same way. A property Access wrote and the caller did not change
   goes back byte for byte.
+- **`DatabaseOpenOptions.ReadOnly`** (#32), Java's `DatabaseBuilder.withReadOnly`: the file is opened only to be
+  read, by a handle that cannot write, and every change is refused with `NotSupportedException` before anything
+  happens (`Database.IsReadOnly`). It opens beside Access, or a `Database`, writing to the file, as Access's own
+  read-only open does; only a program holding the file exclusively keeps it out. A file marked read-only opens this
+  way. What it reads while another program writes is the file as it is at each move of a cursor, and at each row of
+  `Table.Rows`: it keeps no page from one move to the next, as the file can change between them, so a walk of a table
+  reads a page or more at every row - ten to thirty times the pages one opened to be written reads, which keeps the
+  page it is on. `Table.Rows` over 500,000 rows reads 550,002 pages where one opened to be written reads 53,694:
+  about 1.7 s where 0.3 s is on .NET 10, 2.1 s where 0.5 s is on .NET Framework (measured by the review of #73). An
+  Access 97 file is read so too. Such a reading can miss rows, give a row twice - one moved ahead of a cursor, or one
+  on a page read while the writer was part-way through writing it - or with a Memo or OLE value of another row's, or
+  fail. It cannot change the file, and a writer neither waits for it nor is kept out by it; it keeps out only what
+  needs the file to itself - Access opening the database exclusively, and so Compact and Repair, and
+  `Database.Create` replacing the file. A reading that agrees with itself needs no writer while it is made.
+  [Sharing a file with Access](https://github.com/markmario/jackcess-dotnet/blob/main/docs/sharing.md) has what was
+  measured.
+- **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
+  that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
