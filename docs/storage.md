@@ -72,6 +72,11 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 ## Long values
 
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit.
+- **A memo's text is stored as Access stores it** ([#87]), measured with ACE 16 on a column with Unicode compression:
+  no text is no bytes; 1 or 2 characters are UTF-16LE; 3 to 1,908 characters that are all 0x01 to 0xFF are
+  compressed, 0xFF 0xFE and a byte each, so never more than one long-value row; anything longer, or with another
+  character, is UTF-16LE. ACE also compresses text that mixes the two in runs; this library writes it as UTF-16LE,
+  which every reader reads the same.
 - **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
   has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
   replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
@@ -107,3 +112,4 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 [Back to contents](README.md)
 
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58
+[#87]: https://github.com/markmario/jackcess-dotnet/issues/87

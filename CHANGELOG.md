@@ -13,6 +13,11 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A memo's text is stored as Access stores it** (#87). It was UTF-16LE whenever it went to a long-value page,
+  and a zero-length memo the two-byte compression marker. Measured with ACE 16: no text is no bytes, 1 or 2
+  characters UTF-16LE, and 3 to 1,908 characters that are all 0x01 to 0xFF compressed, a byte a character after
+  0xFF 0xFE; longer text, or text with another character, UTF-16LE. A Latin memo of up to 1,908 characters is half
+  the bytes it was. Text mixing the two, which ACE compresses in runs, is still UTF-16LE.
 - **A file is not grown past 2 GB** (#82). Access reads a longer file this library wrote, and cannot write to
   it: ACE refused an insert into one of 2,160,779,264 bytes, "Cannot open database ''... may be corrupt", and took
   one into a file of 2,140,618,752. The page that would pass 2,147,483,648 bytes is refused with the new
