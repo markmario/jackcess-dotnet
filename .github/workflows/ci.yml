@@ -322,6 +322,15 @@ jobs:
           name: access-tests
           path: tests/JackcessDotNet.AccessTests/bin/Release/net48
 
+      # The tests' databases are made and opened, thousands of times, in the
+      # temporary folder: real-time scanning of each is time the tests do not
+      # measure.
+      - name: No real-time scan of the tests' databases
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath ([IO.Path]::GetTempPath()), $env:RUNNER_TEMP, $env:GITHUB_WORKSPACE
+          "Excluded: $((Get-MpPreference).ExclusionPath -join ', ')"
+
       # The redistributable has killed a test process with exit code
       # -1073740771 and no test named; a dump showed the crash inside it, on a
       # thread of its own. Windows keeps a dump of any process that crashes from

@@ -161,6 +161,11 @@ $pieces = @{
         @{ Name = 'Mdb'; Method = 'ace_reads_every_long_value_the_engine_writes_in_a_table_ace_made'; Cases = 'extension: ".mdb")' }
         @{ Name = 'Accdb'; Method = 'ace_reads_every_long_value_the_engine_writes_in_a_table_ace_made'; Cases = 'extension: ".accdb")' }
     )
+    # Seven minutes a case on CI, where a read-only open reads the index again at each of 3,000 moves; 25 s with Access.
+    FileSharingInAccessTests = @(
+        @{ Name = 'AheadMdb'; Method = 'a_read_only_index_cursor_gives_once_a_row_ace_moves_ahead_of_it'; Cases = 'extension: ".mdb")' }
+        @{ Name = 'AheadAccdb'; Method = 'a_read_only_index_cursor_gives_once_a_row_ace_moves_ahead_of_it'; Cases = 'extension: ".accdb")' }
+    )
     # Eighteen minutes in one process in the full sweep: four and two minutes a case.
     CursorsAndRowsInAccessTests = @(
         @{ Name = 'TAccessKeyed'; Method = $rows; Cases = 'accessMade: True, keyed: True)' }
@@ -177,7 +182,8 @@ $pieces = @{
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 90; ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
+        FileSharingInAccessTests = 60; 'FileSharingInAccessTests.AheadMdb' = 430; 'FileSharingInAccessTests.AheadAccdb' = 430
+        ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 41; Access97InAccessTests = 3; CorpusInAccessTests = 12; 'CorpusInAccessTests.ReadsAccdb' = 129
         'CorpusInAccessTests.ReadsMdb' = 48; 'CorpusInAccessTests.the_engine_reads-others' = 7; CursorsAndRowsInAccessTests = 32
@@ -199,7 +205,8 @@ $table = @{
     }
     full = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 90; ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
+        FileSharingInAccessTests = 60; 'FileSharingInAccessTests.AheadMdb' = 430; 'FileSharingInAccessTests.AheadAccdb' = 430
+        ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
         RoomReuseInAccessTests = 188
         AccdbFormatsInAccessTests = 28; Access97InAccessTests = 2; CorpusInAccessTests = 24; 'CorpusInAccessTests.ReadsAccdb' = 131
         'CorpusInAccessTests.ReadsMdb' = 56; 'CorpusInAccessTests.the_engine_reads-others' = 6; CursorsAndRowsInAccessTests = 49
