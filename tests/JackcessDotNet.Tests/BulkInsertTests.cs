@@ -203,6 +203,74 @@ public sealed class BulkInsertTests : IDisposable
         Assert.Equal(1_000, table.RowCount);
     }
 
+    // Rows 1 to 1,000 in which row 900 has row 10's code and row 600 row 500's: as rows go in one by one - and as ACE
+    // refuses them - the first refused is row 600, place 599.
+    private static IEnumerable<Row> TwoPairs() => Enumerable.Range(1, 1_000).Select(i =>
+    {
+        var row = RowOf(i);
+        if (i == 900) row["Code"] = RowOf(10)["Code"];
+        if (i == 600) row["Code"] = RowOf(500)["Code"];
+        return row;
+    });
+
+    [Fact]
+    public void A_row_inserted_by_itself_writes_its_table_s_definition_once_counts_and_all()
+    {
+        // The count of each index's keys goes to the definition with the row count, in the write an insert makes of it
+        // anyway: a row costs what it cost before the counts were kept.
+        using var db = Create(_path);
+        var table = db.GetTable("Rows");
+        table.Insert(RowOf(1));
+        long reads = db.File.ReadCount, writes = db.File.WriteCount;
+
+        table.Insert(RowOf(2));   // new keys in every tree, all of them one leaf: a page, five leaves, the definition
+
+        Assert.Equal(7, db.File.WriteCount - writes);
+        Assert.Equal(9, db.File.ReadCount - reads);
+        Assert.Equal(2, KeyCount(db, "ByCode"));
+    }
+
+    [Fact]
+    public void A_load_names_the_earliest_row_that_duplicates_one_before_it_as_row_by_row_does()
+    {
+        using var db = Create(_path);
+        var table = db.GetTable("Rows");
+
+        Assert.Equal(599, Assert.Throws<BatchInsertException>(() => table.BulkInsert(TwoPairs())).RowIndex);
+        Assert.Equal(599, Assert.Throws<BatchInsertException>(() => table.InsertRange(TwoPairs().ToList())).RowIndex);
+        Assert.Equal(0, table.RowCount);
+
+        // Row by row, into a table that has a row, the same row is refused.
+        table.Insert(new Row { ["Code"] = "something else" });
+        Assert.Equal(599, Assert.Throws<BatchInsertException>(() => table.InsertRange(TwoPairs().ToList())).RowIndex);
+    }
+
+    [Fact]
+    public void A_temporary_folder_the_sort_cannot_use_is_no_row_s_failure_and_the_load_is_taken_back()
+    {
+        using (Create(_path)) { }
+        byte[] before = File.ReadAllBytes(_path);
+        EntrySorter.Budget = 16 * 1024;
+        EntrySorter.Folder = Path.Combine(Path.GetTempPath(), $"no_such_folder_{Guid.NewGuid():N}");
+        try
+        {
+            using (var db = Database.Open(_path))
+            {
+                var failed = Assert.Throws<IOException>(() => db.GetTable("Rows").BulkInsert(Enumerable.Range(1, 2_000).Select(RowOf)));
+                Assert.Contains(EntrySorter.Folder, failed.Message);
+                Assert.IsAssignableFrom<IOException>(failed.InnerException);
+                var rows = Enumerable.Range(1, 2_000).Select(RowOf).ToList();
+                Assert.Throws<IOException>(() => db.GetTable("Rows").InsertRange(rows));
+                Assert.All(rows, row => Assert.False(row.ContainsKey("Id"), "a row was not given back as it came"));
+            }
+        }
+        finally
+        {
+            EntrySorter.Folder = null;
+        }
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "the failed load changed the file");
+    }
+
     [Fact]
     public void Insert_range_into_a_table_with_none_builds_the_trees_and_gives_the_rows_back_when_refused()
     {
@@ -389,8 +457,16 @@ public sealed class BulkInsertTests : IDisposable
             using (var db = Database.Open(_path))
             {
                 db.File.WritesBeforeFailure = writes;
-                var refused = Assert.Throws<BatchInsertException>(() => db.GetTable("Rows").BulkInsert(Enumerable.Range(1, 3_000).Select(RowOf)));
-                Assert.IsType<IOException>(refused.InnerException);
+                // A write of a row's fails as that row's insert; a write of the trees, built once every row is in, is no
+                // row's and fails as itself.
+                var failed = Record.Exception(() => db.GetTable("Rows").BulkInsert(Enumerable.Range(1, 3_000).Select(RowOf)));
+                if (failed is BatchInsertException refused)
+                {
+                    Assert.IsType<IOException>(refused.InnerException);
+                    Assert.InRange(refused.RowIndex, 0, 2_999);
+                }
+                else Assert.IsType<IOException>(failed);
+                if (writes >= writesNeeded - 10) Assert.IsNotType<BatchInsertException>(failed);
                 db.File.WritesBeforeFailure = null;
             }
             Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), $"the file changed when write {writes + 1} of {writesNeeded} failed");

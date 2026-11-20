@@ -488,14 +488,16 @@ internal sealed class TableIndexes
 
     /// <summary>
     /// Adds <paramref name="entries"/> to their indexes for the row at <paramref name="rowPointer"/>, through
-    /// <paramref name="writer"/> when <see cref="EnsureNoDuplicates"/> returned one for them.
+    /// <paramref name="writer"/> when <see cref="EnsureNoDuplicates"/> returned one for them. Returns, by tree, the
+    /// keys added that no other row had: one more each in the count Access keeps of the tree's keys, which an insert
+    /// writes with the row count (<see cref="PutKeyCounts"/>) and nothing else writes.
     /// </summary>
-    public void Add(IReadOnlyList<Entry> entries, int rowPointer, IndexWriter? writer = null)
+    public IReadOnlyDictionary<int, int> Add(IReadOnlyList<Entry> entries, int rowPointer, IndexWriter? writer = null)
     {
-        if (entries.Count == 0) return;
+        var newKeys = new Dictionary<int, int>();
+        if (entries.Count == 0) return newKeys;
         writer ??= new IndexWriter(_file, _allocator);
         TakeOutEntriesSeenToBeNoRows(writer);
-        var newKeys = new Dictionary<int, int>();
         foreach (var entry in entries)
         {
             // Another entry under the key of a row a unique index compares points at no row, or - the index
@@ -506,8 +508,7 @@ internal sealed class TableIndexes
             if (ComparesRows(entry) && (another || entry.IsCut))
                 TakeOutEntriesOfNoRow(writer, entry, rowPointer);
         }
-        // A key no other row has is one more in the count Access keeps of each tree's keys.
-        AddToKeyCounts(newKeys);
+        return newKeys;
     }
 
     /// <summary>
@@ -574,17 +575,20 @@ internal sealed class TableIndexes
     /// <summary>
     /// Builds each tree of the table, every one holding no entry (<see cref="AllEmpty"/>), from the table's rows: one
     /// tree at a time, the table's rows read for it and their entries made as an insert makes them
-    /// (<see cref="EntriesFor"/>), sorted and written page after page (<see cref="IndexWriter.Build"/>). A unique
-    /// tree that would hold two rows' entries under one key - neither with a null in the tree's columns - is
-    /// refused before it is written, with the later of the two rows: <see cref="BuildRefusal"/>, whose inner
-    /// exception is the <see cref="ConstraintViolationException"/> an insert of that row would have thrown. The
-    /// caller holds the undo scope.
+    /// (<see cref="EntriesFor"/>), sorted and written page after page (<see cref="IndexWriter.Build"/>). When a unique
+    /// tree or the primary key would hold two rows' entries under one key - neither with a null in its columns - the
+    /// refused row is the one the rows' own order would have refused first: the earliest row, by
+    /// <paramref name="placeOf"/> (a row's place among the rows inserted, from its pointer), that is a duplicate of a
+    /// row before it, in any of them. <see cref="BuildRefusal"/> names it, its inner exception the
+    /// <see cref="ConstraintViolationException"/> an insert of that row would have thrown; every tree is looked at
+    /// first, and the caller's undo scope takes back what was written.
     /// </summary>
-    internal void BuildAll()
+    internal void BuildAll(Func<int, int> placeOf)
     {
         var format  = _file.Format;
         var decoder = new RowDecoder(format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
         var writer  = new IndexWriter(_file, _allocator);
+        var refused = new Refused();
         foreach (var tree in Trees)
         {
             using var entries = new EntrySorter();
@@ -610,52 +614,108 @@ internal sealed class TableIndexes
                 }
             }
             var keys = new int[1];
-            writer.Build(tree.Target, Checked(tree, entries.Sorted(), keys));
+            writer.Build(tree.Target, Checked(tree, entries.Sorted(), keys, placeOf, refused));
             AddToKeyCounts(new Dictionary<int, int> { [tree.Number] = keys[0] });
+        }
+
+        if (refused.Tree is { } at)
+        {
+            var shown = ValuesAt(at, refused.Pointer, out _);
+            throw new BuildRefusal(refused.Pointer, new ConstraintViolationException(
+                $"The row would be a duplicate in {_table.Name}'s {Describe(at)}, which is unique: another row holds " +
+                $"{string.Join(", ", at.Columns.Select((c, n) => $"{Shown(shown?[n])} for {c.Column.Name}"))}. The table is left as it was."));
         }
     }
 
-    /// <summary>
-    /// Adds to the count Access keeps, in the table's definition, of the keys each tree has had: bytes 4 to 7 of the
-    /// tree's block of counts (Java Jackcess's <c>uniqueEntryCount</c>). Access adds one when it enters a row under a
-    /// key no other row has, and takes nothing away when a row goes (measured: ACE's export of 142 documents counts
-    /// 142 in the index on Document_ID and 7 in the one on Document_Date, the dates they have). It is what Access
-    /// plans a query by; an index whose count is 0 is one it takes to be empty.
-    /// </summary>
-    internal void AddToKeyCounts(IReadOnlyDictionary<int, int> added)
+    /// <summary>The row a build refuses so far: the earliest that duplicates a row before it.</summary>
+    private sealed class Refused
     {
-        if (added.Count == 0 || added.Values.All(n => n == 0)) return;
-        var format = _file.Format;
-        byte[] page = _file.ReadPage(_table.TdefPageNumber);
+        public Tree? Tree;
+        public int Pointer;
+        public int Place = int.MaxValue;
+    }
+
+    /// <summary>The bytes of a page of a table's definition with each tree's count of its keys raised by <paramref name="added"/>.</summary>
+    internal static void PutKeyCounts(byte[] tdefPage, JetFormat format, IReadOnlyDictionary<int, int>? added)
+    {
+        if (added is null) return;
         foreach (var pair in added)
         {
             if (pair.Value == 0) continue;
             int at = format.SizeTdefHeader + pair.Key * format.SizeIndexDefinition + 4;
-            ByteUtil.PutInt(page, at, unchecked(ByteUtil.GetInt(page, at) + pair.Value));
+            ByteUtil.PutInt(tdefPage, at, unchecked(ByteUtil.GetInt(tdefPage, at) + pair.Value));
         }
+    }
+
+    /// <summary>
+    /// Adds to the count of each tree's keys that Access keeps in the table's definition: bytes 4 to 7 of the tree's
+    /// block of counts (Java Jackcess's <c>uniqueEntryCount</c>). It is a statistic Access plans a query by - an index
+    /// whose count is 0 is one it takes to be empty - not a count any reader checks against the tree. This library
+    /// writes, for a tree built whole, the number of its keys, and adds one for each row inserted under a key no other
+    /// row had; an update or delete changes nothing. That is what ACE wrote for an export of 142 documents (142 in the
+    /// index on Document_ID, 7 in the one on Document_Date). Access's own updates and deletes move the count in ways
+    /// not fully measured: after ACE deleted rows of a table, one count went from 5,000 to 2,833 with 4,333 rows left.
+    /// </summary>
+    internal void AddToKeyCounts(IReadOnlyDictionary<int, int> added)
+    {
+        if (added.Count == 0 || added.Values.All(n => n == 0)) return;
+        byte[] page = _file.ReadPage(_table.TdefPageNumber);
+        PutKeyCounts(page, _file.Format, added);
         _file.WritePage(_table.TdefPageNumber, page);
     }
 
-    // The entries of a tree being built, in order, refusing the second of two under one key in a unique tree, and
-    // counting the keys in keys[0].
-    // Entries under one key are in row-pointer order, and a bulk insert's rows are in the order they were inserted.
-    private IEnumerable<(byte[] Key, int RowPointer)> Checked(Tree tree, IEnumerable<EntrySorter.Item> sorted, int[] keys)
+    // The entries of a tree being built, in order, counting its keys in keys[0]. In a unique tree, each key that more
+    // than one row has - none with a null in the tree's columns - is a duplicate at the second of those rows in the
+    // order they were inserted (placeOf); the earliest such row over every tree is the one refused, in refused.
+    private IEnumerable<(byte[] Key, int RowPointer)> Checked(Tree tree, IEnumerable<EntrySorter.Item> sorted, int[] keys,
+                                                              Func<int, int> placeOf, Refused refused)
     {
         EntrySorter.Item? previous = null;
+        // The two earliest rows of the key being read, by place, and its first entry, placed only when a second comes:
+        // only a key some row repeats asks where its rows are.
+        (int Place, int Pointer) earliest = (int.MaxValue, 0), next = (int.MaxValue, 0);
+        int? pending = null;
+        int inGroup = 0;
+        void Take(int pointer)
+        {
+            var row = (placeOf(pointer), pointer);
+            if (row.Item1 < earliest.Place) { next = earliest; earliest = row; }
+            else if (row.Item1 < next.Place) next = row;
+        }
+        void Close()
+        {
+            if (inGroup > 1 && next.Place < refused.Place)
+            {
+                refused.Place   = next.Place;
+                refused.Pointer = next.Pointer;
+                refused.Tree    = tree;
+            }
+        }
         foreach (var item in sorted)
         {
             bool sameKey = previous is { } last && last.Key.AsSpan().SequenceEqual(item.Key);
-            if (!sameKey) keys[0]++;
-            if (tree.IsUnique && sameKey && !previous!.Value.HasNull && !item.HasNull)
+            if (!sameKey)
             {
-                var shown = ValuesAt(tree, item.RowPointer, out _);
-                throw new BuildRefusal(item.RowPointer, new ConstraintViolationException(
-                    $"The row would be a duplicate in {_table.Name}'s {Describe(tree)}, which is unique: another row holds " +
-                    $"{string.Join(", ", tree.Columns.Select((c, n) => $"{Shown(shown?[n])} for {c.Column.Name}"))}. The table is left as it was."));
+                keys[0]++;
+                if (tree.IsUnique) Close();
+                earliest = next = (int.MaxValue, 0);
+                pending = null;
+                inGroup = 0;
+            }
+            if (tree.IsUnique && !item.HasNull)
+            {
+                inGroup++;
+                if (inGroup == 1) pending = item.RowPointer;
+                else
+                {
+                    if (pending is { } firstPointer) { Take(firstPointer); pending = null; }
+                    Take(item.RowPointer);
+                }
             }
             previous = item;
             yield return (item.Key, item.RowPointer);
         }
+        if (tree.IsUnique) Close();
     }
 
     /// <summary>Takes <paramref name="entries"/> out of their indexes for the row that was at <paramref name="rowPointer"/>.</summary>

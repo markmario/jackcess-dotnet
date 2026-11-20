@@ -107,13 +107,15 @@ internal sealed class DataPageWriter
     /// table's Long auto-number counter - the counter's new value. Both go in one write, after the row is on its
     /// page, so the counter never runs ahead of the rows nor falls behind them.
     /// </summary>
-    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber)
+    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber, IReadOnlyDictionary<int, int>? newKeys = null)
     {
         var format   = _file.Format;
         var tdefPage = _file.ReadPage(tdefPageNumber);
         ByteUtil.PutInt(tdefPage, format.TdefOffsetNumRows, ByteUtil.GetInt(tdefPage, format.TdefOffsetNumRows) + 1);
         if (lastAutoNumber is { } last)
             ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, last);
+        // The keys the row's entries added that no other row had: the count Access keeps of each index's keys.
+        TableIndexes.PutKeyCounts(tdefPage, format, newKeys);
         _file.WritePage(tdefPageNumber, tdefPage);
     }
 
