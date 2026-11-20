@@ -134,6 +134,9 @@ public sealed class ObjectNameTests : IDisposable
         new object[] { X(0x30C7, 0x30FC, 0x30BF), X(0xFF83, 0xFF9E, 0xFF70, 0xFF80), true },   // データ, ﾃﾞｰﾀ
         new object[] { X(0x61, 0x30FC), "xaa", true },                  // aー, aa
         new object[] { X(0x3055, 0x309D), X(0x30B5, 0x30FD), true },   // さゝ, サヽ
+        new object[] { X(0x309E), X(0x309D, 0x3099), true },           // ゞ, and ゝ with the combining voiced sound mark
+        new object[] { X(0x309E), X(0x30FE), true },                   // ゞ, ヾ
+        new object[] { X(0x3055, 0x309E), X(0x3055, 0x3056), false },  // さゞ, さざ
         new object[] { X(0x30AB, 0x30FC), X(0x30AB, 0x30A2), false },  // カー, カア
         new object[] { X(0x30AB, 0x30FC), X(0x30AB), false },          // カー, カ
         new object[] { X(0x30AB, 0x30FC), X(0x30AB, 0x2D), false },    // カー, カ-
@@ -311,9 +314,9 @@ public sealed class ObjectNameTests : IDisposable
         Assert.False(reopen.TryGetTable("Strase", out _));
     }
 
-    // A table Access made with the micro sign and the mu as two columns (DAO keeps them apart): each is read and written
-    // by its own name, on every target - on .NET, where a comparison without case takes them as one, an insert once wrote
-    // one value to both.
+    // A table with the micro sign and the mu as two columns, which Access keeps apart: each is read and written by its own
+    // name on every target, and an insert that gives one of them a value leaves the other with none - though .NET's
+    // comparison without regard to case takes the two names as one.
     [Fact]
     public void The_micro_sign_and_the_mu_are_two_columns_and_an_insert_writes_each_on_every_target()
     {
@@ -380,6 +383,7 @@ public sealed class ObjectNameTests : IDisposable
             db.CreateTable("New", new[] { new ColumnDefinition("Id", DataType.Int32), Text("Name") }, "Id")
               .Insert(new Row { ["Id"] = 1, ["Name"] = "made" });
             foreach (var (table, _) in odd) db.GetTable(table).AddColumn(Text("Added"));
+            db.GetTable("F_D800").Insert(new Row { ["Id"] = 1, [X(0xD800)] = "lone" });
 
             var source = new DataTable("Imported");
             source.Columns.Add("Id", typeof(int));
@@ -403,8 +407,10 @@ public sealed class ObjectNameTests : IDisposable
                 Assert.Equal(new[] { "Id", column, "Added" }, reopen.GetTable(table).Columns.Select(c => c.Name));
             var row = reopen.GetTable("F_FFFE").Rows.Single();
             Assert.Equal((7, "odd", "added"), ((int)row["Id"]!, (string)row[X(0xFFFE)]!, (string)row["Added"]!));
-            // The column with the lone surrogate is found by that name.
-            Assert.Equal(X(0xD800), reopen.GetTable("F_D800").Columns.Single(c => c.Name == X(0xD800)).Name);
+            // The column with the lone surrogate is found by that name, by the table and by the row written by it.
+            var surrogate = reopen.GetTable("F_D800");
+            Assert.Equal(X(0xD800), surrogate.Definition.FindColumn(X(0xD800))!.Name);
+            Assert.Equal("lone", surrogate.Rows.Single()[X(0xD800)]);
         }
 
         // A new name one with one of them is refused, as any other: a noncharacter has no code, so "x" and it are one.
