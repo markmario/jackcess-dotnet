@@ -81,19 +81,71 @@ and the two definitions hold the same index slots.
   exclamation mark, a grave accent, a square bracket or a control character in it, or a space at its start. So
   nothing can take the name Access gives a referenced table's index (`.rB`, `.rC`...). A relationship given no
   name is named for its two tables; when their names make no valid name, one has to be given.
-- **A name another object of its kind has is taken, without regard to case.** A table, or a column, index or
-  relationship, is refused a name another of its kind has, the two compared as .NET compares them without regard
-  to case (`StringComparison.OrdinalIgnoreCase`) - the comparison this library looks names up with, so that no
-  two objects are taken for each other. `CreateTable` is refused two columns of one name so (`ArgumentException`,
-  before anything is written): it made both, and a row then kept one value for the two. The comparison throws for
-  no name: one already in a file - a noncharacter in it, say - stands in the way only of a new name equal to it.
-  What is renamed is compared with every other object of its kind, and left out by what it is, not by its name; a
-  table's rename changes the relationships that name it, and no other table's. A table asked for by a name one has
-  exactly is that table, though another's is the same without regard to case.
-  This is not yet Access's own rule. Measured with DAO, Access also takes as one names that differ in width, in
-  kana, or in an accent written as one character or as two, which are two names here. And it keeps apart names
-  .NET takes as one without regard to case - `xµ` and `xμ` (the micro sign and the Greek mu), and letters of
-  other scripts that .NET's newer case tables pair - which are one name here on .NET, and two on .NET Framework.
+- **A name that is one with another of its kind is taken, as Access takes it** ([#63]). A table, or a column,
+  index or relationship, is refused a name that is one with another's of its kind, before anything is written -
+  `ArgumentException`, or `InvalidOperationException` for a table's - and the message names the other. Access
+  decides which two names are one by their text index keys, and so does this library: two names are one when the
+  keys an index has for them are equal, their trailing spaces dropped, or when the keys of the whole names are.
+  Access refuses a second name whose index key is a first one's; its own lookups - DAO's collections, SQL - take as
+  one two names whose whole keys are equal: DAO makes a table `x` and a space and a table `x` and an ideographic
+  space, and then deletes neither by its name. So names in the other case, the other width or the other kana, with
+  an accent written as one character or as two, or `ß` against `ss`, are one; names Access keeps apart are two:
+  `xµ` and `xμ` (the micro sign and the Greek mu), `e` and `é`, `I` and `ı`. The comparison is the same on every
+  target.
+- **The order they are compared in** is the one Access compares them by:
+  - a table's or a relationship's name by the order the catalog sorts in: General - Legacy, Access 2000 to 2007's,
+    or General, Access 2010's, which a new file of a later format sorts in ([File formats](file-formats.md)). In a
+    database that sorts in General, a table's name is compared by General - Legacy's keys as well: DAO makes two
+    tables whose names General's keys keep apart and General - Legacy's take as one (`xȤ` and `xȥ`), and its
+    lookups then find either for the other;
+  - a column's or an index's name by General - Legacy's keys, in a database that sorts in General as well as in one
+    that sorts in General - Legacy (in another order, see below);
+  - in an Access 97 file, which this library only reads, a table's name by the index keys of Access 97's General
+    order, and a column's or an index's by those and General - Legacy's, by which DAO's Fields and Indexes take
+    some names as one there (`xÞ` and `xTH`).
+- **Measured.** DAO 16 and Jet 4.0 were asked about 18,140 pairs of names, as field, table and index names, in a
+  database of each of those orders (`tests/JackcessDotNet.Tests/Assets/dao-object-names.tsv`, which
+  `tools/dao-object-names.ps1` makes): each character of the BMP that has another form - its other case, its
+  canonical and compatibility forms and their case, its other kana, the letters it sorts as - after an `x`,
+  against that form; trailing and inner spaces, and the characters General - Legacy has no code for; the names of
+  code page 1252 against their letters without an accent; and names with the marks below. Every pair DAO takes as
+  one, or makes as two and then confuses, is one here. Of the 90,205 verdicts in which DAO keeps two names apart
+  and tells them apart, 106 are one here, each for one of the two reasons that follow.
+- **Names Access allows that are refused**, so that no name made here is one Access's lookups take for another:
+  - In a database that sorts in General, a table's name that General - Legacy's keys take as one with another's,
+    which General's keep apart and Access's lookups tell apart: `xÜ` against `xU` with a combining diaeresis, and
+    `x` against `x` followed by a character General - Legacy has no code for (U+03F3, U+202F, U+FEFF).
+  - A name with a mark Access keys by the characters around it - the prolonged sound mark `ー`, the iteration
+    marks `ゝ`, `々` and `〱` to `〵`, the double hyphen `゠`, the Yi iteration mark, the shadda and the Arabic marks
+    General keys by context - is one with another name when any reading of it is: each mark as itself, a voiced
+    iteration mark as the plain one and U+3099 (`ゞ` is one with `ゝ` and U+3099, as to Access); each as the
+    character before it, as Access reads `ー` after a Latin letter; and the Arabic marks left out. That takes as
+    one some names Access keeps apart (`人々` and `人人`), and as two none it takes as one.
+- **A database whose text sorts in another order.** Access compares the names of its columns and indexes by that
+  order's own keys, which this library makes only for the orders whose keys are General - Legacy's
+  ([Text index keys](indexes.md#text-index-keys-sort-orders-and-limits)). In another, names General - Legacy keeps
+  apart are one: DAO refused an index `xʎ` beside `xÜ` in Swedish, `xė` beside `xℯ` in Czech, `x―` beside `xー` in
+  Japanese and `xi` beside `xİ` in Turkish, and made such fields and then took one for the other. So a column, an
+  index or a relationship is given a new name there only in Swedish, Czech, French and Japanese, and only a name of
+  printable ASCII among names of printable ASCII: there DAO gave every such pair it was asked about - in another
+  case, with punctuation or spaces among its letters - the verdict General - Legacy gives. Any other new name, and
+  any in another order, is refused with `NotSupportedException`, before anything is written. The database's tables,
+  columns and indexes are found by name as in any other.
+- **A lookup finds the name given exactly first.** `GetTable`, `TryGetTable`, a table's columns and indexes, a
+  `Row`'s entries, a join's columns, an export's properties and an import's columns are found by the name given
+  exactly, when there is one; otherwise by the first name that is one with it by its index key, and then by the
+  first that is one with it at all, as Access's lookups take the first of names that are one. A file can have two
+  names that are one - Access makes the fields `x` and `x ` (a space), and the tables above - and each is found by
+  its own.
+- **What this library keeps by name it keeps by the exact name**: the row it writes, a table's long-value and
+  property maps, and the tables and columns of the relationships it enforces. A table with two columns whose names
+  are one keeps a value, a map and a relationship of each, and a row given `xµ` for a table with columns `xµ` and
+  `xμ` writes its value to `xµ` alone.
+- **The comparison throws for no name**, and a name already in a file stands in the way only of a new name that
+  is one with it. Half of a surrogate pair alone in a name, which Access keeps as it is given, is read as the file
+  holds it and found by that name; a new name with one is refused with `NotSupportedException`. What is renamed is
+  compared with every other object of its kind, and left out by what it is, not by its name; a table's rename
+  changes the relationships that name it, and no other table's.
 
 ## How a table is written
 
@@ -136,8 +188,8 @@ is the only referee, and what it refuses is refused:
   throws `InvalidOperationException` from then on.
 - **Renaming** a column changes its name in the definition, in its relationships and in its properties; an
   index's, in the definition, where its slot moves to where the new name sorts; a table's, in the catalog and
-  in its relationships. A name Access does not allow, or that is taken, is refused; one that differs only in
-  case is taken. A saved query goes on naming a column or table by the name it had, as it does when Access's
+  in its relationships. A name Access does not allow, or that is taken, is refused; one that is one only with
+  the object's own name - in another case, say - is taken. A saved query goes on naming a column or table by the name it had, as it does when Access's
   engine renames one. A relationship's index keeps its name, and a system table its own.
 - **Pages given back** are free in the database's own map of its pages, with their bytes left as they were, as
   Access leaves them: Access uses them again, and compacting the file removes them. This library adds pages
@@ -146,3 +198,4 @@ is the only referee, and what it refuses is refused:
 [Back to contents](README.md)
 
 [#37]: https://github.com/markmario/jackcess-dotnet/issues/37
+[#63]: https://github.com/markmario/jackcess-dotnet/issues/63

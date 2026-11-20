@@ -115,6 +115,9 @@ finds every row whose number reads as the `DateTime` given ([Date/Time](cursors-
 
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
   is written that way.
+- **Text is read and written as the UTF-16 code units it holds**, half of a surrogate pair alone among them, as
+  Access keeps a value or a name with one: a Text value, a Memo in its row or on pages of its own, and the names
+  of tables, columns and indexes. `Encoding.Unicode` would read and write U+FFFD in its place ([#63]).
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and
@@ -143,5 +146,6 @@ are each refused with `NotSupportedException`.
 
 [Back to contents](README.md)
 
+[#63]: https://github.com/markmario/jackcess-dotnet/issues/63
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65

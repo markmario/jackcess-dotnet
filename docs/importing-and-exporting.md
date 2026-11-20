@@ -59,9 +59,11 @@ An import holds every value of its source exactly, or refuses before anything is
 - **An empty byte array is written as `Table.Insert` writes one**, for a table made and for one that is there: a
   value of no bytes, as ACE's own INSERT writes it, which ACE reads back as one and DAO shows as Null (see
   [Binary and OLE Object](data-types.md#binary-and-ole-object)).
-- **Two columns whose names are one without regard to case are refused** - `A` and `a` of a case-sensitive
-  `DataTable`, a property and a `[Column("a")]` - for a table made, which would have one column of the name, and
-  for one that is there, whose column would keep one of their values.
+- **Two columns whose names are one to Access are refused** - `A` and `a` of a case-sensitive `DataTable`, a
+  name and its full-width form, a property and a `[Column("a")]` - for a table made, which would have one column of
+  the name, and for one that is there, whose column would keep one of their values. A source column goes to the
+  column of a table that is there of exactly its name, or else to the first whose name is one with it
+  ([Names](tables-and-schema.md#names)).
 - An `IEnumerable<T>` is read whole, every object, before anything is written.
 
 POCO mapping respects `[Key]`, `[Column("X")]`, `[Column(Order = n)]`, `[MaxLength]`, `[Required]`, `[NotMapped]`
