@@ -4,5 +4,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/JackcessDotNet.Tests/JackcessDotNet.Tests.csproj" />
+    <Project Path="tests/JackcessDotNet.AccessTests/JackcessDotNet.AccessTests.csproj" />
   </Folder>
 </Solution>

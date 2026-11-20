@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The Access referee tests: Microsoft Access's own engine - ACE through OLE DB, and DAO - reads, queries, writes to
+    and compacts what this library writes, and this library reads what Access wrote. They need ACE, which is Windows
+    and .NET Framework only, and so run on net48 alone, in a 64-bit process, against the library's net48 assembly.
+    Without ACE every test is skipped, saying why (Support/TestEnv.cs). docs/building-and-testing.md says how to run
+    them; CI runs them in shards (scripts/Invoke-AccessTests.ps1).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Written before nullable annotations; the referee code is plain C#. -->
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- xUnit.net v3: a test project is its own runner, so it is an executable. -->
+    <OutputType>Exe</OutputType>
+    <!-- xUnit2013 (Assert.Single for a count of one): a few tests compare a count with the number they expect,
+         one among others, and say so in the same form. -->
+    <NoWarn>$(NoWarn);xUnit2013</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- xUnit.net v3 on Microsoft Testing Platform: global.json tells `dotnet test` to use it. -->
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+    <ProjectReference Include="..\..\src\JackcessDotNet\JackcessDotNet.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Data" />
+    <!-- DAO is driven late-bound (dynamic) where a test has it make a table or a database. -->
+    <Reference Include="Microsoft.CSharp" />
+    <!-- The attributes the importer reads off a type (ImporterInAccessTests). -->
+    <Reference Include="System.ComponentModel.DataAnnotations" />
+  </ItemGroup>
+
+  <!-- Pins the culture tests run in: see Support\TestEnv.cs. -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The corpus of Access-made files, read where it is and copied before a test writes to one. -->
+    <AssemblyMetadata Include="EngineCorpusDir" Value="$(MSBuildProjectDirectory)\..\corpus" />
+    <!-- Databases Access and earlier releases of this library made, kept with the unit tests. -->
+    <AssemblyMetadata Include="EngineAssetsDir" Value="$(MSBuildProjectDirectory)\..\JackcessDotNet.Tests\Assets" />
+  </ItemGroup>
+</Project>
