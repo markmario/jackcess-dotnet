@@ -9,9 +9,9 @@ namespace JackcessDotNet.Tests;
 /// Which two names of a database's objects are one, as Access decides it (#63): by the names' keys in the order Access
 /// compares them by (<see cref="ObjectNames"/>), the same on every target. A table, column, index or relationship is
 /// refused a name that is one with another of its kind, before anything is written, and a name is looked up exactly
-/// first. The pairs are some of those DAO 16 and Jet 4.0 were asked about, as field, table and index names, in
-/// databases that sort in General - Legacy and General. A name already in a file, whatever it holds, stands in the way
-/// of nothing but a
+/// first. The pairs are those DAO 16 and Jet 4.0 were asked about, as field, table and index names, in databases that
+/// sort in General - Legacy and General and in an Access 97 file (Assets/dao-object-names.tsv, which
+/// tools/dao-object-names.ps1 makes). A name already in a file, whatever it holds, stands in the way of nothing but a
 /// new name it is one with (Assets/dao-odd-names.accdb, which tools/odd-names-fixture.ps1 makes).
 /// </summary>
 public sealed class ObjectNameTests : IDisposable
@@ -30,6 +30,73 @@ public sealed class ObjectNameTests : IDisposable
     private static string X(params int[] codes) => "x" + U(codes);
 
     // ── What DAO measured ────────────────────────────────────────────────────
+
+    private static string Unhex(string hex)
+        => new(hex.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(h => (char)Convert.ToInt32(h, 16)).ToArray());
+
+    // The rule for each kind of name - a field's, a table's, an index's - in a database of each order: a table's name by
+    // the order its catalog sorts in, a field's and an index's by General - Legacy's, which Access compares them by in a
+    // database that sorts in General too; in an Access 97 file a table's by Access 97's order, and a field's and an
+    // index's by that and General - Legacy's.
+    private static readonly (string Order, ObjectNames[] Rules)[] Orders =
+    {
+        ("General - Legacy", new[] { ObjectNames.GeneralLegacy,  ObjectNames.GeneralLegacy, ObjectNames.GeneralLegacy }),
+        ("General",          new[] { ObjectNames.GeneralLegacy,  ObjectNames.General,       ObjectNames.GeneralLegacy }),
+        ("Access 97",        new[] { ObjectNames.Access97Columns, ObjectNames.Access97,     ObjectNames.Access97Columns }),
+    };
+
+    private static readonly string[] Kinds = { "fields", "tables", "indexes" };
+
+    // Each line: the two names in hex, what makes them a pair, and for each order DAO's verdict as a field, a table and
+    // an index name: 1 one (the second refused), c two that DAO's own lookups then confuse, 2 two, - not asked.
+    [Fact]
+    public void Every_pair_DAO_was_asked_about_is_one_name_or_two_as_Access_takes_it()
+    {
+        int asked = 0, one = 0, apart = 0, onPurpose = 0;
+        var wrong = new List<string>();
+        foreach (string line in File.ReadLines(ProtectedFileTests.Asset("dao-object-names.tsv")))
+        {
+            if (line.Length == 0 || line[0] == '#') continue;
+            string[] parts = line.Split('\t');
+            string a = Unhex(parts[0]), b = Unhex(parts[1]);
+            for (int o = 0; o < Orders.Length; o++)
+                for (int k = 0; k < Kinds.Length; k++)
+                {
+                    char verdict = parts[3 + o][k];
+                    if (verdict == '-') continue;
+                    asked++;
+                    bool same = Orders[o].Rules[k].Same(a, b);
+                    Assert.Equal(same, Orders[o].Rules[k].Same(b, a));
+                    if (verdict is '1' or 'c')
+                    {
+                        one++;
+                        if (!same) wrong.Add($"{parts[0]} / {parts[1]} ({parts[2]}), {Kinds[k]} in {Orders[o].Order}: one to Access, two here");
+                    }
+                    else
+                    {
+                        apart++;
+                        if (!same) continue;
+                        if (TakenAsOneOnPurpose(a, b, o, k)) onPurpose++;
+                        else wrong.Add($"{parts[0]} / {parts[1]} ({parts[2]}), {Kinds[k]} in {Orders[o].Order}: two to Access, one here");
+                    }
+                }
+        }
+        Assert.True(wrong.Count == 0, $"{wrong.Count} verdicts this library does not give:\n" + string.Join("\n", wrong.Take(100)));
+        // The file is whole: 108,795 verdicts, 18,590 of them one.
+        Assert.True(asked > 100_000 && one > 15_000 && apart > 80_000, $"{asked} verdicts, {one} one, {apart} two");
+        // Of the names Access keeps apart, few are taken as one, and each on purpose: 106 verdicts.
+        Assert.True(onPurpose < 200, $"{onPurpose} of Access's verdicts of two are one here");
+    }
+
+    // Where this library takes as one two names Access keeps apart, on purpose (ObjectNames): a name with a mark Access
+    // keys by the characters around it (ー, 々, ゝ, the shadda), any of whose readings is one with the other name; and a
+    // table's name in a database that sorts in General, compared by General - Legacy's keys as well as General's, as
+    // DAO's own lookups compare some names there.
+    private static bool TakenAsOneOnPurpose(string a, string b, int order, int kind)
+        => (a + b).Any(IsMark)
+        || (Orders[order].Order == "General" && Kinds[kind] == "tables" && ObjectNames.GeneralLegacy.Same(a, b));
+
+    private static bool IsMark(char c) => TextIndexCodes.GeneralLegacy.IsContextDependent(c) || TextIndexCodes.General.IsContextDependent(c);
 
     // Pairs Access takes as one, as a field, a table and an index name, in a database that sorts in General - Legacy.
     public static IEnumerable<object[]> OneToAccess() => new[]
