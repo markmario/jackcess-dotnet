@@ -274,7 +274,10 @@ public sealed class Table
     /// without holding it all; <c>Rows.ToList()</c> gives a list. Each enumeration reads the table again from its
     /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
     /// are those of the pages as they were listed, and of each page as it was when it was reached, without a row
-    /// inserted since the enumeration began, whichever page it went to: take the list first.
+    /// inserted since the enumeration began, whichever page it went to: take the list first. A database opened only
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to, reads each
+    /// row from its page as the page is when the row is reached, and is not told of the rows that program inserts: one
+    /// inserted where the enumeration has still to come, on a page it listed, is given.
     /// </para>
     /// </summary>
     public IEnumerable<Row> Rows
@@ -292,7 +295,11 @@ public sealed class Table
             var    ownedList = UsageMap.GetOwnedPages(umapPage, definition.OwnedPagesRow, format, _file);
 
             // Each page is read once, and its rows given from that reading - those it held when the pages were listed:
-            // a row inserted since is not given, whichever page it goes to (TableScan).
+            // a row inserted since is not given, whichever page it goes to (TableScan). Unless another program may
+            // write to the file meanwhile (#62), which tells the scan nothing: then each row after the page's first is
+            // read from the page as it is when the row is reached, and a page that is no longer one of the table's
+            // gives no more rows.
+            bool shared = _file.SharedWithWriters;
             var scan = _file.TableScans.Begin(definition.TdefPageNumber);
             scan.Restart(ownedList);
             try
@@ -300,10 +307,18 @@ public sealed class Table
                 foreach (int pageNum in ownedList)
                 {
                     byte[] dp       = _file.ReadPage(pageNum);
+                    if (shared && !IsDataPageOf(dp, definition)) continue;
                     int    rowCount = scan.Slots(pageNum, ByteUtil.GetShort(dp, format.OffsetDataNumRows));
 
                     for (int r = 0; r < rowCount; r++)
                     {
+                        if (r > 0 && shared)
+                        {
+                            dp = _file.ReadPage(pageNum);
+                            if (!IsDataPageOf(dp, definition)) break;
+                            rowCount = scan.Slots(pageNum, ByteUtil.GetShort(dp, format.OffsetDataNumRows));
+                            if (r >= rowCount) break;
+                        }
                         // Deleted rows are passed; an overflow row is read where its pointer leads.
                         if (DataRows.Read(_file, dp, r) is not { } rowBytes) continue;
 
@@ -324,6 +339,11 @@ public sealed class Table
             }
         }
     }
+
+    // Whether a page is a data page of the table: what a page the table's usage map listed is no longer, when another
+    // program has given it up since (Rows, beside a writer).
+    private static bool IsDataPageOf(byte[] page, TableDefinition definition)
+        => page[0] == JetFormat.PageTypeData && ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) == definition.TdefPageNumber;
 
     /// <summary>
     /// Creates a cursor over the table's rows in the order they are stored, which can move both ways. For a

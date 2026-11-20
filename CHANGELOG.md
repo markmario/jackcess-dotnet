@@ -28,8 +28,9 @@ changed since 1.2.2.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
   `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
   by side, and checks the packages each target of the package depends on.
-- **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
-  format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
+- **Files Access accepts.** Every change listed under
+  [What this fork changes](https://github.com/markmario/jackcess-dotnet/blob/main/docs/differences.md#what-this-fork-changes):
+  files up to the format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
   Extended columns, and foreign keys enforced.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
@@ -221,7 +222,8 @@ changed since 1.2.2.
   made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
   German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
   General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
-  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  are written to, where they were refused. Every other order is refused as before;
+  [Indexes and keys](https://github.com/markmario/jackcess-dotnet/blob/main/docs/indexes.md#refused) lists the ones
   measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
   General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
   and ß among accented letters).
@@ -354,13 +356,42 @@ changed since 1.2.2.
   - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
     searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
     non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
-    "stale integrity hash" this README warned of does not arise.
+    "stale integrity hash" the README of 1.2.2 warned of does not arise.
+- **A file open to be written is kept from every other writer, and is not opened while another has it** (#62).
+  This library takes none of Access's locks. The file was shared for writing, so Access opened it to write while a
+  `Database` had it open and wrote over pages the `Database` kept track of: rows were lost and a primary key led to
+  other rows. It is shared for reading only, as Access shares a database it has open exclusively, but for readers:
+  Access opening it to write - shared or exclusively - is refused ("Could not use '...'; file already in use"), and
+  so is a second `Database`; Access read-only (ACE's `Mode=Read`, DAO's read-only) and a `Database` opened
+  `ReadOnly` open it and read it. **What a caller sees:** a program that opened, to write, a file a `Database` had
+  open is refused; and `Database.Open` of a file another program or `Database` has open to write throws
+  `DatabaseInUseException` - an `IOException` with a sharing violation's HResult, as the `IOException` it threw was -
+  where it was refused only because the file's header was read without sharing writing. Access's lock file (`.ldb`,
+  `.laccdb`) is neither made nor read, as Access makes none for a database it opens exclusively (measured with ACE 16,
+  DAO 16 and DAO 3.6).
+- **`Database.Create` replaces a file only when no one has it open** (#62), readers included: it emptied a file
+  Access had open, under Access. `DatabaseInUseException`, the file as it was. The new database has the file to
+  itself until it is disposed, as DAO's `CreateDatabase` holds one: no other program or `Database` opens it
+  meanwhile, even to read. Opened again with `Database.Open`, it is shared with readers.
+- **An Access 97 file opens while Access has it open** (#62). It is only read, and is opened as one opened
+  `ReadOnly` is; it was refused, as a file to be written is. DAO and ACE can write to it meanwhile, so it is read as a
+  `ReadOnly` database is, its pages read again at every move, whether `ReadOnly` is set or not, and costs what that
+  costs: over the ten Access 97 files of the test corpus, every table and index walked 20 times, 612,280 pages read
+  where 78,420 were - about 2.8 s where 0.55 s was on .NET 10, 6.9 s where 0.85 s was on .NET Framework (measured by
+  the review of #73).
+- **A Memo or OLE value that is not where its row's reference says is refused** (#62), with `InvalidDataException`
+  saying what does not fit: a page the file does not have or that holds no values, a row its page does not have or
+  has deleted, a place shorter than the value, a chain of pieces that ends before it. It was read from whatever the
+  place held - a deleted value's bytes, or a shorter value made up with zeros - and two such references were refused
+  with `InvalidOperationException`. A reading beside a writer meets one when the writer changes a row between the
+  reading of the row and of its value; so does a reading of a damaged file.
 - **Room on a table's pages is used again as Access uses it** (#58). A deleted row's bytes stayed on its page, and
   no row was put where a delete, or a row's values moving back from another page, had left room: a row updated back
   and forth past its page's room grew the file by a page every few hundred changes, without end - 13 pages in 3,000
   cycles, where Access's grew by one with each change a session of its own (in one session, by hundreds). This
   library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
-  and `.accdb`; the README's "Rows and long values" has the rules): a row goes to the lowest page the table's
+  and `.accdb`; [Storage](https://github.com/markmario/jackcess-dotnet/blob/main/docs/storage.md#where-a-new-row-goes)
+  has the rules): a row goes to the lowest page the table's
   free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
   another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
   for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
@@ -548,6 +579,24 @@ changes with them.
   whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
   are the database's own, read and written the same way. A property Access wrote and the caller did not change
   goes back byte for byte.
+- **`DatabaseOpenOptions.ReadOnly`** (#32), Java's `DatabaseBuilder.withReadOnly`: the file is opened only to be
+  read, by a handle that cannot write, and every change is refused with `NotSupportedException` before anything
+  happens (`Database.IsReadOnly`). It opens beside Access, or a `Database`, writing to the file, as Access's own
+  read-only open does; only a program holding the file exclusively keeps it out. A file marked read-only opens this
+  way. What it reads while another program writes is the file as it is at each move of a cursor, and at each row of
+  `Table.Rows`: it keeps no page from one move to the next, as the file can change between them, so a walk of a table
+  reads a page or more at every row - ten to thirty times the pages one opened to be written reads, which keeps the
+  page it is on. `Table.Rows` over 500,000 rows reads 550,002 pages where one opened to be written reads 53,694:
+  about 1.7 s where 0.3 s is on .NET 10, 2.1 s where 0.5 s is on .NET Framework (measured by the review of #73). An
+  Access 97 file is read so too. Such a reading can miss rows, give a row twice - one moved ahead of a cursor, or one
+  on a page read while the writer was part-way through writing it - or with a Memo or OLE value of another row's, or
+  fail. It cannot change the file, and a writer neither waits for it nor is kept out by it; it keeps out only what
+  needs the file to itself - Access opening the database exclusively, and so Compact and Repair, and
+  `Database.Create` replacing the file. A reading that agrees with itself needs no writer while it is made.
+  [Sharing a file with Access](https://github.com/markmario/jackcess-dotnet/blob/main/docs/sharing.md) has what was
+  measured.
+- **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
+  that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
 - Releases from `vX.Y.Z` tags, checked before anything is built and published through nuget.org Trusted
   Publishing (`.github/workflows/publish.yml`). Upstream's tag-triggered `nuget-publish.yml` is retired.
