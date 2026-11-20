@@ -8,8 +8,9 @@ using JackcessDotNet;
 // Reads every table of every .mdb and .accdb under the corpus folder, system tables included, and writes one text
 // file for each: the tables in name order, each with its columns (name, type, length), the number of rows read and
 // the number its definition counts, and every row as it was read, in the order it was read. Only the engine's
-// public reading API is used, so the same source builds against any version of the engine: run it with two and
-// compare the folders to see every value one reads differently from the other.
+// public reading API is used (GetTableNames, GetSystemTableNames and Table.Rows), so the same source builds
+// against every version of the engine that has it: run it with two and compare the folders to see every value one
+// reads differently from the other.
 
 if (args.Length != 2)
 {
@@ -34,7 +35,7 @@ foreach (string file in Directory.EnumerateFiles(corpus, "*.*", SearchOption.All
     try
     {
         using var db = Database.Open(copy);
-        foreach (string name in db.ListTables(includeSystem: true).OrderBy(n => n, StringComparer.Ordinal))
+        foreach (string name in db.GetTableNames().Concat(db.GetSystemTableNames()).OrderBy(n => n, StringComparer.Ordinal))
         {
             tables++;
             text.Append("TABLE ").Append(name).Append('\n');
@@ -42,8 +43,8 @@ foreach (string file in Directory.EnumerateFiles(corpus, "*.*", SearchOption.All
             {
                 var table = db.GetTable(name);
                 foreach (var column in table.Columns)
-                    text.Append("  COLUMN ").Append(column.Name).Append(' ').Append(column.DataType).Append(' ').Append(column.Length).Append('\n');
-                var rows = table.ReadAllRows();
+                    text.Append("  COLUMN ").Append(column.Name).Append(' ').Append(column.DataType).Append(' ').Append(column.LengthInBytes).Append('\n');
+                var rows = table.Rows.ToList();
                 text.Append("  ROWS ").Append(rows.Count).Append(" read, ").Append(table.RowCount).Append(" in the definition\n");
                 foreach (var row in rows)
                     text.Append("  ROW ").Append(string.Join(" | ", table.Columns.Select(c =>

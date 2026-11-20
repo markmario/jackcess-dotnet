@@ -97,17 +97,15 @@ files Access and earlier versions of this library made are described beside what
 ## Comparing two versions of the engine
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
-versions of the engine. Nothing builds it, and it does not compile against the public API: it calls
-`ListTables` and `ReadAllRows`, whose places `GetTableNames` and `GetSystemTableNames`, and `Table.Rows`, have
-taken ([#47]).
+versions of the engine. Neither the solution nor CI builds it; it uses only the public API, and is run on its
+own:
+
+```
+dotnet run --project tools/CorpusDump --configuration Release -- tests/corpus <output folder>
+```
 
 ## Reporting problems
 
 Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
-Some comments in the source still cite issues of ExportMdb.Interop's tracker (`qcatco/exportmdb.interop`), which
-is private: the work was tracked there until this repository had its own, and [#47] replaces those citations with
-this repository's issues.
 
 [Back to contents](README.md)
-
-[#47]: https://github.com/markmario/jackcess-dotnet/issues/47
