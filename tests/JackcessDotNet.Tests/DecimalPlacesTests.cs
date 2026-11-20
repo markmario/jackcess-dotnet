@@ -129,6 +129,36 @@ public sealed class DecimalPlacesTests : IDisposable
         Assert.Equal(stored, Written(NumericCodec.Decode(bytes, 0, scale)!.Value));
     }
 
+    // A zero made a negative zero, and back: each update is made, though the two are equal numbers, since the row
+    // stores them as two values. Taken for the value already there, the update was dropped.
+    [Fact]
+    public void An_update_from_zero_to_a_negative_zero_and_back_is_made()
+    {
+        using var db = Database.Create(_path, FileFormat.Access2000);
+        var table = db.CreateTable("T", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32),
+            new ColumnDefinition("D", DataType.Decimal) { Precision = 18, Scale = 2 },
+        }, new[] { "Id" });
+        table.Insert(new Row { ["Id"] = 1, ["D"] = 0m });
+        string Stored() => Written((decimal)table.Rows.Single()["D"]!);
+
+        var row = table.Rows.Single();
+        row["D"] = -0.001m;
+        table.Update(row);
+        Assert.Equal("-0.00", Stored());
+
+        row = table.Rows.Single();
+        row["D"] = 0.00m;
+        table.Update(row);
+        Assert.Equal("0.00", Stored());
+
+        var cursor = table.CreateCursor();
+        Assert.True(cursor.MoveNext());
+        cursor.UpdateCurrentRow(new Row { ["D"] = -0.004 });
+        Assert.Equal("-0.00", Stored());
+    }
+
     // The update path takes a number as the insert does, and so does the row's check before it is written.
     [Fact]
     public void An_update_and_a_validation_take_such_a_number_as_an_insert_does()
