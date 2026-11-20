@@ -32,7 +32,7 @@ namespace JackcessDotNet;
 /// (<see cref="TableIndexes.RowPointersFor(IReadOnlyList{string}, IReadOnlyList{object?})"/>): the first search
 /// through each index, while the database is open, reads its table to see. Versions of this library before it
 /// kept every index left rows out of all but the primary key, and a row that is not in the index on its foreign
-/// key is not found as a child (qcatco/exportmdb.interop#64). An index seen not to hold every row is not
+/// key is not found as a child. An index seen not to hold every row is not
 /// searched: its table is read, as one with no index is.
 /// </para>
 /// <para>

@@ -5,12 +5,12 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// A duplicate of a row that a unique index does not hold, in a file Access made and an earlier version of this
-/// library wrote to (qcatco/exportmdb.interop#73): the real thing <see cref="UniqueIndexTrustTests"/> reconstructs.
+/// library wrote to: the real thing <see cref="UniqueIndexTrustTests"/> reconstructs.
 /// <para>
 /// Assets/engine-3ad3aed-rows-in-unique-indexes.mdb was made by tools/legacy-unique-indexes.ps1. DAO made
 /// Codes(Id primary key, Code in the unique index CodeUnique, Name) with rows (1, 100) and (2, 200), and
-/// Renamed(Id primary key, Name) with rows 1 and 2. Then this library as it was at commit 3ad3aed, the one in
-/// ExportMdb.Interop 2.1.2, which kept a primary key under the value a row was found by, and no other index:
+/// Renamed(Id primary key, Name) with rows 1 and 2. Then this library as it was at commit 3ad3aed, before
+/// it kept every index, which kept a primary key under the value a row was found by, and no other index:
 /// inserted Codes (3, 300); changed Codes 2 to Code 250; changed Renamed 2 to Id 7.
 /// </para>
 /// <para>

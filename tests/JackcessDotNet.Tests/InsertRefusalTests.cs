@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A table can be asked whether it takes rows, before anything is written (qcatco/exportmdb.interop#28): a caller
+/// A table can be asked whether it takes rows, before anything is written: a caller
 /// that writes to several tables asks each first, and writes to none when one would refuse.
 /// <see cref="Table.InsertRefusal"/> is what <see cref="Table.Insert"/> throws, so the two cannot differ; each
 /// case here holds them to it, for a table that takes rows and for each kind of table that does not, and holds

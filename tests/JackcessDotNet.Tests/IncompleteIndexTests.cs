@@ -4,8 +4,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// <see cref="Database.EnforceForeignKeys"/> over a table whose index does not hold every row
-/// (qcatco/exportmdb.interop#64). Versions of this library before it kept every index added a row to its table's
+/// <see cref="Database.EnforceForeignKeys"/> over a table whose index does not hold every row.
+/// Versions of this library before it kept every index added a row to its table's
 /// primary key and to no other index, and rewrote or deleted one leaving its entries elsewhere where they were: a
 /// row they inserted or updated is not found through the index on its foreign key. With
 /// <see cref="Database.VerifyIndexes"/>, which every database here is opened with, enforcement finds rows through

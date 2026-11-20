@@ -6,7 +6,7 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// What an Access 97 (Jet3) file holds that the nine such files of the corpus do not, read as the engine that
-/// wrote it reads it (qcatco/exportmdb.interop#67 and #59).
+/// wrote it reads it.
 /// <para>
 /// Assets/access97-jet40.mdb was written by Jet 4.0 (32-bit DAO 3.6), Microsoft's engine of Access 2000 to 2003,
 /// which creates and keeps a Jet3 database; tools/access97-fixture.ps1 made it, and is the record of what is in
@@ -323,7 +323,7 @@ public sealed class Access97ReadTests
     /// its leaves, so this holds for the text indexes too, whose keys, in Access 97's sort order, this library
     /// does not make.
     /// <para>
-    /// indexCodesV1997 and compIndexV1997, which qcatco/exportmdb.interop#59 names, have pages above their
+    /// indexCodesV1997 and compIndexV1997 have pages above their
     /// leaves, none with a shared prefix. Read with the level for the high byte of the prefix's length, such a
     /// page had a prefix of 256 bytes: IndexReader, finding the page's first entry shorter than that, applied
     /// none, and read these pages rightly all the same; IndexWriter, which a primary key is looked up through,

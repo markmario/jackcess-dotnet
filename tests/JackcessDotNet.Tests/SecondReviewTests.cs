@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// What the second review of qcatco/jackcess-dotnet#3 found, each seen failing first: a delete or update in a key
+/// What a second review of the engine found, each seen failing first: a delete or update in a key
 /// whose pages Access compressed, which changed the row and lost the key's change; a table an earlier version
 /// registered outside the Tables container, whose name another table could then take; FindRowByEntry's scan
 /// matching the table's first columns, not the index's; a root left holding one child; sort orders the engine

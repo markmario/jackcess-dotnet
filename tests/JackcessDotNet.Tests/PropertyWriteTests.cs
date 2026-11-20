@@ -6,7 +6,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// Properties are written (#27): a table's, a column's and the database's, to the LvProp value of the object's
 /// row in MSysObjects, where Access keeps them. What Access wrote goes back byte for byte. That Access reads what
-/// is written here is ExportMdb.Interop's suite to say, where DAO is the referee; these say what the library
+/// is written here is PropertiesInAccessTests' to say, where DAO is the referee; these say what the library
 /// itself holds to.
 /// Assets/dao-properties.mdb is a database DAO made (tools/dao-properties.ps1).
 /// </summary>

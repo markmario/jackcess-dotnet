@@ -3,8 +3,8 @@ namespace JackcessDotNet.Diagnostics;
 /// <summary>
 /// A Decimal (Numeric) value whose stored number has more digits than its column's precision allows: what
 /// <see cref="DecimalByteOrder.Find(JackcessDotNet.Table)"/> and <see cref="DecimalByteOrder.Find(Database)"/> list.
-/// Access does not write such a value, and neither does this library, so it is almost certainly one a version of
-/// this library before qcatco/exportmdb.interop#61 wrote, with its bytes in the order those versions used:
+/// Access does not write such a value, and neither does this library, so it is almost certainly one an earlier
+/// version of this library wrote, with its bytes in the order those versions used:
 /// <see cref="ValueInEarlierByteOrder"/> is then the number that was meant.
 /// </summary>
 public sealed class DecimalBeyondPrecision

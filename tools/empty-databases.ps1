@@ -18,7 +18,7 @@
     No DAO constant makes the Access 2016 or Access 2019 format. Access makes one out of the 2010 format by
     setting the header's version to 0x05 0x00 when a table first gets a Large Number column, and to 0x06 0x00
     when one first gets a Date/Time Extended column; nothing else in the header changes. Database.Create does
-    the same to a copy of empty2010.accdb (qcatco/exportmdb.interop#39), so there is no third or fourth file.
+    the same to a copy of empty2010.accdb, so there is no third or fourth file.
 
     The files are not the same bytes on every run (they hold the time they were made), so they are committed,
     and this script is the record of how. It needs the Access Database Engine (for DAO): these were made with

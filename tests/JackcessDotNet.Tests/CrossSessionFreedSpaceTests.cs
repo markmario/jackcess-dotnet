@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Space a delete freed is used again after the file is closed and opened again (qcatco/exportmdb.interop#23), as
+/// Space a delete freed is used again after the file is closed and opened again, as
 /// Access keeps it: a long-value column's free-space usage map lists the pages a delete left room on, a page leaves it
 /// once a value fills it, and the first write to the column in a session starts from it.
 /// </summary>

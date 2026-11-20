@@ -6,11 +6,11 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Large Number and Date/Time Extended columns as this library writes them (qcatco/exportmdb.interop#40): a table
+/// Large Number and Date/Time Extended columns as this library writes them: a table
 /// is created with them, a value comes back as it went in - a <see cref="long"/>, and a <see cref="DateTime"/> to
 /// its last tick - indexes on them are kept, the file becomes one of the format that has the column, as Access
 /// makes it, and an .mdb, which has neither, refuses them. What Access makes of such a file is refereed by ACE in
-/// ExportMdb.Interop's tests; what Access itself wrote is read in <see cref="AccessLargeNumberExtendedDateTests"/>.
+/// AccdbFormatsInAccessTests; what Access itself wrote is read in <see cref="AccessLargeNumberExtendedDateTests"/>.
 /// </summary>
 public sealed class LargeNumberExtendedDateTests : IDisposable
 {

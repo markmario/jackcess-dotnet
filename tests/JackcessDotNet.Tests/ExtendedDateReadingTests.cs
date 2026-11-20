@@ -10,8 +10,8 @@ namespace JackcessDotNet.Tests;
 /// and asked of ACE 16's <c>=</c> (through a snapshot and a table-type recordset alike, which read every case the
 /// same): what DAO read is beside each. Where Access has an error - DAO gives Empty, and ACE's <c>=</c> fails, "Internal
 /// error" or, for a count of 10 or more, "Attempted to divide by zero" - this library reads null; so it does where
-/// Access reads a value no <see cref="DateTime"/> is. ExportMdb.Interop's referee tests patch such bytes into a file
-/// and have DAO and ACE read them beside this library.
+/// Access reads a value no <see cref="DateTime"/> is. ExtendedDateLayoutsInAccessTests patches such bytes into a file
+/// and has DAO and ACE read them beside this library.
 /// </summary>
 public sealed class ExtendedDateReadingTests
 {

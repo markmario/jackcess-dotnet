@@ -28,7 +28,7 @@ General - Legacy keys of the first two files, byte for byte as ACE 16 does.
 
 No file holds the keys of another locale's order: where ACE's keys for a locale are those of General -
 Legacy, the first two files are that locale's too (`tools/ace-text-keys.ps1 -Locale` makes a locale's, to
-compare), and ExportMdb.Interop's SortOrdersInAccessTests has ACE seek what the library wrote in a database
+compare), and `SortOrdersInAccessTests` has ACE seek what the library wrote in a database
 of each such locale.
 
 Do not regenerate a file to make a failing test pass: a key that differs is a defect in the library.

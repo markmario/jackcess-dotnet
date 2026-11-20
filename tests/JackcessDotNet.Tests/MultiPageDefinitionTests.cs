@@ -10,7 +10,7 @@ namespace JackcessDotNet.Tests;
 /// definition where the page before left it. Such a definition is read whole - Access's own, in the corpus's
 /// <c>common2</c> files - and one that grows past its page, as a column or an index is added, or is longer than a
 /// page when its table is created, is written that way, on the pages Access gives it: the fewest that hold its
-/// length and eight bytes more. What Access makes of the result is in ExportMdb.Interop's
+/// length and eight bytes more. What Access makes of the result is in
 /// SchemaChangesInAccessTests.
 /// </summary>
 public sealed class MultiPageDefinitionTests : IDisposable

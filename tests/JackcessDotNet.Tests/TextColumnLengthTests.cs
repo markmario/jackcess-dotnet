@@ -4,7 +4,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A value longer than its Text column is refused, as Access refuses one (qcatco/exportmdb.interop#20). Written
+/// A value longer than its Text column is refused, as Access refuses one. Written
 /// anyway, ACE read it cut to the column's length - a 12-character date in an 11-character column came back
 /// "14-Sept-202" - and a typed reader refused the whole table.
 /// </summary>

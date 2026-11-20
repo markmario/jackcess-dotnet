@@ -9,7 +9,7 @@ namespace JackcessDotNet.Tests;
 /// table's definition, its pages given back to the file in the global usage map, its usage maps' rows taken off
 /// their page, its rows out of the system tables. What Access refuses is refused, a refused change leaves the
 /// file as it was, and one that fails while it is written is taken back. What Access makes of the result is in
-/// ExportMdb.Interop's SchemaChangesInAccessTests.
+/// SchemaChangesInAccessTests.
 /// </summary>
 public sealed class SchemaRemovalTests : IDisposable
 {

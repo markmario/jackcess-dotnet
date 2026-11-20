@@ -4,12 +4,12 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Index keys of more than 510 bytes that a file holds whole (qcatco/exportmdb.interop#26, review of
-/// qcatco/jackcess-dotnet#10). Access cuts such a key at 510 bytes and ends it in a digest, and so does this
-/// library now; before, it wrote the key whole, as Jackcess did before it cut keys. A file can therefore hold three
-/// kinds of entry for a long key - Access's cut one, this library's (the same bytes), and a whole one - and a
-/// whole one must be found, moved, removed and seen by a unique index like the others, or a delete leaves it
-/// behind, an update leaves it beside the new one, and a duplicate of its value is taken.
+/// Index keys of more than 510 bytes that a file holds whole. Access cuts such a key at 510 bytes and ends it
+/// in a digest, and so does this library now; before, it wrote the key whole, as Jackcess did before it cut
+/// keys. A file can therefore hold three kinds of entry for a long key - Access's cut one, this library's (the
+/// same bytes), and a whole one - and a whole one must be found, moved, removed and seen by a unique index like
+/// the others, or a delete leaves it behind, an update leaves it beside the new one, and a duplicate of its value
+/// is taken.
 /// <para>
 /// Assets/engine-696ca52-long-keys.mdb is a database this library wrote at commit 696ca52, before it cut keys
 /// (tools/legacy-long-keys.ps1 made it, with that commit's own code): the primary keys of its tables hold whole

@@ -6,7 +6,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// Relationships on Large Number and Date/Time Extended columns (#38): created, and kept on insert, update and
 /// delete, with values at the ends of each type's range and values one apart, which a comparison through any
-/// narrower type would take for the same. What Access makes of such a relationship is in ExportMdb.Interop's
+/// narrower type would take for the same. What Access makes of such a relationship is in
 /// SchemaChangesInAccessTests.
 /// </summary>
 public sealed class NewTypeForeignKeyTests : IDisposable
