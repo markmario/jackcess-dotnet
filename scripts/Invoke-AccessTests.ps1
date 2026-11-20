@@ -201,6 +201,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkDutch' = 8; 'SortOrdersInAccessTests.WalkEnglishUK' = 9; 'SortOrdersInAccessTests.WalkGerman' = 11
         'SortOrdersInAccessTests.WalkGreek' = 11; 'SortOrdersInAccessTests.WalkHebrew' = 12; 'SortOrdersInAccessTests.WalkItalian' = 9
         'SortOrdersInAccessTests.WalkPortuguese' = 7
+        BulkIndexesInAccessTests = 57; MemoStorageInAccessTests = 11; 'SchemaChangesInAccessTests.Names' = 19; ValuesAndEntriesInAccessTests = 15
     }
     full = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
@@ -224,6 +225,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkDutch' = 184; 'SortOrdersInAccessTests.WalkEnglishUK' = 125; 'SortOrdersInAccessTests.WalkGerman' = 160
         'SortOrdersInAccessTests.WalkGreek' = 99; 'SortOrdersInAccessTests.WalkHebrew' = 125; 'SortOrdersInAccessTests.WalkItalian' = 161
         'SortOrdersInAccessTests.WalkPortuguese' = 172
+        BulkIndexesInAccessTests = 57; MemoStorageInAccessTests = 11; 'SchemaChangesInAccessTests.Names' = 19; ValuesAndEntriesInAccessTests = 15
     }
 }
 
