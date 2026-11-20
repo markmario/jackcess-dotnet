@@ -357,6 +357,7 @@ namespace JackcessDotNet.AccessTests
         // CreateDatabase nor Access's default for a new database makes one.
         private string GeneralDatabase()
         {
+            AccessReferee.SkipUnlessAceOpensAccess2010();
             var corpus = typeof(EngineTablesInAccessTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
                 .Single(a => a.Key == "EngineCorpusDir").Value;
             var path = Path.Combine(_tmp.Dir, "general-" + Guid.NewGuid().ToString("N") + ".accdb");

@@ -60,6 +60,7 @@ namespace JackcessDotNet.AccessTests
                 return path;
             }
 
+            SkipUnlessAceOpensAccess2010();
             var corpus = typeof(SchemaChangesInAccessTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
                 .Single(a => a.Key == "EngineCorpusDir").Value;
             var copy = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + ".accdb");
