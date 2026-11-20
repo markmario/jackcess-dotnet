@@ -240,8 +240,8 @@ namespace JackcessDotNet.AccessTests.Support
             AssertSame(written, Written(EngineTable(path, table)), table + " as the engine reads it " + when);
 
             // The count and every lookup on one connection. On a CI runner a connection costs about 65 ms to open and
-            // close, most of it in the close, and a lookup about 2 ms: a connection to each lookup took 131 s of a
-            // 149 s test of 1,000 rows (#97).
+            // close, most of it in the close, and a lookup about 2 ms: a connection to each lookup is 130 s of
+            // connections for a table of 1,000 rows.
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
             {
                 connection.Open();
