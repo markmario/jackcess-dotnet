@@ -1359,28 +1359,26 @@ public sealed class Database : IDisposable
 
     /// <summary>
     /// Refuses, before anything is written, <paramref name="newName"/> for a column, an index or a relationship in a
-    /// database whose text sorts in an order this library makes no keys for, in which Access compares such names by
-    /// that order's own keys (<see cref="ObjectNames.ComparesColumnsAsGeneralLegacy"/>, #63). In Swedish, Czech, French
-    /// and Japanese, where Access was measured to compare names of printable ASCII as General - Legacy's keys do, a
-    /// name of printable ASCII is given when every name it is compared with - <paramref name="others"/> - is of
-    /// printable ASCII too (<see cref="ObjectNames.ComparesAsciiAsGeneralLegacy"/>). A table is not created or renamed
-    /// in a database whose order this library makes no keys for already: its catalog's keys are not made.
+    /// database whose text sorts in an order this library makes no keys for, when it is one with one of
+    /// <paramref name="others"/> by General - Legacy's keys, or is the same without regard to case as .NET's ordinal
+    /// comparison takes it (<see cref="StringComparison.OrdinalIgnoreCase"/>). Access compares such names there by that
+    /// order's own keys (<see cref="ObjectNames.ComparesColumnsAsGeneralLegacy"/>, #63), and this is not that order's
+    /// rule: it can refuse a name Access takes, and take one Access refuses - in Turkish, an index "xİ" beside "xi". A
+    /// table is not created or renamed in such a database already: its catalog's keys are not made.
     /// </summary>
-    /// <exception cref="NotSupportedException">The name is not compared there as Access compares it. Nothing is changed.</exception>
+    /// <exception cref="ArgumentException">The name is one with another by that comparison. Nothing is changed.</exception>
     internal void EnsureNamesCompared(string whatWasNotDone, string newName, IEnumerable<string> others)
     {
         var order = _catalog.NameOrder;
         if (ObjectNames.ComparesColumnsAsGeneralLegacy(order)) return;
-        if (!ObjectNames.ComparesAsciiAsGeneralLegacy(order))
-            throw new NotSupportedException(
-                $"{whatWasNotDone}: the database's text sorts in {order}, in which Access compares names by keys this " +
-                "library does not make, and which it has not been measured to compare names in. Nothing was changed.");
-        string? notAscii = ObjectNames.IsPrintableAscii(newName) ? others.FirstOrDefault(other => !ObjectNames.IsPrintableAscii(other)) : newName;
-        if (notAscii is not null)
-            throw new NotSupportedException(
-                $"{whatWasNotDone}: the database's text sorts in {order}, in which Access compares names by keys this " +
-                "library does not make, and two names as General - Legacy's keys compare them only where both are of " +
-                $"printable ASCII, which '{notAscii}' is not. Nothing was changed.");
+        var names = others.ToList();
+        string? taken = ObjectNames.GeneralLegacy.OneWith(names, newName)
+                     ?? names.FirstOrDefault(other => string.Equals(other, newName, StringComparison.OrdinalIgnoreCase));
+        if (taken is not null)
+            throw new ArgumentException(
+                $"{whatWasNotDone}: '{taken}' is there already. The database's text sorts in {order}, whose keys this " +
+                "library does not make: a new name is compared there with the others by General - Legacy's keys and " +
+                "without regard to case. Nothing was changed.");
     }
 
     /// <summary>What appends pages to the file, for a change to the schema.</summary>

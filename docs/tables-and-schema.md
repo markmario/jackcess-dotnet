@@ -133,11 +133,16 @@ and the two definitions hold the same index slots.
   Legacy's ([Text index keys](indexes.md#text-index-keys-sort-orders-and-limits)). In another, names General -
   Legacy keeps apart are one: DAO refused an index `xʎ` beside `xÜ` in Swedish, `xė` beside `xℯ` in Czech, `x―`
   beside `xー` in Japanese and `xi` beside `xİ` in Turkish, and made such fields and then took one for the other.
-  So a column, an index or a relationship is given a new name there only in Swedish, Czech, French and Japanese,
-  and only a name of printable ASCII among names of printable ASCII: there DAO gave every such pair it was asked
-  about - in another case, with punctuation or spaces among its letters - the verdict General - Legacy gives. Any
-  other new name, and any in another order, is refused with `NotSupportedException`, before anything is written.
-  The database's tables, columns and indexes are found by name as in any other.
+  There a new column, index or relationship name is compared with the others by General - Legacy's keys and without
+  regard to case, as .NET's ordinal comparison takes case (`StringComparison.OrdinalIgnoreCase`), and refused -
+  `ArgumentException`, before anything is written - only when it is one with another by either. That is not the
+  order's own rule, which this library does not have: it makes names Access refuses there, as those above, and
+  refuses some Access makes. .NET Framework takes fewer characters for another's case than .NET does - the micro
+  sign and mu are one on .NET and two on .NET Framework - so such a name is refused on the one and made on the
+  other. In Swedish, Czech, French and Japanese DAO gave every pair of names of printable ASCII it was asked about -
+  in another case, with punctuation or spaces among its letters - the verdict General - Legacy gives. No table is
+  created or renamed there, and no column Access keeps properties for is renamed or dropped: the catalog's keys are
+  not made. The database's tables, columns and indexes are found by name as in any other.
 - **A lookup finds the name given exactly first.** `GetTable`, `TryGetTable`, a table's columns and indexes, a
   `Row`'s entries, a join's columns, an export's properties and an import's columns are found by the name given
   exactly, when there is one; otherwise by the first name that is one with it by its index key, and then by the

@@ -49,9 +49,9 @@ it does not do. Work not yet done is tracked in this repository's
 - **A table can be asked first** whether it takes rows, with `Table.InsertRefusal`:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused).
 - **New names in a database of another order.** In a database whose text sorts in an order whose keys this library
-  does not make, a column, an index or a relationship is given a new name only in Swedish, Czech, French and
-  Japanese, and only a name of printable ASCII among names of printable ASCII; any other new name there is refused.
-  Some names Access allows are refused everywhere, so that none made here is one Access's lookups take for another:
+  does not make, a new column, index or relationship name is compared with the others by General - Legacy's keys and
+  without regard to case, not by that order's own rule, and no table is created or renamed there. Some names Access
+  allows are refused everywhere, so that none made here is one Access's lookups take for another:
   [Names](tables-and-schema.md#names).
 - **Access 97 (Jet 3) files are read and not written**, as in Jackcess: one is opened for reading only, and
   creating one, or changing anything in one, is refused with `NotSupportedException`:

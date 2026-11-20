@@ -82,23 +82,6 @@ internal sealed class ObjectNames
     /// </summary>
     internal static bool ComparesColumnsAsGeneralLegacy(SortOrder order) => ForCatalog(order) is not null;
 
-    /// <summary>
-    /// Whether Access compares names of printable ASCII as General - Legacy's keys do in a database whose text sorts in
-    /// <paramref name="order"/>, an order whose keys this library does not make: Swedish, Czech, French or Japanese,
-    /// in which DAO was asked about pairs of such names - in another case, with punctuation or spaces among them - as
-    /// field and index names, and gave each the verdict it gives in General - Legacy.
-    /// </summary>
-    internal static bool ComparesAsciiAsGeneralLegacy(SortOrder order)
-        => order.Version == 0 && order.Code is 0x041D or 0x0405 or 0x040C or 0x0411;
-
-    /// <summary>Whether <paramref name="name"/> is of printable ASCII alone, U+0020 to U+007E.</summary>
-    internal static bool IsPrintableAscii(string name)
-    {
-        foreach (char c in name)
-            if (c is < ' ' or > '~') return false;
-        return true;
-    }
-
     private readonly TextIndexCodes _codes;
     private readonly bool _byWholeName;
     private readonly ObjectNames? _alsoBy;

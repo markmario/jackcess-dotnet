@@ -331,10 +331,12 @@ changed since 1.2.2.
   by its name, and changes the relationships that name the table and no other's.
 - **A new column, index or relationship name in a database of another order** (#63): in a database whose text
   sorts in an order whose keys this library does not make, Access compares such names by that order's keys, and
-  takes as one names General - Legacy keeps apart (in Swedish, an index `xʎ` beside `xÜ`). Such a name is refused
-  with `NotSupportedException` before anything is written, except in Swedish, Czech, French and Japanese for a name
-  of printable ASCII among names of printable ASCII, which Access was measured to compare there as General -
-  Legacy does.
+  takes as one names General - Legacy keeps apart (in Swedish, an index `xʎ` beside `xÜ`). There a new name is
+  compared with the others by General - Legacy's keys and without regard to case (`OrdinalIgnoreCase`), and refused
+  with `ArgumentException`, before anything is written, only when it is one with another by either: not that
+  order's own rule, which this library does not have
+  ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). It was compared
+  without regard to case alone.
 - **Text with half of a surrogate pair alone in it is read and written as it is** (#63): a name or a value Access
   kept with one was read with U+FFFD in its place, so a table or column of such a name was found by no name, and a
   value read and written back lost it. A new name with one is refused with `NotSupportedException`.

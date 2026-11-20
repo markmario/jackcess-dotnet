@@ -439,50 +439,71 @@ public sealed class ObjectNameTests : IDisposable
 
     // A database that sorts in Swedish, an order this library makes no keys for, in which Access compares field and
     // index names by Swedish keys: DAO refused an index "x" with U+028E beside "x" with U+00DC, which General - Legacy's
-    // keys keep apart. It was measured to compare names of printable ASCII there as General - Legacy's keys do, so a
-    // column of such a name is added beside columns of such names, and compared with them so; another name is refused.
+    // keys keep apart. A new name is compared there with the others by General - Legacy's keys and without regard to
+    // case, and refused only when it is one with another so.
     [Fact]
-    public void A_database_that_sorts_in_swedish_takes_a_name_of_printable_ascii_beside_names_of_printable_ascii()
+    public void A_database_that_sorts_in_swedish_compares_a_new_name_by_general_legacy_s_keys_and_without_regard_to_case()
     {
         File.Copy(ProtectedFileTests.Asset("dao-swedish.mdb"), _path);
         File.SetAttributes(_path, FileAttributes.Normal);
         using (var db = Database.Open(_path))
-            db.GetTable("People").AddColumn(Text("Street"));
-        Unchanged(db => db.GetTable("People").AddColumn(Text("STREET")));
-        Unchanged<NotSupportedException>(db => db.GetTable("People").AddColumn(Text(X(0x28E))));
-        Unchanged<NotSupportedException>(db => db.GetTable("People").AddIndex(new IndexDefinition(X(0xDC), "Id")));
-        Unchanged<NotSupportedException>(db => db.GetTable("People").RenameColumn("Street", "Stra" + U(0xDF) + "e"));
-        using (var db = Database.Open(_path))
-            db.GetTable("People").AddColumn(Text("Town"));
+        {
+            var people = db.GetTable("People");
+            people.AddColumn(Text("Street"));
+            people.AddColumn(Text(X(0x28E)));
+            people.AddIndex(new IndexDefinition(X(0xDC), "Id"));
+            people.RenameColumn("Street", "Stra" + U(0xDF) + "e");
+        }
+        Unchanged(db => db.GetTable("People").AddColumn(Text("NAME")));                 // another case
+        Unchanged(db => db.GetTable("People").AddColumn(Text("STRASSE")));              // one with Straße by its keys
+        Unchanged(db => db.GetTable("People").AddIndex(new IndexDefinition(X(0xFC), "Name")));
         using var reopen = Database.Open(_path);
-        Assert.Equal(new[] { "Id", "Name", "Street", "Town" }, reopen.GetTable("people").Columns.Select(c => c.Name));
-        Assert.Equal("Street", reopen.GetTable("People").Definition.FindColumn("street")!.Name);
+        Assert.Equal(new[] { "Id", "Name", "Stra" + U(0xDF) + "e", X(0x28E) }, reopen.GetTable("people").Columns.Select(c => c.Name));
+        Assert.Equal("Name", reopen.GetTable("People").Definition.FindColumn("name")!.Name);
     }
 
-    // A database whose text sorts in an order this library makes no keys for and Access was not measured to compare
-    // names of printable ASCII in as General - Legacy does - Turkish here, whose catalog this test gives that order - is
-    // given no new column, index or column's name: in Turkish, an index named "xİ" is one with "xi", which General -
-    // Legacy keeps apart.
-    [Fact]
-    public void A_database_that_sorts_in_an_order_not_measured_is_given_no_new_name_and_its_tables_are_found()
+    // A database whose text sorts in an order this library makes no keys for - Turkish, Polish or Spanish, which this
+    // test gives its catalog: a new column's or index's name is compared with the others by General - Legacy's keys and
+    // without regard to case, and refused - ArgumentException, the file unchanged - only when it is one with another so.
+    // That is not the order's own rule: in Turkish, an index named "xİ" is one with "xi", which both keep apart. A table
+    // is not created there, its catalog's keys not made; the tables there are found by name.
+    [Theory]
+    [InlineData(0x1F)]   // Turkish, 1055
+    [InlineData(0x15)]   // Polish, 1045
+    [InlineData(0x0A)]   // Spanish, 1034
+    public void A_database_that_sorts_in_an_order_without_keys_compares_a_new_name_by_general_legacy_s_keys_and_without_regard_to_case(int language)
     {
         using (var db = Database.Create(_mdb))
         {
-            db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("N", DataType.Int32) }, "Id");
-            // The catalog's Text and Memo columns sort in 1055, Access's Turkish order.
+            db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true }, new ColumnDefinition("N", DataType.Int32) }, "Id");
+            // The catalog's Text and Memo columns sort in Access's order of that language.
             byte[] page = db.File.ReadPage(2);
             int columns = Util.ByteUtil.GetShort(page, 45), definitions = 63 + Util.ByteUtil.GetInt(page, 51) * 12;
             for (int i = 0; i < columns; i++)
-                if (page[definitions + i * 25] is 10 or 12) page[definitions + i * 25 + 11] = 0x1F;
+                if (page[definitions + i * 25] is 10 or 12) page[definitions + i * 25 + 11] = (byte)language;
             db.File.WritePage(2, page);
         }
-        Unchanged<NotSupportedException>(db => db.GetTable("T").AddColumn(Text("Added")), _mdb);
-        Unchanged<NotSupportedException>(db => db.GetTable("T").AddIndex(new IndexDefinition("ByN", "N")), _mdb);
-        Unchanged<NotSupportedException>(db => db.GetTable("T").RenameColumn("N", "M"), _mdb);
+        using (var db = Database.Open(_mdb))
+        {
+            var table = db.GetTable("T");
+            table.AddColumn(Text("Added"));
+            table.AddIndex(new IndexDefinition("ByN", "N"));
+            table.RenameColumn("Id", "Key");                                    // a Long AutoNumber: no properties to follow it
+            table.RenameIndex("ByN", "ByM");
+            table.AddColumn(Text("xe"));
+            table.AddColumn(Text("x" + U(0xE9)));                                        // two by both
+        }
+        Unchanged<ArgumentException>(db => db.GetTable("T").AddColumn(Text("ADDED")), _mdb);
+        Unchanged<ArgumentException>(db => db.GetTable("T").AddColumn(Text(U(0xFF21) + "dded")), _mdb);   // a full-width A
+        Unchanged<ArgumentException>(db => db.GetTable("T").AddIndex(new IndexDefinition("BYM", "Id")), _mdb);
+        Unchanged<ArgumentException>(db => db.GetTable("T").RenameColumn("Added", "key"), _mdb);
+        Unchanged<ArgumentException>(db => db.GetTable("T").RenameIndex("ByM", "primarykey"), _mdb);
         Unchanged<NotSupportedException>(db => db.CreateTable("U", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"), _mdb);
         using var reopen = Database.Open(_mdb);
         Assert.Equal("T", reopen.GetTable("t").Name);
-        Assert.Equal("N", reopen.GetTable("T").Definition.FindColumn("n")!.Name);
+        Assert.Equal(new[] { "Key", "N", "Added", "xe", "x" + U(0xE9) }, reopen.GetTable("T").Columns.Select(c => c.Name));
+        Assert.Equal("Key", reopen.GetTable("T").Definition.FindColumn("key")!.Name);
+        Assert.Equal(new[] { "ByM", "PrimaryKey" }, reopen.GetTable("T").Indexes.Select(ix => ix.Name).OrderBy(n => n, StringComparer.Ordinal));
     }
 
     // ── Rows a caller makes ──────────────────────────────────────────────────
