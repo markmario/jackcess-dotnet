@@ -155,6 +155,10 @@ jobs:
   # as an application on .NET 8 or 9 loads it, and on net48 as one on .NET
   # Framework 4.7.2 does.
   #
+  # net48, 32-bit is the net48 tests in a 32-bit process (-p:TestX86=true): .NET Framework computes doubles there
+  # with the x87 unit, whose precision another component in the process can change - ACE leaves it at 64 bits - and
+  # a computation that ended in a 64-bit process did not end there (#98).
+  #
   # Each framework's test classes are split between its shards: every shard
   # lists the same tests and splits them alike, balanced by how long each class
   # took on CI, so the shards of a framework run every class once between them,
@@ -175,6 +179,10 @@ jobs:
           - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 2, shards: 4 }
           - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 3, shards: 4 }
           - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 4, shards: 4 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 1, shards: 4 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 2, shards: 4 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 3, shards: 4 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 4, shards: 4 }
           - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 1, shards: 2 }
           - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 2, shards: 2 }
           - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 1, shards: 4 }
