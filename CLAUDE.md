@@ -11,5 +11,6 @@ request. This file holds only what is particular to Claude Code.
   every command and script.
 - **Memory.** Auto memory is for what is particular to a machine or to the owner: paths, clones, preferences. A
   rule that holds for every clone belongs in `AGENTS.md`, and outstanding work belongs in an issue.
-- **Scripts on Windows.** Write a script that holds backslashes or regular expressions with the file tools, not
-  in a shell heredoc, which changes them on the way.
+- **Scripts on Windows.** Write a script that holds backslashes, `$` or regular expressions to a file with the
+  file tools, and run the file. Passed through a shell's quoting - an unquoted heredoc, a double-quoted string -
+  they can be changed on the way.
