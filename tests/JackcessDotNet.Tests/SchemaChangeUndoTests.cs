@@ -90,7 +90,8 @@ public sealed class SchemaChangeUndoTests : IDisposable
     {
         int failures = FailAtEveryWrite(db => db.GetTable("Child").AddIndex(new IndexDefinition("ByName", "Name") { IsUnique = true }));
 
-        Assert.True(failures > 300, $"only {failures} writes failed: the index has an entry to write for each of 300 rows");
+        // The tree of 300 entries is written page after page (#82): its leaves, root, usage map and the definition.
+        Assert.True(failures > 5, $"only {failures} writes failed: the index's leaves, root, usage map and definition are more");
         using var after = Database.Open(_path);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(after, "Child", expectedRows: 300));
     }
@@ -103,7 +104,8 @@ public sealed class SchemaChangeUndoTests : IDisposable
             Name = "ParentChild", HasReferentialIntegrity = true, CascadeDeletes = true,
         }));
 
-        Assert.True(failures > 300, $"only {failures} writes failed: the foreign key's index has an entry to write for each of 300 rows");
+        // The foreign key's tree of 300 entries is written page after page (#82), with the relationship's catalog rows.
+        Assert.True(failures > 20, $"only {failures} writes failed: the foreign key's tree and the relationship's catalog rows are more");
         using var after = Database.Open(_path);
         Assert.Equal("ParentChild", Assert.Single(after.GetRelationships()).Name);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(after, "Child", expectedRows: 300));

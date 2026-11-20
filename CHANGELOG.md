@@ -13,6 +13,24 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A file is not grown past 2 GB** (#82). Access reads a longer file this library wrote, and cannot write to
+  it: ACE refused an insert into one of 2,160,779,264 bytes, "Cannot open database ''... may be corrupt", and took
+  one into a file of 2,140,618,752. The page that would pass 2,147,483,648 bytes is refused with the new
+  `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
+  that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
+  17 map pages, about 2.28 GB.
+- **Each index's count of its keys is written** (#82). Access keeps, in the table's definition (bytes 4-7 of each
+  tree's block of counts, Java Jackcess's `uniqueEntryCount`), a count of keys it plans queries by. The engine left
+  it as it was, so every index it filled was one Access took to have no keys. It now writes, for a tree built whole,
+  the number of its keys, and adds one for each row inserted under a key no row had, in the write of the definition
+  an insert makes anyway: no page more. An update or delete changes nothing. Beside ACE's twin of an export the
+  counts are equal in all 35 of the template's indexes; Access's own updates and deletes move them in ways not fully
+  measured.
+- **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
+  noted the header's and the global usage map's pages as they were at every write of them, and the global usage
+  map is written for every page a change adds: a batch of a million rows held a copy of it for each page it
+  added, 300 MB for an export of 50,000 documents. It notes each as it was before the change first wrote it, which
+  is all taking the change back needs.
 - **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
 - **Targets `net10.0`, `net11.0`, `net48` and `netstandard2.0`** (it was `net8.0`, `net472` and
@@ -623,6 +641,27 @@ changes with them.
   (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
+- **Indexes built once, page after page** (#82). `Table.InsertRange` into a table with no rows, and the new
+  `Table.BulkInsert`, put the rows in without index entries and then build each index from the table's rows:
+  sorted, and written leaf after leaf as Access builds an index when it compacts a file. `Table.AddIndex` builds
+  its tree the same way. Keeping every index row by row cost an export of 13 rows a document into a template with
+  35 indexes 11.5 ms a document; loaded so it costs 0.6 ms, against 0.46 ms for the same rows with no index. A
+  duplicate in a unique index or primary key is refused when the trees are built, naming the row row by row would
+  name - the earliest that duplicates one before it - and nothing written; a row refused for something else is named
+  ahead of it. A failure while the trees are built that is no row's is thrown as itself, an `IOException`. While a batch is going in the table's indexes hold none of its rows, so a sequence
+  of rows that looks in the table through an index does not find them; a table that has rows, a table in an
+  enforced relationship and one with an index cursor open are filled row by row as before. Keys past 64 MB are
+  sorted in runs in temporary files; the last entry of each page written is held for the levels above, about 75
+  bytes a row with 510-byte keys (measured live: 34 MB at 50,000 rows, 91 MB at 450,000).
+- **`Table.BulkInsert(rows)`** (#82) inserts rows all or none, as `InsertRange` does, going through them once and
+  holding none of them, for loading many rows. A refused batch leaves the rows inserted before the refusal
+  holding the AutoNumber values they were given; `InsertRange`, which holds every row, gives them back as they
+  came.
+- **`Table.FindDuplicates(rows)`** (#82) names every set of rows a unique index or primary key would refuse as
+  duplicates, of one another or of a row already in the table, by the index's key as Access compares them: text
+  that differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter,
+  "ß" and "ss", "æ" and "ae") is one key. `DuplicateRows` gives the index, the rows' places, and whether a row of
+  the table has the key. `Validate` looks at one row against the table; this looks at a batch.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
 - **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;
