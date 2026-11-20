@@ -318,10 +318,12 @@ changed since 1.2.2.
   keys, in the order Access compares names by, as DAO 16 and Jet 4.0 were measured to decide it for 18,140 pairs of
   names ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). Names
   in another case, width or kana, or with an accent written as one character or as two, are one; `xµ` and `xμ`,
-  and `I` and `ı`, are two, on every target. Names were compared as .NET compares them without regard to case, which
-  kept apart names Access takes as one and took as one names Access keeps apart. `CreateTable` made a table of two
-  columns named `A` and `a`, and a row then kept one value for the two; it now refuses them, as an import does. A
-  call that made such names now throws: a change toward refusing, which writes nothing wrong.
+  and `I` and `ı`, are two, on every target. In a database that sorts in General, a name is compared by General's
+  keys and General - Legacy's: Access compares some names there by the one and some by the other, a column's as its
+  process has gone, so some names DAO makes there are refused. Names were compared as .NET compares them without
+  regard to case, which kept apart names Access takes as one and took as one names Access keeps apart. `CreateTable`
+  made a table of two columns named `A` and `a`, and a row then kept one value for the two; it now refuses them, as
+  an import does. A call that made such names now throws: a change toward refusing, which writes nothing wrong.
 - **A lookup by name finds the name given exactly first** (#63) - `GetTable`, `TryGetTable`, a table's columns
   and indexes, a `Row`'s entries, a join's columns, an export's properties and an import's columns - and only then
   the first name Access takes as one with it. In a file Access made with tables `xµ` and `xμ`, on .NET, either could

@@ -93,13 +93,17 @@ and the two definitions hold the same index slots.
   `xµ` and `xμ` (the micro sign and the Greek mu), `e` and `é`, `I` and `ı`. The comparison is the same on every
   target.
 - **The order they are compared in** is the one Access compares them by:
-  - a table's or a relationship's name by the order the catalog sorts in: General - Legacy, Access 2000 to 2007's,
-    or General, Access 2010's, which a new file of a later format sorts in ([File formats](file-formats.md)). In a
-    database that sorts in General, a table's name is compared by General - Legacy's keys as well: DAO makes two
-    tables whose names General's keys keep apart and General - Legacy's take as one (`xȤ` and `xȥ`), and its
-    lookups then find either for the other;
-  - a column's or an index's name by General - Legacy's keys, in a database that sorts in General as well as in one
-    that sorts in General - Legacy (in another order, see below);
+  - in a database that sorts in General - Legacy, Access 2000 to 2007's, a table's, a column's, an index's and a
+    relationship's name by General - Legacy's keys;
+  - in one that sorts in General, Access 2010's, which a new file of a later format sorts in
+    ([File formats](file-formats.md)), each by General's keys and by General - Legacy's. Access compares a table's
+    name there by the one in its catalog and by the other in its lookups: DAO makes two tables `xȤ` and `xȥ`, which
+    General's keys keep apart and General - Legacy's take as one, and then finds either for the other. And it
+    compares a column's name by the one or the other as its process has gone: DAO made two fields `xƀ` and `xɃ`,
+    which General's keys take as one and General - Legacy's keep apart, and kept them apart; in a process that had
+    used such a database through DAO before, ACE refused the second as a field already there and as an index's
+    name, and its SQL found the first by the name of the second. In a database that sorts in General - Legacy, ACE
+    kept them apart whatever the process had done;
   - in an Access 97 file, which this library only reads, a table's name by the index keys of Access 97's General
     order, and a column's or an index's by those and General - Legacy's, by which DAO's Fields and Indexes take
     some names as one there (`xÞ` and `xTH`).
@@ -110,27 +114,30 @@ and the two definitions hold the same index slots.
   against that form; trailing and inner spaces, and the characters General - Legacy has no code for; the names of
   code page 1252 against their letters without an accent; and names with the marks below. Every pair DAO takes as
   one, or makes as two and then confuses, is one here. Of the 90,205 verdicts in which DAO keeps two names apart
-  and tells them apart, 106 are one here, each for one of the two reasons that follow.
+  and tells them apart, 3,786 are one here, each for one of the two reasons that follow.
 - **Names Access allows that are refused**, so that no name made here is one Access's lookups take for another:
-  - In a database that sorts in General, a table's name that General - Legacy's keys take as one with another's,
-    which General's keep apart and Access's lookups tell apart: `xÜ` against `xU` with a combining diaeresis, and
-    `x` against `x` followed by a character General - Legacy has no code for (U+03F3, U+202F, U+FEFF).
+  - In a database that sorts in General, a name that one of the two orders' keys takes as one with another's of
+    its kind, which the other's keep apart and DAO made beside it in its own process: 3,739 of the verdicts, most of
+    them a column's or an index's name General's keys take as one with another (`xƀ` and `xɃ`, a letter and its
+    compatibility form), and some a table's name General - Legacy's keys take as one with another (`xÜ` against
+    `xU` with a combining diaeresis, `x` against `x` followed by a character General - Legacy has no code for:
+    U+03F3, U+202F, U+FEFF).
   - A name with a mark Access keys by the characters around it - the prolonged sound mark `ー`, the iteration
     marks `ゝ`, `々` and `〱` to `〵`, the double hyphen `゠`, the Yi iteration mark, the shadda and the Arabic marks
     General keys by context - is one with another name when any reading of it is: each mark as itself, a voiced
     iteration mark as the plain one and U+3099 (`ゞ` is one with `ゝ` and U+3099, as to Access); each as the
     character before it, as Access reads `ー` after a Latin letter; and the Arabic marks left out. That takes as
-    one some names Access keeps apart (`人々` and `人人`), and as two none it takes as one.
+    one some names Access keeps apart (`人々` and `人人`): 47 of the verdicts, and as two none it takes as one.
 - **A database whose text sorts in another order.** Access compares the names of its columns and indexes by that
-  order's own keys, which this library makes only for the orders whose keys are General - Legacy's
-  ([Text index keys](indexes.md#text-index-keys-sort-orders-and-limits)). In another, names General - Legacy keeps
-  apart are one: DAO refused an index `xʎ` beside `xÜ` in Swedish, `xė` beside `xℯ` in Czech, `x―` beside `xー` in
-  Japanese and `xi` beside `xİ` in Turkish, and made such fields and then took one for the other. So a column, an
-  index or a relationship is given a new name there only in Swedish, Czech, French and Japanese, and only a name of
-  printable ASCII among names of printable ASCII: there DAO gave every such pair it was asked about - in another
-  case, with punctuation or spaces among its letters - the verdict General - Legacy gives. Any other new name, and
-  any in another order, is refused with `NotSupportedException`, before anything is written. The database's tables,
-  columns and indexes are found by name as in any other.
+  order's own keys, which this library makes for General - Legacy, General and the orders whose keys are General -
+  Legacy's ([Text index keys](indexes.md#text-index-keys-sort-orders-and-limits)). In another, names General -
+  Legacy keeps apart are one: DAO refused an index `xʎ` beside `xÜ` in Swedish, `xė` beside `xℯ` in Czech, `x―`
+  beside `xー` in Japanese and `xi` beside `xİ` in Turkish, and made such fields and then took one for the other.
+  So a column, an index or a relationship is given a new name there only in Swedish, Czech, French and Japanese,
+  and only a name of printable ASCII among names of printable ASCII: there DAO gave every such pair it was asked
+  about - in another case, with punctuation or spaces among its letters - the verdict General - Legacy gives. Any
+  other new name, and any in another order, is refused with `NotSupportedException`, before anything is written.
+  The database's tables, columns and indexes are found by name as in any other.
 - **A lookup finds the name given exactly first.** `GetTable`, `TryGetTable`, a table's columns and indexes, a
   `Row`'s entries, a join's columns, an export's properties and an import's columns are found by the name given
   exactly, when there is one; otherwise by the first name that is one with it by its index key, and then by the
