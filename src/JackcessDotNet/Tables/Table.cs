@@ -523,14 +523,16 @@ public sealed class Table
 
                 // Everything an index can refuse the row for, before any of it is written.
                 entries = _indexes.EntriesFor(written, enforce: true);
-                var looked = _indexes.EnsureNoDuplicates(entries, forEntry: true);
+                // A bulk insert into a table with no rows builds the trees once its rows are in (BulkInsert): until
+                // then they hold nothing, and a duplicate is found when they are built.
+                var looked = _buildingIndexes ? null : _indexes.EnsureNoDuplicates(entries, forEntry: true);
 
                 rowPtr = _dataWriter.InsertRow(_definition, written);
 
                 // The counter and the row count go to the definition together, once the row is on its page and
                 // before its index entries: a row in the file is always one the counter has passed.
                 _dataWriter.RecordInsert(_definition.TdefPageNumber, lastAutoNumber);
-                _indexes.Add(entries, rowPtr, looked);
+                if (!_buildingIndexes) _indexes.Add(entries, rowPtr, looked);
                 undo?.Commit();
             }
             catch when (given is not null)
@@ -554,7 +556,7 @@ public sealed class Table
 
         // A cursor over an index is told of the row's entry in it, once the insert is in the file for good: when a
         // batch it is part of is committed, and not at all when the batch is taken back.
-        if (_indexCursors.Count > 0)
+        if (_indexCursors.Count > 0 && !_buildingIndexes)
             _file.WhenKept(() =>
             {
                 foreach (var entry in entries)
@@ -658,6 +660,18 @@ public sealed class Table
     /// A copy of each page the batch changes is held until the batch is in, so that it can be taken back: the
     /// pages a batch adds to the file cost nothing, the index pages it changes are what is held.
     /// </para>
+    /// <para>
+    /// Into a table with no rows whose indexes hold no entry - a table Access made and nothing has filled yet - the
+    /// rows go in with no index entries, and each index is then built from the table's rows, its entries sorted and
+    /// written page after page, as Access builds an index when it compacts a file: a few page writes for each
+    /// hundred rows, where keeping every index row by row costs several reads and writes for each row. Every index
+    /// holds every row, under the keys Access gives it, either way. What is different, and only while the batch is
+    /// going in: a duplicate in a unique index or primary key is found once every row is in, not at the row - the
+    /// row named is the later of the two either way; and the table's indexes hold none of the batch's rows until the
+    /// batch is in, so that a sequence of rows that looks in the table through an index as it is gone through does
+    /// not find them. Not when a relationship the table is in is enforced (<see cref="Database.EnforceForeignKeys"/>)
+    /// or a cursor over its indexes is open: then each row gains its entries as it goes in.
+    /// </para>
     /// </summary>
     /// <param name="rows">The rows to insert. They are gone through once.</param>
     /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
@@ -685,30 +699,176 @@ public sealed class Table
         // its rows back so.
         var given      = batch.Select(AutoNumberValuesIn).ToList();
         var identities = batch.Select(row => row.Identity).ToList();
-        int at = 0;
+        int inserted = InsertInOneChange(batch, nameof(rows), out int failedAt, out var failure);
+        if (failure is null) return;
+
+        for (int i = 0; i <= Math.Max(inserted, failedAt) && i < batch.Count; i++)
+        {
+            if (given[i] is { } values)
+                foreach (var (name, had, value) in values)
+                {
+                    if (had) batch[i][name] = value;
+                    else     batch[i].Remove(name);
+                }
+            batch[i].Identity = identities[i];
+        }
+        throw new BatchInsertException(failedAt, batch.Count, failure);
+    }
+
+    /// <summary>
+    /// Finds the rows among <paramref name="rows"/> that an insert of them all would be refused for as duplicates: for
+    /// each unique index and the primary key, each key that two or more of the rows would have, or that one of them
+    /// would have and a row of the table already has. What <see cref="Validate"/> does not do, which looks at one row
+    /// against the table. Rows are compared by the index's key, as Access compares them - so "ABC" and "abc" are one
+    /// key in an index on text, as are text with and without trailing spaces - and a row with a null in a column of an
+    /// index is no row's duplicate in it. Each row is taken as given: an AutoNumber column a row brings no value for is
+    /// a null, as the number it would be given is a new one. Nothing is written.
+    /// <para>
+    /// The rows are gone through once; the key of each row in each unique index is held until they all have been.
+    /// </para>
+    /// </summary>
+    /// <param name="rows">The rows to look at, as they would be given to <see cref="Insert"/>.</param>
+    /// <returns>Each set of duplicates, by index and then by the first row's place; empty when there are none.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
+    /// <exception cref="ArgumentException">One of <paramref name="rows"/> is null.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The table takes no row (<see cref="InsertRefusal"/>), or a row has a value in an indexed text column that no
+    /// key is made for, as <see cref="Insert"/> refuses it.
+    /// </exception>
+    public IReadOnlyList<DuplicateRows> FindDuplicates(IEnumerable<Row> rows)
+    {
+        if (rows is null) throw new ArgumentNullException(nameof(rows));
+        EnsureTakesRows();
+        var trees = _definition.Indexes.GroupBy(ix => ix.IndexDataNumber).ToDictionary(g => g.Key, g => g.ToList());
+        return _indexes.Duplicates(rows, RowCount > 0)
+            .Select(d => new DuplicateRows(
+                (trees[d.Tree.Number].FirstOrDefault(ix => ix.IsPrimaryKey) ?? trees[d.Tree.Number].First(ix => ix.IsUnique)).Name,
+                d.Places, d.InTable))
+            .OrderBy(d => d.IndexName, StringComparer.OrdinalIgnoreCase).ThenBy(d => d.RowIndexes[0])
+            .ToList();
+    }
+
+    // While a batch is putting rows into a table with no rows: index entries are not made row by row, and the trees
+    // are built once the rows are in (InsertInOneChange).
+    private bool _buildingIndexes;
+
+    /// <summary>
+    /// Inserts <paramref name="rows"/>, in their order, all of them or none, as <see cref="InsertRange"/> does, but
+    /// going through them once and holding none of them: for loading many rows - a whole export - with memory that
+    /// does not grow with their number. Each row is inserted as <see cref="Insert"/> inserts one, and holds its
+    /// AutoNumber values afterwards. Into a table with no rows the indexes are built once the rows are in, as for
+    /// <see cref="InsertRange"/>, which says what that changes.
+    /// <para>
+    /// What is held is a copy of each page the rows change that the file had before, so that they can be taken
+    /// back (the pages they add cost nothing), four bytes a row to name a refused one, and, while the indexes are
+    /// built, at most 64 MB of one index's keys, the rest in sorted runs in temporary files.
+    /// </para>
+    /// <para>
+    /// The difference from <see cref="InsertRange"/>: that holds every row so that, when the batch is refused, it
+    /// can give each back as it came. Here a refused batch leaves a row inserted before the refusal holding the
+    /// AutoNumber values it was given and the place it was inserted at (<see cref="Row.Id"/>), though none of the
+    /// rows is in the table.
+    /// </para>
+    /// </summary>
+    /// <param name="rows">The rows to insert. They are gone through once.</param>
+    /// <returns>How many rows were inserted.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
+    /// <exception cref="BatchInsertException">
+    /// A row was not inserted, or one of the rows is null: <see cref="BatchInsertException.RowIndex"/> is its place
+    /// among <paramref name="rows"/> and <see cref="Exception.InnerException"/> what <see cref="Insert"/> threw for
+    /// it (an <see cref="ArgumentException"/> for a null row). Nothing of the rows is in the table.
+    /// </exception>
+    /// <exception cref="NotSupportedException">The table takes no row (<see cref="InsertRefusal"/>). Nothing is written.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The call is made from inside another change that is being kept for undoing. Nothing is written.
+    /// </exception>
+    public int BulkInsert(IEnumerable<Row> rows)
+    {
+        if (rows is null) throw new ArgumentNullException(nameof(rows));
+        EnsureTakesRows();
+
+        int inserted = InsertInOneChange(rows, nameof(rows), out int failedAt, out var failure);
+        if (failure is not null) throw new BatchInsertException(failedAt, failure);
+        return inserted;
+    }
+
+    /// <summary>
+    /// Inserts <paramref name="rows"/> in one change kept for undoing, and returns how many went in. When one is
+    /// refused or cannot be written, or a tree being built refuses one, the change is taken back and
+    /// <paramref name="failure"/> is why, <paramref name="failedAt"/> the row's place among them.
+    /// <para>
+    /// When the table has no rows, its indexes hold no entry, no relationship it is in is enforced and no cursor
+    /// over its indexes is open, the rows go in with no index entries and each tree is then built from the table's
+    /// rows (<see cref="TableIndexes.BuildAll"/>): a duplicate in a unique index or primary key is found then, and
+    /// it is the later of the two rows that is named.
+    /// </para>
+    /// </summary>
+    private int InsertInOneChange(IEnumerable<Row> rows, string parameter, out int failedAt, out Exception? failure)
+    {
+        failedAt = -1;
+        failure  = null;
         using var undo = _file.BeginUndo();
+        bool build = RowCount == 0 && !InEnforcedRelationship() && !HasOpenIndexCursors()
+                  && _indexes.Trees.Count > 0 && _indexes.AllEmpty();
+        // Where each row went, to name one a tree refuses: in the order they were inserted, which is the order of
+        // their pages and slots as rows go to a table's last page - searched in halves while that holds.
+        var pointers  = build ? new List<int>() : null;
+        bool inOrder  = true;
+        int  inserted = 0;
         try
         {
-            for (; at < batch.Count; at++)
-                Insert(batch[at]);
+            _buildingIndexes = build;
+            foreach (var row in rows)
+            {
+                if (row is null) throw new ArgumentException("A row to insert is null.", parameter);
+                Insert(row);
+                if (pointers is not null && row.Id is { } id)
+                {
+                    int pointer = RowPointer.Pack(id.PageNumber, id.RowNumber);
+                    if (pointers.Count > 0 && (uint)pointer <= (uint)pointers[^1]) inOrder = false;
+                    pointers.Add(pointer);
+                }
+                inserted++;
+            }
+            _buildingIndexes = false;
+            if (build) _indexes.BuildAll();
             undo.Commit();
+            return inserted;
+        }
+        catch (TableIndexes.BuildRefusal refusal)
+        {
+            _buildingIndexes = false;
+            undo.Dispose();
+            failedAt = inOrder ? pointers!.BinarySearch(refusal.RowPointer, UnsignedOrder) : pointers!.IndexOf(refusal.RowPointer);
+            if (failedAt < 0) failedAt = inserted;
+            failure  = refusal.InnerException!;
+            return inserted;
         }
         catch (Exception e) when (e is not (ObjectDisposedException or OutOfMemoryException))
         {
+            _buildingIndexes = false;
             undo.Dispose();
-            for (int i = 0; i <= at && i < batch.Count; i++)
-            {
-                if (given[i] is { } values)
-                    foreach (var (name, had, value) in values)
-                    {
-                        if (had) batch[i][name] = value;
-                        else     batch[i].Remove(name);
-                    }
-                batch[i].Identity = identities[i];
-            }
-            throw new BatchInsertException(at, batch.Count, e);
+            failedAt = inserted;
+            failure  = e;
+            return inserted;
+        }
+        finally
+        {
+            _buildingIndexes = false;
         }
     }
+
+    private static readonly IComparer<int> UnsignedOrder = Comparer<int>.Create((a, b) => ((uint)a).CompareTo((uint)b));
+
+    // Whether a relationship this table is in has its rules kept as rows change: its rows are then looked for
+    // through the indexes as they are inserted, and the indexes must hold them.
+    private bool InEnforcedRelationship()
+        => _owningDb is { } db && db.EnforceForeignKeys && db.GetRelationships().Any(r =>
+               string.Equals(r.FromTableName, Name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(r.ToTableName, Name, StringComparison.OrdinalIgnoreCase));
+
+    private bool HasOpenIndexCursors()
+        => _indexCursors.Any(reference => reference.TryGetTarget(out _));
 
     /// <summary>
     /// Updates <paramref name="row"/>, a row that was read from this table - by <see cref="Rows"/>, a cursor or

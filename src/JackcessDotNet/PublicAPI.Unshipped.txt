@@ -139,6 +139,11 @@ JackcessDotNet.Diagnostics.DecimalBeyondPrecision.RowIndex.get -> int
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Table.get -> string!
 override JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ToString() -> string!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Value.get -> decimal?
+JackcessDotNet.DuplicateRows
+JackcessDotNet.DuplicateRows.IndexName.get -> string!
+JackcessDotNet.DuplicateRows.InTable.get -> bool
+JackcessDotNet.DuplicateRows.RowIndexes.get -> System.Collections.Generic.IReadOnlyList<int>!
+override JackcessDotNet.DuplicateRows.ToString() -> string!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ValueInEarlierByteOrder.get -> decimal?
 JackcessDotNet.Diagnostics.DecimalByteOrder
 static JackcessDotNet.Diagnostics.DecimalByteOrder.Find(JackcessDotNet.Database! database) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Diagnostics.DecimalBeyondPrecision!>!
@@ -309,6 +314,8 @@ JackcessDotNet.Table.AddColumn(JackcessDotNet.ColumnDefinition! column) -> Jackc
 JackcessDotNet.Table.AddIndex(JackcessDotNet.IndexDefinition! index) -> JackcessDotNet.Index!
 JackcessDotNet.Table.AllowAutoNumberInsert.get -> bool?
 JackcessDotNet.Table.AllowAutoNumberInsert.set -> void
+JackcessDotNet.Table.BulkInsert(System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>! rows) -> int
+JackcessDotNet.Table.FindDuplicates(System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>! rows) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.DuplicateRows!>!
 JackcessDotNet.Table.Columns.get -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Column!>!
 JackcessDotNet.Table.CreateCursor() -> JackcessDotNet.Cursor!
 JackcessDotNet.Table.CreateIndexCursor() -> JackcessDotNet.IndexCursor!

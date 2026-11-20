@@ -193,7 +193,9 @@ public sealed class AddPrimaryKeyTests : IDisposable
             db.Dispose();
             Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), $"the file changed when write {writes + 1} of the change failed");
         }
-        Assert.True(failures > 300, $"only {failures} writes failed: the key has an entry to write for each of 300 rows");
+        // The key's tree of 300 entries is written page after page (#82): its leaves, its root, its usage map and the
+        // definition are more than five writes.
+        Assert.True(failures > 5, $"only {failures} writes failed: the key's leaves, root, usage map and definition are more");
 
         using var after = Database.Open(_path);
         Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(after, "T", expectedRows: 300));

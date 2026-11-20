@@ -506,6 +506,128 @@ internal sealed class TableIndexes
         }
     }
 
+    /// <summary>
+    /// The rows among <paramref name="rows"/> that a unique tree of the table would hold under one key - two or more
+    /// of them, or one with a row already in the table - as (tree, places among the rows, whether a row of the table
+    /// has the key). A row with a null in a tree's columns is no row's duplicate in it. Rows are taken as given: an
+    /// AutoNumber column a row brings no value for is a null. A value no key is made for is refused, as an insert
+    /// refuses it.
+    /// </summary>
+    internal List<(Tree Tree, List<int> Places, bool InTable)> Duplicates(IEnumerable<Row> rows, bool tableHasRows)
+    {
+        var unique = Trees.Where(t => t.IsUnique).ToList();
+        var groups = unique.ToDictionary(t => t, _ => new Dictionary<string, (Entry First, List<int> Places)>(StringComparer.Ordinal));
+        int place = 0;
+        foreach (var row in rows)
+        {
+            if (row is null) throw new ArgumentException("A row to look at is null.", nameof(rows));
+            var written = RowValues.AsWritten(row, _table.Columns);
+            foreach (var tree in unique)
+            {
+                var values = ValuesIn(tree, written, out int nulls);
+                if (nulls > 0) continue;
+                for (int i = 0; i < values.Length; i++)
+                    if (!IndexKeys.CanEncode(tree.Columns[i].Column, values[i]))
+                        throw new NotSupportedException(
+                            $"{_table.Name}'s {Describe(tree)} cannot be kept: {IndexKeys.WhyNot(tree.Columns[i].Column, values[i])}.");
+                var entry = EntryOf(tree, values, hasNull: false);
+                string key = Convert.ToBase64String(entry.Key);
+                if (groups[tree].TryGetValue(key, out var group)) group.Places.Add(place);
+                else groups[tree][key] = (entry, new List<int> { place });
+            }
+            place++;
+        }
+
+        var found = new List<(Tree, List<int>, bool)>();
+        var writer = tableHasRows ? new IndexWriter(_file, _allocator) : null;
+        foreach (var tree in unique)
+            foreach (var (first, places) in groups[tree].Values)
+            {
+                bool inTable = writer is not null && StoredUnder(writer, first).Any(stored => IsDuplicateOf(first, stored.Key, stored.RowPointer));
+                if (places.Count > 1 || inTable) found.Add((tree, places, inTable));
+            }
+        return found;
+    }
+
+    /// <summary>Whether every tree of the table holds no entry, as the trees of a table Access made with no rows do.</summary>
+    internal bool AllEmpty()
+    {
+        var writer = new IndexWriter(_file, _allocator);
+        return Trees.All(tree => writer.IsEmpty(tree.Target));
+    }
+
+    /// <summary>A row a tree being built refuses, and why: what <see cref="BuildAll"/> throws.</summary>
+    internal sealed class BuildRefusal : Exception
+    {
+        internal BuildRefusal(int rowPointer, Exception refusal) : base(refusal.Message, refusal)
+        {
+            RowPointer = rowPointer;
+        }
+
+        internal int RowPointer { get; }
+    }
+
+    /// <summary>
+    /// Builds each tree of the table, every one holding no entry (<see cref="AllEmpty"/>), from the table's rows: one
+    /// tree at a time, the table's rows read for it and their entries made as an insert makes them
+    /// (<see cref="EntriesFor"/>), sorted and written page after page (<see cref="IndexWriter.Build"/>). A unique
+    /// tree that would hold two rows' entries under one key - neither with a null in the tree's columns - is
+    /// refused before it is written, with the later of the two rows: <see cref="BuildRefusal"/>, whose inner
+    /// exception is the <see cref="ConstraintViolationException"/> an insert of that row would have thrown. The
+    /// caller holds the undo scope.
+    /// </summary>
+    internal void BuildAll()
+    {
+        var format  = _file.Format;
+        var decoder = new RowDecoder(format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
+        var writer  = new IndexWriter(_file, _allocator);
+        foreach (var tree in Trees)
+        {
+            using var entries = new EntrySorter();
+            foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
+            {
+                byte[] page = _file.ReadPage(pageNumber);
+                if (page[0] != JetFormat.PageTypeData || ByteUtil.GetInt(page, JetFormat.OffsetDataTdefPage) != _table.TdefPageNumber) continue;
+                int rowCount = ByteUtil.GetShort(page, format.OffsetDataNumRows);
+                for (int r = 0; r < rowCount; r++)
+                {
+                    if (DataRows.Read(_file, page, r) is not { } rowBytes) continue;
+                    var values = new object?[tree.Columns.Count];
+                    int nulls = 0;
+                    for (int i = 0; i < values.Length; i++)
+                    {
+                        var column = tree.Columns[i].Column;
+                        values[i] = decoder.DecodeForKey(rowBytes, column);
+                        if (column.DataType == DataType.Boolean) values[i] = RowValues.ToBoolean(values[i]);
+                        else if (values[i] is null) nulls++;
+                    }
+                    if (nulls == values.Length && tree.IgnoreNulls) continue;
+                    entries.Add(EntryOf(tree, values, nulls > 0).Key, RowPointer.Pack(pageNumber, r), nulls > 0);
+                }
+            }
+            writer.Build(tree.Target, Checked(tree, entries.Sorted()));
+        }
+    }
+
+    // The entries of a tree being built, in order, refusing the second of two under one key in a unique tree.
+    // Entries under one key are in row-pointer order, and a bulk insert's rows are in the order they were inserted.
+    private IEnumerable<(byte[] Key, int RowPointer)> Checked(Tree tree, IEnumerable<EntrySorter.Item> sorted)
+    {
+        EntrySorter.Item? previous = null;
+        foreach (var item in sorted)
+        {
+            if (tree.IsUnique && previous is { } before && !before.HasNull && !item.HasNull && before.Key.AsSpan().SequenceEqual(item.Key))
+            {
+                var shown = ValuesAt(tree, item.RowPointer, out _);
+                throw new BuildRefusal(item.RowPointer, new ConstraintViolationException(
+                    $"The row would be a duplicate in {_table.Name}'s {Describe(tree)}, which is unique: another row holds " +
+                    $"{string.Join(", ", tree.Columns.Select((c, n) => $"{Shown(shown?[n])} for {c.Column.Name}"))}. The table is left as it was."));
+            }
+            previous = item;
+            yield return (item.Key, item.RowPointer);
+        }
+    }
+
     /// <summary>Takes <paramref name="entries"/> out of their indexes for the row that was at <paramref name="rowPointer"/>.</summary>
     public void Remove(IReadOnlyList<Entry> entries, int rowPointer)
     {
