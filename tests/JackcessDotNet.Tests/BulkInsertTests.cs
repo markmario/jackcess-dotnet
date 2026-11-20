@@ -288,6 +288,27 @@ public sealed class BulkInsertTests : IDisposable
     }
 
     [Fact]
+    public void A_long_change_notes_a_kept_page_as_it_was_once_however_often_it_writes_it()
+    {
+        using (Create(_path)) { }
+        using var db = Database.Open(_path);
+        var before = db.File.ReadKeptPage(1);
+        using (var undo = db.File.BeginUndo())
+        {
+            for (int i = 0; i < 1_000; i++)
+            {
+                var page = db.File.ReadKeptPage(1);
+                page[page.Length - 1] = (byte)i;
+                db.File.WritePage(1, page);
+            }
+            // Noted at every write, a load of a million rows held a copy of the global usage map for each page it added.
+            Assert.True(undo.NotedCount <= 2, $"{undo.NotedCount} things noted for one page written 1,000 times");
+        }
+        Assert.True(before.AsSpan().SequenceEqual(db.File.ReadKeptPage(1)), "taken back, the page the file keeps is not as it was");
+        Assert.True(before.AsSpan().SequenceEqual(db.File.ReadPage(1)), "taken back, the page in the file is not as it was");
+    }
+
+    [Fact]
     public void A_load_whose_writing_fails_at_a_page_leaves_the_file_as_it_was()
     {
         using (Create(_path)) { }

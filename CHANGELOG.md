@@ -535,6 +535,26 @@ changes with them.
   (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
+- **Indexes built once, page after page** (#82). `Table.InsertRange` into a table with no rows, and the new
+  `Table.BulkInsert`, put the rows in without index entries and then build each index from the table's rows:
+  sorted, and written leaf after leaf as Access builds an index when it compacts a file. `Table.AddIndex` builds
+  its tree the same way. Keeping every index row by row cost an export of 13 rows a document into a template with
+  35 indexes 11.5 ms a document; loaded so it costs 0.6 ms, against 0.46 ms for the same rows with no index. A
+  duplicate in a unique index or primary key is refused when the trees are built, with the later of the two rows
+  named, and nothing written. While a batch is going in the table's indexes hold none of its rows, so a sequence
+  of rows that looks in the table through an index does not find them; a table that has rows, a table in an
+  enforced relationship and one with an index cursor open are filled row by row as before. Keys past 64 MB are
+  sorted in runs in temporary files, so building the trees of a table of millions of rows with long text keys
+  takes no more memory than a small one.
+- **`Table.BulkInsert(rows)`** (#82) inserts rows all or none, as `InsertRange` does, going through them once and
+  holding none of them, for loading many rows. A refused batch leaves the rows inserted before the refusal
+  holding the AutoNumber values they were given; `InsertRange`, which holds every row, gives them back as they
+  came.
+- **`Table.FindDuplicates(rows)`** (#82) names every set of rows a unique index or primary key would refuse as
+  duplicates, of one another or of a row already in the table, by the index's key as Access compares them: text
+  that differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter,
+  "ß" and "ss", "æ" and "ae") is one key. `DuplicateRows` gives the index, the rows' places, and whether a row of
+  the table has the key. `Validate` looks at one row against the table; this looks at a batch.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
 - **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;

@@ -284,7 +284,10 @@ internal sealed class PageFile : IDisposable
         if (_kept.TryGetValue(pageNumber, out var was))
         {
             _kept[pageNumber] = (byte[])data.Clone();
-            Journal(() => _kept[pageNumber] = was);
+            // A change kept for undoing notes the page as it was before the change's first write of it, once: taken
+            // back, the change puts that back. Noted at every write, a load of a million rows held a copy of the global
+            // usage map for every page it added (#82).
+            if (_undo is null || _undo.FirstWriteOfKept(pageNumber)) Journal(() => _kept[pageNumber] = was);
         }
     }
 
@@ -412,6 +415,15 @@ internal sealed class PageFile : IDisposable
 
         /// <summary>Whether the change has written a page yet.</summary>
         internal bool HasWritten => _wrote;
+
+        // The pages the file keeps (ReadKeptPage) that the change has written: how each was before is noted once.
+        private readonly HashSet<int> _keptWritten = new();
+
+        /// <summary>True the first time the change writes <paramref name="pageNumber"/>, a page the file keeps.</summary>
+        internal bool FirstWriteOfKept(int pageNumber) => _keptWritten.Add(pageNumber);
+
+        /// <summary>How many things the change has noted to take back (<see cref="Remember"/>): for tests of what a long change holds.</summary>
+        internal int NotedCount => _journal?.Count ?? 0;
 
         /// <summary>Notes what to run once the change is committed (<see cref="WhenKept"/>).</summary>
         internal void AfterCommit(Action action) => (_afterCommit ??= new List<Action>()).Add(action);

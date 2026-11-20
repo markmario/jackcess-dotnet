@@ -127,6 +127,11 @@ orders.Delete(order);
 try { people.InsertRange(rows); }
 catch (BatchInsertException e) { Console.WriteLine($"row {e.RowIndex}: {e.InnerException!.Message}"); }
 
+// Many rows - an export of millions - go in once, all or none, without holding them. Into a table with no rows
+// its indexes are built once the rows are in, page after page, as Access builds them when it compacts.
+foreach (var duplicate in people.FindDuplicates(rows)) Console.WriteLine(duplicate);   // "ByEmail: rows 3, 17"
+int loaded = people.BulkInsert(ReadRowsFromSomewhere());
+
 // A cursor finds rows by their values, and updates or deletes the row it is on.
 var cursor = people.CreateCursor();
 for (var row = cursor.FindRow("Name", "Alice"); row is not null; row = cursor.FindNextRow("Name", "Alice"))
@@ -828,6 +833,8 @@ Integer otherwise, which does not hold every value).
 | Row CRUD + primary-key B-tree index               | ✅      |
 | Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change |
 | Batch insert, all rows or none (`Table.InsertRange`) | ✅ |
+| Loading many rows without holding them (`Table.BulkInsert`), indexes built once into a table with no rows | ✅ Keys past 64 MB are sorted on disk |
+| Duplicates a unique index would refuse, among many rows (`Table.FindDuplicates`) | ✅ By the index's key, as Access compares |
 | Cursors: both ways, find first and next, update or delete the current row, one column, some columns, savepoints | ✅ No column matchers |
 | Index cursors: the index's order, ranges between two entries, closest row, rows of an entry; `Joiner` | ✅ For every type an index is kept for |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID |
