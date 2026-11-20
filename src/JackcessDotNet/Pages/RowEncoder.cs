@@ -269,7 +269,7 @@ internal sealed class RowEncoder
             string text = Convert.ToString(value) ?? string.Empty;
             byte[] textBytes = EncodeText(col, text);
             return textBytes.Length > InlineLvalThreshold && writer is not null
-                ? (null, (writer, System.Text.Encoding.Unicode.GetBytes(text)))
+                ? (null, (writer, Util.ByteUtil.EncodeUtf16(text)))
                 : (BuildInlineLvRef(textBytes), null);
         }
 
@@ -431,9 +431,10 @@ internal sealed class RowEncoder
         return lvRef;
     }
 
-    // Compressed only where the column allows it (see Column.IsCompressedUnicode).
+    // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
+    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16).
     private static byte[] EncodeText(Column col, string text)
-        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : System.Text.Encoding.Unicode.GetBytes(text);
+        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : Util.ByteUtil.EncodeUtf16(text);
 
     private byte[] WriteVariableValue(Column col, object value)
     {

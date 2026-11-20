@@ -131,7 +131,7 @@ internal static class ByteUtil
                 bytes[i + 2] = (byte)value[i];
             return bytes;
         }
-        return Encoding.Unicode.GetBytes(value);
+        return EncodeUtf16(value);
     }
 
     /// <summary>
@@ -178,7 +178,7 @@ internal static class ByteUtil
             // begins with U+00FF ('ÿ' encodes as FF 00) out of this branch.
             return EncodingCompat.Latin1.GetString(data, offset + 1, length - 1);
         }
-        return Encoding.Unicode.GetString(data, offset, length);
+        return DecodeUtf16(data, offset, length);
     }
 
     private static void DecodeTextSegment(byte[] data, int start, int end, bool compressed, StringBuilder text)
@@ -192,8 +192,35 @@ internal static class ByteUtil
         }
         else
         {
-            text.Append(Encoding.Unicode.GetString(data, start, end - start));
+            text.Append(DecodeUtf16(data, start, end - start));
         }
+    }
+
+    /// <summary>
+    /// UTF-16LE text as the code units it holds, half of a surrogate pair alone among them: Access keeps a name or a
+    /// value with one as it is given, and <see cref="Encoding.Unicode"/> reads each as U+FFFD (#63). An odd byte at
+    /// the end is U+FFFD, as <see cref="Encoding.Unicode"/> reads one.
+    /// </summary>
+    public static string DecodeUtf16(byte[] data, int offset, int length)
+    {
+        int units = length / 2;
+        var chars = new char[units + length % 2];
+        for (int i = 0; i < units; i++)
+            chars[i] = (char)(data[offset + 2 * i] | data[offset + 2 * i + 1] << 8);
+        if (length % 2 != 0) chars[units] = '�';
+        return new string(chars);
+    }
+
+    /// <summary>Text as UTF-16LE, each code unit as it is, half of a surrogate pair alone among them: what <see cref="DecodeUtf16"/> reads.</summary>
+    public static byte[] EncodeUtf16(string text)
+    {
+        var bytes = new byte[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            bytes[2 * i]     = (byte)text[i];
+            bytes[2 * i + 1] = (byte)(text[i] >> 8);
+        }
+        return bytes;
     }
 
     /// <summary>

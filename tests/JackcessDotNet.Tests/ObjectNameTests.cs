@@ -177,8 +177,8 @@ public sealed class ObjectNameTests : IDisposable
         var odd = new[]
         {
             ("F_FDD0", X(0xFDD0)), ("F_FFFE", X(0xFFFE)), ("F_FFFF", X(0xFFFF)),
-            // A lone surrogate is read as U+FFFD, as .NET decodes one; the file keeps what Access wrote.
-            ("F_D800", X(0xFFFD)), ("F_DC00", X(0xFFFD, 0x79)),
+            // A lone surrogate is read as the file holds it, and found by that name.
+            ("F_D800", X(0xD800)), ("F_DC00", X(0xDC00, 0x79)),
         };
         using (var db = Database.Open(_path))
         {
