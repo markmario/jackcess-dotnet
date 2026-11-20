@@ -69,7 +69,10 @@ and the two definitions hold the same index slots.
 - **An index** is built over the rows already there and kept on every write after. It is refused for what an
   insert would be: two rows with one key in a unique index (rows with a null in it aside), a null in an index
   that requires its values, a column whose keys this library does not write (Decimal, Binary, OLE, Complex, text
-  in another sort order), a value no key is made for. An index like one the table has shares its tree.
+  in another sort order), a value no key is made for. An index like one the table has shares its tree. The tree
+  is built from the rows sorted, page after page, as Access builds one when it compacts
+  ([Indexes built page after page](indexes.md#indexes-built-page-after-page)): a few page writes for each hundred
+  rows.
 - **A primary key** is an index with `IsPrimaryKey` set, added to a table that has none: unique, and requiring
   its values, as Access writes one. It is refused when two rows have one key or a row has a null in it, and
   when the table has a primary key already.
