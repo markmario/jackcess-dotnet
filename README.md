@@ -887,6 +887,14 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   through a `decimal` of 15 significant digits and a `float` through one of 7 on .NET Framework and .NET up to 10,
   so a row was not found by the number it was written with. A file it wrote keeps those values: see
   [Rows and long values](#rows-and-long-values-what-to-know).
+- **A Decimal with more places than its column holds is stored as ACE stores it**
+  ([#80](https://github.com/markmario/jackcess-dotnet/issues/80)): the places past the column's scale are cut off,
+  toward zero - 1.015 is 1.01 in a column of scale 2, -2.5 is -2 in one of scale 0 - and a negative number cut to
+  nothing is a negative zero, as ACE writes it, on every runtime. Measured with ACE 16 for typed Decimal, Double,
+  Single and text parameters, at every scale from 0 to 28, in both signs; DAO refuses such a value, and ACE is the
+  referee here as everywhere. The engine rounded half away from zero. A lookup compares the number given with the
+  stored value exactly, as ACE's `=` does, so 1.015 does not find the row of 1.01; the importer, which takes only a
+  value a column holds exactly, refuses one, as DAO does.
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds

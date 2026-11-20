@@ -544,11 +544,15 @@ public sealed class RowLayoutTests : IDisposable
     [InlineData("-0.001", 2)]
     [InlineData("-0.004", 2)]
     [InlineData("-0.4", 0)]
-    public void A_Decimal_that_rounds_to_zero_has_no_sign(string value, int scale)
+    // A negative Decimal cut to nothing is a negative zero, its sign byte set and its number 0, as ACE stores it (#80,
+    // DecimalPlacesTests); a zero given is a zero with no sign, as in ACE.
+    public void A_negative_Decimal_cut_to_zero_is_a_negative_zero(string value, int scale)
     {
         byte[] bytes = NumericCodec.Encode(decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture), 18, scale, "N");
-        Assert.All(bytes, b => Assert.Equal(0, b));
-        Assert.Equal(0x80, NumericCodec.Encode(-0.005m, 18, 2, "N")[0]);   // rounds to -0.01
+        Assert.Equal(0x80, bytes[0]);
+        Assert.All(bytes.Skip(1), b => Assert.Equal(0, b));
+        Assert.All(NumericCodec.Encode(NumericCodec.AsStored(-0.00m, 2), 18, 2, "N"), b => Assert.Equal(0, b));
+        Assert.Equal(0x80, NumericCodec.Encode(-0.005m, 18, 2, "N")[0]);   // cut to -0.00
     }
 
     [Fact]

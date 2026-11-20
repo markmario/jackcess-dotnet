@@ -34,9 +34,9 @@ internal static class RowValues
     /// <summary>
     /// <paramref name="row"/> as it will be written to a table of <paramref name="columns"/>: no
     /// <see cref="DBNull"/> (a column without a value has none), a Yes/No column's value as the
-    /// <see cref="bool"/> it stands for, and a Currency column's as the <see cref="decimal"/> the row stores
-    /// (<see cref="AsCurrency"/>). The row itself when it is already so; otherwise a copy - the caller's row is not
-    /// changed.
+    /// <see cref="bool"/> it stands for, and a Currency column's and a Decimal column's number as the
+    /// <see cref="decimal"/> the row stores (<see cref="AsCurrency"/>, <see cref="AsDecimal"/>). The row itself when
+    /// it is already so; otherwise a copy - the caller's row is not changed.
     /// </summary>
     /// <exception cref="ArgumentException">A Currency column's value is of a kind no number is made of.</exception>
     /// <exception cref="FormatException">A Currency column's value is text that does not read as a number.</exception>
@@ -50,12 +50,27 @@ internal static class RowValues
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
                 : column.DataType == DataType.Currency && value is not null ? AsCurrency(column, value)
+                : column.DataType == DataType.Decimal && Util.CurrencyRounding.IsNumber(value) ? AsDecimal(column, value!)
                 : value;
             if (ReferenceEquals(normal, value)) continue;
             written ??= new Row(row);
             written[column.Name] = normal;
         }
         return written ?? row;
+    }
+
+    /// <summary>
+    /// <paramref name="value"/>, a number given for the Decimal column <paramref name="column"/>, as the row stores
+    /// it: a double or a float taken to a decimal as Access takes one (<see cref="Util.AutomationDecimal"/>), and the
+    /// places past the column's scale cut off, toward zero, as ACE stores them (<see cref="NumericCodec.AsStored"/>,
+    /// #80). The value itself when it is that decimal already. A number with more digits than the column holds is
+    /// refused when the row is encoded.
+    /// </summary>
+    /// <exception cref="OverflowException"><paramref name="value"/> is a number past what a decimal holds.</exception>
+    public static object AsDecimal(Column column, object value)
+    {
+        decimal stored = NumericCodec.AsStored(Util.AutomationDecimal.From(value, CultureInfo.InvariantCulture), column.Scale);
+        return value is decimal given && decimal.GetBits(given).AsSpan().SequenceEqual(decimal.GetBits(stored)) ? value : stored;
     }
 
     /// <summary>

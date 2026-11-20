@@ -393,6 +393,18 @@ changed since 1.2.2.
   change is made and mends the index: an update moves the row's entry to its new key, and a delete takes out the
   entry the row had under another key, which it left pointing at no row. In a sound index the check reads no page
   more: the pages it reads are the ones the entry's removal goes down.
+- **A Decimal with more places than its column holds is cut, as ACE cuts it** (#80). The places past the column's
+  scale are cut off toward zero, where they were rounded half away from zero: 1.015 is 1.01 in a column of scale 2
+  (it was 1.02), and 2.5 is 2 in a column of scale 0 (it was 3). A negative number cut to nothing is a negative zero,
+  as ACE stores it (-0.001 at scale 2); a zero given, of either sign, has no sign, as in ACE. ACE 16 was measured
+  for 5,080 numbers - typed Decimal, Double, Single and text parameters, every scale from 0 to 28, both signs, in an
+  .mdb and an .accdb - and cut every one (`tools/ace-decimal-places.ps1`, `Assets/ace-decimal-places.tsv`). DAO
+  refuses every one of them ("Scaling of decimal value resulted in data truncation"); ACE is the referee, as it is
+  for every value this library writes. An insert, an update, `Validate` and the relationships an insert or update
+  is checked against all take the number as the row stores it. A lookup is unchanged: it compares the number given
+  with the stored value exactly, as ACE's `=` does, through an index and without one, so 1.015 finds no row of
+  1.01. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
+  one, as DAO does.
 
 ### Breaking changes to the public API
 
