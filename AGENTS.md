@@ -52,7 +52,8 @@ release 1.2.2 of `mehran-ghanizadeh/jackcess-dotnet` and maintained on its own.
      `DatabaseInUseException`);
    - `Try...` for the form that does not throw, and no `[Obsolete]` member that forwards to a new name;
    - a database null is `null`. A row that is read never holds `DBNull`; a `DBNull` in a row that is written is
-     taken as null, and a `DataTable` holds `DBNull` as a `DataTable` does.
+     taken as null, and a `DataTable` the library exports holds `DBNull.Value` for a null, as any `DataTable`
+     does.
 6. **Correctness first.** Index correctness, everything written matching what Access writes, and bug fixes come
    before new features. Work is ranked by what the applications that depend on this library use. A feature
    nothing uses yet waits, with its state recorded on its issue.
@@ -111,12 +112,13 @@ Before a pull request, on its final state: a clean build with no warnings, the w
 - **What needs Windows, and Access.** The .NET Framework 4.8 tests and the Access referee tests run on Windows
   only. The referee tests also need Access, or the Access Database Engine 2016 redistributable, in 64 bits;
   without it every one of them is skipped, saying what is missing.
-- **Off Windows, or without Access.** Build and test one framework at a time, as CI's jobs do, and not the
-  solution: `net10.0`, `net11.0`, and the `netstandard2.0` assembly on `net10.0`. Say which configurations were
-  not run, and that the referee tests were not, and leave them to CI: it installs the redistributable and sets
-  `JACKCESS_ACCESS_REQUIRED=1`, so that a missing referee fails the tests instead of skipping them. A change
-  that needs a measurement from Access, made where there is no Access, stops and says what has to be measured.
-  It does not guess.
+- **Off Windows.** Build and test one framework at a time, as CI's jobs do, and not the solution: `net10.0`,
+  `net11.0`, and the `netstandard2.0` assembly on `net10.0`. Say that the .NET Framework configurations were not
+  run.
+- **Without Access,** on Windows or off it, the referee tests are not run. Say so, and leave them to CI: it
+  installs the redistributable and sets `JACKCESS_ACCESS_REQUIRED=1`, so that a missing referee fails the tests
+  instead of skipping them. A change that needs a measurement from Access, made where there is no Access, stops
+  and says what has to be measured. It does not guess.
 - **Referee tests run one at a time in a process.** ACE refuses two connections opened at once in one process,
   so the test project runs its tests one after another. `scripts/Invoke-AccessTests.ps1` also gives each class a
   process of its own, so that a crash costs one class.
@@ -165,8 +167,9 @@ Before a pull request, on its final state: a clean build with no warnings, the w
   nuget.org: its links are absolute, and it changes only for a new page or a new headline feature.
 - Comments that say what the code does and why. XML documentation and comments carry no history ("now", "no
   longer") and no talk of tasks, reviews or agents. An issue of this repository is cited as `#NN`, and no other
-  tracker is cited. A few comments still cite another one, which issue 47 replaces: do not copy them, and do not
-  sweep them out in passing.
+  tracker is cited. A few comments still cite another one, which
+  [#47](https://github.com/markmario/jackcess-dotnet/issues/47) replaces: do not copy them, and do not sweep them
+  out in passing.
 - Text files are LF (`.gitattributes`). A file's byte-order mark stays as it is.
 - Nothing else: no rename, reformatting or move that the task does not need.
 
@@ -201,7 +204,8 @@ How a release is made is in [Releasing](docs/releasing.md). What matters to an a
   (`vX.Y.Z-suffix`) is pushed only with the owner's leave, on `main`'s merge commit, by the session coordinating
   the work and never by a sub-agent, and the owner is told the tag and the commit. A tag that published is never
   moved or used again, and a published version is never replaced. A tag the release guard refused published
-  nothing: it is deleted, what it tripped over is fixed, and the commit is tagged again.
+  nothing: it is deleted, what it tripped over is fixed, and a tag is pushed again, on `main`'s merge commit and
+  with a version the guard accepts.
 - Publishing waits for a person to approve the `nuget` environment. An agent never approves or rejects it,
   whatever its credentials allow.
 - `.github/workflows/nuget-publish.yml` stays disabled: never enable it, delete it or put a workflow back at
