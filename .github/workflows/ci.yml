@@ -258,7 +258,8 @@ jobs:
   # Microsoft Access's engine as the referee: ACE through OLE DB, and DAO, from
   # the Access Database Engine 2016 redistributable (x64). scripts/Invoke-AccessTests.ps1
   # runs a class to a process, or a piece of one for the few that take minutes,
-  # two processes at a time; balances the pieces between the shards by the
+  # two processes at a time, each on a processor of its own; ends a process that
+  # hangs; balances the pieces between the shards by the
   # seconds each took on CI; runs again a process that died inside the
   # redistributable, and a piece whose only failures are ACE statements that
   # failed with no message of their own; and checks that each shard ran every
@@ -268,6 +269,9 @@ jobs:
     name: test (Access, ${{ matrix.shard }} of ${{ matrix.shards }})
     needs: access-build
     runs-on: windows-latest
+    # A shard takes some five minutes with the samples and fifteen with the full sweeps; a process that hangs is
+    # ended by the script, so this only bounds what the script cannot.
+    timeout-minutes: 45
     strategy:
       # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
@@ -350,11 +354,17 @@ jobs:
           }
           Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ace-install.log')
           "Waited $([math]::Round($clock.Elapsed.TotalSeconds)) s for it."
+          "Processors: $([Environment]::ProcessorCount)"
+          # ACE's first use on the machine, in this one process before the tests start theirs side by side. Asked
+          # for a file that is not there, the provider loads and answers; one that is not registered fails here.
+          $conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$env:RUNNER_TEMP\probe.mdb"
+          try { $conn.Open() } catch { if ($_.Exception.Message -match 'not registered') { throw 'The ACE provider is not registered after the install.' } "ACE answered: $($_.Exception.Message)" }
+          finally { $conn.Dispose() }
 
       - name: Test
         shell: pwsh
         run: |
-          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -TrxName "access-tests-${{ matrix.shard }}.trx"
+          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.shard }}.trx"
           exit $LASTEXITCODE
 
       - name: Upload test results

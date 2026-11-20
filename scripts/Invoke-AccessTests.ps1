@@ -51,11 +51,19 @@
 # there is taken to be slow, and named in a warning; one that takes far longer than its number is too, in the job's
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
 # makes one shard longer, and leaves nothing out.
+#
+# The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
+# number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
+# again, up to twice; a test that truly never ends still fails, on its third attempt.
+#
+# -ProcessorsEach keeps each process to that many logical processors of its own (0, the default, leaves them all): the
+# redistributable's deaths are in its own threads, and CI gives each process one processor.
 param(
     [string] $TrxName = 'access-tests.trx',
     [ValidateRange(1, 64)] [int] $Shard = 1,
     [ValidateRange(1, 64)] [int] $Shards = 1,
-    [ValidateRange(1, 8)] [int] $Parallel = 1
+    [ValidateRange(1, 8)] [int] $Parallel = 1,
+    [ValidateRange(0, 64)] [int] $ProcessorsEach = 0
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
@@ -348,6 +356,12 @@ public sealed class AccessTestProcess : IDisposable
 
     public bool HasExited { get { return _process.HasExited; } }
 
+    /// <summary>Keeps the process to the logical processors of <paramref name="mask"/>.</summary>
+    public void Confine(long mask) { _process.ProcessorAffinity = new IntPtr(mask); }
+
+    /// <summary>Ends the process and every process it started.</summary>
+    public void Kill() { try { _process.Kill(true); } catch (InvalidOperationException) { } }
+
     /// <summary>The exit code, once the process has ended and all its output has been read.</summary>
     public int Finish()
     {
@@ -389,9 +403,17 @@ function Start-Unit($entry) {
     Remove-Item -LiteralPath "$report.xml" -ErrorAction SilentlyContinue
     $arguments = @($unit.Filter) + @('-noLogo', '-noColor', '-preEnumerateTheories', '-reporter', 'verbose', '-result-xml', "$report.xml", '-result-trx', "$report.trx")
     Write-Host "[$($unit.Name)] started: $($unit.Tests.Count) tests$(if ($entry.Attempt -gt 1) { ", attempt $($entry.Attempt)" })"
+    $slot = @(0..($Parallel - 1) | Where-Object { $s = $_; -not ($running | Where-Object Slot -eq $s) })[0]
+    $process = [AccessTestProcess]::new($exe, [string[]]$arguments, $root, $temp)
+    if ($ProcessorsEach -gt 0) {
+        $count = [Environment]::ProcessorCount
+        $mask = [long]0
+        for ($i = 0; $i -lt $ProcessorsEach; $i++) { $mask = $mask -bor ([long]1 -shl (($slot * $ProcessorsEach + $i) % $count)) }
+        $process.Confine($mask)
+    }
     $running.Add([pscustomobject]@{
-        Entry = $entry; Temp = $temp; Report = "$report.xml"; Output = [System.Collections.Generic.List[string]]::new()
-        Clock = [Diagnostics.Stopwatch]::StartNew(); Process = [AccessTestProcess]::new($exe, [string[]]$arguments, $root, $temp)
+        Entry = $entry; Temp = $temp; Report = "$report.xml"; Output = [System.Collections.Generic.List[string]]::new(); Slot = $slot
+        Clock = [Diagnostics.Stopwatch]::StartNew(); Process = $process; Limit = [math]::Max(600, 5 * (Get-Seconds $unit.Name)); Hung = $false
     })
 }
 
@@ -416,7 +438,12 @@ while ($queue.Count -or $running.Count) {
     Start-Sleep -Milliseconds 250
     foreach ($run in @($running)) {
         Write-Lines $run
-        if (-not $run.Process.HasExited) { continue }
+        if (-not $run.Process.HasExited) {
+            if ($run.Clock.Elapsed.TotalSeconds -lt $run.Limit) { continue }
+            Write-Host "[$($run.Entry.Unit.Name)] has run $([math]::Round($run.Clock.Elapsed.TotalSeconds)) s, past its limit of $($run.Limit) s: ended."
+            $run.Hung = $true
+            $run.Process.Kill()
+        }
         $code = $run.Process.Finish()
         Write-Lines $run
         $run.Process.Dispose()
@@ -444,7 +471,10 @@ while ($queue.Count -or $running.Count) {
         }
 
         $retry = $null
-        if ($code -eq $crashedInAce) {
+        if ($run.Hung) {
+            $retry = "hung, and was ended after $elapsed s"
+            $limit = $attempts
+        } elseif ($code -eq $crashedInAce) {
             $retry = "died inside the Access Database Engine (exit $code)"
             $limit = $attempts
         } elseif ($code -eq $crashedInOleDb) {
