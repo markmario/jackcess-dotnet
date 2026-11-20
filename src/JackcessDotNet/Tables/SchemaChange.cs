@@ -38,7 +38,7 @@ internal static class SchemaChange
         if (string.IsNullOrWhiteSpace(given.Name) || given.Name.Length > MaxNameLength)
             throw new ArgumentException($"A column's name is 1 to {MaxNameLength} characters; '{given.Name}' is not.", nameof(given));
         EnsureNewName(given.Name, "column", nameof(given));
-        db.EnsureNamesCompared($"Column '{given.Name}' was not added to '{table.Name}'");
+        db.EnsureNamesCompared($"Column '{given.Name}' was not added to '{table.Name}'", given.Name, table.Columns.Select(c => c.Name));
         if (db.ColumnNames.OneWith(table.Columns.Select(c => c.Name), given.Name) is { } taken)
             throw new ArgumentException($"Table '{table.Name}' already has a column named {ObjectNames.Taken(taken, given.Name)}. Nothing was changed.", nameof(given));
         if (table.Columns.Count >= MaxColumns)
@@ -134,7 +134,7 @@ internal static class SchemaChange
             throw new ArgumentException($"An index's name is at most {MaxNameLength} characters; '{index.Name}' is longer.", nameof(index));
         EnsureValidName(index.Name, "an index", nameof(index));
         EnsureNewName(index.Name, "index", nameof(index));
-        db.EnsureNamesCompared($"Index '{index.Name}' was not added to '{table.Name}'");
+        db.EnsureNamesCompared($"Index '{index.Name}' was not added to '{table.Name}'", index.Name, table.Indexes.Select(ix => ix.Name));
         var names = db.ColumnNames;
         foreach (string descending in index.DescendingColumns)
             if (names.OneWith(index.Columns, descending) is null)
@@ -466,7 +466,7 @@ internal static class SchemaChange
                 throw new ArgumentException($"A relationship's name is 1 to {MaxNameLength} characters; '{asked}' is not.", nameof(definition));
             EnsureValidName(asked, "a relationship", nameof(definition));
             EnsureNewName(asked, "relationship", nameof(definition));
-            db.EnsureNamesCompared($"Relationship '{asked}' was not created");
+            db.EnsureNamesCompared($"Relationship '{asked}' was not created", asked, relationshipNames.Concat(indexNames));
             if (Taken(asked))
                 throw new InvalidOperationException(
                     $"There is already a relationship named '{asked}' in this database, or an index of that name on '{toName}', " +
@@ -475,11 +475,11 @@ internal static class SchemaChange
         }
         else
         {
-            db.EnsureNamesCompared("A relationship was not created");
             // Made of the tables' names, which this library lets hold what a name may not: then one must be given.
             name = FreeName(fromName, toName, Taken);
             EnsureValidName(name, "a relationship (made of the tables' names: give it one of its own)", nameof(definition));
             EnsureNewName(name, "relationship (made of the tables' names: give it one of its own)", nameof(definition));
+            db.EnsureNamesCompared($"Relationship '{name}' was not created", name, relationshipNames.Concat(indexNames));
         }
         var entry = db.Catalog.PrepareRelationship(name);
 

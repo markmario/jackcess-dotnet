@@ -413,27 +413,32 @@ public sealed class ObjectNameTests : IDisposable
         Unchanged<InvalidOperationException>(db => db.CreateTable(X(0xFDD0), new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id"));
     }
 
-    // A database that sorts in Swedish, an order this library makes no keys for and DAO was measured to compare field and
-    // index names in as General - Legacy does: a column is added there, and compared with the others so.
+    // A database that sorts in Swedish, an order this library makes no keys for, in which Access compares field and
+    // index names by Swedish keys: DAO refused an index "x" with U+028E beside "x" with U+00DC, which General - Legacy's
+    // keys keep apart. It was measured to compare names of printable ASCII there as General - Legacy's keys do, so a
+    // column of such a name is added beside columns of such names, and compared with them so; another name is refused.
     [Fact]
-    public void A_database_that_sorts_in_swedish_takes_a_name_compared_as_general_legacy_compares_it()
+    public void A_database_that_sorts_in_swedish_takes_a_name_of_printable_ascii_beside_names_of_printable_ascii()
     {
         File.Copy(ProtectedFileTests.Asset("dao-swedish.mdb"), _path);
         File.SetAttributes(_path, FileAttributes.Normal);
-        string table;
         using (var db = Database.Open(_path))
-        {
-            table = db.GetTableNames().First();
-            db.GetTable(table).AddColumn(Text("Straße"));
-        }
-        Unchanged(db => db.GetTable(table).AddColumn(Text("STRASSE")));
+            db.GetTable("People").AddColumn(Text("Street"));
+        Unchanged(db => db.GetTable("People").AddColumn(Text("STREET")));
+        Unchanged<NotSupportedException>(db => db.GetTable("People").AddColumn(Text(X(0x28E))));
+        Unchanged<NotSupportedException>(db => db.GetTable("People").AddIndex(new IndexDefinition(X(0xDC), "Id")));
+        Unchanged<NotSupportedException>(db => db.GetTable("People").RenameColumn("Street", "Stra" + U(0xDF) + "e"));
+        using (var db = Database.Open(_path))
+            db.GetTable("People").AddColumn(Text("Town"));
         using var reopen = Database.Open(_path);
-        Assert.Equal("Straße", reopen.GetTable(table.ToUpperInvariant()).Definition.FindColumn("strasse")!.Name);
+        Assert.Equal(new[] { "Id", "Name", "Street", "Town" }, reopen.GetTable("people").Columns.Select(c => c.Name));
+        Assert.Equal("Street", reopen.GetTable("People").Definition.FindColumn("street")!.Name);
     }
 
-    // A database whose text sorts in an order DAO was not measured to compare field and index names in as General -
-    // Legacy does - Turkish here, whose catalog this test gives that order - is given no new column, index or column's
-    // name: in Turkish, an index named "xİ" is one with "xi", which General - Legacy keeps apart.
+    // A database whose text sorts in an order this library makes no keys for and Access was not measured to compare
+    // names of printable ASCII in as General - Legacy does - Turkish here, whose catalog this test gives that order - is
+    // given no new column, index or column's name: in Turkish, an index named "xİ" is one with "xi", which General -
+    // Legacy keeps apart.
     [Fact]
     public void A_database_that_sorts_in_an_order_not_measured_is_given_no_new_name_and_its_tables_are_found()
     {

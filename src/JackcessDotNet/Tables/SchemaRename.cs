@@ -34,7 +34,7 @@ internal static class SchemaRename
             ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "a column", nameof(newName));
         SchemaChange.EnsureNewName(newName, "column", nameof(newName));
-        db.EnsureNamesCompared($"Column '{column.Name}' of '{table.Name}' was not renamed");
+        db.EnsureNamesCompared($"Column '{column.Name}' of '{table.Name}' was not renamed", newName, table.Columns.Where(c => c != column).Select(c => c.Name));
         // The new name is compared with every other column's: the column is left out by what it is, so it may be given
         // a name Access takes as one with its own (another case, say), as Access renames one.
         if (db.ColumnNames.OneWith(table.Columns.Where(c => c != column).Select(c => c.Name), newName) is { } taken)
@@ -92,7 +92,7 @@ internal static class SchemaRename
             ?? throw new ArgumentException($"Table '{table.Name}' has no index named '{name}'. Nothing was changed.", nameof(name));
         EnsureNewName(newName, "an index", nameof(newName));
         SchemaChange.EnsureNewName(newName, "index", nameof(newName));
-        db.EnsureNamesCompared($"Index '{index.Name}' of '{table.Name}' was not renamed");
+        db.EnsureNamesCompared($"Index '{index.Name}' of '{table.Name}' was not renamed", newName, table.Indexes.Where(ix => ix != index).Select(ix => ix.Name));
         if (db.ColumnNames.OneWith(table.Indexes.Where(ix => ix != index).Select(ix => ix.Name), newName) is { } taken)
             throw new ArgumentException($"Table '{table.Name}' already has an index named {ObjectNames.Taken(taken, newName)}. Nothing was changed.", nameof(newName));
         if (index.IsForeignKey)

@@ -68,15 +68,29 @@ internal sealed class ObjectNames
     internal static ObjectNames ForColumns(JetFormat format) => format.SizeSortOrder < 4 ? Access97Columns : GeneralLegacy;
 
     /// <summary>
-    /// Whether Access compares the names of a table's columns and indexes as General - Legacy's keys do in a database
-    /// whose text sorts in <paramref name="order"/>: one whose keys this library makes, or one DAO was measured to
-    /// compare them so in - every pair of names asked about as field and index names, in databases DAO made in Swedish,
-    /// Czech, French and Japanese. Not in Turkish's - an index "xİ" is one with "xi" there, which General - Legacy keeps
-    /// apart - nor in an order not measured.
+    /// Whether this library compares the names of a table's columns and indexes as Access does in a database whose
+    /// text sorts in <paramref name="order"/>: one whose keys it makes. Access compares them in another by that order's
+    /// own keys - in Swedish an index "xʎ" is one with "xÜ", in Czech "xℯ" with "xė", in Japanese "xー" with "x―", in
+    /// Turkish "xİ" with "xi", each two to General - Legacy's keys.
     /// </summary>
-    internal static bool ComparesColumnsAsGeneralLegacy(SortOrder order)
-        => ForCatalog(order) is not null
-        || (order.Version == 0 && order.Code is 0x041D or 0x0405 or 0x040C or 0x0411);
+    internal static bool ComparesColumnsAsGeneralLegacy(SortOrder order) => ForCatalog(order) is not null;
+
+    /// <summary>
+    /// Whether Access compares names of printable ASCII as General - Legacy's keys do in a database whose text sorts in
+    /// <paramref name="order"/>, an order whose keys this library does not make: Swedish, Czech, French or Japanese,
+    /// in which DAO was asked about pairs of such names - in another case, with punctuation or spaces among them - as
+    /// field and index names, and gave each the verdict it gives in General - Legacy.
+    /// </summary>
+    internal static bool ComparesAsciiAsGeneralLegacy(SortOrder order)
+        => order.Version == 0 && order.Code is 0x041D or 0x0405 or 0x040C or 0x0411;
+
+    /// <summary>Whether <paramref name="name"/> is of printable ASCII alone, U+0020 to U+007E.</summary>
+    internal static bool IsPrintableAscii(string name)
+    {
+        foreach (char c in name)
+            if (c is < ' ' or > '~') return false;
+        return true;
+    }
 
     private readonly TextIndexCodes _codes;
     private readonly bool _byWholeName;
