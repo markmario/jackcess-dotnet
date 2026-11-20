@@ -430,8 +430,9 @@ changed since 1.2.2.
   refuses every one of them ("Scaling of decimal value resulted in data truncation"); ACE is the referee, as it is
   for every value this library writes. An insert, an update, `Validate` and the relationships an insert or update
   is checked against all take the number as the row stores it. A lookup is unchanged: it compares the number given
-  with the stored value exactly, as ACE's `=` does, through an index and without one, so 1.015 finds no row of
-  1.01. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
+  with the stored value exactly, as ACE's `=` does, so 1.015 finds no row of 1.01. A negative zero is zero to it, as
+  to ACE's `=` without an index; ACE's index tells -0.00 from 0.00, and `WHERE D = 0` through one finds only the row of
+  0.00. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
   one, as DAO does.
 - **A `bool`, text and a date are taken for a number as Access takes them, by every number type alike** (#75).
   Measured with ACE 16 (typed parameters) and DAO (`AddNew`) for Byte, Integer, Long Integer, Large Number, Single,

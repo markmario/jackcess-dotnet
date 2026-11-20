@@ -148,7 +148,9 @@ caller's `double` or `float` taken to a decimal as Access takes one - to 15 or 7
 Automation rounds it - so the double 0.1 finds the Decimal 0.1, and is written as 0.1, on every runtime (.NET
 11's own conversion is exact). A number with more places than a Decimal column holds finds no row - 1.015 is not
 the row of 1.01 a write of 1.015 stores ([Decimal](data-types.md#decimal)) - as ACE's `=` with the same parameter
-finds none, through an index and without one (measured, [#80]). NaN finds nothing in a number column, where ACE's
+finds none, through an index and without one (measured, [#80]). A negative zero, which a negative number cut to
+nothing is stored as, is zero here, as to ACE's scan: ACE's index tells -0.00 from 0.00, so through one `WHERE D = 0`
+finds the row of 0.00 alone, and without one both. NaN finds nothing in a number column, where ACE's
 scan finds every row for it, and ACE's `=` a Currency column's least value.
 
 ### Date/Time

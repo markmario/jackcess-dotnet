@@ -16,7 +16,8 @@ namespace JackcessDotNet.Tests;
 /// <para>
 /// ACE's <c>=</c> with the same parameter compares it with the stored value exactly, through the column's index and
 /// without one: it finds the row only where the number given is the number stored - none of these but a double
-/// whose 15 significant digits leave no place past the scale. A lookup here does the same.
+/// whose 15 significant digits leave no place past the scale. A lookup here does the same. (A negative zero is not among
+/// these lookups: ACE's index tells it from zero, and its scan does not. A lookup here takes it for zero.)
 /// </para>
 /// </summary>
 public sealed class DecimalPlacesTests : IDisposable
