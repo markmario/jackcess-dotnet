@@ -352,9 +352,11 @@ internal sealed class PageFile : IDisposable
 
         long offset = (long)pageNumber * _format.PageSize;
         long requiredLength = offset + _format.PageSize;
-        // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused.
-        if (requiredLength > MaxLength)
-            throw new DatabaseFullException(_path, MaxLength);
+        // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused,
+        // and so is any write to a file already past it - one an earlier version of this library wrote - which is
+        // read whole and left as it is.
+        if (requiredLength > MaxLength || _stream.Length > MaxLength)
+            throw new DatabaseFullException(_path, MaxLength, _stream.Length);
         byte[] encoded = Codec.EncodePage(data, pageNumber);
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
