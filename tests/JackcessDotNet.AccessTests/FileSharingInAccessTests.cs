@@ -51,8 +51,8 @@ namespace JackcessDotNet.AccessTests
         // is about - a few of them.
         private const int OneAtATime = 10;
 
-        // How many rows set a scene. AssertTableIs looks each row up twice through ACE, each on a connection of its own, so
-        // a scene of hundreds of rows costs as many lookups at the end of the test; twenty make the table the test needs.
+        // How many rows set a scene. AssertTableIs looks each row up twice through ACE, so a scene of hundreds of rows costs
+        // as many lookups at the end of the test; twenty make the table the test needs.
         private const int Scene = 20;
 
         private static string Insert(int id, string what) { return "INSERT INTO T (Id, V) VALUES (" + id + ", '" + what + " " + id + "')"; }
