@@ -59,20 +59,26 @@ namespace JackcessDotNet.AccessTests.Support
         /// <summary>Every row ACE reads with <paramref name="sql"/>, a null for a null.</summary>
         public static List<Values> AceRows(string path, string sql)
         {
-            var rows = new List<Values>();
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
-            using (var command = new OleDbCommand(sql, connection))
             {
                 connection.Open();
-                using (var reader = command.ExecuteReader())
-                    while (reader.Read())
-                    {
-                        var row = new Values();
-                        for (var i = 0; i < reader.FieldCount; i++)
-                            row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                        rows.Add(row);
-                    }
+                return AceRows(connection, sql);
             }
+        }
+
+        /// <summary>Every row ACE reads with <paramref name="sql"/> on <paramref name="connection"/>, open, a null for a null.</summary>
+        public static List<Values> AceRows(OleDbConnection connection, string sql)
+        {
+            var rows = new List<Values>();
+            using (var command = new OleDbCommand(sql, connection))
+            using (var reader = command.ExecuteReader())
+                while (reader.Read())
+                {
+                    var row = new Values();
+                    for (var i = 0; i < reader.FieldCount; i++)
+                        row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    rows.Add(row);
+                }
             return rows;
         }
 
@@ -217,6 +223,7 @@ namespace JackcessDotNet.AccessTests.Support
         {
             var rows = expected.ToList();
             var written = Written(rows);
+            var lap = TemporaryTiming.Start();
             List<Values> aceRows;
             try { aceRows = AceTable(path, table); }
             catch (Exception e) when (e is InvalidOperationException || e is OleDbException)
@@ -230,20 +237,61 @@ namespace JackcessDotNet.AccessTests.Support
                 throw new Xunit.Sdk.XunitException("ACE could not read " + table + " " + when + ": " + e.Message
                     + "\n  it cannot read: " + string.Join("; ", unreadable.Take(12)));
             }
+            lap.Mark("ace scan");
             AssertSame(written, Written(aceRows), table + " as ACE reads it " + when);
             AssertSame(written, Written(EngineTable(path, table)), table + " as the engine reads it " + when);
+            lap.Mark("engine scan");
 
-            Assert.Equal(rows.Count, Convert.ToInt32(Scalar(path, "SELECT COUNT(*) FROM [" + table + "]")));
+            // TEMPORARY: the lookups as they were, each on a connection of its own, timed apart from what they find.
+            double opens = 0, queries = 0;
             foreach (var row in rows)
                 foreach (var where in new[] { "[" + key + "] = ", "[" + key + "] + 0 = " })
                 {
-                    var found = AceRows(path, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
-                    AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+                    {
+                        connection.Open();
+                        opens += clock.Elapsed.TotalMilliseconds;
+                        clock.Restart();
+                        var found = AceRows(connection, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
+                        AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
+                        queries += clock.Elapsed.TotalMilliseconds;
+                    }
                 }
+            lap.Mark("old lookups, " + rows.Count * 2 + " of them: opens " + Math.Round(opens) + " ms, queries " + Math.Round(queries) + " ms");
+
+            // One connection for the count and every lookup.
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                using (var count = new OleDbCommand("SELECT COUNT(*) FROM [" + table + "]", connection))
+                    Assert.Equal(rows.Count, Convert.ToInt32(count.ExecuteScalar()));
+                foreach (var row in rows)
+                    foreach (var where in new[] { "[" + key + "] = ", "[" + key + "] + 0 = " })
+                    {
+                        var found = AceRows(connection, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
+                        AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
+                    }
+            }
+            lap.Mark("new lookups, one connection");
 
             var compacted = Compact(path);
+            lap.Mark("compact");
             try { AssertSame(written, Written(AceTable(compacted, table)), table + " after DAO compacted the file, " + when); }
             finally { File.Delete(compacted); }
+            lap.Mark("compacted scan; " + table + ", " + rows.Count + " rows, " + when);
+        }
+
+        // TEMPORARY: where AssertTableIs's time goes on the runner (#97).
+        internal sealed class TemporaryTiming
+        {
+            private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+            public static TemporaryTiming Start() { return new TemporaryTiming(); }
+            public void Mark(string what)
+            {
+                Console.WriteLine("[timing] " + Math.Round(_clock.Elapsed.TotalMilliseconds) + " ms: " + what);
+                _clock.Restart();
+            }
         }
 
         /// <summary>One table, the rows it should hold, and the two engines changing it in turn.</summary>
