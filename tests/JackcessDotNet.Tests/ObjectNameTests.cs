@@ -600,6 +600,35 @@ public sealed class ObjectNameTests : IDisposable
         Assert.Equal((1, 7), ((int)read["x"]!, (int)read["x  "]!));
     }
 
+    // The same in a batch: a refused InsertRange gives its rows back as they came - the number taken off x, "x  " keeping
+    // its value - and a BulkInsert into the empty table, whose index is built once its rows are in, leaves each row it
+    // inserted with its number under x.
+    [Fact]
+    public void A_batch_puts_an_autonumber_under_its_own_column_and_a_refused_one_takes_it_off_there()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("x", DataType.Int32) { IsAutoNumber = true }, Long("y  "),
+                new ColumnDefinition("S", DataType.Text) { MaxLength = 2 },
+            }, "x");
+        RenameInDefinition(_mdb, "T", "y  ", "x  ");
+        using (var db = Database.Open(_mdb))
+        {
+            var table = db.GetTable("T");
+            var refused = new[] { new Row { ["x  "] = 7 }, new Row { ["x  "] = 8, ["S"] = "too long" } };
+            Assert.Throws<BatchInsertException>(() => table.InsertRange(refused));
+            Assert.All(refused, row => Assert.Equal(new[] { "x  " }, row.Keys.Where(k => k.StartsWith("x", StringComparison.Ordinal))));
+            Assert.Equal((7, 8), ((int)refused[0]["x  "]!, (int)refused[1]["x  "]!));
+
+            var loaded = new[] { new Row { ["x  "] = 7 }, new Row { ["x  "] = 8 } };
+            Assert.Equal(2, table.BulkInsert(loaded));
+            Assert.Equal(new[] { (1, 7), (2, 8) }, loaded.Select(row => ((int)row["x"]!, (int)row["x  "]!)));
+        }
+        using var reopen = Database.Open(_mdb);
+        Assert.Equal(new[] { (1, 7), (2, 8) }, reopen.GetTable("T").Rows.Select(row => ((int)row["x"]!, (int)row["x  "]!)));
+    }
+
     // A row read without column "x  ", beside x: given a value by the name of the column it was not read with, it gives
     // that column the value, not x, whose name is one with it.
     [Fact]

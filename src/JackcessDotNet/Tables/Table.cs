@@ -796,7 +796,9 @@ public sealed class Table
     /// <param name="rows">The rows to look at, as they would be given to <see cref="Insert"/>.</param>
     /// <returns>Each set of duplicates, by index and then by the first row's place; empty when there are none.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="rows"/> is null.</exception>
-    /// <exception cref="ArgumentException">One of <paramref name="rows"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// One of <paramref name="rows"/> is null, or two of a row's names go to one column (<see cref="Insert"/>).
+    /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table takes no row (<see cref="InsertRefusal"/>), or a row has a value in an indexed text column that no
     /// key is made for, as <see cref="Insert"/> refuses it.
