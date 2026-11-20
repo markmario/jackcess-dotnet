@@ -90,7 +90,12 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 ## How a file grows
 
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
-  Access's does, up to the 2 GB a Jet file can be.
+  Access's does, up to the 2 GB a Jet file can be. The page that would make the file longer than 2,147,483,648
+  bytes is refused with `DatabaseFullException`, and the change it was part of taken back: ACE reads a longer
+  file and cannot write to it ("Cannot open database ''... may be corrupt", measured on 2,160,779,264 bytes).
+- **An index takes room of its own.** Its tree holds every row's key, so a table with indexes reaches the limit
+  sooner: an export of ExportMdb's shape is 22% larger with the template's 35 indexes, and 77% larger when every
+  row has a text key of 510 bytes ([Indexes built page after page](indexes.md#indexes-built-page-after-page)).
 - **Pages this library adds are taken out of the database's free-page map**, so Access does not hand them out
   again and write over them.
 - **Pages given back** - a dropped index's, a dropped column's long values - are free in the database's own map

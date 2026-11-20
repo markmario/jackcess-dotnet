@@ -330,6 +330,9 @@ internal sealed class PageFile : IDisposable
         return (byte[])page.Clone();
     }
 
+    /// <summary>The longest the file may grow to: 2 GB, the most an Access file can be. Lower only in a test.</summary>
+    internal long MaxLength { get; set; } = 1L << 31;
+
     public void WritePage(int pageNumber, byte[] data)
     {
         ThrowIfDisposed();
@@ -347,9 +350,12 @@ internal sealed class PageFile : IDisposable
             WritesBeforeFailure = left - 1;
         }
 
-        byte[] encoded = Codec.EncodePage(data, pageNumber);
         long offset = (long)pageNumber * _format.PageSize;
         long requiredLength = offset + _format.PageSize;
+        // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused.
+        if (requiredLength > MaxLength)
+            throw new DatabaseFullException(_path, MaxLength);
+        byte[] encoded = Codec.EncodePage(data, pageNumber);
         _undo?.Keep(pageNumber, offset);
         WriteCount++;
         ChangeStamp++;

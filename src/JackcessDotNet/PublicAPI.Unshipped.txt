@@ -144,6 +144,8 @@ JackcessDotNet.Diagnostics.DecimalBeyondPrecision.RowIndex.get -> int
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Table.get -> string!
 override JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ToString() -> string!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Value.get -> decimal?
+JackcessDotNet.DatabaseFullException
+JackcessDotNet.DatabaseFullException.MaxLength.get -> long
 JackcessDotNet.DuplicateRows
 JackcessDotNet.DuplicateRows.IndexName.get -> string!
 JackcessDotNet.DuplicateRows.InTable.get -> bool

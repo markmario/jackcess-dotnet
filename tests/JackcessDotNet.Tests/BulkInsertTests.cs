@@ -288,6 +288,28 @@ public sealed class BulkInsertTests : IDisposable
     }
 
     [Fact]
+    public void A_file_is_not_grown_past_the_most_an_access_file_can_be_and_the_change_is_taken_back()
+    {
+        using (Create(_path)) { }
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            Assert.Equal(2_147_483_648L, db.File.MaxLength);
+            // A limit a few hundred pages past the file, for the test: a load needs more, and its trees come last.
+            db.File.MaxLength = before.Length + 300L * 4096;
+            var refused = Assert.Throws<BatchInsertException>(() => db.GetTable("Rows").BulkInsert(Enumerable.Range(1, 20_000).Select(RowOf)));
+            var full = Assert.IsType<DatabaseFullException>(refused.InnerException);
+            Assert.Equal(before.Length + 300L * 4096, full.MaxLength);
+            Assert.Equal(0, db.GetTable("Rows").RowCount);
+
+            // One row that needs a page past the limit is refused by itself, as a disk that is full refuses it.
+            db.File.MaxLength = before.Length;
+            Assert.Throws<DatabaseFullException>(() => db.GetTable("Rows").Insert(RowOf(1)));
+        }
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a change refused at the limit changed the file");
+    }
+
+    [Fact]
     public void A_long_change_notes_a_kept_page_as_it_was_once_however_often_it_writes_it()
     {
         using (Create(_path)) { }
