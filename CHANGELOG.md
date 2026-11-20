@@ -13,6 +13,17 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A file is not grown past 2 GB** (#82). Access reads a longer file this library wrote, and cannot write to
+  it: ACE refused an insert into one of 2,160,779,264 bytes, "Cannot open database ''... may be corrupt", and took
+  one into a file of 2,140,618,752. The page that would pass 2,147,483,648 bytes is refused with the new
+  `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
+  that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
+  17 map pages, about 2.28 GB.
+- **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
+  noted the header's and the global usage map's pages as they were at every write of them, and the global usage
+  map is written for every page a change adds: a batch of a million rows held a copy of it for each page it
+  added, 300 MB for an export of 50,000 documents. It notes each as it was before the change first wrote it, which
+  is all taking the change back needs.
 - **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
 - **Targets `net10.0`, `net11.0`, `net48` and `netstandard2.0`** (it was `net8.0`, `net472` and
@@ -28,8 +39,9 @@ changed since 1.2.2.
 - **The tests run on every target**: on .NET 10, .NET 11 and .NET Framework 4.8, and against the
   `netstandard2.0` assembly on .NET 10 and on .NET Framework 4.8. They ran on .NET 8 only. CI runs the five side
   by side, and checks the packages each target of the package depends on.
-- **Files Access accepts.** Every change listed under "What this fork changes" in the README: files up to the
-  format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
+- **Files Access accepts.** Every change listed under
+  [What this fork changes](https://github.com/markmario/jackcess-dotnet/blob/main/docs/differences.md#what-this-fork-changes):
+  files up to the format's 2 GB, Access's own text index keys, every index kept on every write, AutoNumbers from the table's
   counter, rows and long values laid out as Access lays them out, `.accdb` creation, Large Number and Date/Time
   Extended columns, and foreign keys enforced.
 - **Public API.** Pages, formats and codecs are internal; the public API is recorded in
@@ -221,7 +233,8 @@ changed since 1.2.2.
   made in another locale has that locale's LCID for the sort order of its text. ACE keys the text of Arabic,
   German, Greek, Hebrew, Italian, Dutch, Russian, British English and Portuguese databases exactly as it keys
   General - Legacy - compared over 1,013,302 values each - and tables whose text sorts in one of those orders
-  are written to, where they were refused. Every other order is refused as before; the README lists the ones
+  are written to, where they were refused. Every other order is refused as before;
+  [Indexes and keys](https://github.com/markmario/jackcess-dotnet/blob/main/docs/indexes.md#refused) lists the ones
   measured to differ. An Access 97 file, which is only read, has rows found through its text indexes: its
   General order's keys are made (Jackcess's `General97IndexCodes`, and ACE 12's keys where they differ for Œ, Æ
   and ß among accented letters).
@@ -354,7 +367,7 @@ changed since 1.2.2.
   - What this library writes to an .mdb with a password, an encoded .mdb and an Agile-encrypted .accdb is read,
     searched, added to and compacted by Access; so is what it writes to jackcess-encrypt's RC4 CryptoAPI and
     non-standard AES files. Access's descriptor for an encrypted database has no data-integrity element, so the
-    "stale integrity hash" this README warned of does not arise.
+    "stale integrity hash" the README of 1.2.2 warned of does not arise.
 - **A file open to be written is kept from every other writer, and is not opened while another has it** (#62).
   This library takes none of Access's locks. The file was shared for writing, so Access opened it to write while a
   `Database` had it open and wrote over pages the `Database` kept track of: rows were lost and a primary key led to
@@ -388,7 +401,8 @@ changed since 1.2.2.
   and forth past its page's room grew the file by a page every few hundred changes, without end - 13 pages in 3,000
   cycles, where Access's grew by one with each change a session of its own (in one session, by hundreds). This
   library now does what Access was measured to do (DAO 16 and ACE 16, `.mdb`
-  and `.accdb`; the README's "Rows and long values" has the rules): a row goes to the lowest page the table's
+  and `.accdb`; [Storage](https://github.com/markmario/jackcess-dotnet/blob/main/docs/storage.md#where-a-new-row-goes)
+  has the rules): a row goes to the lowest page the table's
   free-space map lists, a page without room for it leaving the map; a new page is listed when it has room for
   another row of the same size; a delete takes the row's bytes off its page and lists the page when it had no room
   for the row before, as a row coming home lists the page it leaves; and a page an update leaves with no row, which
@@ -609,8 +623,9 @@ changes with them.
   on a page read while the writer was part-way through writing it - or with a Memo or OLE value of another row's, or
   fail. It cannot change the file, and a writer neither waits for it nor is kept out by it; it keeps out only what
   needs the file to itself - Access opening the database exclusively, and so Compact and Repair, and
-  `Database.Create` replacing the file. A reading that agrees with itself needs no writer while it is made. The
-  README has what was measured.
+  `Database.Create` replacing the file. A reading that agrees with itself needs no writer while it is made.
+  [Sharing a file with Access](https://github.com/markmario/jackcess-dotnet/blob/main/docs/sharing.md) has what was
+  measured.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
