@@ -464,7 +464,9 @@ internal static class SchemaRemoval
             for (int r = 0; r < rowCount; r++)
             {
                 if (DataRows.Read(file, page, r) is not { } rowBytes) continue;
-                var row = new Row();
+                // A row of the table, whose names are compared by its rule: a column asked for by a name of another
+                // case is the entry of that name, given the column's value.
+                var row = new Row(columns.Length, definition.Names);
                 foreach (string column in columns) row[column] = null;
                 foreach (var column in wanted) row[column.Name] = decoder.Decode(rowBytes, column);
                 rows.Add((RowPointer.Pack(pageNumber, r), row));

@@ -491,10 +491,16 @@ public sealed class Table
     /// A number column takes a value that is not one of .NET's numbers as Access stores it: a <see cref="bool"/>
     /// as -1 or 0, text read in the current culture, a <see cref="DateTime"/> as its day number.
     /// </para>
+    /// <para>
+    /// Each of the row's names goes to the column of exactly that name, and otherwise to the one column a lookup of it
+    /// finds by the table's rule - a name in another case, say (<see cref="Row"/>). A table with two columns whose
+    /// names are one to Access, which a file can have, takes a value in each by its exact name.
+    /// </para>
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// A number column's value is of a kind no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>.
-    /// Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// Two of the row's names go to one column ("x" and "X" for a column "x"); or a number column's value is of a kind
+    /// no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>. Nothing of the row is written, and the
+    /// counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
     /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
@@ -565,8 +571,8 @@ public sealed class Table
                 // it is written, so a table with none has nothing to give back: its refusal is not caught.
                 foreach (var (name, had, value) in given)
                 {
-                    if (had) row[name] = value;
-                    else     row.Remove(name);
+                    if (had) row.Put(name, value);
+                    else     row.RemoveExactly(name);
                 }
                 row.Identity = identity;
                 throw;
@@ -586,15 +592,25 @@ public sealed class Table
             });
     }
 
-    /// <summary>What <paramref name="row"/> holds for each AutoNumber column; null for a table with none.</summary>
+    /// <summary>
+    /// What <paramref name="row"/> holds for each AutoNumber column, by the row's name for it (<see cref="AutoNumberName"/>):
+    /// null for a table with none.
+    /// </summary>
     private List<(string Name, bool Had, object? Value)>? AutoNumberValuesIn(Row row)
     {
         if (_autoNumberColumns.Count == 0) return null;
         var values = new List<(string, bool, object?)>(_autoNumberColumns.Count);
         foreach (var column in _autoNumberColumns)
-            values.Add((column.Name, row.TryGetValue(column.Name, out var value), value));
+        {
+            string name = AutoNumberName(row, column);
+            values.Add((name, row.TryGetExactly(name, out var value), value));
+        }
         return values;
     }
+
+    // The row's name for an AutoNumber column - the one its value is written from (RowValues.NameFor), else the column's
+    // own - which the number is put under and given back under: never another column's entry.
+    private string AutoNumberName(Row row, Column column) => RowValues.NameFor(row, _definition, column) ?? column.Name;
 
     /// <summary>
     /// Puts each AutoNumber column's value in <paramref name="row"/> and returns what the table's Long counter
@@ -611,16 +627,18 @@ public sealed class Table
         foreach (var column in _autoNumberColumns)
         {
             // No value to bring - null, or DBNull as a DataRow holds an empty cell (RowValues) - and the table
-            // numbers the row.
-            object? given = allowed && row.TryGetValue(column.Name, out var value) && !RowValues.IsNull(value) ? value : null;
+            // numbers the row. The number goes under the row's name for the column, exactly: never into the entry of
+            // another column whose name is one with this one's to Access.
+            string name = AutoNumberName(row, column);
+            object? given = allowed && row.TryGetExactly(name, out var value) && !RowValues.IsNull(value) ? value : null;
             if (column.DataType == DataType.Guid)
             {
-                row[column.Name] = given switch
+                row.Put(name, given switch
                 {
                     null      => Guid.NewGuid(),
                     Guid guid => guid,
                     _         => Guid.Parse(Convert.ToString(given, System.Globalization.CultureInfo.InvariantCulture)!),
-                };
+                });
                 continue;
             }
 
@@ -629,12 +647,12 @@ public sealed class Table
             {
                 // Past int.MaxValue the counter wraps to the negative numbers.
                 last = unchecked(last.Value + 1);
-                row[column.Name] = last.Value;
+                row.Put(name, last.Value);
             }
             else
             {
                 int number = Convert.ToInt32(given, System.Globalization.CultureInfo.InvariantCulture);
-                row[column.Name] = number;
+                row.Put(name, number);
                 if (number > last) last = number;
             }
         }
@@ -644,7 +662,8 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
+    /// its column, <see cref="ArgumentException"/> for two of the row's names that go to one column,
+    /// <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
     /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
     /// takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
@@ -725,8 +744,8 @@ public sealed class Table
                 if (given[i] is { } values)
                     foreach (var (name, had, value) in values)
                     {
-                        if (had) batch[i][name] = value;
-                        else     batch[i].Remove(name);
+                        if (had) batch[i].Put(name, value);
+                        else     batch[i].RemoveExactly(name);
                     }
                 batch[i].Identity = identities[i];
             }
@@ -768,8 +787,8 @@ public sealed class Table
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
-    /// table's. Or a value it assigns to a number column is of a kind no number is made of (<see cref="Insert"/>).
-    /// Nothing is written.
+    /// table's. Or two of the names it assigns go to one column, or a value it assigns to a number column is of a
+    /// kind no number is made of (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="FormatException">
     /// A value <paramref name="row"/> assigns to a number column is text that does not read as a number

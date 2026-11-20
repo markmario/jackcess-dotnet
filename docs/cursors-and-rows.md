@@ -20,6 +20,10 @@ try { people.InsertRange(rows); }
 catch (BatchInsertException e) { Console.WriteLine($"row {e.RowIndex}: {e.InnerException!.Message}"); }
 ```
 
+- **A row a caller makes holds each value under the name given**, exactly: `row["Name"]` and `row["NAME"]` are two
+  entries. An insert, an update and `Validate` give each name the column of exactly that name, or else the one a
+  lookup of it finds, and refuse two names that go to one column with `ArgumentException` before anything is
+  written ([Names](tables-and-schema.md#names)).
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
   other rows moved up or down around it; one that no longer fits goes to another page, and its slot is left

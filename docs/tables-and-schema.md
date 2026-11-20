@@ -144,10 +144,19 @@ and the two definitions hold the same index slots.
   first that is one with it at all, as Access's lookups take the first of names that are one. A file can have two
   names that are one - Access makes the fields `x` and `x ` (a space), and the tables above - and each is found by
   its own.
-- **What this library keeps by name it keeps by the exact name**: the row it writes, a table's long-value and
-  property maps, and the tables and columns of the relationships it enforces. A table with two columns whose names
-  are one keeps a value, a map and a relationship of each, and a row given `xµ` for a table with columns `xµ` and
-  `xμ` writes its value to `xµ` alone.
+- **What this library keeps by name it keeps by the exact name**: a row a caller makes, the row it writes, a
+  table's long-value and property maps, and the tables and columns of the relationships it enforces. A `Row` a
+  caller makes holds each value under the name given - `x` and `X` are two entries, as `x` and `x ` (a space) are -
+  and a value is set, added and taken out by its exact name alone; it is read by its exact name, and otherwise by a
+  name that is one with it by General - Legacy's keys. A name finds its column where the row meets a table -
+  `Insert`, `InsertRange`, `Update`, `Validate`: the column of exactly that name, and only when there is none the one
+  a lookup of it finds. Two of a row's names that go to one column (`x` and `X` for a column `x`) are refused with
+  `ArgumentException`, naming both and the column, before anything is written: neither value is dropped for the
+  other. So a table with two columns whose names are one keeps a value, a map and a relationship of each: a row
+  given `x`, `x  ` (two spaces), `xµ` and `xμ` for a table DAO made with those four fields writes each value to its
+  own, and ACE reads the four back. A row a table gives has an entry for each column it was read with, under the
+  column's name, and finds a name as a lookup does; given a value by the name of one of the table's columns, it
+  gives that column the value, though it was read without it.
 - **The comparison throws for no name**, and a name already in a file stands in the way only of a new name that
   is one with it. Half of a surrogate pair alone in a name, which Access keeps as it is given, is read as the file
   holds it and found by that name; a new name with one is refused with `NotSupportedException`. What is renamed is

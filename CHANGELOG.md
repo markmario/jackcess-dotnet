@@ -551,6 +551,15 @@ changes with them.
   `Row.FromValues` are removed, and `GetValue<T>` and `IsNull` added. **A row that is read has an entry for
   every column, `null` for a column with no value** (it had no entry for one), so `ContainsKey` no longer says
   whether a value is null.
+- **A `Row` a caller makes holds each value under the name given, exactly** (#63). This compiles unchanged; it is
+  here because a row given one column's value by two names does what it did not. The indexer's set, `Add` and
+  `Remove` go by the exact name alone, so `row["Name"]` and `row["NAME"]` are two entries; a value is still read by
+  a name in another case. A name finds its column where the row meets a table: `Insert`, `InsertRange`, `Update`
+  and `Validate` give each name the column of exactly that name, and otherwise the one a lookup of it finds, and
+  refuse two names that go to one column with `ArgumentException`, naming both and the column, before anything is
+  written. Such a row kept the value set last: `new Row { ["Id"] = 1, ["ID"] = 2 }` inserted 2, and now throws. An
+  AutoNumber is given back under the row's name for its column. A row read from a table finds a name as it did, and
+  given a value by the name of one of the table's columns it was not read with, gives that column the value.
 - **`DataType` members are renamed** (their values are not): `Int` is `Int16`, `Long` is `Int32`, `BigInt` is
   `Int64`, `Float` is `Single`, `Numeric` is `Decimal`, `ShortDateTime` is `DateTime`, `Money` is `Currency`,
   `Ole` is `OleObject`, `ExtendedDateTime` is `DateTimeExtended`.

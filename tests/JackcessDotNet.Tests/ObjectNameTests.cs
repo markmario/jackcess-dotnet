@@ -289,8 +289,10 @@ public sealed class ObjectNameTests : IDisposable
     public void Columns_Access_keeps_apart_are_two_and_keep_their_values_on_every_target(string first, string second)
         => AreTwoColumns(first, second);
 
+    // A caller's row holds each value under its exact name, and reads one by its exact name or else by a name Access
+    // takes as one with it.
     [Fact]
-    public void A_row_finds_a_column_by_its_name_or_else_by_one_Access_takes_as_one_with_it()
+    public void A_caller_s_row_holds_each_name_exactly_and_reads_by_one_Access_takes_as_one_with_it()
     {
         var row = new Row { ["Name"] = 1, [X(0xB5)] = 2, [X(0x3BC)] = 3 };
         Assert.Equal(3, row.Count);
@@ -299,13 +301,16 @@ public sealed class ObjectNameTests : IDisposable
         Assert.Equal(2, row[X(0xB5)]);
         Assert.Equal(3, row[X(0x3BC)]);
         Assert.Equal(3, row[X(0x39C)]);                                    // the capital mu is the mu's
-        Assert.Throws<ArgumentException>(() => row.Add("name", 4));
-        row["NAME"] = 5;
-        Assert.Equal(new[] { "Name", X(0xB5), X(0x3BC) }, row.Keys);       // the entry keeps its own name
-        Assert.Equal(5, row["Name"]);
-        Assert.True(row.Remove("nAmE"));
-        Assert.False(row.ContainsKey("Name"));
         Assert.False(row.ContainsKey("Strasse"));
+        // A value is set, added and taken out by its exact name alone: another spelling is another entry.
+        row["NAME"] = 5;
+        Assert.Equal(new[] { "Name", X(0xB5), X(0x3BC), "NAME" }, row.Keys);
+        Assert.Equal((1, 5), ((int)row["Name"]!, (int)row["NAME"]!));
+        Assert.Throws<ArgumentException>(() => row.Add("Name", 4));
+        row.Add("name", 4);
+        Assert.False(row.Remove("nAmE"));
+        Assert.True(row.Remove("name"));
+        Assert.Equal(4, row.Count);
         row["Straße"] = 6;
         Assert.Equal(6, row["STRASSE"]);
     }
@@ -478,6 +483,125 @@ public sealed class ObjectNameTests : IDisposable
         using var reopen = Database.Open(_mdb);
         Assert.Equal("T", reopen.GetTable("t").Name);
         Assert.Equal("N", reopen.GetTable("T").Definition.FindColumn("n")!.Name);
+    }
+
+    // ── Rows a caller makes ──────────────────────────────────────────────────
+
+    private static ColumnDefinition Long(string name) => new(name, DataType.Int32);
+
+    // Gives a column of a table this library made, by its definition's bytes, a name this library would refuse beside
+    // another - as Access lets a file have: the two names are of one length.
+    private static void RenameInDefinition(string path, string table, string from, string to)
+    {
+        Assert.Equal(from.Length, to.Length);
+        using var db = Database.Open(path);
+        int page = db.GetTable(table).Definition.TdefPageNumber;
+        byte[] bytes = db.File.ReadPage(page);
+        byte[] pattern = new[] { (byte)(from.Length * 2), (byte)0 }.Concat(Util.ByteUtil.EncodeUtf16(from)).ToArray();
+        int at = bytes.AsSpan().IndexOf(pattern);
+        Assert.True(at >= 0 && bytes.AsSpan(at + 1).IndexOf(pattern) < 0, $"the name '{from}' is not in the definition once");
+        Util.ByteUtil.EncodeUtf16(to).CopyTo(bytes, at + 2);
+        db.File.WritePage(page, bytes);
+    }
+
+    // A table of a file that sorts in General - Legacy with fields x, x and two spaces, x and the micro sign, x and mu,
+    // as DAO makes them (the library's referee test has DAO make it): a caller's row holds a value for each, by its
+    // exact name, and each reaches its own column. Before #63 was fixed, the row took "x  " for "x" and lost a value.
+    [Fact]
+    public void A_caller_s_row_holds_a_value_for_each_of_two_columns_whose_names_are_one_and_each_reaches_its_column()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("Dup", new[] { Long("Id"), Long("x"), Long("y  "), Long(X(0xB5)), Long(X(0x3BC)) }, "Id");
+        RenameInDefinition(_mdb, "Dup", "y  ", "x  ");
+
+        var row = new Row { ["Id"] = 1, ["x"] = 1, ["x  "] = 2, [X(0xB5)] = 3, [X(0x3BC)] = 4 };
+        Assert.Equal(5, row.Count);
+        using (var db = Database.Open(_mdb))
+            db.GetTable("Dup").Insert(row);
+        using var reopen = Database.Open(_mdb);
+        var read = reopen.GetTable("Dup").Rows.Single();
+        Assert.Equal(new object?[] { 1, 1, 2, 3, 4 }, new[] { "Id", "x", "x  ", X(0xB5), X(0x3BC) }.Select(name => read[name]));
+    }
+
+    // In a database that sorts in General, fields x with U+2460 (a circled one) and x1, which DAO makes as two and this
+    // library takes as one: a caller's row reaches each.
+    [Fact]
+    public void A_caller_s_row_reaches_each_of_two_columns_a_database_that_sorts_in_general_takes_as_one()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2010))
+            db.CreateTable("T", new[] { Long("Id"), Long(X(0x2460)), Long("y1") }, "Id");
+        RenameInDefinition(_path, "T", "y1", "x1");
+        using (var db = Database.Open(_path))
+            db.GetTable("T").Insert(new Row { ["Id"] = 1, [X(0x2460)] = 10, ["x1"] = 20 });
+        using var reopen = Database.Open(_path);
+        var read = reopen.GetTable("T").Rows.Single();
+        Assert.Equal((10, 20), ((int)read[X(0x2460)]!, (int)read["x1"]!));
+    }
+
+    // Two of a row's names that go to one column are refused, naming both and the column, before anything is written:
+    // neither is dropped. A name in another case alone reaches its column.
+    [Fact]
+    public void Two_names_of_a_row_for_one_column_are_refused_and_a_name_in_another_case_reaches_its_column()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("T", new[] { Long("Id"), Long("x") }, "Id");
+        byte[] before = File.ReadAllBytes(_mdb);
+        using (var db = Database.Open(_mdb))
+        {
+            var refused = Assert.Throws<ArgumentException>(() => db.GetTable("T").Insert(new Row { ["Id"] = 1, ["x"] = 1, ["X"] = 2 }));
+            Assert.Contains("'x'", refused.Message);
+            Assert.Contains("'X'", refused.Message);
+        }
+        Assert.Equal(before, File.ReadAllBytes(_mdb));
+
+        using (var db = Database.Open(_mdb))
+            db.GetTable("T").Insert(new Row { ["ID"] = 2, ["X"] = 5 });
+        using var reopen = Database.Open(_mdb);
+        var read = reopen.GetTable("T").Rows.Single();
+        Assert.Equal((2, 5), ((int)read["Id"]!, (int)read["x"]!));
+    }
+
+    // An AutoNumber column x beside a column "x  ", whose names are one to Access: a row that names only "x  " keeps its
+    // value there, and the table numbers x - the number goes under the AutoNumber column's own name, not into the
+    // entry of the other column.
+    [Fact]
+    public void An_autonumber_is_put_under_its_own_column_beside_a_column_whose_name_is_one_with_it()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("T", new[] { new ColumnDefinition("x", DataType.Int32) { IsAutoNumber = true }, Long("y  ") }, "x");
+        RenameInDefinition(_mdb, "T", "y  ", "x  ");
+        var row = new Row { ["x  "] = 7 };
+        using (var db = Database.Open(_mdb))
+            db.GetTable("T").Insert(row);
+        Assert.Equal((1, 7), ((int)row["x"]!, (int)row["x  "]!));
+        using var reopen = Database.Open(_mdb);
+        var read = reopen.GetTable("T").Rows.Single();
+        Assert.Equal((1, 7), ((int)read["x"]!, (int)read["x  "]!));
+    }
+
+    // A row read without column "x  ", beside x: given a value by the name of the column it was not read with, it gives
+    // that column the value, not x, whose name is one with it.
+    [Fact]
+    public void A_row_read_with_some_of_the_columns_gives_a_value_to_the_column_of_exactly_its_name()
+    {
+        using (var db = Database.Create(_mdb))
+            db.CreateTable("T", new[] { Long("Id"), Long("x"), Long("y  ") }, "Id");
+        RenameInDefinition(_mdb, "T", "y  ", "x  ");
+        using (var db = Database.Open(_mdb))
+        {
+            var table = db.GetTable("T");
+            table.Insert(new Row { ["Id"] = 1, ["x"] = 1, ["x  "] = 2 });
+            var cursor = table.CreateCursor();
+            cursor.ColumnNames = new[] { "Id", "x" };
+            Assert.True(cursor.MoveNext());
+            var row = cursor.Current!;
+            row["x  "] = 20;
+            Assert.Equal(1, row["x"]);
+            table.Update(row);
+        }
+        using var reopen = Database.Open(_mdb);
+        var read = reopen.GetTable("T").Rows.Single();
+        Assert.Equal((1, 20), ((int)read["x"]!, (int)read["x  "]!));
     }
 
     // ── Imports ──────────────────────────────────────────────────────────────
