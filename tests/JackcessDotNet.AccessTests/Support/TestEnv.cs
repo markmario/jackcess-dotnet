@@ -56,7 +56,8 @@ namespace JackcessDotNet.AccessTests.Support
 
     /// <summary>
     /// Every test here needs Microsoft Access's own engine - the ACE OLE DB provider and DAO, from the Access Database
-    /// Engine redistributable or from Access itself, of this process's bitness (64-bit) - as the referee. On a machine
+    /// Engine redistributable or from Access itself, of this process's bitness (64-bit, or 32-bit in a build with
+    /// -p:TestX86=true) - as the referee. On a machine
     /// without them each test is skipped, saying why. Where <c>JACKCESS_ACCESS_REQUIRED=1</c> (CI sets it), a missing
     /// referee fails every test instead: there it means the install went wrong, and a skip would pass unrefereed.
     /// </summary>
@@ -80,7 +81,6 @@ namespace JackcessDotNet.AccessTests.Support
 
         private static string Probe()
         {
-            if (!Environment.Is64BitProcess) return "the tests run in a 32-bit process; they are built for x64";
             // Looked up in the registry, not made: an ACE object made and let go before the tests start is one more
             // thing for the redistributable's own threads to trip over (see Dao). A ProgID can be registered with its
             // DLL gone, so the DLL the class names must be there too.
@@ -90,11 +90,12 @@ namespace JackcessDotNet.AccessTests.Support
                 {
                     var clsid = clsidKey?.GetValue(null) as string;
                     if (clsid == null) return progId + " is not registered";
-                    using (var server = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.ClassesRoot, Microsoft.Win32.RegistryView.Registry64)
+                    var view = Environment.Is64BitProcess ? Microsoft.Win32.RegistryView.Registry64 : Microsoft.Win32.RegistryView.Registry32;
+                    using (var server = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.ClassesRoot, view)
                         .OpenSubKey(@"CLSID\" + clsid + @"\InprocServer32"))
                     {
                         var dll = server?.GetValue(null) as string;
-                        if (dll == null) return progId + " is registered with no 64-bit server";
+                        if (dll == null) return progId + " is registered with no " + (Environment.Is64BitProcess ? "64" : "32") + "-bit server";
                         dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
                         if (!File.Exists(dll)) return progId + " is registered and its server, " + dll + ", is not there";
                     }

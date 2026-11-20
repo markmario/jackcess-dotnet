@@ -20,6 +20,17 @@
     <NoWarn>$(NoWarn);xUnit2013</NoWarn>
   </PropertyGroup>
 
+  <!--
+    -p:TestX86=true: the tests in a 32-bit process, against 32-bit ACE where it is installed. ACE leaves the thread
+    that ran a statement computing doubles with the x87 unit at 64 bits of precision, which only a 32-bit process
+    has (#98). Built to folders of its own, so a 32-bit executable is never left where the 64-bit one is expected.
+  -->
+  <PropertyGroup Condition="'$(TestX86)' == 'true'">
+    <PlatformTarget>x86</PlatformTarget>
+    <OutputPath>bin\$(Configuration)-x86\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)-x86\</IntermediateOutputPath>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- xUnit.net v3 on Microsoft Testing Platform: global.json tells `dotnet test` to use it. -->
     <PackageReference Include="xunit.v3" Version="4.0.3" />

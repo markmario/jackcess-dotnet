@@ -12,6 +12,18 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
+  <!--
+    -p:TestX86=true: the tests in a 32-bit process, on .NET Framework (-f net48). A v3 test project is the process
+    its tests run in, so its bitness is the executable's own; 32-bit .NET Framework computes doubles as its JIT does
+    there, which a 64-bit process never shows (#98). Built to folders of its own, so a 32-bit executable is never
+    left where the ordinary build's is expected.
+  -->
+  <PropertyGroup Condition="'$(TestX86)' == 'true'">
+    <PlatformTarget>x86</PlatformTarget>
+    <OutputPath>bin\$(Configuration)-x86\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)-x86\</IntermediateOutputPath>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- xUnit.net v3 on Microsoft Testing Platform: global.json tells `dotnet test` to use it. -->
     <PackageReference Include="xunit.v3" Version="4.0.3" />

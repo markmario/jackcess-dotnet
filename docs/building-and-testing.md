@@ -27,7 +27,13 @@ A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a rel
   (as one on 4.7.2 does). `LibraryAssemblyTests` fails if the assembly loaded is not the one the build was for.
   That build goes to `bin/Release-netstandard`, beside the ordinary one:
   `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true`
-- Those are the five configurations, and CI runs each on every pull request, each split into shards that run side
+- `-p:TestX86=true` runs the .NET Framework 4.8 tests in a 32-bit process, where .NET Framework computes doubles
+  with the x87 unit, whose precision another component in the process can change (ACE leaves it at 64 bits; #98).
+  That build goes to `bin/Release-x86`:
+  `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net48 -p:TestX86=true`.
+  The Access referee tests take the same switch, and then need 32-bit ACE: Access itself, 32-bit, or the
+  redistributable's x86 installer.
+- Those are the six configurations, and CI runs each on every pull request, each split into shards that run side
   by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
