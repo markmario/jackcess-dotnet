@@ -38,6 +38,10 @@ A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a rel
   [Supported frameworks](getting-started.md#supported-frameworks).
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
+- A few tests are skipped unless an environment variable gives them what they need, each saying so:
+  `JACKCESS_ENCRYPT_FIXTURES` names the `src/test/data` folder of the jackcess-encrypt project, whose protected
+  files are not in this repository, and `JACKCESS_PAST_65536_PAGES`, set to anything, runs the tests that grow a
+  file past 270 MB.
 - The engine's tests read back what the engine wrote. Whether Access accepts a file is what the
   [Access referee tests](#the-access-referee-tests) are for.
 
