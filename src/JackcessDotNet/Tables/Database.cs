@@ -573,7 +573,8 @@ public sealed class Database : IDisposable
     /// An Access 97 file is opened for reading only, as Jackcess opens one (<see cref="IsReadOnly"/>): its tables
     /// and rows are read, and every change to it - a row inserted, updated or deleted, a table created or
     /// imported - is refused with <see cref="NotSupportedException"/> before anything is written. Such a file is
-    /// opened as one opened with <see cref="DatabaseOpenOptions.ReadOnly"/> is, beside a writer.
+    /// opened as one opened with <see cref="DatabaseOpenOptions.ReadOnly"/> is, beside a writer - DAO and ACE can write
+    /// to it meanwhile - and so it is read as such a one is, its pages read again at every move.
     /// </para>
     /// </summary>
     /// <param name="path">The path of the file to open.</param>
