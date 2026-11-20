@@ -127,17 +127,14 @@ changed since 1.2.2.
     `double` or `float` to a Currency column (`AppendIfExists`) takes the numbers it took and refuses those it
     refused, but each as the Currency Access makes of it: past 2^38 or so it took the number the round-trip form
     says, which can be another Currency (35184372088832.0078125 was 35184372088832.01; it is 35184372088832.0078).
-  - **Text and a `bool` are taken as before**, as every number column takes them - text read in the current
-    culture, a `bool` as 1 or 0 - and the number they make is taken to four places by the same rule. **A write
-    refuses, before anything is written,** NaN, the infinities and a number past the range once taken to four places
-    with `OverflowException`, as a number past the range was refused; a date, a `Guid`, bytes or a `char` with
-    `ArgumentException`, where it was an `InvalidCastException`; and text that reads as no number with
-    `FormatException`, as before, now naming the column.
+  - **Text, a `bool` and a date are taken as every number column takes them** (#75, below), and the number they
+    make is taken to four places by the same rule. **A write refuses, before anything is written,** NaN, the
+    infinities and a number past the range once taken to four places with `OverflowException`, as a number past the
+    range was refused; a `Guid`, bytes or a `char` with `ArgumentException`, where it was an `InvalidCastException`;
+    and text that reads as no number with `FormatException`, as before, now naming the column.
 
   Where Access differs: ACE and DAO write NaN as the least Currency (-922,337,203,685,477.5808), the integer a
-  processor makes of NaN, and their `=` finds that row for NaN; ACE reads text by the machine's locale and writes
-  True as -1, where this library, for a Currency as for every number column, reads text in the current culture and
-  takes True as 1; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
+  processor makes of NaN, and their `=` finds that row for NaN; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
   there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's index, its writes and
   DAO's take a decimal exactly, and so does this library, by a scan as through an index.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
@@ -405,6 +402,24 @@ changed since 1.2.2.
   with the stored value exactly, as ACE's `=` does, through an index and without one, so 1.015 finds no row of
   1.01. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
   one, as DAO does.
+- **A `bool`, text and a date are taken for a number as Access takes them, by every number type alike** (#75).
+  Measured with ACE 16 (typed parameters) and DAO (`AddNew`) for Byte, Integer, Long Integer, Large Number, Single,
+  Double, Currency and Decimal (`tools/ace-number-kinds.ps1`, `Assets/ace-number-kinds.tsv`):
+  - **`true` is -1**, Access's value, and `false` 0. It was 1. A Byte, which holds no -1, refuses `true` with
+    `OverflowException`, as it refuses -1 and as DAO refuses it; ACE wraps every negative number into a Byte (-1 is
+    255, -3 is 253), which this library does not.
+  - **Text is read in the current culture**, as before and as Access reads it by the machine's settings, and now in
+    every form Access reads: a currency symbol ("$5" is 5 where the culture's symbol is "$"), parentheses for a
+    negative number ("(5)" is -5), an exponent ("1e2" is 100), group separators and spaces around it. A whole-number
+    column takes "2.5" as 2 and "1.5" as 2, half to even, as Access does; it refused them (`FormatException`). Text
+    is read as a `double` for a Single or a Double column and as a `decimal` for any other. Text that is no number
+    is refused with `FormatException`, naming the column, as Access refuses it ("Data type mismatch").
+  - **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
+    2020 12:00 is 43832.5 in a Double, a Single, a Currency or a Decimal, and 43832 in a Long Integer or a Large
+    Number; an Integer and a Byte refuse it with `OverflowException`, as Access does (ACE wraps it into a Byte).
+  - A range or the closest row looked for through an index of a number column takes these values the same way. A
+    lookup for one row by its value still takes text and a `bool` for no number, as before. The importer keeps its
+    own rule: it takes only a value a column holds exactly, text read in the invariant culture, and no `bool`.
 
 ### Breaking changes to the public API
 
@@ -538,6 +553,15 @@ changes with them.
   parent was written from 0.03125 (it holds 0.0313). A unique index refuses the number when its neighbour holds what
   it now makes, as 1.23465m beside the row of 1.234549999999999. **Find such rows by the value stored - as a row
   reads it back - and not by the number they were written from.**
+- **A value of a kind no number is made of, given for a number column, throws `ArgumentException`** naming the
+  column, in every number type (#75): a `Guid`, bytes, a `char`, a `TimeSpan` or any other. It threw
+  `InvalidCastException` from `Convert` in every number column but Currency. `ArgumentException` is the engine's
+  exception for a caller's bad argument; code that caught `InvalidCastException` for it catches `ArgumentException`.
+  `Insert`, `InsertRange` (inside its `BatchInsertException`), `Update`, a cursor's `UpdateCurrentRow` and
+  `Validate` all throw it, before anything is written. With it, what a number column makes of other values changes
+  (above): `true` is -1 where it was 1, so a row written with `true` holds -1 and a Byte refuses `true` with
+  `OverflowException`; a `DateTime` is its day number where it was refused; and text such as "$5", "(5)" or "2.5"
+  for a whole-number column is a number where it was refused with `FormatException`.
 
 ### Added
 

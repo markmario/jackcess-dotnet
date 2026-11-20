@@ -463,17 +463,20 @@ public sealed class Table
     /// <para>
     /// A Currency column's number is taken to its four places as Access takes one: its exact value, half to even.
     /// The double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written as - 0.0001, and the
-    /// decimal 1.23465 1.2346. A lookup by the same number finds the row. Text and a <see cref="bool"/> are taken
-    /// as every number column takes them - text read in the current culture, a <see cref="bool"/> as 1 or 0 - and
-    /// the number they make is taken to four places so.
+    /// decimal 1.23465 1.2346. A lookup by the same number finds the row. A Decimal column's number has the places
+    /// past its scale cut off, toward zero, as ACE stores it.
+    /// </para>
+    /// <para>
+    /// A number column takes a value that is not one of .NET's numbers as Access stores it: a <see cref="bool"/>
+    /// as -1 or 0, text read in the current culture, a <see cref="DateTime"/> as its day number.
     /// </para>
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// A Currency column's value is of a kind no number is made of: a date, a <see cref="Guid"/>, bytes, a
-    /// <see cref="char"/>. Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
+    /// A number column's value is of a kind no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>.
+    /// Nothing of the row is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
-    /// A Currency column's value is text that does not read as a number in the current culture. Nothing of the row
+    /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
     /// is written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="OverflowException">
@@ -620,7 +623,7 @@ public sealed class Table
     /// <summary>
     /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a Currency column's value that
+    /// its column, <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
     /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
     /// takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
@@ -635,7 +638,6 @@ public sealed class Table
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsureTakesRows();
-        new RowEncoder(_file.Format, _definition).Validate(row);
 
         var asWritten = row;
         if (_autoNumberColumns.Count > 0)
@@ -644,6 +646,7 @@ public sealed class Table
             FillAutoNumbers(asWritten);
         }
         asWritten = RowValues.AsWritten(asWritten, _definition.Columns);
+        new RowEncoder(_file.Format, _definition).Validate(asWritten);
         EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }
@@ -744,11 +747,11 @@ public sealed class Table
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
-    /// table's. Or a value it assigns to a Currency column is of a kind no number is made of (<see cref="Insert"/>).
+    /// table's. Or a value it assigns to a number column is of a kind no number is made of (<see cref="Insert"/>).
     /// Nothing is written.
     /// </exception>
     /// <exception cref="FormatException">
-    /// A value <paramref name="row"/> assigns to a Currency column is text that does not read as a number
+    /// A value <paramref name="row"/> assigns to a number column is text that does not read as a number
     /// (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="OverflowException">

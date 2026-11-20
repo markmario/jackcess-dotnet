@@ -1122,10 +1122,19 @@ have been deleted - and a row Access moved to another page is read where its poi
   wherever one is made: a row, its index keys, a relationship's check, a property, an import
   ([#65](https://github.com/markmario/jackcess-dotnet/issues/65)). Measured with ACE 16 and DAO, which write alike
   through every path tried: the double 0.03125 is 0.0312, the double 0.00015 - just under the half it is written
-  as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346. Text and a `bool` are taken as
-  every number column takes them - text read in the current culture, a `bool` as 1 or 0 - and the number they make
-  is taken to four places so; Access reads text by the machine's locale and writes True as -1. A date, a `Guid`,
-  bytes or a `char` is refused with `ArgumentException`, and text that reads as no number with `FormatException`.
+  as - is 0.0001, 562949953421312.5 is itself, and the decimal 1.23465 is 1.2346. Text, a `bool` and a date are taken
+  as every number column takes them (below) and the number they make is taken to four places so. A `Guid`, bytes or
+  a `char` is refused with `ArgumentException`, and text that reads as no number with `FormatException`.
+- **A `bool`, text and a date given for a number column are what Access stores for them**, in every number type
+  alike ([#75](https://github.com/markmario/jackcess-dotnet/issues/75); measured with ACE's typed parameters and
+  DAO for Byte, Integer, Long Integer, Large Number, Single, Double, Currency and Decimal): `true` is -1 and `false`
+  0; text is read in the current culture, as Access reads it by the machine's settings, with a currency symbol,
+  parentheses for a negative number and an exponent ("$5", "(5)", "1e2"), and taken to a whole number half to even
+  ("2.5" is 2); a `DateTime` is its day number (2 January 2020 12:00 is 43832.5, and 43832 in a Long Integer). A
+  number a column does not hold - `true`, -1, in a Byte; a date in an Integer - is refused with `OverflowException`,
+  as DAO refuses it (ACE wraps a negative number into a Byte). A `Guid`, bytes, a `char` or any other kind is refused
+  with `ArgumentException` naming the column, and text that is no number with `FormatException`. A range or the
+  closest row through an index takes them the same way; an equality takes text and a `bool` for no number.
   NaN, an infinity and a number past -922,337,203,685,477.5808 to 922,337,203,685,477.5807 are refused with
   `OverflowException`; Access refuses the last two ("Overflow"), and writes NaN as the least Currency, which this
   library does not.

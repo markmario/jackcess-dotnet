@@ -240,6 +240,10 @@ internal static class IndexKeys
     {
         if (RowValues.IsNull(value) && type != DataType.Boolean)
             return new[] { ascending ? AscNullFlag : DescNullFlag };
+        // A value that is not one of .NET's numbers is keyed as the number a row is written with for it (#75).
+        if (type is DataType.Byte or DataType.Int16 or DataType.Int32 or DataType.Int64 or DataType.Single or DataType.Double
+            && !CurrencyRounding.IsNumber(value))
+            value = RowValues.NumberOf(type, value!);
 
         byte[] bytes;
         switch (type)
