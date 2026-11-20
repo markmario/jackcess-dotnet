@@ -406,7 +406,7 @@ public class Cursor : IEnumerable<Row>
     private protected Column ColumnNamed(string columnName, string parameterName)
     {
         if (columnName is null) throw new ArgumentNullException(parameterName);
-        return _definition.Columns.FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase))
+        return _definition.FindColumn(columnName)
             ?? throw new ArgumentException($"Table '{_definition.Name}' has no column named '{columnName}'.", parameterName);
     }
 
@@ -441,9 +441,9 @@ public class Cursor : IEnumerable<Row>
 
         // Every column read has its entry, in the table's order: null for a column with no value.
         var columns = ColumnsToRead ?? _definition.Columns;
-        var row = new Row(columns.Count);
+        var row = new Row(columns.Count, _definition.Names);
         foreach (var col in columns)
-            row[col.Name] = ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col);
+            row.Put(col.Name, ValuesAsStored ? _decoder.DecodeForKey(rowBytes, col) : _decoder.Decode(rowBytes, col));
         row.ReadFrom(_table, pointer);
         return row;
     }

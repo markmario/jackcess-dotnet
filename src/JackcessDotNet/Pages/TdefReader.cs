@@ -170,7 +170,8 @@ internal static class TdefReader
         // columns BY COLUMN NUMBER, not by order. (The previous 4-byte parse
         // read garbage page numbers out of real Access TDEFs, corrupting every
         // memo write into such files.)
-        var lvalUmapPages = new Dictionary<string, LvalUmapRef>(StringComparer.OrdinalIgnoreCase);
+        // By the columns' names exactly: two Memo columns whose names .NET, or Access, takes as one each have their maps.
+        var lvalUmapPages = new Dictionary<string, LvalUmapRef>(StringComparer.Ordinal);
         var lvalColsByNumber = columns.Where(c => c.DataType.IsLongValue())
                                       .ToDictionary(c => (int)c.Ordinal);
         while (lvalColsByNumber.Count > 0 && pos + 10 <= page.Length)
@@ -328,8 +329,9 @@ internal static class TdefReader
         if (nameLen < 0 || nameStart + nameLen > page.Length)
             return ($"__bad_name_at_{pos}__", format.SizeNameLength);
 
+        // A name as the code units it holds, half of a surrogate pair alone among them (ByteUtil.DecodeUtf16).
         string name = format.SizeNameLength == 2
-            ? Encoding.Unicode.GetString(page, nameStart, nameLen)
+            ? ByteUtil.DecodeUtf16(page, nameStart, nameLen)
             : format.TextEncoding.GetString(page, nameStart, nameLen);
         return (name, format.SizeNameLength + nameLen);
     }

@@ -227,9 +227,28 @@ internal sealed class TextIndexCodes
 
     /// <summary>The key of <paramref name="value"/>, without the flag byte an index entry starts each column with.</summary>
     /// <exception cref="NotSupportedException">The value is one <see cref="CanEncode"/> is false for.</exception>
-    public byte[] Encode(string value, bool ascending)
+    public byte[] Encode(string value, bool ascending) => EncodeChars(ToIndexCharSequence(value), ascending);
+
+    /// <summary>
+    /// The key of an object's name, as Access compares names in this order (<see cref="ObjectNames"/>): the key an
+    /// index entry has for it, its trailing spaces dropped as a value's are, or with <paramref name="whole"/> the key
+    /// of the whole name, its trailing spaces kept. Null for a name with a character Access keys by the characters
+    /// around it (<see cref="IsContextDependent"/>) or, in Access 97's order, one code page 1252 has not.
+    /// </summary>
+    internal byte[]? NameKey(string name, bool whole)
     {
-        string str = ToIndexCharSequence(value);
+        string str = whole ? (name.Length > MaxTextIndexCharLength ? name.Substring(0, MaxTextIndexCharLength) : name) : ToIndexCharSequence(name);
+        foreach (char c in str)
+            if (CodesOf(c) is { IsContextDependent: true } or { IsNotInCodePage: true }) return null;
+        return EncodeChars(str, ascending: true);
+    }
+
+    /// <summary>Whether Access keys <paramref name="c"/> by the characters around it in this order: ー, 々 and the like.</summary>
+    internal bool IsContextDependent(char c) => CodesOf(c).IsContextDependent;
+
+    // The key of text that is already as a key takes it: no longer than an entry holds, and trimmed or not.
+    private byte[] EncodeChars(string str, bool ascending)
+    {
         if (_isAccess97) return EncodeAccess97(str, ascending);
 
         var key = new List<byte>(str.Length * 2 + 8);

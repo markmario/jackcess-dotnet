@@ -333,20 +333,36 @@ changed since 1.2.2.
   database DAO had created, nor drop a relationship it made.
 - **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
   is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
-- **Two columns whose names differ only in case are refused.** `CreateTable` made a table of two columns named
-  `A` and `a`, and a row then kept one value for the two (DAO saw one column); it now refuses them with
-  `ArgumentException` before anything is written, as an import does. A call that made such a table now throws: a
-  change toward refusing, which writes nothing wrong. Names are compared as before, as .NET compares them without
-  regard to case (`StringComparison.OrdinalIgnoreCase`), which is how this library looks them up, for a table,
-  column, index and relationship. That is not yet Access's own rule: measured with DAO, Access also takes as one
-  names that differ in width, in kana or in an accent written as one character or two, which are two here; and it
-  keeps apart some names .NET takes as one - `xµ` and `xμ`, and letters of other scripts that .NET's newer case
-  tables pair - which are one here on .NET, and two on .NET Framework.
-- **`GetTable` and `TryGetTable` find the table of exactly the name asked for**, when there is one, and only then
-  one of that name without regard to case: in a file Access made with tables `xµ` and `xμ`, on .NET, either could
-  be found for the other, and so dropped, renamed or written to in its place. `RenameTable` compares the new name
-  with every other object's, leaving the table out by what it is, not by its name, and changes the relationships
-  that name the table and no other's.
+- **Two names are one as Access takes them** (#44, #63). A table, column, index or relationship is refused a name
+  that is one with another of its kind, before anything is written, as Access refuses it: by the names' text index
+  keys, in the order Access compares names by, as DAO 16 and Jet 4.0 were measured to decide it for 18,140 pairs of
+  names ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). Names
+  in another case, width or kana, or with an accent written as one character or as two, are one; `xµ` and `xμ`,
+  and `I` and `ı`, are two, on every target. In a database that sorts in General, a name is compared by General's
+  keys and General - Legacy's: Access compares some names there by the one and some by the other, a column's as its
+  process has gone, so some names DAO makes there are refused. Names were compared as .NET compares them without
+  regard to case, which kept apart names Access takes as one and took as one names Access keeps apart. `CreateTable`
+  made a table of two columns named `A` and `a`, and a row then kept one value for the two; it now refuses them, as
+  an import does. A call that made such names now throws: a change toward refusing, which writes nothing wrong.
+- **A lookup by name finds the name given exactly first** (#63) - `GetTable`, `TryGetTable`, a table's columns
+  and indexes, a `Row`'s entries, a join's columns, an export's properties and an import's columns - and only then
+  the first name Access takes as one with it. In a file Access made with tables `xµ` and `xμ`, on .NET, either could
+  be found for the other, and so dropped, renamed or written to in its place. A row of a table with two columns
+  whose names are one, which Access lets a file have, has an entry for each, and an insert writes each value to its
+  own column; the foreign keys enforced, a table's long-value maps and its property maps are kept by the exact
+  name too. `RenameTable` compares the new name with every other object's, leaving the table out by what it is, not
+  by its name, and changes the relationships that name the table and no other's.
+- **A new column, index or relationship name in a database of another order** (#63): in a database whose text
+  sorts in an order whose keys this library does not make, Access compares such names by that order's keys, and
+  takes as one names General - Legacy keeps apart (in Swedish, an index `xʎ` beside `xÜ`). There a new name is
+  compared with the others by General - Legacy's keys and without regard to case (`OrdinalIgnoreCase`), and refused
+  with `ArgumentException`, before anything is written, only when it is one with another by either: not that
+  order's own rule, which this library does not have
+  ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). It was compared
+  without regard to case alone.
+- **Text with half of a surrogate pair alone in it is read and written as it is** (#63): a name or a value Access
+  kept with one was read with U+FFFD in its place, so a table or column of such a name was found by no name, and a
+  value read and written back lost it. A new name with one is refused with `NotSupportedException`.
 - **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
   (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
   - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with
@@ -560,6 +576,16 @@ changes with them.
   `Row.FromValues` are removed, and `GetValue<T>` and `IsNull` added. **A row that is read has an entry for
   every column, `null` for a column with no value** (it had no entry for one), so `ContainsKey` no longer says
   whether a value is null.
+- **A `Row` a caller makes holds each value under the name given, exactly** (#63). This compiles unchanged; it is
+  here because a row given one column's value by two names does what it did not. The indexer's set, `Add` and
+  `Remove` go by the exact name alone, so `row["Name"]` and `row["NAME"]` are two entries; a value is still read by
+  a name in another case. A name finds its column where the row meets a table: `Insert`, `InsertRange`, `Update`
+  and `Validate` give each name the column of exactly that name, and otherwise the one a lookup of it finds, and
+  refuse two names that go to one column with `ArgumentException`, naming both and the column, before anything is
+  written. Such a row kept the value set last: `new Row { ["Id"] = 1, ["ID"] = 2 }` inserted 2, and now throws. An
+  AutoNumber is given back under the row's name for its column, by `InsertRange` and `BulkInsert` too. A row read
+  from a table sends a name of another spelling to the column a lookup of it finds in the table, as an insert does,
+  whichever columns it was read with.
 - **`DataType` members are renamed** (their values are not): `Int` is `Int16`, `Long` is `Int32`, `BigInt` is
   `Int64`, `Float` is `Single`, `Numeric` is `Decimal`, `ShortDateTime` is `DateTime`, `Money` is `Currency`,
   `Ole` is `OleObject`, `ExtendedDateTime` is `DateTimeExtended`.

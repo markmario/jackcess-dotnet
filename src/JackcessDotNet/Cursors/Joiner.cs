@@ -55,7 +55,7 @@ public sealed class Joiner
 
         ToIndex = toTable.Indexes.FirstOrDefault(index =>
                 index.Columns.Count >= _toColumns.Length
-                && index.Columns.Take(_toColumns.Length).Select(c => c.Column.Name).SequenceEqual(_toColumns, StringComparer.OrdinalIgnoreCase))
+                && index.Columns.Take(_toColumns.Length).Select(c => c.Column.Name).SequenceEqual(_toColumns, StringComparer.Ordinal))
             ?? throw new ArgumentException(
                 $"Table '{toTable.Name}' has no index whose first columns are {string.Join(", ", _toColumns)}: a join looks its rows up through one.",
                 nameof(toColumnNames));
@@ -64,8 +64,9 @@ public sealed class Joiner
     private static string[] NamesIn(Table table, IEnumerable<string> columnNames, string parameterName)
     {
         if (columnNames is null) throw new ArgumentNullException(parameterName);
+        // Each column as the table spells it: of exactly the name given, or else of one Access takes as one with it.
         var names = columnNames.Select(name =>
-            table.Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))?.Name
+            table.Definition.FindColumn(name ?? throw new ArgumentException("A column name must not be null.", parameterName))?.Name
             ?? throw new ArgumentException($"Table '{table.Name}' has no column named '{name}'.", parameterName)).ToArray();
         if (names.Length == 0) throw new ArgumentException("A join is on at least one column.", parameterName);
         return names;
@@ -158,12 +159,15 @@ public sealed class Joiner
         return values;
     }
 
-    // A Row finds a column whatever the case of its name; another dictionary may not.
-    private static bool TryGet(IReadOnlyDictionary<string, object?> row, string column, out object? value)
+    // A Row finds a column by its name or one Access takes as one with it; another dictionary is asked for the name, and
+    // then its keys are looked through as the table's names are compared (ObjectNames.Find).
+    private bool TryGet(IReadOnlyDictionary<string, object?> row, string column, out object? value)
     {
         if (row.TryGetValue(column, out value)) return true;
-        foreach (var entry in row)
-            if (string.Equals(entry.Key, column, StringComparison.OrdinalIgnoreCase)) { value = entry.Value; return true; }
+        if (row is Row) return false;
+        var keys = row.Keys.ToList();
+        int at = FromTable.Definition.Names.Find(keys, column);
+        if (at >= 0) return row.TryGetValue(keys[at], out value);
         value = null;
         return false;
     }

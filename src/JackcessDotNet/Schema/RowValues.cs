@@ -32,25 +32,60 @@ internal static class RowValues
     };
 
     /// <summary>
-    /// <paramref name="row"/> as it will be written to a table of <paramref name="columns"/>: no
-    /// <see cref="DBNull"/> (a column without a value has none), a Yes/No column's value as the
-    /// <see cref="bool"/> it stands for, a number column's value as the number it stands for
+    /// <paramref name="row"/> as it will be written to <paramref name="table"/>: an entry for each column it gives a
+    /// value, by the column's own name; no <see cref="DBNull"/> (a column without a value has none), a Yes/No
+    /// column's value as the <see cref="bool"/> it stands for, a number column's value as the number it stands for
     /// (<see cref="AsNumber"/>), and a Currency column's and a Decimal column's number as the <see cref="decimal"/> the
-    /// row stores (<see cref="AsCurrency"/>, <see cref="AsDecimal"/>). The row itself when it is already so; otherwise
-    /// a copy - the caller's row is not changed.
+    /// row stores (<see cref="AsCurrency"/>, <see cref="AsDecimal"/>). Each of the row's names goes to one column
+    /// (<see cref="NameFor"/>): the column of exactly that name, and otherwise the one a lookup of it finds by the
+    /// table's rule (<see cref="ObjectNames"/>) - so a table with two columns whose names are one to Access, which a file
+    /// can have, takes a value in each by its exact name. A name no column is for is left out. The row itself when it
+    /// is already so; otherwise a copy - the caller's row is not changed.
     /// </summary>
-    /// <exception cref="ArgumentException">A number column's value is of a kind no number is made of.</exception>
+    /// <exception cref="ArgumentException">
+    /// Two of the row's names go to one column - "x" and "X" for a column "x", say - and neither is dropped; or a
+    /// number column's value is of a kind no number is made of.
+    /// </exception>
     /// <exception cref="FormatException">A number column's value is text that does not read as a number.</exception>
     /// <exception cref="OverflowException">
     /// A number column's value is text of a number past what it is read as, or a Currency column's a number no
     /// Currency holds.
     /// </exception>
-    public static Row AsWritten(Row row, IReadOnlyList<Column> columns)
+    public static Row AsWritten(Row row, TableDefinition table)
     {
-        Row? written = null;
+        var columns = table.Columns;
+        var exact   = table.ColumnNameSet;
+
+        // The names of another spelling, each with the column it goes to; two names for one column are refused.
+        bool loose = false;
+        Dictionary<string, string>? nameFor = null;   // a column's name -> the row's name of another spelling for it
+        foreach (var entry in row)
+        {
+            if (exact.Contains(entry.Key)) continue;
+            loose = true;
+            if (table.FindColumn(entry.Key) is not { } column) continue;
+            string? other = row.HasExactly(column.Name) ? column.Name
+                          : nameFor is not null && nameFor.TryGetValue(column.Name, out var earlier) ? earlier
+                          : null;
+            if (other is not null)
+                throw new ArgumentException(
+                    $"The row gives column '{column.Name}' of '{table.Name}' two values: one by '{other}' and one by " +
+                    $"'{entry.Key}', names Access takes as one. Nothing was written.", nameof(row));
+            (nameFor ??= new Dictionary<string, string>(StringComparer.Ordinal)).Add(column.Name, entry.Key);
+        }
+
+        // A row written from has its columns' names exactly, and finds a column it gives no value at once: the caller's
+        // row when it names every column exactly (and the table has no two columns whose names are one), and otherwise
+        // a copy that finds names only exactly - there a column the row gives no value has none, where the rule would
+        // look for one, and might find the other column's.
+        bool complete = !loose && row.Count == columns.Count;
+        Row? written = complete && !table.HasColumnsThatAreOne ? null : new Row(columns.Count, table.Names, exactOnly: true);
         foreach (var column in columns)
         {
-            if (!row.TryGetValue(column.Name, out var value)) continue;
+            if (!row.TryGetExactly(column.Name, out object? value)
+                && !(nameFor is not null && nameFor.TryGetValue(column.Name, out var name) && row.TryGetExactly(name, out value)))
+                continue;
+
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
                 : value is null || !IsNumberType(column.DataType) ? value
@@ -58,11 +93,28 @@ internal static class RowValues
                 : column.DataType == DataType.Decimal ? AsDecimal(column, AsNumber(column, value))
                 : column.DataType == DataType.Single ? AsSingle(column, AsNumber(column, value))
                 : AsNumber(column, value);
-            if (ReferenceEquals(normal, value)) continue;
-            written ??= new Row(row);
-            written[column.Name] = normal;
+            if (written is null)
+            {
+                if (ReferenceEquals(normal, value)) continue;
+                written = new Row(row);
+            }
+            written.Put(column.Name, normal);
         }
         return written ?? row;
+    }
+
+    /// <summary>
+    /// The row's name that gives <paramref name="column"/> of <paramref name="table"/> its value, as
+    /// <see cref="AsWritten"/> takes it: the column's own name when the row has it, and otherwise the first of the
+    /// row's names of another spelling that a lookup by the table's rule finds the column by; null when the row gives
+    /// the column no value.
+    /// </summary>
+    public static string? NameFor(Row row, TableDefinition table, Column column)
+    {
+        if (row.HasExactly(column.Name)) return column.Name;
+        foreach (var entry in row)
+            if (!table.ColumnNameSet.Contains(entry.Key) && table.FindColumn(entry.Key) == column) return entry.Key;
+        return null;
     }
 
     /// <summary>

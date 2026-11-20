@@ -284,7 +284,8 @@ internal sealed class TableIndexes
     // ── Finding rows ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The row pointers an index on exactly <paramref name="columns"/>, in that order, holds for
+    /// The row pointers an index on exactly <paramref name="columns"/> - by their names as the table spells them - in
+    /// that order, holds for
     /// <paramref name="values"/> - Access gives a relationship's foreign key such an index, and a primary key is
     /// one - or null when the table has no such index that can be searched: none on those columns, one whose keys
     /// this library does not make, one that holds no entry for a key that is all null, a value this library
@@ -300,7 +301,7 @@ internal sealed class TableIndexes
         var tree = Trees.FirstOrDefault(t =>
             t.Target.RootPage > 0
             && t.Columns.Count == columns.Count
-            && t.Columns.Select(c => c.Column.Name).SequenceEqual(columns, StringComparer.OrdinalIgnoreCase)
+            && t.Columns.Select(c => c.Column.Name).SequenceEqual(columns, StringComparer.Ordinal)
             && t.Columns.All(c => IndexKeys.CanEncode(c.Column)));
         if (tree is null || (tree.IgnoreNulls && values.All(v => v is null))) return null;
 
@@ -408,7 +409,8 @@ internal sealed class TableIndexes
         // at one is believed, whatever its key, but the row is held only when its entry is under this library's
         // key, which a search makes - so that an index with such a row under another key is not searched.
         var believed = trees.Select(_ => new HashSet<int>()).ToList();
-        var row     = new Row();
+        // By the columns' names exactly: a column with no value has no entry, and no other column's is found for it.
+        var row     = new Row(columns.Count, _table.Names, exactOnly: true);
         foreach (int pageNumber in UsageMap.GetOwnedPages(_file.ReadPage(_table.UmapPageNumber), _table.OwnedPagesRow, format, _file))
         {
             byte[] page = _file.ReadPage(pageNumber);
@@ -420,7 +422,7 @@ internal sealed class TableIndexes
                 row.Clear();
                 foreach (var column in columns)
                     if (decoder.DecodeForKey(rowBytes, column) is { } value)
-                        row[column.Name] = value;
+                        row.Put(column.Name, value);
                 for (int t = 0; t < trees.Count; t++)
                 {
                     var tree   = trees[t];
@@ -526,7 +528,7 @@ internal sealed class TableIndexes
         foreach (var row in rows)
         {
             if (row is null) throw new ArgumentException("A row to look at is null.", nameof(rows));
-            var written = RowValues.AsWritten(row, _table.Columns);
+            var written = RowValues.AsWritten(row, _table);
             foreach (var tree in unique)
             {
                 var values = ValuesIn(tree, written, out int nulls);
@@ -1102,10 +1104,10 @@ internal sealed class TableIndexes
         if (DataRows.Read(_file, page, RowPointer.Row(rowPointer)) is not { } rowBytes) return null;
 
         _keyDecoder ??= new RowDecoder(_file.Format, _table.Columns, _table.LvalColumnUmapPages.Count > 0 ? new LvalReader(_file) : null);
-        var row = new Row();
+        var row = new Row(tree.Columns.Count, _table.Names, exactOnly: true);
         foreach (var column in tree.Columns)
             if (_keyDecoder.DecodeForKey(rowBytes, column.Column) is { } value)
-                row[column.Column.Name] = value;
+                row.Put(column.Column.Name, value);
 
         var values = ValuesIn(tree, row, out nulls);
         for (int i = 0; i < values.Length; i++)

@@ -4,8 +4,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// <see cref="Row"/>: a dictionary of values by column name, whatever the case of the name, that keeps its
-/// entries in order; and what a row read from a table holds.
+/// <see cref="Row"/>: a dictionary of values by column name that keeps its entries in order - a caller's holding each
+/// value under its exact name, and reading one by a name in another case too; and what a row read from a table holds.
 /// </summary>
 public sealed class RowTests : IDisposable
 {
@@ -25,14 +25,19 @@ public sealed class RowTests : IDisposable
         Assert.Equal("Alice", r["Name"]);
     }
 
+    // A caller's row merges no two names (#63): a value set by a name in another case is an entry of its own, and each
+    // is read by its own name. Where the row meets a table the two are refused, for they go to one column.
     [Fact]
-    public void Indexer_Set_CaseInsensitive_OverwritesPrevious()
+    public void A_value_set_by_a_name_in_another_case_is_an_entry_of_its_own()
     {
         var r = new Row { ["Name"] = "Alice" };
         r["NAME"] = "Bob";
-        Assert.Single(r);
-        Assert.Equal("Bob", r["name"]);
-        Assert.Equal(new[] { "Name" }, r.Keys);   // under the name it was added by
+        Assert.Equal(new[] { "Name", "NAME" }, r.Keys);
+        Assert.Equal("Alice", r["Name"]);
+        Assert.Equal("Bob", r["NAME"]);
+        Assert.Equal("Alice", r["name"]);         // read by a name neither has: the first that is one with it
+        r["Name"] = "Carol";                       // set by its own name: changed in place
+        Assert.Equal(new object?[] { "Carol", "Bob" }, r.Values);
     }
 
     [Fact]
@@ -52,7 +57,7 @@ public sealed class RowTests : IDisposable
     }
 
     [Fact]
-    public void A_collection_initialiser_adds_each_value_and_refuses_a_column_twice()
+    public void A_collection_initialiser_adds_each_value_and_refuses_a_name_twice()
     {
         var r = new Row
         {
@@ -66,23 +71,27 @@ public sealed class RowTests : IDisposable
         Assert.Equal("Alice",  r["Name"]);
         Assert.Equal((short)30, r["Age"]);
 
-        Assert.Throws<ArgumentException>(() => r.Add("NAME", "Bob"));
-        Assert.Throws<ArgumentException>(() => new Row { { "A", 1 }, { "a", 2 } });
+        Assert.Throws<ArgumentException>(() => r.Add("Name", "Bob"));
+        Assert.Throws<ArgumentException>(() => new Row { { "A", 1 }, { "A", 2 } });
         Assert.Equal("Alice", r["Name"]);
+
+        // Names in another case are two entries: a caller's row merges nothing (#63).
+        Assert.Equal(2, new Row { { "A", 1 }, { "a", 2 } }.Count);
     }
 
     [Fact]
     public void The_entries_keep_the_order_they_were_added_in()
     {
         var r = new Row { ["Zed"] = 1, ["Alpha"] = 2, ["Mid"] = 3 };
-        r["alpha"] = 20;        // changed in place
+        r["Alpha"] = 20;        // changed in place
         r["Last"] = 4;
 
         Assert.Equal(new[] { "Zed", "Alpha", "Mid", "Last" }, r.Keys);
         Assert.Equal(new object?[] { 1, 20, 3, 4 }, r.Values);
         Assert.Equal(new[] { "Zed", "Alpha", "Mid", "Last" }, r.Select(entry => entry.Key));
 
-        Assert.True(r.Remove("ALPHA"));
+        Assert.False(r.Remove("ALPHA"));        // taken out by its exact name alone
+        Assert.True(r.Remove("Alpha"));
         Assert.False(r.Remove("Alpha"));
         Assert.Equal(new[] { "Zed", "Mid", "Last" }, r.Keys);
         Assert.Equal(3, r["mid"]);
@@ -185,7 +194,8 @@ public sealed class RowTests : IDisposable
         Assert.True(dictionary.Contains(new KeyValuePair<string, object?>("age", 30)));
         Assert.False(dictionary.Contains(new KeyValuePair<string, object?>("age", 31)));
         Assert.False(dictionary.Remove(new KeyValuePair<string, object?>("age", 31)));
-        Assert.True(dictionary.Remove(new KeyValuePair<string, object?>("age", 30)));
+        Assert.False(dictionary.Remove(new KeyValuePair<string, object?>("age", 30)));   // taken out by its exact name alone
+        Assert.True(dictionary.Remove(new KeyValuePair<string, object?>("Age", 30)));
         Assert.False(dictionary.IsReadOnly);
 
         var copied = new KeyValuePair<string, object?>[3];

@@ -220,7 +220,8 @@ internal sealed class TdefEditor
         if (pos + 2 > _length) throw Unexpected("a name");
         int length = ByteUtil.GetShort(_page, pos);
         if (length < 0 || pos + 2 + length > _length) throw Unexpected("a name");
-        string name = Encoding.Unicode.GetString(_page, pos + 2, length);
+        // As the definition's reader reads it (TdefReader): the names are compared with its exactly.
+        string name = ByteUtil.DecodeUtf16(_page, pos + 2, length);
         pos += 2 + length;
         return name;
     }

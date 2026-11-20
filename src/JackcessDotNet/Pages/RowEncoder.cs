@@ -452,7 +452,7 @@ internal sealed class RowEncoder
         bool compress = col.IsCompressedUnicode && text.Length >= 3 && text.Length <= MaxCompressedMemoChars;
         for (int i = 0; compress && i < text.Length; i++)
             compress = text[i] >= 0x01 && text[i] <= 0xFF;
-        if (!compress) return System.Text.Encoding.Unicode.GetBytes(text);
+        if (!compress) return Util.ByteUtil.EncodeUtf16(text);   // the code units it holds, half a surrogate pair among them
         var bytes = new byte[text.Length + 2];
         bytes[0] = 0xFF;
         bytes[1] = 0xFE;
@@ -460,9 +460,10 @@ internal sealed class RowEncoder
         return bytes;
     }
 
-    // Compressed only where the column allows it (see Column.IsCompressedUnicode).
+    // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
+    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16).
     private static byte[] EncodeText(Column col, string text)
-        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : System.Text.Encoding.Unicode.GetBytes(text);
+        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : Util.ByteUtil.EncodeUtf16(text);
 
     private byte[] WriteVariableValue(Column col, object value)
     {

@@ -26,7 +26,8 @@ public sealed class IndexDefinition
     /// <param name="columns">The names of the columns it is on, in key order: one to <see cref="MaxColumns"/>.</param>
     /// <exception cref="ArgumentException">
     /// <paramref name="name"/> is null, empty or white space; or <paramref name="columns"/> is null or has no
-    /// names, more than <see cref="MaxColumns"/>, an empty name, or one name twice, whatever its case.
+    /// names, more than <see cref="MaxColumns"/>, an empty name, or one name twice: two names Access takes as one, in
+    /// another case or width, say.
     /// </exception>
     public IndexDefinition(string name, params string[] columns)
     {
@@ -38,7 +39,9 @@ public sealed class IndexDefinition
             throw new ArgumentException($"An index has at most {MaxColumns} columns; {columns.Length} were given.", nameof(columns));
         if (columns.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("An index column name must not be empty.", nameof(columns));
-        if (columns.Distinct(StringComparer.OrdinalIgnoreCase).Count() != columns.Length)
+        // Names a table's columns are one by (ObjectNames): an index created in a file whose names Access compares by
+        // General - Legacy's keys, the only kind of file this library writes an index to.
+        if (ObjectNames.GeneralLegacy.FirstTwoThatAreOne(columns) is not null)
             throw new ArgumentException("An index names each of its columns once.", nameof(columns));
 
         Name    = name;

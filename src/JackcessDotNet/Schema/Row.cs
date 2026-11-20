@@ -5,14 +5,33 @@ using System.Globalization;
 namespace JackcessDotNet;
 
 /// <summary>
-/// A row of a table: its values by column name, whatever the case of the name's letters. It is the row a caller
-/// gives to <see cref="Table.Insert"/> and the row a table or cursor reads.
+/// A row of a table: its values by column name. It is the row a caller gives to <see cref="Table.Insert"/> and the row
+/// a table or cursor reads.
 /// <code>
 ///   table.Insert(new Row { ["Name"] = "Alice", ["Born"] = new DateTime(1990, 4, 1) });
 ///
 ///   foreach (Row row in table.Rows)
 ///       Console.WriteLine($"{row["Name"]} {row.GetValue&lt;DateTime?&gt;("Born"):d}");
 /// </code>
+/// <para>
+/// A row a caller makes holds each value under the name given, exactly: two names are two entries, whatever Access
+/// takes as one, and a value is set, added and taken out by its exact name alone. Where the row meets a table - an
+/// insert, an update - each name goes to the column of exactly that name, and otherwise to the one column a lookup of
+/// it finds by the table's rule (<see cref="Table.Insert"/>); two names that go to one column are refused, before
+/// anything is written (#63). A value is read by its exact name, and otherwise by a name Access takes as one with it -
+/// the same in another case, in another width, in the other kana, an accent written as one character or as two - by
+/// General - Legacy's keys.
+/// </para>
+/// <para>
+/// A row a table gives - read by <see cref="Table.Rows"/>, a cursor or <see cref="Table.FindRowByPrimaryKey"/> - has
+/// an entry for each column it was read with, under the column's own name. A name finds the entry of exactly that
+/// name, and otherwise the entry of the column a lookup of it finds in the table, by the table's rule
+/// (<see cref="ObjectNames"/>) - the column an insert or an update sends the name to - which a row read with some of
+/// the columns may not have: given a value, the row adds it under that column's name. So a table with two columns whose
+/// names are one to Access, which a file can have, has an entry for each, each found by its own name. Names Access
+/// keeps apart - the micro sign and the Greek mu, a letter with and without its accent - are two. The comparison is
+/// the same on every runtime.
+/// </para>
 /// <para>
 /// A database null is <c>null</c>. A row that is read has an entry for every column that was read, in the
 /// table's column order, <c>null</c> for a column with no value: so <see cref="ContainsKey"/> says whether the
@@ -32,21 +51,34 @@ namespace JackcessDotNet;
 /// </summary>
 public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<string, object?>
 {
-    // The entries in the order they were added, and where each column's entry is.
+    // The entries in the order they were added, and where the entry of each name is: by the name exactly.
     private readonly List<KeyValuePair<string, object?>> _entries;
     private readonly Dictionary<string, int> _places;
+
+    // How a name that is not an entry's exactly finds one when it is read (ObjectNames). A row this library writes from,
+    // whose entries have their columns' names exactly, finds a name only exactly: a column it gives no value has none,
+    // though another column's name is one with its name to Access. A row a caller makes sets, adds and takes out an
+    // entry only by its exact name: it merges no two names.
+    private readonly ObjectNames _names;
+    private readonly bool _exactOnly;
+    private readonly bool _setsExactly;
+
+    // The entries by the hashes of their names' keys (ObjectNames.NameKey.Hashes): a name finds the entries it may be one
+    // with through its own, made when such a name is first looked for and kept as entries are added.
+    private Dictionary<int, List<int>>? _byHash;
 
     // The table the row was read from and where in it, for a row that was read.
     private Table? _source;
     private int    _pointer;
 
-    // The columns of a row that was read that have been given a value since - with the indexer or Add, whatever
-    // the value: what an update assigns, as Access's Edit and Update assign the fields given a value in between.
+    // The entries of a row that was read that have been given a value since - with the indexer or Add, whatever the
+    // value - by their names: what an update assigns, as Access's Edit and Update assign the fields given a value in
+    // between.
     private HashSet<string>? _assigned;
 
-    private void Assigned(string columnName)
+    private void Assigned(int at)
     {
-        if (_source is not null) (_assigned ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(columnName);
+        if (_source is not null) (_assigned ??= new HashSet<string>(StringComparer.Ordinal)).Add(_entries[at].Key);
     }
 
     /// <summary>
@@ -56,15 +88,15 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// </summary>
     internal Row AssignedSinceRead()
     {
-        var assigned = new Row();
+        var assigned = new Row(0, _names);
         if (_assigned is null) return assigned;
         foreach (var entry in _entries)
-            if (_assigned.Contains(entry.Key)) assigned.Add(entry.Key, entry.Value);
+            if (_assigned.Contains(entry.Key)) assigned.Put(entry.Key, entry.Value);
         return assigned;
     }
 
-    /// <summary>Whether <paramref name="columnName"/> has been given a value since the row was read (<see cref="AssignedSinceRead"/>).</summary>
-    internal bool WasAssigned(string columnName) => _assigned?.Contains(columnName) == true && _places.ContainsKey(columnName);
+    /// <summary>Whether the entry <paramref name="columnName"/> finds has been given a value since the row was read (<see cref="AssignedSinceRead"/>).</summary>
+    internal bool WasAssigned(string columnName) => _assigned is not null && Find(columnName) is >= 0 and var at && _assigned.Contains(_entries[at].Key);
 
     /// <summary>
     /// Which row of which table the row is, and what it has been given since it was read: kept by an insert, which
@@ -72,7 +104,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// </summary>
     internal (Table? Source, int Pointer, HashSet<string>? Assigned) Identity
     {
-        get => (_source, _pointer, _assigned is null ? null : new HashSet<string>(_assigned, StringComparer.OrdinalIgnoreCase));
+        get => (_source, _pointer, _assigned is null ? null : new HashSet<string>(_assigned, StringComparer.Ordinal));
         set => (_source, _pointer, _assigned) = value;
     }
 
@@ -101,35 +133,185 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     /// <summary>Notes that the row is in no table any longer: it was deleted.</summary>
     internal void Detach() => _source = null;
 
-    /// <summary>Creates a row with no values.</summary>
-    public Row()
-    {
-        _entries = new List<KeyValuePair<string, object?>>();
-        _places  = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-    }
+    /// <summary>Creates a row with no values, a caller's: each value is held under the name given, exactly.</summary>
+    public Row() : this(0, ObjectNames.GeneralLegacy, exactOnly: false, setsExactly: true) { }
 
-    /// <summary>A row with room for <paramref name="capacity"/> values: one that is about to be read.</summary>
-    internal Row(int capacity)
+    /// <summary>
+    /// A row with room for <paramref name="capacity"/> values, whose names are compared by <paramref name="names"/>:
+    /// one that is about to be read, by its table's rule. With <paramref name="exactOnly"/> a name finds only the
+    /// entry of exactly that name: a row written from. With <paramref name="setsExactly"/> an entry is set, added and
+    /// taken out only by its exact name: a caller's row.
+    /// </summary>
+    internal Row(int capacity, ObjectNames names, bool exactOnly = false, bool setsExactly = false)
     {
-        _entries = new List<KeyValuePair<string, object?>>(capacity);
-        _places  = new Dictionary<string, int>(capacity, StringComparer.OrdinalIgnoreCase);
+        _entries     = new List<KeyValuePair<string, object?>>(capacity);
+        _places      = new Dictionary<string, int>(capacity, StringComparer.Ordinal);
+        _names       = names;
+        _exactOnly   = exactOnly;
+        _setsExactly = setsExactly || exactOnly;
     }
 
     /// <summary>
     /// Creates a row with the values of <paramref name="values"/>, in their order: a copy of another row, for one.
-    /// A copy of a row that was read is a new row, with no <see cref="Id"/>.
+    /// The copy is a caller's row (<see cref="Row()"/>): each value under its name, exactly. A copy of a row that was
+    /// read is a new row, with no <see cref="Id"/>, and has every entry the row has.
     /// </summary>
-    /// <exception cref="ArgumentException">Two of the values are for one column.</exception>
-    public Row(IEnumerable<KeyValuePair<string, object?>> values) : this()
+    /// <exception cref="ArgumentException">Two of the values have one name, exactly.</exception>
+    public Row(IEnumerable<KeyValuePair<string, object?>> values) : this(0, ObjectNames.GeneralLegacy, exactOnly: false, setsExactly: true)
     {
         if (values is null) throw new ArgumentNullException(nameof(values));
+        if (values is Row row)
+        {
+            foreach (var entry in row._entries) Put(entry.Key, entry.Value);
+            return;
+        }
         foreach (var value in values)
             Add(value.Key, value.Value);
     }
 
     /// <summary>
+    /// A row of <paramref name="values"/>, each the entry of exactly its name, whose names are compared as
+    /// <paramref name="like"/>'s are: a copy of some of a row's entries, which may be for columns whose names Access
+    /// takes as one.
+    /// </summary>
+    internal static Row Of(IEnumerable<KeyValuePair<string, object?>> values, Row like)
+    {
+        var row = new Row(0, like._names, like._exactOnly, like._setsExactly);
+        foreach (var value in values) row.Put(value.Key, value.Value);
+        return row;
+    }
+
+    /// <summary>
+    /// A row of <paramref name="values"/> by their columns' exact names, that finds a name only exactly: values this
+    /// library has worked out for a table's columns, and writes.
+    /// </summary>
+    internal static Row Exactly(IEnumerable<KeyValuePair<string, object?>> values, ObjectNames names)
+    {
+        var row = new Row(0, names, exactOnly: true);
+        foreach (var value in values) row.Put(value.Key, value.Value);
+        return row;
+    }
+
+    /// <summary>
+    /// Gives the entry of exactly <paramref name="columnName"/> <paramref name="value"/>, adding it when the row has
+    /// none: how a row is read, an entry for each column, though two columns' names are one to Access.
+    /// </summary>
+    internal void Put(string columnName, object? value)
+    {
+        if (_places.TryGetValue(columnName, out int at))
+        {
+            _entries[at] = new KeyValuePair<string, object?>(columnName, value);
+            return;
+        }
+        Append(columnName, value);
+    }
+
+    // A new entry, after the others.
+    private void Append(string columnName, object? value)
+    {
+        int at = _entries.Count;
+        _places.Add(columnName, at);
+        _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+        if (_byHash is not null) Index(at);
+    }
+
+    // The entry at `at` among the entries found by the hashes of its name's keys.
+    private void Index(int at)
+    {
+        foreach (int hash in _names.KeyOf(_entries[at].Key).Hashes)
+        {
+            if (!_byHash!.TryGetValue(hash, out var places)) _byHash[hash] = places = new List<int>(1);
+            places.Add(at);
+        }
+    }
+
+    /// <summary>Whether the row has an entry of exactly <paramref name="columnName"/>.</summary>
+    internal bool HasExactly(string columnName) => _places.ContainsKey(columnName);
+
+    /// <summary>Takes the entry of exactly <paramref name="columnName"/> out of the row, when it has one.</summary>
+    internal bool RemoveExactly(string columnName)
+    {
+        if (!_places.TryGetValue(columnName, out int at)) return false;
+        _places.Remove(columnName);
+        _entries.RemoveAt(at);
+        _byHash = null;
+        for (int i = at; i < _entries.Count; i++)
+            _places[_entries[i].Key] = i;
+        return true;
+    }
+
+    /// <summary>The value of the entry of exactly <paramref name="columnName"/>, when the row has one.</summary>
+    internal bool TryGetExactly(string columnName, out object? value)
+    {
+        if (_places.TryGetValue(columnName, out int at))
+        {
+            value = _entries[at].Value;
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    // The column of the table a row was read from that a lookup of a name finds (TableDefinition.FindColumn): the column
+    // an insert or an update sends the name to. Null for a row a caller makes, and for a name that is no column's.
+    private Column? ColumnOf(string columnName) => _setsExactly ? null : _source?.Definition.FindColumn(columnName);
+
+    // Where the entry a name finds is, or -1: the entry of exactly that name. Otherwise, in a row a table gave, the entry
+    // of the column a lookup of the name finds in the table - none when the row was read without it - so that a row read
+    // with some of the columns sends a name where a whole row does; and in any other row, or for a name that is no
+    // column's, the first entry whose name is one with it by its index key, then the first that is one with it at all
+    // (ObjectNames.Find).
+    private int Find(string columnName)
+    {
+        if (_places.TryGetValue(columnName, out int at)) return at;
+        if (_exactOnly || _entries.Count == 0) return -1;
+        if (ColumnOf(columnName) is { } column) return _places.TryGetValue(column.Name, out at) ? at : -1;
+        var key = _names.KeyOf(columnName);
+        if (_byHash is null)
+        {
+            _byHash = new Dictionary<int, List<int>>();
+            for (int i = 0; i < _entries.Count; i++) Index(i);
+        }
+
+        // The entries that have a key's hash in common with the name, in the row's order: the first the name is one
+        // with by its index key, else the first it is one with at all.
+        int byIndexKey = -1, found = -1;
+        foreach (int hash in key.Hashes)
+        {
+            if (!_byHash.TryGetValue(hash, out var places)) continue;
+            foreach (int i in places)
+            {
+                if (byIndexKey >= 0 && i >= byIndexKey) continue;
+                var other = _names.KeyOf(_entries[i].Key);
+                if (key.HasIndexKeyOf(other)) byIndexKey = i;
+                else if ((found < 0 || i < found) && key.IsOneWith(other)) found = i;
+            }
+        }
+        return byIndexKey >= 0 ? byIndexKey : found;
+    }
+
+    // Where the entry a name sets, adds or takes out is, or -1, and the name a new entry for it is added under. In a
+    // caller's row, the entry of exactly that name: it merges no two names. In a row a table gave, the entry a read
+    // finds: that of the column a lookup of the name finds in the table, added under the column's own name when the row
+    // was read without it.
+    private int FindToChange(string columnName, out string name)
+    {
+        name = columnName;
+        if (_places.TryGetValue(columnName, out int at)) return at;
+        if (_setsExactly) return -1;
+        if (ColumnOf(columnName) is { } column)
+        {
+            name = column.Name;
+            return _places.TryGetValue(column.Name, out at) ? at : -1;
+        }
+        return Find(columnName);
+    }
+
+    /// <summary>
     /// The value of column <paramref name="columnName"/>. Setting it adds the column to the row, after the others,
-    /// when the row does not have it.
+    /// when the row does not have it: in a row a caller makes, an entry of exactly that name; in a row a table gave, an
+    /// entry under the name of the column a lookup of the name finds in the table, and a column the row has keeps the
+    /// name it was read under.
     /// </summary>
     /// <exception cref="KeyNotFoundException">Reading a column the row has no entry for (<see cref="TryGetValue"/> asks without throwing).</exception>
     public object? this[string columnName]
@@ -137,24 +319,26 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         get
         {
             if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-            return _places.TryGetValue(columnName, out int at)
+            int at = Find(columnName);
+            return at >= 0
                 ? _entries[at].Value
                 : throw new KeyNotFoundException($"The row has no column '{columnName}'.");
         }
         set
         {
             if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-            Assigned(columnName);
-            if (_places.TryGetValue(columnName, out int at))
+            int at = FindToChange(columnName, out string name);
+            if (at >= 0)
             {
                 // The entry keeps the name it was added under.
                 _entries[at] = new KeyValuePair<string, object?>(_entries[at].Key, value);
             }
             else
             {
-                _places.Add(columnName, _entries.Count);
-                _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+                at = _entries.Count;
+                Append(name, value);
             }
+            Assigned(at);
         }
     }
 
@@ -207,23 +391,32 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         }
     }
 
-    /// <summary>Adds column <paramref name="columnName"/> with <paramref name="value"/>, after the row's other columns.</summary>
-    /// <exception cref="ArgumentException">The row already has an entry for the column.</exception>
+    /// <summary>
+    /// Adds column <paramref name="columnName"/> with <paramref name="value"/>, after the row's other columns: in a row a
+    /// table gave, under the name of the column a lookup of the name finds in the table.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// The row already has an entry for the column: one of exactly that name; in a row a table gave, also one of a name
+    /// Access takes as one with it.
+    /// </exception>
     public void Add(string columnName, object? value)
     {
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-        if (_places.ContainsKey(columnName))
-            throw new ArgumentException($"The row already has a value for column '{columnName}'.", nameof(columnName));
-        Assigned(columnName);
-        _places.Add(columnName, _entries.Count);
-        _entries.Add(new KeyValuePair<string, object?>(columnName, value));
+        if (FindToChange(columnName, out string name) is >= 0 and var at)
+            throw new ArgumentException(
+                _entries[at].Key == columnName
+                    ? $"The row already has a value for column '{columnName}'."
+                    : $"The row already has a value for column '{_entries[at].Key}', which is one name with '{columnName}' to Access.",
+                nameof(columnName));
+        Append(name, value);
+        Assigned(_entries.Count - 1);
     }
 
     /// <summary>Whether the row has an entry for column <paramref name="columnName"/>, null or not.</summary>
     public bool ContainsKey(string columnName)
     {
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-        return _places.ContainsKey(columnName);
+        return Find(columnName) >= 0;
     }
 
     /// <summary>
@@ -233,7 +426,8 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     public bool TryGetValue(string columnName, [MaybeNullWhen(false)] out object? value)
     {
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-        if (_places.TryGetValue(columnName, out int at))
+        int at = Find(columnName);
+        if (at >= 0)
         {
             value = _entries[at].Value;
             return true;
@@ -242,14 +436,19 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
         return false;
     }
 
-    /// <summary>Takes column <paramref name="columnName"/> out of the row, and says whether the row had it.</summary>
+    /// <summary>
+    /// Takes column <paramref name="columnName"/> out of the row, and says whether the row had it: in a row a caller
+    /// makes, the entry of exactly that name; in a row a table gave, the entry a read finds.
+    /// </summary>
     public bool Remove(string columnName)
     {
         if (columnName is null) throw new ArgumentNullException(nameof(columnName));
-        if (!_places.TryGetValue(columnName, out int at)) return false;
+        int at = FindToChange(columnName, out _);
+        if (at < 0) return false;
 
+        _places.Remove(_entries[at].Key);
         _entries.RemoveAt(at);
-        _places.Remove(columnName);
+        _byHash = null;   // the places after it have moved: made again when it is next needed
         for (int i = at; i < _entries.Count; i++)
             _places[_entries[i].Key] = i;
         return true;
@@ -260,6 +459,7 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     {
         _entries.Clear();
         _places.Clear();
+        _byHash = null;
     }
 
     /// <summary>The row's columns and their values, in the row's order.</summary>
@@ -281,6 +481,10 @@ public sealed class Row : IDictionary<string, object?>, IReadOnlyDictionary<stri
     void ICollection<KeyValuePair<string, object?>>.CopyTo(KeyValuePair<string, object?>[] array, int arrayIndex)
         => _entries.CopyTo(array, arrayIndex);
 
+    // The entry Remove(string) takes out, when it holds the value: in a caller's row, by its exact name.
     bool ICollection<KeyValuePair<string, object?>>.Remove(KeyValuePair<string, object?> item)
-        => ((ICollection<KeyValuePair<string, object?>>)this).Contains(item) && Remove(item.Key);
+    {
+        if (item.Key is null) throw new ArgumentNullException(nameof(item));
+        return FindToChange(item.Key, out _) is >= 0 and var at && Equals(_entries[at].Value, item.Value) && Remove(item.Key);
+    }
 }

@@ -25,6 +25,10 @@ foreach (var duplicate in people.FindDuplicates(rows)) Console.WriteLine(duplica
 int loaded = people.BulkInsert(ReadRowsFromSomewhere());
 ```
 
+- **A row a caller makes holds each value under the name given**, exactly: `row["Name"]` and `row["NAME"]` are two
+  entries. An insert, an update and `Validate` give each name the column of exactly that name, or else the one a
+  lookup of it finds, and refuse two names that go to one column with `ArgumentException` before anything is
+  written ([Names](tables-and-schema.md#names)).
 - **Into a table with no rows, a batch's indexes are built once its rows are in** (`InsertRange` and
   `BulkInsert`), as [Indexes built page after page](indexes.md#indexes-built-page-after-page) describes.
   `BulkInsert` goes through the rows once and holds none of them; `InsertRange` holds them all, so that a refused

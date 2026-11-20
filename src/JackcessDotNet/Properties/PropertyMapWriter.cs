@@ -99,9 +99,11 @@ internal static class PropertyMapWriter
         buffer.Position = end;
     }
 
+    // A name as the code units it holds: a map's name is its column's, which a file can have with half of a surrogate
+    // pair alone in it, and Encoding.Unicode would write U+FFFD in its place (ByteUtil.DecodeUtf16 reads it back).
     private static void PutName(Stream buffer, string name)
     {
-        byte[] bytes = Encoding.Unicode.GetBytes(name);
+        byte[] bytes = ByteUtil.EncodeUtf16(name);
         PutShort(buffer, bytes.Length);
         buffer.Write(bytes, 0, bytes.Length);
     }

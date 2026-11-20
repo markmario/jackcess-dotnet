@@ -173,10 +173,11 @@ internal static class PropertyMapReader
 
     private static string DecodeName(byte[] buf, int pos, int len, JetFormat format)
     {
-        // Property names use the database charset (cp1252 for Jet3, UTF-16LE for Jet4+).
+        // Property names use the database charset (cp1252 for Jet3, UTF-16LE for Jet4+). A map's name is its column's,
+        // read as the definition's reader reads that: as the code units it holds (ByteUtil.DecodeUtf16).
         return format.Version == FileFormat.Access97
             ? format.TextEncoding.GetString(buf, pos, len)
-            : Encoding.Unicode.GetString(buf, pos, len);
+            : ByteUtil.DecodeUtf16(buf, pos, len);
     }
 
     private static object? DecodeValue(byte[] buf, int pos, int len, DataType dt, JetFormat format)
