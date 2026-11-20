@@ -383,6 +383,16 @@ changed since 1.2.2.
   column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
   change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's
   grew by 3. It grows by a page at most.
+- **A change a damaged index cannot take is refused, as Access refuses it** (#81). When an index, taken at its word,
+  does not hold a row's entry under the row's key - an entry under another key, or none, as an earlier version of
+  this library or another program can leave - an update that changes the row's key in that index, and a delete of
+  the row, throw `NotSupportedException` before anything is written. Access refuses both on such a file ("The search
+  key was not found in any record") and changes nothing; it makes an update of the row's other columns, and so does
+  this library. The update was made: the row's new entry went in beside its wrong one, the row was in the index
+  twice, and DAO's compaction copied the row twice and dropped the primary key. With `Database.VerifyIndexes` the
+  change is made and mends the index: an update moves the row's entry to its new key, and a delete takes out the
+  entry the row had under another key, which it left pointing at no row. In a sound index the check reads no page
+  more: the pages it reads are the ones the entry's removal goes down.
 
 ### Breaking changes to the public API
 

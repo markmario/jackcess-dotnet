@@ -1039,7 +1039,17 @@ public sealed class Table
             _old = _indexes.EntriesFor(oldRow, enforce: false);
             _new = _indexes.EntriesFor(newRow, enforce: true);
             if (_refuseDuplicates) _indexes.EnsureNoDuplicates(_new, replacedRowPointer: oldPointer);
+            // An entry the update takes out must be there, under the row's key, in an index taken at its word: Access
+            // refuses the change otherwise, and the row would be in the index twice (#81). The row keeps its slot, so
+            // the entries taken out are those whose key changes (Follow).
+            _held = _indexes.EnsureHeld(_old.Where(o => !_new.Any(n => Same(o, n))).ToList(), oldPointer);
         }
+
+        // The writer that found the entries the update takes out, holding the pages it read (TableIndexes.EnsureHeld).
+        private IndexWriter? _held;
+
+        private static bool Same(TableIndexes.Entry a, TableIndexes.Entry b)
+            => ReferenceEquals(a.Tree, b.Tree) && !a.IsCut && !b.IsCut && a.Key.AsSpan().SequenceEqual(b.Key);
 
         internal void Follow(int oldPointer, int newPointer)
         {
@@ -1050,12 +1060,10 @@ public sealed class Table
             var now = _new;
             if (oldPointer == newPointer && !_table._file.VerifyIndexes)
             {
-                bool Same(TableIndexes.Entry a, TableIndexes.Entry b)
-                    => ReferenceEquals(a.Tree, b.Tree) && !a.IsCut && !b.IsCut && a.Key.AsSpan().SequenceEqual(b.Key);
                 old = _old.Where(o => !_new.Any(n => Same(o, n))).ToList();
                 now = _new.Where(n => !_old.Any(o => Same(o, n))).ToList();
             }
-            _indexes.Remove(old, oldPointer);
+            _indexes.Remove(old, oldPointer, oldPointer == newPointer ? _held : null);
             _indexes.Add(now, newPointer);
         }
 
@@ -1105,7 +1113,16 @@ public sealed class Table
     internal void DeleteRowAt(int rowPtr)
     {
         _file.EnsureWritable();
-        RecordDeleted(rowPtr, _dataWriter.DeleteRowAt(_definition, rowPtr));
+        // The row's entries must be there, under its key, in an index taken at its word, before anything of it goes:
+        // Access refuses the delete otherwise (#81).
+        IReadOnlyList<TableIndexes.Entry> entries = Array.Empty<TableIndexes.Entry>();
+        IndexWriter? held = null;
+        _dataWriter.DeleteRowAt(_definition, rowPtr, values =>
+        {
+            entries = _indexes.EntriesFor(values, enforce: false);
+            held = _indexes.EnsureHeld(entries, rowPtr);
+        });
+        RecordDeleted(rowPtr, entries, held);
     }
 
     /// <summary>The values of <paramref name="columns"/> in the row at <paramref name="rowPtr"/>, or null when no row is there.</summary>
@@ -1118,12 +1135,12 @@ public sealed class Table
     internal TableIndexes IndexEntries => _indexes;
 
     /// <summary>What follows a row's deletion, however it was found: one row fewer, and its index entries gone.</summary>
-    private void RecordDeleted(int rowPtr, Row values)
+    private void RecordDeleted(int rowPtr, IReadOnlyList<TableIndexes.Entry> entries, IndexWriter? held)
     {
         _dataWriter.IncrementTdefRowCount(_definition.TdefPageNumber, -1);
 
         // Its index entries go with it: Access counts and finds rows through them.
-        _indexes.Remove(_indexes.EntriesFor(values, enforce: false), rowPtr);
+        _indexes.Remove(entries, rowPtr, held);
 
         // A cursor over an index holds nothing of a row it can no longer come to, once the delete is in for good.
         if (_indexCursors.Count > 0) _file.WhenKept(() => TellCursorsDeleted(rowPtr));

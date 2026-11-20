@@ -422,6 +422,12 @@ answered with the row that no longer has it, and that row is not found under the
   Text and Long, which was not measured - and an entry Access wrote, taken out on that judgement, is a row Access
   can then neither find, update nor delete. A row an index does not hold is a duplicate of nothing, as it is to
   Access, unless `VerifyIndexes` is set.
+- **A row the index does not hold under its key is not given a second entry**
+  ([#81](https://github.com/markmario/jackcess-dotnet/issues/81)). An update that changes the row's key in that
+  index, and a delete of the row, throw `NotSupportedException` before anything is written, as Access refuses
+  them ("The search key was not found in any record", measured with ACE and DAO on such a file); an update of the
+  row's other columns is made, as Access makes it. Made, the update left the row in the index twice, and DAO's
+  compaction copied it twice and dropped the key. `VerifyIndexes` makes such a change, and mends the index.
 - **With `VerifyIndexes`**, every entry an index was seen to hold that points at no row goes when the table's
   indexes are next changed, whatever the key; and an entry that points at a row whose key is another, where that
   key is one this library makes as Access does, is that row's wrong one: a row with the entry's key is taken,

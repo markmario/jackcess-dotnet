@@ -254,10 +254,16 @@ internal sealed class DataPageWriter
     /// values its index keys were made of. The caller takes one off the TDEF's row count.
     /// </summary>
     /// <exception cref="InvalidOperationException">No row of the table is at <paramref name="rowPtr"/>.</exception>
-    internal Row DeleteRowAt(TableDefinition table, int rowPtr)
+    /// <param name="table">The row's table.</param>
+    /// <param name="rowPtr">Where the row is.</param>
+    /// <param name="beforeChange">
+    /// Given the values the row's index keys are made of once the row is known to be one that is deleted, and
+    /// before anything is freed or written: what it throws leaves the row as it was.
+    /// </param>
+    internal Row DeleteRowAt(TableDefinition table, int rowPtr, Action<Row>? beforeChange = null)
     {
         var (page, rowBytes) = ReadLiveRow(table, rowPtr);
-        return Delete(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes);
+        return Delete(table, DecoderFor(table), page, RowPointer.Page(rowPtr), RowPointer.Row(rowPtr), rowBytes, beforeChange);
     }
 
     /// <summary>
@@ -518,7 +524,8 @@ internal sealed class DataPageWriter
     /// <summary>
     /// The one way a row is deleted, however it was found. Returns the values its index keys were made of.
     /// </summary>
-    private Row Delete(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex, byte[] rowBytes)
+    private Row Delete(TableDefinition table, RowDecoder decoder, byte[] page, int pageNumber, int rowIndex, byte[] rowBytes,
+                       Action<Row>? beforeChange)
     {
         // What its index keys were made of: every column kept in the row itself, and a Memo that is
         // indexed (read before its pages are freed).
@@ -536,6 +543,7 @@ internal sealed class DataPageWriter
 
         // A row whose index entries could not be taken out stays: nothing has changed yet.
         TableIndexes.EnsureEntriesCanBeRemoved(table, values);
+        beforeChange?.Invoke(values);
 
         // Free any LVAL chains referenced by this row.
         FreeRowLvalChains(table, rowBytes, decoder);
