@@ -81,20 +81,23 @@ namespace JackcessDotNet.AccessTests.Support
         private static string Probe()
         {
             if (!Environment.Is64BitProcess) return "the tests run in a 32-bit process; they are built for x64";
+            // Looked up in the registry, not made: an ACE object made and let go before the tests start is one more
+            // thing for the redistributable's own threads to trip over (see Dao). A ProgID can be registered with its
+            // DLL gone, so the DLL the class names must be there too.
             foreach (var progId in new[] { AceVerification.ProviderName, "DAO.DBEngine.120" })
             {
-                // A ProgID can be registered with its DLL gone, so the object is made, not only looked up.
-                var type = Type.GetTypeFromProgID(progId, throwOnError: false);
-                if (type == null) return progId + " is not registered";
-                try
+                using (var clsidKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(progId + @"\CLSID"))
                 {
-                    var instance = Activator.CreateInstance(type);
-                    if (instance != null && System.Runtime.InteropServices.Marshal.IsComObject(instance))
-                        System.Runtime.InteropServices.Marshal.FinalReleaseComObject(instance);
-                }
-                catch (Exception e)
-                {
-                    return progId + " is registered and cannot be made: " + e.Message;
+                    var clsid = clsidKey?.GetValue(null) as string;
+                    if (clsid == null) return progId + " is not registered";
+                    using (var server = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.ClassesRoot, Microsoft.Win32.RegistryView.Registry64)
+                        .OpenSubKey(@"CLSID\" + clsid + @"\InprocServer32"))
+                    {
+                        var dll = server?.GetValue(null) as string;
+                        if (dll == null) return progId + " is registered with no 64-bit server";
+                        dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
+                        if (!File.Exists(dll)) return progId + " is registered and its server, " + dll + ", is not there";
+                    }
                 }
             }
             return null;
