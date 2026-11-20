@@ -64,6 +64,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **A `bool`, text and a date for a number column are what Access stores for them**, `true` as -1, in every number
   type ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
+- **Two names are one as Access takes them**: by their text index keys, in the order Access compares names by,
+  measured with DAO on 18,140 pairs. A name one with another of its kind is refused, and a lookup finds the name
+  given exactly first. The engine took two names as one when they were equal without regard to case
+  ([Names](tables-and-schema.md#names)).
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds
   rows to them; and **Access generates the GUID** of a Replication ID AutoNumber the engine made. See
@@ -94,6 +98,9 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   ([How a table is written](tables-and-schema.md#how-a-table-is-written)).
 - **Dropping and renaming** a column, an index, a relationship or a table, which Jackcess does not do
   ([Dropping and renaming](tables-and-schema.md#dropping-and-renaming)).
+- **Names** are one as Access takes them, by their text index keys, where Jackcess takes two as one when they are
+  equal without regard to case: names in another width or kana, or with an accent written as one character or as
+  two, are one here, and `xµ` and `xμ` are two ([Names](tables-and-schema.md#names)).
 - **A one-to-one relationship's foreign key** has a unique index, as Access makes it, where Jackcess gives it a
   plain one ([Creating a relationship](relationships.md#creating-a-relationship)).
 - **Properties** Access wrote go back byte for byte, where Jackcess lists the names again and encodes every value

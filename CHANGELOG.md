@@ -13,6 +13,29 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A memo's text is stored as Access stores it** (#87). It was UTF-16LE whenever it went to a long-value page,
+  and a zero-length memo the two-byte compression marker. Measured with ACE 16: no text is no bytes, 1 or 2
+  characters UTF-16LE, and 3 to 1,908 characters that are all 0x01 to 0xFF compressed, a byte a character after
+  0xFF 0xFE; longer text, or text with another character, UTF-16LE. A Latin memo of up to 1,908 characters is half
+  the bytes it was. Text mixing the two, which ACE compresses in runs, is still UTF-16LE.
+- **A file is not grown past 2 GB** (#82). Access reads a longer file this library wrote, and cannot write to
+  it: ACE refused an insert into one of 2,160,779,264 bytes, "Cannot open database ''... may be corrupt", and took
+  one into a file of 2,140,618,752. The page that would pass 2,147,483,648 bytes is refused with the new
+  `DatabaseFullException` (an `IOException`, with `MaxLength`), and the change it was part of is taken back, as one
+  that fails part-way is. The engine wrote such files before: a table's usage map refused to grow only past
+  17 map pages, about 2.28 GB.
+- **Each index's count of its keys is written** (#82). Access keeps, in the table's definition (bytes 4-7 of each
+  tree's block of counts, Java Jackcess's `uniqueEntryCount`), a count of keys it plans queries by. The engine left
+  it as it was, so every index it filled was one Access took to have no keys. It now writes, for a tree built whole,
+  the number of its keys, and adds one for each row inserted under a key no row had, in the write of the definition
+  an insert makes anyway: no page more. An update or delete changes nothing. Beside ACE's twin of an export the
+  counts are equal in all 35 of the template's indexes; Access's own updates and deletes move them in ways not fully
+  measured.
+- **A long change no longer holds a copy of a kept page for every write of it** (#82). A change kept for undoing
+  noted the header's and the global usage map's pages as they were at every write of them, and the global usage
+  map is written for every page a change adds: a batch of a million rows held a copy of it for each page it
+  added, 300 MB for an export of 50,000 documents. It notes each as it was before the change first wrote it, which
+  is all taking the change back needs.
 - **Package ID `Jackcess.Net`.** nuget.org's `JackcessDotNet` is the other port's package. The
   assembly and namespace are still `JackcessDotNet`.
 - **Targets `net10.0`, `net11.0`, `net48` and `netstandard2.0`** (it was `net8.0`, `net472` and
@@ -314,20 +337,36 @@ changed since 1.2.2.
   database DAO had created, nor drop a relationship it made.
 - **A primary key made with a table is unique and required** (its block's flags `0x89`), and **an index that
   is no relationship's has 4 in its slot's two cascade bytes**, as Access writes both (#37).
-- **Two columns whose names differ only in case are refused.** `CreateTable` made a table of two columns named
-  `A` and `a`, and a row then kept one value for the two (DAO saw one column); it now refuses them with
-  `ArgumentException` before anything is written, as an import does. A call that made such a table now throws: a
-  change toward refusing, which writes nothing wrong. Names are compared as before, as .NET compares them without
-  regard to case (`StringComparison.OrdinalIgnoreCase`), which is how this library looks them up, for a table,
-  column, index and relationship. That is not yet Access's own rule: measured with DAO, Access also takes as one
-  names that differ in width, in kana or in an accent written as one character or two, which are two here; and it
-  keeps apart some names .NET takes as one - `xµ` and `xμ`, and letters of other scripts that .NET's newer case
-  tables pair - which are one here on .NET, and two on .NET Framework.
-- **`GetTable` and `TryGetTable` find the table of exactly the name asked for**, when there is one, and only then
-  one of that name without regard to case: in a file Access made with tables `xµ` and `xμ`, on .NET, either could
-  be found for the other, and so dropped, renamed or written to in its place. `RenameTable` compares the new name
-  with every other object's, leaving the table out by what it is, not by its name, and changes the relationships
-  that name the table and no other's.
+- **Two names are one as Access takes them** (#44, #63). A table, column, index or relationship is refused a name
+  that is one with another of its kind, before anything is written, as Access refuses it: by the names' text index
+  keys, in the order Access compares names by, as DAO 16 and Jet 4.0 were measured to decide it for 18,140 pairs of
+  names ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). Names
+  in another case, width or kana, or with an accent written as one character or as two, are one; `xµ` and `xμ`,
+  and `I` and `ı`, are two, on every target. In a database that sorts in General, a name is compared by General's
+  keys and General - Legacy's: Access compares some names there by the one and some by the other, a column's as its
+  process has gone, so some names DAO makes there are refused. Names were compared as .NET compares them without
+  regard to case, which kept apart names Access takes as one and took as one names Access keeps apart. `CreateTable`
+  made a table of two columns named `A` and `a`, and a row then kept one value for the two; it now refuses them, as
+  an import does. A call that made such names now throws: a change toward refusing, which writes nothing wrong.
+- **A lookup by name finds the name given exactly first** (#63) - `GetTable`, `TryGetTable`, a table's columns
+  and indexes, a `Row`'s entries, a join's columns, an export's properties and an import's columns - and only then
+  the first name Access takes as one with it. In a file Access made with tables `xµ` and `xμ`, on .NET, either could
+  be found for the other, and so dropped, renamed or written to in its place. A row of a table with two columns
+  whose names are one, which Access lets a file have, has an entry for each, and an insert writes each value to its
+  own column; the foreign keys enforced, a table's long-value maps and its property maps are kept by the exact
+  name too. `RenameTable` compares the new name with every other object's, leaving the table out by what it is, not
+  by its name, and changes the relationships that name the table and no other's.
+- **A new column, index or relationship name in a database of another order** (#63): in a database whose text
+  sorts in an order whose keys this library does not make, Access compares such names by that order's keys, and
+  takes as one names General - Legacy keeps apart (in Swedish, an index `xʎ` beside `xÜ`). There a new name is
+  compared with the others by General - Legacy's keys and without regard to case (`OrdinalIgnoreCase`), and refused
+  with `ArgumentException`, before anything is written, only when it is one with another by either: not that
+  order's own rule, which this library does not have
+  ([Names](https://github.com/markmario/jackcess-dotnet/blob/main/docs/tables-and-schema.md#names)). It was compared
+  without regard to case alone.
+- **Text with half of a surrogate pair alone in it is read and written as it is** (#63): a name or a value Access
+  kept with one was read with U+FFFD in its place, so a table or column of such a name was found by no name, and a
+  value read and written back lost it. A new name with one is refused with `NotSupportedException`.
 - **Protected files open as Access opens them** (#46). Measured against files ACE 16 and Jet 4.0 made
   (`tools/protected-fixtures.ps1`, whose files the tests now read in place of returning early):
   - **An .mdb's database password is checked**, exactly, as Access checks it: opened without it, or with
@@ -541,6 +580,16 @@ changes with them.
   `Row.FromValues` are removed, and `GetValue<T>` and `IsNull` added. **A row that is read has an entry for
   every column, `null` for a column with no value** (it had no entry for one), so `ContainsKey` no longer says
   whether a value is null.
+- **A `Row` a caller makes holds each value under the name given, exactly** (#63). This compiles unchanged; it is
+  here because a row given one column's value by two names does what it did not. The indexer's set, `Add` and
+  `Remove` go by the exact name alone, so `row["Name"]` and `row["NAME"]` are two entries; a value is still read by
+  a name in another case. A name finds its column where the row meets a table: `Insert`, `InsertRange`, `Update`
+  and `Validate` give each name the column of exactly that name, and otherwise the one a lookup of it finds, and
+  refuse two names that go to one column with `ArgumentException`, naming both and the column, before anything is
+  written. Such a row kept the value set last: `new Row { ["Id"] = 1, ["ID"] = 2 }` inserted 2, and now throws. An
+  AutoNumber is given back under the row's name for its column, by `InsertRange` and `BulkInsert` too. A row read
+  from a table sends a name of another spelling to the column a lookup of it finds in the table, as an insert does,
+  whichever columns it was read with.
 - **`DataType` members are renamed** (their values are not): `Int` is `Int16`, `Long` is `Int32`, `BigInt` is
   `Int64`, `Float` is `Single`, `Numeric` is `Decimal`, `ShortDateTime` is `DateTime`, `Money` is `Currency`,
   `Ole` is `OleObject`, `ExtendedDateTime` is `DateTimeExtended`.
@@ -627,6 +676,27 @@ changes with them.
   (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
   an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
+- **Indexes built once, page after page** (#82). `Table.InsertRange` into a table with no rows, and the new
+  `Table.BulkInsert`, put the rows in without index entries and then build each index from the table's rows:
+  sorted, and written leaf after leaf as Access builds an index when it compacts a file. `Table.AddIndex` builds
+  its tree the same way. Keeping every index row by row cost an export of 13 rows a document into a template with
+  35 indexes 11.5 ms a document; loaded so it costs 0.6 ms, against 0.46 ms for the same rows with no index. A
+  duplicate in a unique index or primary key is refused when the trees are built, naming the row row by row would
+  name - the earliest that duplicates one before it - and nothing written; a row refused for something else is named
+  ahead of it. A failure while the trees are built that is no row's is thrown as itself, an `IOException`. While a batch is going in the table's indexes hold none of its rows, so a sequence
+  of rows that looks in the table through an index does not find them; a table that has rows, a table in an
+  enforced relationship and one with an index cursor open are filled row by row as before. Keys past 64 MB are
+  sorted in runs in temporary files; the last entry of each page written is held for the levels above, about 75
+  bytes a row with 510-byte keys (measured live: 34 MB at 50,000 rows, 91 MB at 450,000).
+- **`Table.BulkInsert(rows)`** (#82) inserts rows all or none, as `InsertRange` does, going through them once and
+  holding none of them, for loading many rows. A refused batch leaves the rows inserted before the refusal
+  holding the AutoNumber values they were given; `InsertRange`, which holds every row, gives them back as they
+  came.
+- **`Table.FindDuplicates(rows)`** (#82) names every set of rows a unique index or primary key would refuse as
+  duplicates, of one another or of a row already in the table, by the index's key as Access compares them: text
+  that differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter,
+  "ß" and "ss", "æ" and "ae") is one key. `DuplicateRows` gives the index, the rows' places, and whether a row of
+  the table has the key. `Validate` looks at one row against the table; this looks at a batch.
 - **`Joiner`** finds the rows of one table that go with a row of another through an index, either way (#29).
 - **A primary key for a table that has rows**: `Table.AddIndex` with `IndexDefinition.IsPrimaryKey` (#37).
 - **Dropping and renaming** (#37): `Table.DropColumn`, `DropIndex`, `RenameColumn` and `RenameIndex`;

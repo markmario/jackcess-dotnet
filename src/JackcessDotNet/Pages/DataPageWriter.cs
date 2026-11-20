@@ -82,7 +82,7 @@ internal sealed class DataPageWriter
             if (col.DataType.IsLongValue() &&
                 tableDef.LvalColumnUmapPages.TryGetValue(col.Name, out var umapRef))
             {
-                lvalWriters ??= new Dictionary<string, LvalWriter>(StringComparer.OrdinalIgnoreCase);
+                lvalWriters ??= new Dictionary<string, LvalWriter>(StringComparer.Ordinal);
                 lvalWriters[col.Name] = new LvalWriter(_file, _allocator, umapRef);
             }
         }
@@ -107,13 +107,15 @@ internal sealed class DataPageWriter
     /// table's Long auto-number counter - the counter's new value. Both go in one write, after the row is on its
     /// page, so the counter never runs ahead of the rows nor falls behind them.
     /// </summary>
-    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber)
+    internal void RecordInsert(int tdefPageNumber, int? lastAutoNumber, IReadOnlyDictionary<int, int>? newKeys = null)
     {
         var format   = _file.Format;
         var tdefPage = _file.ReadPage(tdefPageNumber);
         ByteUtil.PutInt(tdefPage, format.TdefOffsetNumRows, ByteUtil.GetInt(tdefPage, format.TdefOffsetNumRows) + 1);
         if (lastAutoNumber is { } last)
             ByteUtil.PutInt(tdefPage, format.TdefOffsetLastAutoNumber, last);
+        // The keys the row's entries added that no other row had: the count Access keeps of each index's keys.
+        TableIndexes.PutKeyCounts(tdefPage, format, newKeys);
         _file.WritePage(tdefPageNumber, tdefPage);
     }
 
@@ -303,8 +305,10 @@ internal sealed class DataPageWriter
         // index keys were made of it (a date as the double stored, an extended date as its 42 bytes), for its
         // entries to be found. A long value that is kept and is in no index is not read at all: nothing asks what
         // it holds.
-        var old    = new Row();
-        var merged = new Row();
+        // Each by its columns' names exactly: the new values have them (RowValues.AsWritten), and a table can have two
+        // columns whose names are one to Access.
+        var old    = new Row(table.Columns.Count, table.Names, exactOnly: true);
+        var merged = new Row(table.Columns.Count, table.Names, exactOnly: true);
         foreach (var col in table.Columns)
         {
             if (col.DataType.IsLongValue() && kept.ContainsKey(col)
@@ -312,15 +316,15 @@ internal sealed class DataPageWriter
                 continue;
             object? existing = decoder.Decode(rowBytes, col);
             if (existing is not null)
-                merged[col.Name] = existing;
+                merged.Put(col.Name, existing);
             object? keyed = col.DataType is DataType.DateTime or DataType.DateTimeExtended ? decoder.DecodeForKey(rowBytes, col) : existing;
             if (keyed is not null)
-                old[col.Name] = keyed;
+                old.Put(col.Name, keyed);
             if (keepStoredDates && keyed is double or StoredExtendedDate)
-                merged[col.Name] = keyed;
+                merged.Put(col.Name, keyed);
         }
         foreach (var kvp in newValues)
-            merged[kvp.Key] = kvp.Value;
+            merged.Put(kvp.Key, kvp.Value);
 
         // The new row whole, but for the long values still to go to their pages: a value its column cannot hold,
         // or one not of its type, or a row too large for the format is refused here, with nothing changed. Refused
@@ -529,11 +533,11 @@ internal sealed class DataPageWriter
     {
         // What its index keys were made of: every column kept in the row itself, and a Memo that is
         // indexed (read before its pages are freed).
-        var values = new Row();
+        var values = new Row(table.Columns.Count, table.Names, exactOnly: true);
         foreach (var col in table.Columns)
             if ((!col.DataType.IsLongValue() || table.Indexes.Any(ix => ix.Columns.Any(c => c.Column.Ordinal == col.Ordinal)))
                 && decoder.DecodeForKey(rowBytes, col) is { } stored)
-                values[col.Name] = stored;
+                values.Put(col.Name, stored);
 
         // A table with a calculated column is not written to, and a delete is a write (qcatco/exportmdb.interop#42).
         if (table.Columns.FirstOrDefault(c => c.IsCalculated) is { } calculated)
@@ -588,10 +592,11 @@ internal sealed class DataPageWriter
     {
         if (TryReadLiveRow(table, rowPtr) is not { } found) return null;
         var decoder = DecoderFor(table);
-        var row = new Row();
+        // By the columns' names exactly: a column with no value has no entry, and no other column's is found for it.
+        var row = new Row(columns.Count, table.Names, exactOnly: true);
         foreach (var column in columns)
             if (decoder.DecodeForKey(found.RowBytes, column) is { } value)
-                row[column.Name] = value;
+                row.Put(column.Name, value);
         return row;
     }
 
@@ -604,9 +609,9 @@ internal sealed class DataPageWriter
     {
         if (TryReadLiveRow(table, rowPtr) is not { } found) return null;
         var decoder = DecoderFor(table);
-        var row = new Row();
+        var row = new Row(0, table.Names, exactOnly: true);
         foreach (var column in columns)
-            row[column.Name] = decoder.Decode(found.RowBytes, column);
+            row.Put(column.Name, decoder.Decode(found.RowBytes, column));
         return row;
     }
 

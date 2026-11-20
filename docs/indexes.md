@@ -19,6 +19,53 @@ it cannot write: text in any other sort order, or a column type it makes no key 
 complex column). It still reads such a table. Whether a table takes rows can be asked first, with
 `Table.InsertRefusal` ([When a change is refused](cursors-and-rows.md#when-a-change-is-refused)).
 
+## Indexes built page after page
+
+A row's entry goes into each index of its table as the row is inserted: the tree is read from its root to the
+leaf the entry belongs in, the leaf written, and split when it is full. For a table of 35 indexes that is several
+page reads and writes for each row and each index. Access does not build an index that way when it compacts a
+file: it sorts the keys and writes the tree page after page. This library does the same wherever a tree begins
+empty:
+
+- **`Table.AddIndex`** builds the new tree from the table's rows, sorted.
+- **`Table.InsertRange` and `Table.BulkInsert` into a table with no rows**, whose indexes hold no entry, put the
+  rows in with no index entries and then build every tree from the table's rows, inside the batch's undo scope.
+  Not when a relationship the table is in is enforced, or a cursor over its indexes is open: then each row is
+  entered as it goes in. A table that has rows is always filled row by row.
+
+Each leaf takes entries until the next does not fit it; each node above holds a copy of the last entry under each
+child but its last, and its tail leads to the last; every level is chained, and every page but the root - which
+stays on its page - goes into the index's usage map: the rules a row's insert keeps, so Access reads and adds to
+the tree, and so does this library. A tree holds the same entries in the same order either way.
+
+What changes while a batch goes into an empty table: a duplicate in a unique index or primary key is found once
+every row is in, not at the row. The row named is the one row by row would name - the earliest of the batch that
+duplicates a row before it, in any unique index or the primary key - with the value, and nothing is left in the
+table; but a row refused for something else, a value too long, is named ahead of a duplicate at an earlier row,
+as every row is in before any duplicate is looked for. A failure while the trees are built that is no row's - the
+file or the sort's temporary folder could not be written - is thrown as itself, an `IOException`, with nothing left; and until the batch is in, the table's indexes hold none of its rows, so a sequence of rows
+that looks in the table through an index as it is gone through does not find them.
+
+**What it costs.** An export of 13 rows a document into a template of four tables and 35 indexes (ExportMdb's,
+measured with its `ExportCostTests`): kept row by row, 11.5 ms a document at 2,000 documents and growing with the
+export; built once its rows are in, 0.65 ms at 10,000 documents, 0.67 at 50,000 and 0.68 at 200,000, against
+0.51 to 0.56 ms for the same rows with no index. **Memory**: one tree's keys are sorted at a time, up to 64 MB of
+them in memory and the rest in sorted runs in temporary files (deleted when the build ends); as the tree is
+written, the last entry of each of its pages is held too, for the levels above - about 75 bytes a row with keys of
+510 bytes. Measured live with such keys: 34 MB at 50,000 rows, 76 MB at 150,000, 91 MB at 450,000. The rows
+themselves are not held by `BulkInsert`. An index adds to the file what its keys take: 22% for that export, 77% when every row has a text
+key of 510 bytes ([How a file grows](storage.md#how-a-file-grows)).
+
+## The count of an index's keys
+
+Access keeps in a table's definition, for each tree, a count of keys (Java Jackcess's `uniqueEntryCount`): a
+statistic it plans a query by - an index whose count is 0 is one it takes to be empty - which no reader checks
+against the tree. This library writes, for a tree built whole, the number of its keys, and adds one for each row
+inserted under a key no other row had, in the write of the table's definition the insert makes anyway; an update
+or a delete changes nothing. Beside ACE's twin of an export the counts are equal in every index (ExportMdb.Interop's
+`IndexedExportTwinAuditTests`). Access's own updates and deletes move it in ways not fully measured: after ACE
+deleted rows of a table, one count went from 5,000 to 2,833 with 4,333 rows left.
+
 ## An index is trusted
 
 An index is trusted to hold every row of its table, as Access and Java Jackcess trust one: rows are found through

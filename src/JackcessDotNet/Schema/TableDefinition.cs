@@ -97,7 +97,50 @@ internal sealed class TableDefinition
     /// Populated by <see cref="Database.CreateTable(string, IEnumerable{ColumnDefinition}, string[])"/> before <see cref="Serialize"/> is called.
     /// </summary>
     public Dictionary<string, LvalUmapRef> LvalColumnUmapPages { get; }
-        = new Dictionary<string, LvalUmapRef>(StringComparer.OrdinalIgnoreCase);
+        = new Dictionary<string, LvalUmapRef>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// How the names of the table's columns and indexes are one to Access (<see cref="ObjectNames"/>): by General -
+    /// Legacy's keys, or in an Access 97 file by Access 97's.
+    /// </summary>
+    internal ObjectNames Names { get; set; } = ObjectNames.GeneralLegacy;
+
+    private HashSet<string>? _columnNameSet;
+
+    /// <summary>The names of the table's columns, exactly as the definition has them.</summary>
+    internal HashSet<string> ColumnNameSet => _columnNameSet ??= new HashSet<string>(Columns.Select(c => c.Name), StringComparer.Ordinal);
+
+    private bool? _hasColumnsThatAreOne;
+
+    /// <summary>
+    /// Whether two of the table's columns have names Access takes as one: a table Access let have them - it makes two
+    /// fields "x" and "x " - whose columns this library looks up only by their exact names when it writes a row.
+    /// </summary>
+    internal bool HasColumnsThatAreOne => _hasColumnsThatAreOne ??= Names.FirstTwoThatAreOne(Columns.Select(c => c.Name).ToList()) is not null;
+
+    /// <summary>
+    /// The column a lookup of <paramref name="name"/> finds: the column of exactly that name, or else the first whose
+    /// name Access takes as one with it (<see cref="ObjectNames.Find"/>); null when there is none.
+    /// </summary>
+    internal Column? FindColumn(string name)
+    {
+        for (int i = 0; i < Columns.Count; i++)
+            if (Columns[i].Name == name) return Columns[i];
+        int at = Names.Find(_columnNames ??= Columns.Select(c => c.Name).ToList(), name);
+        return at < 0 ? null : Columns[at];
+    }
+
+    // The columns' names in their order, for a lookup by a name of another spelling: a row a table gave looks up so.
+    private List<string>? _columnNames;
+
+    /// <summary>The index a lookup of <paramref name="name"/> finds, as <see cref="FindColumn"/> finds a column; null when there is none.</summary>
+    internal Index? FindIndex(string name)
+    {
+        for (int i = 0; i < Indexes.Count; i++)
+            if (Indexes[i].Name == name) return Indexes[i];
+        int at = Names.Find(Indexes.Select(ix => ix.Name).ToList(), name);
+        return at < 0 ? null : Indexes[at];
+    }
 
     /// <summary>
     /// The table's indexes: parsed from the on-disk TDEF, or those it was created with
@@ -150,8 +193,7 @@ internal sealed class TableDefinition
         if (pkColumns.Count == 0 || PrimaryKeyIndexPage <= 0) return Array.Empty<Index>();
 
         var columns = pkColumns.Select(name => new IndexColumn(
-            Columns.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"Primary key column '{name}' not found in table '{Name}'."),
+            FindColumn(name) ?? throw new InvalidOperationException($"Primary key column '{name}' not found in table '{Name}'."),
             AscendingColumnFlag)).ToList();
         return new[]
         {

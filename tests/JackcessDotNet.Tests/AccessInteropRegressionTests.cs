@@ -86,6 +86,27 @@ public sealed class AccessInteropRegressionTests : IDisposable
         Assert.Equal(value, RoundTripMemo(value));
     }
 
+    // Half of a surrogate pair alone in text is kept as Access keeps it: written and read as the code units it is - in
+    // a Text column's value, a Memo's in its row and a Memo's on pages of its own - where Encoding.Unicode puts U+FFFD.
+    [Fact]
+    public void Text_with_half_of_a_surrogate_pair_alone_is_written_and_read_as_its_code_units()
+    {
+        string text = "A\uD800B", memo = "\uDC00" + new string('\u30C6', 3000) + "\uD800";
+        using (var db = Database.Create(_path, FileFormat.Access2000))
+        {
+            db.CreateTable("T", new[]
+            {
+                new ColumnDefinition("Id", DataType.Int32),
+                new ColumnDefinition("S", DataType.Text) { MaxLength = 50 },
+                new ColumnDefinition("M", DataType.Memo),
+                new ColumnDefinition("L", DataType.Memo),
+            }, "Id").Insert(new Row { ["Id"] = 1, ["S"] = text, ["M"] = text, ["L"] = memo });
+        }
+        using var reopen = Database.Open(_path);
+        var row = reopen.GetTable("T").Rows.Single();
+        Assert.Equal((text, text, memo), ((string)row["S"]!, (string)row["M"]!, (string)row["L"]!));
+    }
+
     // ── 2 & 3. LvRef format and inline threshold ─────────────────────────────
     // The type lives in the TOP TWO BITS of the 32-bit length:
     //   0x80000000 THIS_PAGE (inline, data at offset 12)

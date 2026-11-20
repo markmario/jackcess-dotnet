@@ -353,14 +353,25 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
 
     internal void Changed() => IsDirty = true;
 
-    // What each column's properties say of it in the file: Required, and Allow Zero Length when it has one.
-    private readonly Dictionary<string, (bool Required, bool? AllowZeroLength)> _saved = new(StringComparer.OrdinalIgnoreCase);
+    // What each column's properties say of it in the file: Required, and Allow Zero Length when it has one. By the
+    // columns' names exactly, as the maps are (KeyComparer).
+    private readonly Dictionary<string, (bool Required, bool? AllowZeroLength)> _saved = new(StringComparer.Ordinal);
 
     /// <summary>Whether the file has the column as required. A change not yet saved does not count: Access does not see it.</summary>
-    internal bool SavedRequired(string column) => _saved.TryGetValue(column, out var rules) && rules.Required;
+    internal bool SavedRequired(string column) => SavedRules(column) is { Required: true };
 
     /// <summary>What the file's AllowZeroLength property of the column says, or null when it has none.</summary>
-    internal bool? SavedAllowZeroLength(string column) => _saved.TryGetValue(column, out var rules) ? rules.AllowZeroLength : null;
+    internal bool? SavedAllowZeroLength(string column) => SavedRules(column)?.AllowZeroLength;
+
+    // The rules of the column's map as the file has it: the map of exactly its name, or else of one Access takes as one
+    // with it (ObjectNames), as a lookup finds a column.
+    private (bool Required, bool? AllowZeroLength)? SavedRules(string column)
+    {
+        if (_saved.TryGetValue(column, out var rules)) return rules;
+        var names = _saved.Keys.ToList();
+        int at = ObjectNames.GeneralLegacy.Find(names, column);
+        return at < 0 ? null : _saved[names[at]];
+    }
 
     private static (bool, bool?) RulesOf(PropertyMap map)
         => (map["Required"] is true, map.TryGetValue("AllowZeroLength", out var allow) ? allow is not false : null);
@@ -447,9 +458,17 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
     /// <summary>The unnamed (table-level) property map, made when there is none.</summary>
     public PropertyMap Default => GetOrAdd(string.Empty, PropertyMap.DefaultType);
 
-    /// <summary>Returns the column map for <paramref name="name"/> (a column name) or null.</summary>
+    /// <summary>
+    /// Returns the column map for <paramref name="name"/> (a column name) or null: the map of exactly that name, or
+    /// else of a name Access takes as one with it, in another case or width, say.
+    /// </summary>
     public PropertyMap? Get(string name)
-        => _maps.TryGetValue((name, PropertyMap.ColumnType), out var m) ? m : null;
+    {
+        if (_maps.TryGetValue((name, PropertyMap.ColumnType), out var m)) return m;
+        var columns = _inOrder.Where(map => map.Type == PropertyMap.ColumnType).ToList();
+        int at = ObjectNames.GeneralLegacy.Find(columns.Select(map => map.Name).ToList(), name);
+        return at < 0 ? null : columns[at];
+    }
 
     /// <summary>Whether there is a map of that name and block type.</summary>
     internal bool Has(string name, short type) => _maps.ContainsKey((name, type));
@@ -500,14 +519,16 @@ internal sealed class PropertyMaps : System.Collections.Generic.IEnumerable<Prop
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
         => GetEnumerator();
 
+    // A map by its name exactly and its block's type: a table can have two columns whose names .NET, or Access, takes
+    // as one, and each has its own map (#63).
     private sealed class KeyComparer : IEqualityComparer<(string Name, short Type)>
     {
         internal static readonly KeyComparer Instance = new();
 
         public bool Equals((string Name, short Type) x, (string Name, short Type) y)
-            => x.Type == y.Type && string.Equals(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
+            => x.Type == y.Type && string.Equals(x.Name, y.Name, StringComparison.Ordinal);
 
         public int GetHashCode((string Name, short Type) key)
-            => StringComparer.OrdinalIgnoreCase.GetHashCode(key.Name) ^ key.Type;
+            => StringComparer.Ordinal.GetHashCode(key.Name) ^ key.Type;
     }
 }

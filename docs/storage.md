@@ -72,6 +72,11 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 ## Long values
 
 - **A memo or OLE value is kept in its row only up to 64 bytes**, Access's own limit.
+- **A memo's text is stored as Access stores it** ([#87]), measured with ACE 16 on a column with Unicode compression:
+  no text is no bytes; 1 or 2 characters are UTF-16LE; 3 to 1,908 characters that are all 0x01 to 0xFF are
+  compressed, 0xFF 0xFE and a byte each, so never more than one long-value row; anything longer, or with another
+  character, is UTF-16LE. ACE also compresses text that mixes the two in runs; this library writes it as UTF-16LE,
+  which every reader reads the same.
 - **Long values are placed as Access places them**: every chunk of a value too long for one page (4,076 bytes)
   has a page to itself. Access gives every page of such a value back to the file when the value is deleted or
   replaced, so a page shared with another value loses that value. `Database.ShareLongValuePages = true` keeps the
@@ -90,7 +95,12 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 ## How a file grows
 
 - **Files up to the format's own limit.** A table's usage map grows past its first window of pages, as
-  Access's does, up to the 2 GB a Jet file can be.
+  Access's does, up to the 2 GB a Jet file can be. The page that would make the file longer than 2,147,483,648
+  bytes is refused with `DatabaseFullException`, and the change it was part of taken back: ACE reads a longer
+  file and cannot write to it ("Cannot open database ''... may be corrupt", measured on 2,160,779,264 bytes).
+- **An index takes room of its own.** Its tree holds every row's key, so a table with indexes reaches the limit
+  sooner: an export of ExportMdb's shape is 22% larger with the template's 35 indexes, and 77% larger when every
+  row has a text key of 510 bytes ([Indexes built page after page](indexes.md#indexes-built-page-after-page)).
 - **Pages this library adds are taken out of the database's free-page map**, so Access does not hand them out
   again and write over them.
 - **Pages given back** - a dropped index's, a dropped column's long values - are free in the database's own map
@@ -102,3 +112,4 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
 [Back to contents](README.md)
 
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58
+[#87]: https://github.com/markmario/jackcess-dotnet/issues/87
