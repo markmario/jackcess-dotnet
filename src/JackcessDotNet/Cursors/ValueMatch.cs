@@ -156,6 +156,8 @@ internal static class ValueMatch
         {
             (double a, double b) => BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b),
             (float a, float b)   => BitConverter.GetBytes(a).AsSpan().SequenceEqual(BitConverter.GetBytes(b)),
+            // A Decimal's negative zero is another value than its zero, as the row stores them (#80).
+            (decimal a, decimal b) => a == b && decimal.GetBits(a)[3] < 0 == decimal.GetBits(b)[3] < 0,
             (string a, string b) => string.Equals(a, b, StringComparison.Ordinal),
             (byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b),
             _                    => read.GetType() == given.GetType() && Equals(read, given),
