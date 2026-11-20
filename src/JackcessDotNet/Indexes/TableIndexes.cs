@@ -718,11 +718,55 @@ internal sealed class TableIndexes
         if (tree.IsUnique) Close();
     }
 
-    /// <summary>Takes <paramref name="entries"/> out of their indexes for the row that was at <paramref name="rowPointer"/>.</summary>
-    public void Remove(IReadOnlyList<Entry> entries, int rowPointer)
+    /// <summary>
+    /// Refuses, before anything is written, a change that must take <paramref name="entries"/>, the entries of the row
+    /// at <paramref name="rowPointer"/>, out of their indexes, when an index taken at its word does not hold one of
+    /// them under the row's key: a damaged index, which an earlier version of this library or another program can
+    /// leave. Access refuses such an update of the row's key, and such a delete, with "The search key was not found
+    /// in any record", and changes nothing; an update of its other columns, which takes no entry out, it makes
+    /// (measured with ACE 16 and DAO, #81). Without the refusal the row's new entry was added beside its wrong one,
+    /// the row was in the index twice, and DAO's compaction copied it twice and dropped the primary key.
+    /// <para>
+    /// Returns the writer that looked, which keeps the pages it read: <see cref="Remove"/> given it goes down the
+    /// same pages again without reading them, so a change in a sound index reads no more pages for the check. With
+    /// <see cref="Database.VerifyIndexes"/> nothing is looked at here and null is returned: the change mends the
+    /// index (#66). An entry this library may not key as Access does - a key cut in an index of columns the cut was
+    /// not measured in (<see cref="IndexKeys.MatchesAccess"/>), a Date/Time Extended value an earlier version keyed
+    /// otherwise (<see cref="EarlierVersionsEntriesOf"/>) - is not judged, and <see cref="Remove"/> looks for it as
+    /// it always has; nor is one under a node of the form earlier versions wrote, which only a change rewrites.
+    /// </para>
+    /// </summary>
+    /// <exception cref="NotSupportedException">An index does not hold one of the row's entries. Nothing was changed.</exception>
+    public IndexWriter? EnsureHeld(IReadOnlyList<Entry> entries, int rowPointer)
+    {
+        if (_file.VerifyIndexes || entries.Count == 0) return null;
+        var writer = new IndexWriter(_file, _allocator);
+        writer.RememberPagesRead();
+        foreach (var entry in entries)
+        {
+            bool held = entry.IsCut
+                ? StoredUnder(writer, entry).Any(stored => stored.RowPointer == rowPointer)
+                : writer.Holds(entry.Tree.Target, entry.Key, rowPointer) != false;
+            if (held || !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values)
+                     || EarlierVersionsEntriesOf(entry, asFrom2930d3f: true).Any()) continue;
+            throw new NotSupportedException(
+                $"{_table.Name}'s {Describe(entry.Tree)} does not hold the row under its key, " +
+                $"{string.Join(", ", entry.Tree.Columns.Select((c, i) => $"{Shown(entry.Values[i])} for {c.Column.Name}"))}: " +
+                "the index is damaged, or an earlier version of this library left the row out of it, and Access refuses the change as " +
+                "this library does (\"The search key was not found in any record\"). Setting Database.VerifyIndexes makes the change " +
+                "and mends the index. Nothing was changed.");
+        }
+        return writer;
+    }
+
+    /// <summary>
+    /// Takes <paramref name="entries"/> out of their indexes for the row that was at <paramref name="rowPointer"/>,
+    /// through <paramref name="writer"/> when <see cref="EnsureHeld"/> returned one for them.
+    /// </summary>
+    public void Remove(IReadOnlyList<Entry> entries, int rowPointer, IndexWriter? writer = null)
     {
         if (entries.Count == 0) return;
-        var writer = new IndexWriter(_file, _allocator);
+        writer ??= new IndexWriter(_file, _allocator);
         TakeOutEntriesSeenToBeNoRows(writer);
         foreach (var entry in entries)
         {
@@ -749,11 +793,21 @@ internal sealed class TableIndexes
                 // for there. A row whose key this library may not make as Access does - one cut in an index of
                 // columns the cut was not measured in - can be under a key this library does not make: when its entry
                 // is not under its own key, its entries are found by the row they point at, every leaf of the index
-                // read, so that none is left pointing where the row was. Any other row with no entry - one an earlier
-                // version of this library wrote without keeping the index - has nothing to take out, and that is no
-                // error: the row is gone and the index holds nothing of it, which is what a delete is for.
-                if (!RemoveAsEarlierVersionsKeyedIt(writer, entry, rowPointer) && !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
+                // read, so that none is left pointing where the row was. Any other row has no entry under its key only
+                // where the index is not taken at its word (Database.VerifyIndexes): with the index trusted, EnsureHeld
+                // refused the change before anything was written, as Access refuses it (#81) - a row an earlier version
+                // of this library wrote without keeping the index among them. Verified, such a row may have no entry at
+                // all, which leaves nothing to take out, or one under another key: the index is looked at, once in the
+                // session, and the entries it holds that are no row's - this row's wrong one among them, the row being
+                // gone or rewritten - go.
+                bool removed = RemoveAsEarlierVersionsKeyedIt(writer, entry, rowPointer);
+                if (!removed && !IndexKeys.MatchesAccess(entry.Tree.Columns, entry.Values))
                     RemoveByPointer(writer, entry.Tree, rowPointer);
+                else if (!removed && _file.VerifyIndexes && !_file.IndexesChecked.ContainsKey(Which(entry.Tree)))
+                {
+                    Look(new[] { entry.Tree });   // a look part-way through a change is forgotten if it is taken back
+                    TakeOutEntriesSeenToBeNoRows(writer);
+                }
                 continue;
             }
             if (ComparesRows(entry) && (another || entry.IsCut))

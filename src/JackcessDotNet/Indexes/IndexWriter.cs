@@ -587,6 +587,25 @@ internal sealed class IndexWriter
     }
 
     /// <summary>
+    /// Whether the tree holds the entry (<paramref name="key"/>, <paramref name="rowPointer"/>), found one way down
+    /// as <see cref="Remove(Target, byte[], int, out bool)"/> goes, the same pages read and nothing written; null
+    /// when a node on the way is in the form earlier versions of this library wrote, without a tail, which only a
+    /// change brings to the form the way down is decided by.
+    /// </summary>
+    internal bool? Holds(Target target, byte[] key, int rowPointer)
+    {
+        var entry = new Entry(key, rowPointer, 0);
+        var page = Read(target.RootPage);
+        while (!page.IsLeaf)
+        {
+            if (page.Tail <= 0) return page.Entries.Count == 0 ? false : null;
+            int slot = FirstAtLeast(page.Entries, entry);
+            page = Read(slot >= 0 ? page.Entries[slot].SubPage : page.Tail);
+        }
+        return page.Entries.Exists(e => Compare(e, entry) == 0);
+    }
+
+    /// <summary>
     /// A root with one child takes that child's entries back, on its own page, for as
     /// long as that leaves it with one child; a root with none is an empty leaf again.
     /// </summary>

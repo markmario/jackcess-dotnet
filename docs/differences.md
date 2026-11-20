@@ -59,6 +59,10 @@ Each of these was found by having Access or ACE open a file the engine wrote.
   through a `decimal` of 15 significant digits and a `float` through one of 7 on .NET Framework and .NET up to 10,
   so a row was not found by the number it was written with. A file it wrote keeps those values: see
   [Currency](data-types.md#currency).
+- **A Decimal with more places than its column holds is stored as ACE stores it**, cut toward zero, where the
+  engine rounded half away from zero ([Decimal](data-types.md#decimal)).
+- **A `bool`, text and a date for a number column are what Access stores for them**, `true` as -1, in every number
+  type ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Properties are written**, a table's, a column's and the database's, with what Access wrote left byte for
   byte as it was; **a column's Required and Allow Zero Length are read, written and held to**, as Access holds

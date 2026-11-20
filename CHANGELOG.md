@@ -146,17 +146,14 @@ changed since 1.2.2.
     `double` or `float` to a Currency column (`AppendIfExists`) takes the numbers it took and refuses those it
     refused, but each as the Currency Access makes of it: past 2^38 or so it took the number the round-trip form
     says, which can be another Currency (35184372088832.0078125 was 35184372088832.01; it is 35184372088832.0078).
-  - **Text and a `bool` are taken as before**, as every number column takes them - text read in the current
-    culture, a `bool` as 1 or 0 - and the number they make is taken to four places by the same rule. **A write
-    refuses, before anything is written,** NaN, the infinities and a number past the range once taken to four places
-    with `OverflowException`, as a number past the range was refused; a date, a `Guid`, bytes or a `char` with
-    `ArgumentException`, where it was an `InvalidCastException`; and text that reads as no number with
-    `FormatException`, as before, now naming the column.
+  - **Text, a `bool` and a date are taken as every number column takes them** (#75, below), and the number they
+    make is taken to four places by the same rule. **A write refuses, before anything is written,** NaN, the
+    infinities and a number past the range once taken to four places with `OverflowException`, as a number past the
+    range was refused; a `Guid`, bytes or a `char` with `ArgumentException`, where it was an `InvalidCastException`;
+    and text that reads as no number with `FormatException`, as before, now naming the column.
 
   Where Access differs: ACE and DAO write NaN as the least Currency (-922,337,203,685,477.5808), the integer a
-  processor makes of NaN, and their `=` finds that row for NaN; ACE reads text by the machine's locale and writes
-  True as -1, where this library, for a Currency as for every number column, reads text in the current culture and
-  takes True as 1; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
+  processor makes of NaN, and their `=` finds that row for NaN; and ACE's scan, with no index to answer, takes a `decimal` through a `double` - 0.00015m is 0.0001
   there - so it does not find the row its own `INSERT` wrote with that decimal (0.0002). ACE's index, its writes and
   DAO's take a decimal exactly, and so does this library, by a scan as through an index.
 - **A Date/Time on 1 January 100 is read at any time of day**, as Access reads it; it was null unless midnight.
@@ -432,6 +429,51 @@ changed since 1.2.2.
   column's free-space map in a new session, so a Memo or OLE value made longer and shorter, a session to each
   change, grew the file by two pages each time it became a chain - 602 pages in 300 such changes, where Access's
   grew by 3. It grows by a page at most.
+- **A change a damaged index cannot take is refused, as Access refuses it** (#81). When an index, taken at its word,
+  does not hold a row's entry under the row's key - an entry under another key, or none, as an earlier version of
+  this library or another program can leave - an update that changes the row's key in that index, and a delete of
+  the row, throw `NotSupportedException` before anything is written. Access refuses both on such a file ("The search
+  key was not found in any record") and changes nothing; it makes an update of the row's other columns, and so does
+  this library. The update was made: the row's new entry went in beside its wrong one, the row was in the index
+  twice, and DAO's compaction copied the row twice and dropped the primary key. With `Database.VerifyIndexes` the
+  change is made and mends the index: an update moves the row's entry to its new key, and a delete takes out the
+  entry the row had under another key, which it left pointing at no row. In a sound index the check reads no page
+  more: the pages it reads are the ones the entry's removal goes down.
+- **A Decimal with more places than its column holds is cut, as ACE cuts it** (#80). The places past the column's
+  scale are cut off toward zero, where they were rounded half away from zero: 1.015 is 1.01 in a column of scale 2
+  (it was 1.02), and 2.5 is 2 in a column of scale 0 (it was 3). A negative number cut to nothing is a negative zero,
+  as ACE stores it (-0.001 at scale 2); a zero given, of either sign, has no sign, as in ACE. ACE 16 was measured
+  for 5,080 numbers - typed Decimal, Double, Single and text parameters, every scale from 0 to 28, both signs, in an
+  .mdb and an .accdb - and cut every one (`tools/ace-decimal-places.ps1`, `Assets/ace-decimal-places.tsv`). DAO
+  refuses every one of them ("Scaling of decimal value resulted in data truncation"); ACE is the referee, as it is
+  for every value this library writes. An insert, an update, `Validate` and the relationships an insert or update
+  is checked against all take the number as the row stores it. A lookup is unchanged: it compares the number given
+  with the stored value exactly, as ACE's `=` does, so 1.015 finds no row of 1.01. A negative zero is zero to it, as
+  to ACE's `=` without an index; ACE's index tells -0.00 from 0.00, and `WHERE D = 0` through one finds only the row of
+  0.00. The importer is unchanged too: it takes a value only into a column that holds it exactly, and refuses this
+  one, as DAO does.
+- **A `bool`, text and a date are taken for a number as Access takes them, by every number type alike** (#75).
+  Measured with ACE 16 (typed parameters) and DAO (`AddNew`) for Byte, Integer, Long Integer, Large Number, Single,
+  Double, Currency and Decimal (`tools/ace-number-kinds.ps1`, `Assets/ace-number-kinds.tsv`):
+  - **`true` is -1**, Access's value, and `false` 0. It was 1. A Byte, which holds no -1, refuses `true` with
+    `OverflowException`, as it refuses -1 and as DAO refuses it; ACE wraps every negative number into a Byte (-1 is
+    255, -3 is 253), which this library does not.
+  - **Text is read in the current culture**, as before and as Access reads it by the machine's settings, and now in
+    every form Access reads: a currency symbol ("$5" is 5 where the culture's symbol is "$"), parentheses for a
+    negative number ("(5)" is -5), an exponent ("1e2" is 100), group separators and spaces around it. A whole-number
+    column takes "2.5" as 2 and "1.5" as 2, half to even, as Access does; it refused them (`FormatException`). Text
+    is read as a `double` for a Single or a Double column and as a `decimal` for any other. Text that is no number
+    is refused with `FormatException`, naming the column, as Access refuses it ("Data type mismatch").
+  - **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
+    2020 12:00 is 43832.5 in a Double, a Single, a Currency or a Decimal, and 43832 in a Long Integer or a Large
+    Number; an Integer and a Byte refuse it with `OverflowException`, as Access does (ACE wraps it into a Byte).
+  - **A number past what a Single holds is refused** with `OverflowException`, naming the column, as ACE refuses it
+    ("Overflow", measured for a Double and a text parameter): a finite number whose nearest Single is not finite, such
+    as 1e39 or 3.5e38, given as a number or as text. A `double` was stored as an infinity on every runtime, and text
+    on .NET; .NET Framework's parse refused text.
+  - A range or the closest row looked for through an index of a number column takes these values the same way. A
+    lookup for one row by its value still takes text and a `bool` for no number, as before. The importer keeps its
+    own rule: it takes only a value a column holds exactly, text read in the invariant culture, and no `bool`.
 
 ### Breaking changes to the public API
 
@@ -565,6 +607,21 @@ changes with them.
   parent was written from 0.03125 (it holds 0.0313). A unique index refuses the number when its neighbour holds what
   it now makes, as 1.23465m beside the row of 1.234549999999999. **Find such rows by the value stored - as a row
   reads it back - and not by the number they were written from.**
+- **A value of a kind no number is made of, given for a number column, throws `ArgumentException`** naming the
+  column, in every number type (#75): a `Guid`, bytes, a `char`, a `TimeSpan` or any other. It threw
+  `InvalidCastException` from `Convert` in every number column but Currency. `ArgumentException` is the engine's
+  exception for a caller's bad argument; code that caught `InvalidCastException` for it catches `ArgumentException`.
+  `Insert`, `InsertRange` (inside its `BatchInsertException`), `Update`, a cursor's `UpdateCurrentRow` and
+  `Validate` all throw it, before anything is written. With it, what a number column makes of other values changes
+  (above): `true` is -1 where it was 1, so a row written with `true` holds -1 and a Byte refuses `true` with
+  `OverflowException`; a `DateTime` is its day number where it was refused; and text such as "$5", "(5)" or "2.5"
+  for a whole-number column is a number where it was refused with `FormatException`.
+- **A row an earlier version left out of an index cannot be deleted, nor its key in that index changed, unless the
+  database is opened with `Database.VerifyIndexes`** (#81). Versions up to 1.2.2 kept a table's primary key and no
+  other index, so a file they wrote rows into can hold rows with no entry in an index. Such a delete or key change
+  went through, and now throws `NotSupportedException` before anything is written, as Access refuses it ("The
+  search key was not found in any record"); its message says that `VerifyIndexes` makes the change and mends the
+  index. Compacting the file in Access rebuilds its indexes, after which nothing is refused.
 
 ### Added
 
