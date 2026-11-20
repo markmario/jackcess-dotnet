@@ -223,7 +223,6 @@ namespace JackcessDotNet.AccessTests.Support
         {
             var rows = expected.ToList();
             var written = Written(rows);
-            var lap = TemporaryTiming.Start();
             List<Values> aceRows;
             try { aceRows = AceTable(path, table); }
             catch (Exception e) when (e is InvalidOperationException || e is OleDbException)
@@ -237,30 +236,12 @@ namespace JackcessDotNet.AccessTests.Support
                 throw new Xunit.Sdk.XunitException("ACE could not read " + table + " " + when + ": " + e.Message
                     + "\n  it cannot read: " + string.Join("; ", unreadable.Take(12)));
             }
-            lap.Mark("ace scan");
             AssertSame(written, Written(aceRows), table + " as ACE reads it " + when);
             AssertSame(written, Written(EngineTable(path, table)), table + " as the engine reads it " + when);
-            lap.Mark("engine scan");
 
-            // TEMPORARY: the lookups as they were, each on a connection of its own, timed apart from what they find.
-            double opens = 0, queries = 0;
-            foreach (var row in rows)
-                foreach (var where in new[] { "[" + key + "] = ", "[" + key + "] + 0 = " })
-                {
-                    var clock = System.Diagnostics.Stopwatch.StartNew();
-                    using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
-                    {
-                        connection.Open();
-                        opens += clock.Elapsed.TotalMilliseconds;
-                        clock.Restart();
-                        var found = AceRows(connection, "SELECT * FROM [" + table + "] WHERE " + where + Convert.ToString(row[key], CultureInfo.InvariantCulture));
-                        AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
-                        queries += clock.Elapsed.TotalMilliseconds;
-                    }
-                }
-            lap.Mark("old lookups, " + rows.Count * 2 + " of them: opens " + Math.Round(opens) + " ms, queries " + Math.Round(queries) + " ms");
-
-            // One connection for the count and every lookup.
+            // The count and every lookup on one connection. On a CI runner a connection costs about 65 ms to open and
+            // close, most of it in the close, and a lookup about 2 ms: a connection to each lookup took 131 s of a
+            // 149 s test of 1,000 rows (#97).
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
             {
                 connection.Open();
@@ -273,25 +254,10 @@ namespace JackcessDotNet.AccessTests.Support
                         AssertSame(Written(new[] { row }), Written(found), table + " WHERE " + where + row[key] + " " + when);
                     }
             }
-            lap.Mark("new lookups, one connection");
 
             var compacted = Compact(path);
-            lap.Mark("compact");
             try { AssertSame(written, Written(AceTable(compacted, table)), table + " after DAO compacted the file, " + when); }
             finally { File.Delete(compacted); }
-            lap.Mark("compacted scan; " + table + ", " + rows.Count + " rows, " + when);
-        }
-
-        // TEMPORARY: where AssertTableIs's time goes on the runner (#97).
-        internal sealed class TemporaryTiming
-        {
-            private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
-            public static TemporaryTiming Start() { return new TemporaryTiming(); }
-            public void Mark(string what)
-            {
-                Console.WriteLine("[timing] " + Math.Round(_clock.Elapsed.TotalMilliseconds) + " ms: " + what);
-                _clock.Restart();
-            }
         }
 
         /// <summary>One table, the rows it should hold, and the two engines changing it in turn.</summary>
