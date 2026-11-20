@@ -12,13 +12,34 @@
 # its tests - four shares on .NET Framework, whose run takes some nine minutes,
 # and two on .NET (scripts/Invoke-TestShard.ps1). One after another on one
 # runner they took 13 minutes, and one job to a framework ten.
+#
+# The Access referee tests (tests/JackcessDotNet.AccessTests) need Microsoft
+# Access's own engine, which hosted runners lack: access-build builds them once,
+# and the access-tests jobs install the Access Database Engine 2016
+# redistributable and run them in shards (scripts/Invoke-AccessTests.ps1). Those
+# whose sweeps take minutes run a sample of them on a pull request, and the
+# whole sweeps on a push to main, every night, and in a run by hand that asks.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Every night at 16:17 UTC, on main: the Access referee tests' full sweeps.
+    - cron: '17 16 * * *'
   workflow_dispatch:
+    inputs:
+      full_sweeps:
+        description: 'Run the Access referee tests full sweeps rather than the samples a pull request runs'
+        type: boolean
+        default: true
+
+env:
+  # 1 runs the Access referee tests' full sweeps and 0 their samples
+  # (tests/JackcessDotNet.AccessTests/Support/Sweeps.cs): the samples on a pull
+  # request and in a run by hand that does not ask for the sweeps.
+  JACKCESS_FULL_SWEEPS: ${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_sweeps)) && '1' || '0' }}
 
 # A newer run of the same pull request or branch cancels the older one. Not on
 # main: every run there has a group of its own and runs to the end, so each
@@ -196,15 +217,174 @@ jobs:
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
 
+  # The Access referee tests, built once - net48, x64 - and handed to the
+  # access-tests jobs, which run them without building or a .NET SDK. The
+  # project's corpus and assets are read where this checkout had them, the same
+  # path on every runner.
+  access-build:
+    name: build (Access referee tests)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Why these SDKs: the build job's.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-access-${{ hashFiles('**/*.csproj', 'global.json') }}
+
+      # The library's net48 assembly and the tests; nothing is packed here.
+      - name: Build
+        run: >
+          dotnet build tests/JackcessDotNet.AccessTests --configuration Release
+          -p:GeneratePackageOnBuild=false -p:ContinuousIntegrationBuild=true
+
+      - name: Upload the tests
+        uses: actions/upload-artifact@v7
+        with:
+          name: access-tests
+          path: tests/JackcessDotNet.AccessTests/bin/Release/net48
+          retention-days: 1
+          if-no-files-found: error
+
+  # Microsoft Access's engine as the referee: ACE through OLE DB, and DAO, from
+  # the Access Database Engine 2016 redistributable (x64). scripts/Invoke-AccessTests.ps1
+  # runs a class to a process, or a piece of one for the few that take minutes,
+  # two processes at a time; balances the pieces between the shards by the
+  # seconds each took on CI; runs again a process that died inside the
+  # redistributable, and a piece whose only failures are ACE statements that
+  # failed with no message of their own; and checks that each shard ran every
+  # test of its own pieces. JACKCESS_ACCESS_REQUIRED makes a missing referee a
+  # failure here, where on a machine without Access the tests are skipped.
+  access-tests:
+    name: test (Access, ${{ matrix.shard }} of ${{ matrix.shards }})
+    needs: access-build
+    runs-on: windows-latest
+    strategy:
+      # Every shard runs to the end, so one run reports every failure.
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: 1, shards: 6 }
+          - { shard: 2, shards: 6 }
+          - { shard: 3, shards: 6 }
+          - { shard: 4, shards: 6 }
+          - { shard: 5, shards: 6 }
+          - { shard: 6, shards: 6 }
+    env:
+      JACKCESS_ACCESS_REQUIRED: '1'
+    steps:
+      # Installed silently; /quiet also bypasses the bitness cross-check against
+      # any preinstalled Office components. It is started first, in a process of
+      # its own, and waited for before the tests: it takes about as long as the
+      # checkout and the download, and neither needs the other.
+      - name: Install Access Database Engine 2016 (x64), in the background
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:RUNNER_TEMP 'install-ace.ps1'
+          Set-Content -LiteralPath $script -Value @'
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'ace-install.log'
+          try {
+            $exe = Join-Path $env:RUNNER_TEMP 'AccessDatabaseEngine_X64.exe'
+            Invoke-WebRequest -Uri 'https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe' -OutFile $exe
+            $installer = Start-Process -FilePath $exe -ArgumentList '/quiet' -Wait -PassThru
+            "The installer ended with exit code $($installer.ExitCode)." | Add-Content -LiteralPath $log
+          } catch {
+            "The installation failed: $_" | Add-Content -LiteralPath $log
+          } finally {
+            New-Item -ItemType File -Force (Join-Path $env:RUNNER_TEMP 'ace-install.done') | Out-Null
+          }
+          '@
+          $process = Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-File', $script -WindowStyle Hidden -PassThru
+          "ACE_INSTALL_PID=$($process.Id)" >> $env:GITHUB_ENV
+          "Started the installer's process, $($process.Id)."
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the tests
+        uses: actions/download-artifact@v8
+        with:
+          name: access-tests
+          path: tests/JackcessDotNet.AccessTests/bin/Release/net48
+
+      # The redistributable has killed a test process with exit code
+      # -1073740771 and no test named; a dump showed the crash inside it, on a
+      # thread of its own. Windows keeps a dump of any process that crashes from
+      # here on, uploaded below.
+      - name: Keep a dump of any process that crashes
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          New-Item -Path $key -Force | Out-Null
+          Set-ItemProperty -Path $key -Name DumpFolder -Value $dumps -Type ExpandString
+          Set-ItemProperty -Path $key -Name DumpType -Value 1 -Type DWord
+          Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
+
+      # The installer started above, finished and registered. Should its
+      # process have gone without finishing, it is run here instead.
+      - name: Access Database Engine 2016 (x64) installed
+        shell: pwsh
+        run: |
+          $done = Join-Path $env:RUNNER_TEMP 'ace-install.done'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          while (-not (Test-Path -LiteralPath $done) -and (Get-Process -Id $env:ACE_INSTALL_PID -ErrorAction SilentlyContinue)) {
+            if ($clock.Elapsed.TotalMinutes -gt 10) { throw 'The Access Database Engine installer has not finished in ten minutes.' }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not (Test-Path -LiteralPath $done)) {
+            '::warning::The installer process ended without finishing; installing now.'
+            & pwsh -NoProfile -NonInteractive -File (Join-Path $env:RUNNER_TEMP 'install-ace.ps1')
+          }
+          Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ace-install.log')
+          "Waited $([math]::Round($clock.Elapsed.TotalSeconds)) s for it."
+
+      - name: Test
+        shell: pwsh
+        run: |
+          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -TrxName "access-tests-${{ matrix.shard }}.trx"
+          exit $LASTEXITCODE
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-access-${{ matrix.shard }}
+          path: |
+            TestResults/*.trx
+            TestResults/*.xml
+          if-no-files-found: warn
+
+      - name: Upload crash dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-access-${{ matrix.shard }}
+          path: ${{ runner.temp }}/crash-dumps/*.dmp
+          if-no-files-found: ignore
+
   # One check with the name this workflow's only job had, for anything that
-  # waits on "test": it passes when the build and every framework did.
+  # waits on "test": it passes when the build, every framework and the Access
+  # referee tests did.
   test:
     name: test
     if: always()
-    needs: [build, frameworks]
+    needs: [build, frameworks, access-build, access-tests]
     runs-on: ubuntu-latest
     steps:
-      - name: The build and every framework passed
+      - name: The build, every framework and the Access referee tests passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
