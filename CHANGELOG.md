@@ -191,6 +191,26 @@ changed since 1.2.2.
   had made. No search looks under the key of no value, under which every row with no value is, each of which would
   be read: a row the versions from 2930d3f to db6f93b entered there is found when it is deleted or its date
   rewritten, and by a search with `Database.VerifyIndexes`, and not by a search that trusts the index.
+- **A Date/Time Extended value is read as Access reads it** (#64); this fixes a defect on `main`. Access reads the
+  42 bytes as three numbers, not as fields at fixed places: the day from the start, the time of day after the first
+  colon and the count of the fraction's digits after the last, each read up to its first byte that is not a digit.
+  DAO's `AddNew` and `Edit` on a table-type recordset - what DAO's `OpenRecordset` gives a table when it is asked
+  for no other kind - write a layout of their own, the day in fifteen digits and four bytes after the value that are
+  whatever DAO's buffer held. Such a value was read as null. It is read as its date, and a lookup by a `DateTime`
+  finds it: by a cursor over the table, and through an index among the keys that begin with the layout's other bytes,
+  which Access's own `=` through an index does not (measured; it finds the first form alone); a `Joiner` joins it by
+  its bytes. The values Access reads a date from in other shapes are read as that date too, as measured with DAO 16
+  and ACE 16 on bytes changed in a file Access made: a number read up to a byte that is not a digit (a day of
+  `73742X` is day 73742), no digit read as 0, a count of 1 to 9 dividing the time into seconds and a remainder in
+  units of 100 nanoseconds (`11045123` with a count of 3 is 03:04:05.0000123). An error in Access - DAO gives Empty,
+  and ACE's `=` fails - is read as null, and so is a value no `DateTime` holds. Writes are as they were: the first
+  form, as Access's `INSERT` writes it, and an update that gives the column no new value keeps its bytes, the four
+  after the value among them, as Access's `UPDATE` and both kinds of recordset keep them (measured). An entry a
+  version of this library that keyed the date it read (#51) made for such a row is under the key of no value, which
+  those versions read it as: it is found when the row is deleted or its date rewritten, and no search looks under
+  that key for the row. On `main`, which read such a row as null, a relationship's search for its bytes, a unique
+  index's for its duplicate and a `Joiner` from it read every row with no value: 40,053 pages to change another
+  column of such a row beside 20,000 rows of no value, where 8 are read.
 
 - **A long-value page is listed as having room from 258 bytes**, where it was 264 (#35). ACE, writing OLE
   Object values of chosen lengths, lists a page left with 258 bytes or more and none left with 257 or fewer; the
