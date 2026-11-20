@@ -31,14 +31,17 @@ public sealed class LongValueRoomTests : IDisposable
         int spread = (int)((uint)(i * 2654435761u) >> 8);
         return workload switch
         {
-            "one length" => 1_500,   // each leaves its page 1,080 bytes no other can use: the case that was slow
+            "one length" => 1_500,   // in Greek, 3,000 bytes: each leaves its page 1,080 bytes no other can use: the case that was slow
             "one piece" => 40 + spread % 1_990,
             "chains"    => 2_100 + spread % 4_000,
             _           => 40 + spread % 6_000,
         };
     }
 
-    private static string Note(int i, int length) => new((char)(i % 3 == 0 ? 0x3A9 + i % 20 : 'a' + i % 26), length);
+    // A third of the notes Greek, which Access writes two bytes a character, the rest Latin, which it compresses to one up to
+    // 1,908 characters (#87); every note Greek where its length in bytes must be the same.
+    private static string Note(int i, int length, bool greek = false)
+        => new((char)(greek || i % 3 == 0 ? 0x3A9 + i % 20 : 'a' + i % 26), length);
 
     [Theory]
     [InlineData("one length")]
@@ -59,7 +62,7 @@ public sealed class LongValueRoomTests : IDisposable
         {
             long visited = notes.CandidatesVisited, reads = db.File.ReadCount;
             clock.Restart();
-            table.Insert(new Row { ["Id"] = i, ["Notes"] = Note(i, Length(workload, i)) });
+            table.Insert(new Row { ["Id"] = i, ["Notes"] = Note(i, Length(workload, i), greek: workload == "one length") });
             clock.Stop();
             visited = notes.CandidatesVisited - visited;
             reads   = db.File.ReadCount - reads;
