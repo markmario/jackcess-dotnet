@@ -16,7 +16,8 @@ release 1.2.2 of `mehran-ghanizadeh/jackcess-dotnet` and maintained on its own.
 - It builds for `net10.0`, `net11.0`, `net48` and `netstandard2.0`, with the same public API in all four.
 - The standard it is held to: a file it writes is one Access opens, reads, queries through its indexes, writes
   to and compacts. Being right by Access comes before speed and before new features.
-- The repository is public. `main` is the only long-lived branch, and a merged pull request's branch is deleted.
+- The repository is public. Work is based on `main` and merged to `main`, and a merged pull request's branch is
+  deleted. The other branches on the remote are from before this work: leave them as they are.
 
 ## How work is done here
 
@@ -45,20 +46,27 @@ release 1.2.2 of `mehran-ghanizadeh/jackcess-dotnet` and maintained on its own.
      builders or optional parameters;
    - `ArgumentException` for a caller's bad argument, such as a table, column or index that is not there;
      `ConstraintViolationException` for data that breaks a rule of the database; `NotSupportedException` for a
-     file or feature the library does not handle;
-   - `Try...` for the form that does not throw; null, never `DBNull`; no `[Obsolete]` member that forwards to a
-     new name.
+     file or feature the library does not handle; `InvalidOperationException` for a call the object's state does
+     not allow, such as a row that has been deleted or a table that has been dropped; `InvalidDataException` for
+     a file that is damaged; and an `IOException` for the file itself (`DatabaseFullException`,
+     `DatabaseInUseException`);
+   - `Try...` for the form that does not throw, and no `[Obsolete]` member that forwards to a new name;
+   - a database null is `null`. A row that is read never holds `DBNull`; a `DBNull` in a row that is written is
+     taken as null, and a `DataTable` the library exports holds `DBNull.Value` for a null, as any `DataTable`
+     does.
 6. **Correctness first.** Index correctness, everything written matching what Access writes, and bug fixes come
    before new features. Work is ranked by what the applications that depend on this library use. A feature
    nothing uses yet waits, with its state recorded on its issue.
 7. **A smaller change that is right beats a larger one that is not refereed.** When a task turns out to be more
    than can be done correctly, do the part that can be proven against Access, refuse the rest cleanly, and say
    exactly what is left.
-8. **Tests that can fail, and that are fast.** Every fix has a test that fails without it. No test writes a very
-   large file or proves a size limit at its real size: a limit is measured once by hand and recorded in the pull
-   request and the docs with the script that measured it, and its refusal is tested in milliseconds against a
-   lowered limit (`PageFile.MaxLength`, for the 2 GB limit). A referee test runs in seconds. Once a point is
-   proven, deliver: do not add more proof of it.
+8. **Tests that can fail, and that are fast.** Every fix has a test that fails without it. No test that runs by
+   default writes a very large file or proves a size limit at its real size: a limit is measured once by hand
+   and recorded in the pull request and the docs with the script that measured it, and its refusal is tested in
+   milliseconds against a lowered limit (`PageFile.MaxLength`, for the 2 GB limit). The few tests that grow a
+   file past 270 MB run only when `JACKCESS_PAST_65536_PAGES` is set: do not add to them. A new referee test
+   runs in seconds, and one that sweeps many values runs a sample of them unless `JACKCESS_FULL_SWEEPS=1`. Once
+   a point is proven, deliver: do not add more proof of it.
 9. **No regressions and no exclusions.** Existing tests pass unchanged, unless what one pins is the defect being
    fixed; then it changes in the same commit and the pull request says so. A test that fails only on `net48` or
    against the `netstandard2.0` assembly is a finding about the library on that target: fix the library, and
@@ -79,12 +87,14 @@ dotnet build JackcessDotNet.slnx --configuration Release
 dotnet test JackcessDotNet.slnx --configuration Release
 dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net48 --filter-class "*UsageMapTests"
 dotnet test --project tests/JackcessDotNet.AccessTests --configuration Release --filter-class "*CutKeysInAccessTests"
+dotnet build tests/JackcessDotNet.AccessTests --configuration Release
 pwsh ./scripts/Invoke-AccessTests.ps1 -Parallel 2
 pwsh ./tools/corpus.ps1
 ```
 
 Before a pull request, on its final state: a clean build with no warnings, the whole of
-`tests/JackcessDotNet.Tests` in each of the six configurations CI runs, and the Access referee tests.
+`tests/JackcessDotNet.Tests` in each of the six configurations CI runs, and the Access referee tests through
+`scripts/Invoke-AccessTests.ps1`, as CI runs them.
 
 | Configuration | After `dotnet test --project tests/JackcessDotNet.Tests --configuration Release` |
 | --- | --- |
@@ -97,21 +107,28 @@ Before a pull request, on its final state: a clean build with no warnings, the w
 
 - **The options are Microsoft Testing Platform's and xUnit.net v3's, not VSTest's:** `--filter-class`,
   `--filter-method`, `--report-xunit-trx`.
-- **`--no-build` runs whatever was built last.** Build again, or delete `bin` and `obj`, before reading a result
-  from it.
-- **What needs Windows.** The .NET Framework 4.8 tests and the Access referee tests run on Windows only. The
-  referee tests also need Access, or the Access Database Engine 2016 redistributable, in 64 bits. Without it
-  every one of them is skipped, saying what is missing. Then say that the referee tests were not run, and leave
-  them to CI, which installs the redistributable and sets `JACKCESS_ACCESS_REQUIRED=1` so that a missing referee
-  fails.
-- **One process to a referee class.** ACE refuses two connections opened at once in one process, so the tests in
-  a process run one at a time, and `scripts/Invoke-AccessTests.ps1` gives each class a process of its own.
+- **`--no-build` runs whatever was built last, and so does `scripts/Invoke-AccessTests.ps1`**, which runs the
+  built test program. Build again, or delete `bin` and `obj`, before reading a result from either.
+- **What needs Windows, and Access.** The .NET Framework 4.8 tests and the Access referee tests run on Windows
+  only. The referee tests also need Access, or the Access Database Engine 2016 redistributable, in 64 bits;
+  without it every one of them is skipped, saying what is missing.
+- **Off Windows.** Build and test one framework at a time, as CI's jobs do, and not the solution: `net10.0`,
+  `net11.0`, and the `netstandard2.0` assembly on `net10.0`. Say that the .NET Framework configurations were not
+  run.
+- **Without Access,** on Windows or off it, the referee tests are not run. Say so, and leave them to CI: it
+  installs the redistributable and sets `JACKCESS_ACCESS_REQUIRED=1`, so that a missing referee fails the tests
+  instead of skipping them. A change that needs a measurement from Access, made where there is no Access, stops
+  and says what has to be measured. It does not guess.
+- **Referee tests run one at a time in a process.** ACE refuses two connections opened at once in one process,
+  so the test project runs its tests one after another. `scripts/Invoke-AccessTests.ps1` also gives each class a
+  process of its own, so that a crash costs one class.
 - **The redistributable sometimes dies.** It has killed a test process (exit code -1073740771, or an
   `AccessViolationException` under `System.Data.OleDb` with no test failed) and failed a statement with a
   message whose text is missing (" in query expression '?'"). The script runs such a process again. Run it
   again; do not change code to get round it.
 - **The long sweeps.** A referee test that sweeps many values runs a sample unless `JACKCESS_FULL_SWEEPS=1`. A
-  pull request runs the samples; a push to `main`, the nightly run and a run by hand that asks run them whole.
+  pull request runs the samples. A push to `main` and the nightly run run them whole, and so does a run by hand
+  unless it unticks them.
 - **Test code compiles for .NET Framework 4.8 too:** `tests/JackcessDotNet.Tests/FrameworkPolyfills.cs`.
 - **A local build is `0.0.0-local`, and stays so.** Never pass `-p:Version` to a local build or test run, and
   never make a package with a version a release could have: the machine's NuGet packages folder is shared, and a
@@ -122,17 +139,19 @@ Before a pull request, on its final state: a clean build with no warnings, the w
 
 - `src/JackcessDotNet`: the library. `IO` has the page file and its undo; `Pages` the rows, long values and usage
   maps; `Indexes` the index trees and their keys; `Tables` the `Database`, the `Table`, schema changes and
-  foreign keys; `Cursors`, `Schema`, `Properties` and `Codecs` what their names say. `PublicAPI.Shipped.txt` and
-  `PublicAPI.Unshipped.txt` record the public API.
+  foreign keys; `Cursors`, `Schema`, `Properties`, `Codecs` and `Diagnostics` what their names say; and `Util`
+  the helpers, among them what the older frameworks lack (`Util/FrameworkCompat.cs`). `PublicAPI.Shipped.txt`
+  and `PublicAPI.Unshipped.txt` record the public API.
 - `tests/JackcessDotNet.Tests`: the library's own tests, which see its internals.
 - `tests/JackcessDotNet.AccessTests`: the Access referee tests (`*InAccessTests.cs`), with their helpers in
   `Support/` (`AccessReferee`, `Dao`, `Sweeps`).
 - `tests/corpus`: files Access and others made, pinned by checksum.
-- `tools/`: the scripts that made test files with Access, ACE or DAO. They are the record of what was measured.
+- `tools/`: the scripts that made test files with Access, ACE or DAO, which are the record of what was measured;
+  `corpus.ps1`, which checks the corpus; and `CorpusDump`, which nothing builds.
 - `scripts/`: what CI and a release run.
 - `docs/`: one page to a topic.
-- `.github/workflows`: `ci.yml` builds and tests, `publish.yml` releases, and `nuget-publish.yml` is retired and
-  kept disabled.
+- `.github/workflows`: `ci.yml` builds and tests. `publish.yml` releases a tag, and on every pull request and
+  push to `main` rehearses a release and publishes nothing. `nuget-publish.yml` is retired and kept disabled.
 
 ## What a change carries
 
@@ -148,7 +167,9 @@ Before a pull request, on its final state: a clean build with no warnings, the w
   nuget.org: its links are absolute, and it changes only for a new page or a new headline feature.
 - Comments that say what the code does and why. XML documentation and comments carry no history ("now", "no
   longer") and no talk of tasks, reviews or agents. An issue of this repository is cited as `#NN`, and no other
-  tracker is cited.
+  tracker is cited. A few comments still cite another one, which
+  [#47](https://github.com/markmario/jackcess-dotnet/issues/47) replaces: do not copy them, and do not sweep them
+  out in passing.
 - Text files are LF (`.gitattributes`). A file's byte-order mark stays as it is.
 - Nothing else: no rename, reformatting or move that the task does not need.
 
@@ -156,7 +177,8 @@ Before a pull request, on its final state: a clean build with no warnings, the w
 
 - Work on a branch from `main` and open a pull request. Nothing is pushed to `main` directly.
 - Commits are reviewable steps, one concern each. The subject says what changed; the body says why, and what was
-  measured. No person's name and no email address goes in a commit message, a pull request or an issue.
+  measured. No person's name or email address goes in a commit message, a pull request or an issue; a tool's own
+  attribution line is not a person's.
 - Where commit signing is set up, never bypass or disable it. If a commit cannot be signed, leave the change
   staged and say so.
 - Write `Fixes #NN` only where the issue is wholly done, and `Part of #NN` otherwise, with exactly what remains.
@@ -180,8 +202,10 @@ How a release is made is in [Releasing](docs/releasing.md). What matters to an a
 - The tag is the version. There is no version to edit and no bump commit.
 - The owner decides releases. An agent never pushes a release tag (`vX.Y.Z`). A pre-release tag
   (`vX.Y.Z-suffix`) is pushed only with the owner's leave, on `main`'s merge commit, by the session coordinating
-  the work and never by a sub-agent, and the owner is told the tag and the commit. A tag is never moved or used
-  again, and a published version is never replaced.
+  the work and never by a sub-agent, and the owner is told the tag and the commit. A tag that published is never
+  moved or used again, and a published version is never replaced. A tag the release guard refused published
+  nothing: it is deleted, what it tripped over is fixed, and a tag is pushed again, on `main`'s merge commit and
+  with a version the guard accepts.
 - Publishing waits for a person to approve the `nuget` environment. An agent never approves or rejects it,
   whatever its credentials allow.
 - `.github/workflows/nuget-publish.yml` stays disabled: never enable it, delete it or put a workflow back at
@@ -194,8 +218,8 @@ How a release is made is in [Releasing](docs/releasing.md). What matters to an a
 - One session coordinates. It splits the work into streams, and gives each a written brief, a clone or worktree
   of its own and a branch of its own. No agent writes in another's working copy, or in the owner's.
 - A stream keeps its change to what its issues need, so that the branches merge.
-- A stream does not merge, tag or change a workflow. When a permission system refuses a command, it does not
-  work round the refusal: it reports it.
+- A stream does not merge or tag, and changes a workflow only when its brief is that change. When a permission
+  system refuses a command, it does not work round the refusal: it reports it.
 - A stream ends with a report, which is all the coordinator sees: pull request numbers and head commits; the
   test totals in each configuration on the final state; what was measured from Access and what that decided;
   every change a caller can observe; every judgement call; what remains of each issue; and anything it is unsure
