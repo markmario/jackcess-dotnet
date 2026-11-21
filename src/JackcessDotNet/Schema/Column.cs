@@ -15,18 +15,26 @@ public sealed class Column
 
     /// <summary>
     /// The room a value has in a row, in bytes: twice <see cref="MaxLength"/> for a Text column, whose
-    /// characters are two bytes each; the most bytes for a Binary column; the size of the type for a column of
-    /// fixed length; 0 for a Memo or OLE Object column, whose values are kept on pages of their own. Jackcess's
-    /// <c>getLength</c>.
+    /// characters are two bytes each, and <see cref="MaxLength"/> itself in an Access 97 file, which keeps text in
+    /// its code page; the most bytes for a Binary column; the size of the type for a column of fixed length; 0 for a
+    /// Memo or OLE Object column, whose values are kept on pages of their own. Jackcess's <c>getLength</c>.
     /// </summary>
     public int LengthInBytes { get; }
 
     /// <summary>
     /// The most a value of the column holds, in the type's own units: characters for a Text column, bytes for
     /// any other (<see cref="LengthInBytes"/>). It is the number <see cref="ColumnDefinition.MaxLength"/> sets
-    /// and <see cref="ColumnValueTooLongException.MaxLength"/> reports. Jackcess's <c>getLengthInUnits</c>.
+    /// and <see cref="ColumnValueTooLongException.MaxLength"/> reports, and the Size DAO reports. A Text column of
+    /// an Access 97 file is as long as its bytes in the database's code page: Text(255) is 255 (#85). Jackcess's
+    /// <c>getLengthInUnits</c>.
     /// </summary>
-    public int MaxLength => DataType == DataType.Text ? LengthInBytes / 2 : LengthInBytes;
+    public int MaxLength => DataType == DataType.Text && !IsCodePageText ? LengthInBytes / 2 : LengthInBytes;
+
+    /// <summary>
+    /// Whether the column's text is kept in the database's code page, a byte a character for its length, as Access
+    /// 97 keeps it, and not two bytes a character.
+    /// </summary>
+    internal bool IsCodePageText { get; set; }
 
     /// <summary>
     /// The column's number in its table's definition, counted from 0: its position among the table's columns,
@@ -153,6 +161,8 @@ public sealed class Column
         copy._allowZeroLength = AllowZeroLength;
         copy.Owner            = null;
         copy._noProperties    = null;
+        // A table is created in a format that keeps text two bytes a character.
+        copy.IsCodePageText   = false;
         if (DataType is DataType.Text or DataType.Memo) copy.SortOrder = textOrder;
         return copy;
     }

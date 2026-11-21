@@ -109,6 +109,7 @@ internal static class TdefReader
             // Jet4's extended flags follow the flags byte; bit 0 is "Unicode Compression".
             col.IsCompressedUnicode = format.Version != FileFormat.Access97
                 && (page[p + format.OffsetColumnFlags + 1] & 0x01) != 0;
+            col.IsCodePageText   = format.Version == FileFormat.Access97;
             if (dataType is DataType.Text or DataType.Memo)
                 col.SortOrder = SortOrder.Read(page, p + format.OffsetColumnSortOrder, format);
             columns.Add(col);
@@ -355,6 +356,7 @@ internal static class TdefReader
             HasStoredPlace   = src.HasStoredPlace,
             IsCalculated     = src.IsCalculated,
             IsCompressedUnicode = src.IsCompressedUnicode,
+            IsCodePageText   = src.IsCodePageText,
             SortOrder        = src.SortOrder,
         };
 }

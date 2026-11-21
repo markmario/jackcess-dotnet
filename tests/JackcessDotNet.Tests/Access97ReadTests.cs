@@ -31,6 +31,29 @@ public sealed class Access97ReadTests
 
     private const int KeysRows = 1500;
 
+    /// <summary>
+    /// An Access 97 Text column is as long as its bytes in the database's code page, a byte a character: LongRows'
+    /// four Text columns are 255 bytes each, and 32-bit DAO 3.6 reports a Size of 255 for each, as it does the bytes
+    /// of all 175 Text columns of the corpus's Access 97 files and this one. The engine said 127, two bytes a
+    /// character, and an export to a DataTable refused the values of 255 characters the column holds (#85).
+    /// </summary>
+    [Fact]
+    public void A_Text_column_is_as_long_as_DAO_says()
+    {
+        using var db = OpenFixture();
+        var table = db.GetTable("LongRows");
+        foreach (var name in new[] { "A", "B", "C", "D" })
+        {
+            var column = table.Columns.Single(c => c.Name == name);
+            Assert.Equal(255, column.MaxLength);
+            Assert.Equal(255, column.LengthInBytes);
+        }
+
+        var exported = table.ToDataTable();
+        Assert.Equal(255, exported.Columns["A"]!.MaxLength);
+        Assert.Contains(exported.Rows.Cast<System.Data.DataRow>(), row => row["A"] is string { Length: 255 });
+    }
+
     /// <summary>K1..K10 of row <paramref name="i"/> of Keys, as tools/access97-fixture.ps1 wrote them.</summary>
     private static object[] KeysOf(int i)
     {

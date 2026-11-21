@@ -32,6 +32,25 @@ public sealed class CorpusTests
     private static string VersionOf(string file)
         => Path.GetFileName(Path.GetDirectoryName(file)!);
 
+    /// <summary>The corpus, and the Access 97 file of the test assets, whose rows are longer than the corpus's (#85).</summary>
+    public static IEnumerable<object[]> CorpusFilesAndAccess97Asset()
+        => CorpusFiles().Concat(new[] { new object[] { "Assets", "access97-jet40.mdb", Path.Combine(AppContext.BaseDirectory, "Assets", "access97-jet40.mdb") } });
+
+    /// <summary>
+    /// Every database exports to a <see cref="System.Data.DataSet"/>: every value fits its <see cref="System.Data.DataColumn"/>.
+    /// An Access 97 Text column was given half its length, two bytes a character, where Access 97 keeps a byte a
+    /// character, and the export of a value longer than half its column failed (#85).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CorpusFilesAndAccess97Asset))]
+    public void Every_database_exports_to_a_DataSet(string version, string filename, string path)
+    {
+        using var db = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true });
+        var exported = db.ToDataSet();
+        Assert.Equal(db.GetTableNames().Count, exported.Tables.Count);
+        _output.WriteLine($"{version}/{filename}: {exported.Tables.Count} tables, {exported.Tables.Cast<System.Data.DataTable>().Sum(t => t.Rows.Count)} rows");
+    }
+
     [Theory]
     [MemberData(nameof(CorpusFiles))]
     public void Open_ListTables_ReadFirstRows(string version, string filename, string path)

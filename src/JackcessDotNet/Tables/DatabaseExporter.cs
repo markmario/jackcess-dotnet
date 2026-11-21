@@ -28,8 +28,8 @@ public static class DatabaseExporter
     /// Reads the whole table into a new <see cref="DataTable"/> of the table's name, with a column for each of
     /// the table's columns, in their order, and a row for each of its rows.
     /// <para>
-    /// A <see cref="DataColumn"/> has its column's name and the CLR type of its values; a Text column's length
-    /// in characters is its <see cref="DataColumn.MaxLength"/>. A null is <see cref="DBNull.Value"/>. Every
+    /// A <see cref="DataColumn"/> has its column's name and the CLR type of its values; a Text column's
+    /// <see cref="Column.MaxLength"/> is its <see cref="DataColumn.MaxLength"/>. A null is <see cref="DBNull.Value"/>. Every
     /// column allows nulls, whether or not the table's column is required. When the table's primary key is one
     /// column and no row has a null in it, that column is the <see cref="DataTable.PrimaryKey"/>; a primary key
     /// of several columns is not carried over. The rows are accepted: each is
@@ -79,7 +79,7 @@ public static class DatabaseExporter
             Type clr = MapToClrType(col.DataType);
             var dc = new DataColumn(col.Name, clr);
             if (col.DataType == DataType.Text && col.LengthInBytes > 0)
-                dc.MaxLength = col.LengthInBytes / 2;     // two bytes a character
+                dc.MaxLength = col.MaxLength;
             dt.Columns.Add(dc);
         }
 
