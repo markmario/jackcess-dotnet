@@ -61,8 +61,9 @@
 # missing from the samples' or the full sweeps' table - or, in a 32-bit run, from the 32-bit run's - a failure rather
 # than a warning, so that the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error
 # says what each table it is missing from wants: the seconds it took, in this run's own table. CI's 32-bit shards run
-# on a push to main, every night and in a run by hand, and on a pull request only when it asks (the ci:access-x86
-# label), so a piece missing from the 32-bit table is a warning in any other run, there and on main alike.
+# on a push to main, every night and in a run by hand, and on a pull request only when it changes what they run or
+# has the ci:access-x86 label (scripts/Get-AccessX86Run.ps1), so a piece missing from the 32-bit table is a warning in
+# any other run, there and on main alike.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run

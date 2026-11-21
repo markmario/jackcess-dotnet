@@ -82,7 +82,11 @@ on Windows, and need one of:
 CI runs them in a 32-bit process too, built with `-p:TestX86=true`, on runners of their own with the
 redistributable's x86 installer (`accessdatabaseengine.exe /quiet`): 32-bit ACE 16 and DAO 16. That run is two jobs
 of about seven minutes, so it is made on a push to `main`, every night and in a run by hand, always with the
-samples; a pull request gets it only with the `ci:access-x86` label, read when its run starts (label it, then push).
+samples, and on a pull request that changes what it runs: a file under `tests/JackcessDotNet.AccessTests/`,
+`scripts/Invoke-AccessTests.ps1` or `scripts/Get-AccessX86Run.ps1`, or the Access jobs of `.github/workflows/ci.yml`
+(not their comments). `scripts/Get-AccessX86Run.ps1` decides, from the pull request's files. Any other pull request
+gets it with the `ci:access-x86` label, read when its run starts (label it, then push). A change under `src/` alone
+does not bring it, since nearly every pull request makes one; `main`'s run is the net for those.
 A piece missing from its timing table (`$table.x86` in `Invoke-AccessTests.ps1`) is a warning, except in a 32-bit
 run of a pull request, where it fails as the other tables' do.
 
