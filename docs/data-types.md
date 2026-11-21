@@ -169,17 +169,25 @@ finds every row whose number reads as the `DateTime` given ([Date/Time](cursors-
     Text column without it, on a long-value page of such a column, and in a chain of long-value rows, they are
     UTF-16LE. (A query of ACE's that sorts, and a DAO snapshot, read a copy ACE writes again, and read such a Text
     value of a column without Unicode compression as compressed text; the table holds it as written.)
-  - So Access does not keep some text that begins with U+FEFF: where it writes UTF-16LE and reads compressed text.
-    U+FEFF alone, U+FEFF and up to three characters 0x01 to 0xFF, U+FEFF followed mostly by other characters, and
-    U+FEFF with NUL or a character with a low byte of 0x00 (U+0100, U+3000), in a Text column with Unicode
-    compression or a Memo kept in its row, are read back changed - and one in a long-value row of 3,814 bytes ACE
-    fails to read. This library writes the same bytes and reads them as ACE does. In a Text column without Unicode
-    compression Access keeps them all.
+  - So Access reads back changed the text that begins with U+FEFF that it keeps as UTF-16LE where it reads
+    compressed text, and **this library refuses such text**, with an `ArgumentException` (by insert, update, batch
+    insert and import) before anything is written. The rule: text that begins with U+FEFF is refused
+    - in a Text column with Unicode compression, unless compressed in runs it is no longer than UTF-16LE and holds
+      no NUL and no character above 0xFF with a low byte of 0x00 (U+0100, U+3000): so U+FEFF alone, U+FEFF and up
+      to three characters 0x01 to 0xFF, and U+FEFF followed mostly by other characters are refused;
+    - in a Memo kept in its row (64 bytes or fewer, in any column) or in one long-value row of a column with Unicode
+      compression (up to 3,816 bytes), unless compressed in runs it is shorter than UTF-16LE. ACE fails outright to
+      read one of these, of 3,814 bytes.
+
+    It is kept in a Text column without Unicode compression, on a long-value page of a Memo column without it,
+    and in a chain. A Memo of more than 3,816 bytes of UTF-16LE that begins with U+FEFF, in a column with Unicode
+    compression, is written as a chain, as ACE writes it - this library otherwise keeps up to 4,076 bytes in one
+    long-value row - which Access and this library read as UTF-16LE.
   - 0xFF followed by any byte but 0xFE is UTF-16LE: `"\u01FFab"` is `FF 01 61 00 62 00`.
-  - Where this library differs: a Memo of 1,909 to 2,038 characters that begins with U+FEFF, in a column with
-    Unicode compression. ACE keeps a value of more than 3,816 bytes as a chain, which it reads as UTF-16LE; this
-    library keeps one of up to 4,076 bytes in one long-value row, which ACE and this library read as compressed
-    text, so the value is read back changed ([#93]).
+  - A table an earlier version of this library created - its catalog row has ParentId 0 and no owner, where Access
+    gives a table the Tables container and an owner - has its name and its Text and Memo values read by their bytes:
+    as compressed text wherever they begin 0xFF 0xFE, as those versions wrote them
+    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)).
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and

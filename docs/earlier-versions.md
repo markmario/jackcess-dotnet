@@ -159,11 +159,25 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
   [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows).
 - **Rows in Access 97 files** that Access 97's format does not have:
   [Access 97 files are read-only](file-formats.md#access-97-files-are-read-only).
-- **Compressed text in a column without Unicode compression**: earlier versions compressed every Text value of
-  characters 0x01 to 0xFF, whatever the column, the names in the system catalog among them. ACE reads such a value
-  as UTF-16LE, as other characters, and so does this library ([Text and Memo](data-types.md#text-and-memo));
-  only writing the right text over it mends it. A table such a
-  version created had its name written that way, and Access did not list it.
+- **Compressed text in a column without Unicode compression** ([#93]). The JackcessDotNet packages to 1.2.2 and
+  this repository's builds before 442bbf8 wrote every Text and Memo value whose characters are all 0x01 to 0xFF
+  compressed - 0xFF 0xFE and a byte each - whatever the column's Unicode compression. What a reader sees depends on
+  whose table it is:
+  - **A table such a version created.** It gave the table's columns no Unicode compression and its catalog row
+    ParentId 0 and no owner, and wrote the table's name compressed too. Access neither lists nor reads the table
+    ("could not find the object"). This library knows such a table by its catalog row and reads its name and its
+    values by their bytes, as those versions did: the table is listed and found by its name, and its values read
+    as they were written - `Alice`, `Zoë`, `ǿab`, text in other scripts. Text those versions wrote that begins with
+    U+FEFF reads without it (they wrote it as UTF-16LE, whose 0xFF 0xFE is read as the mark). Memo values the 1.x
+    packages wrote read as null, as they did before: their long-value references are not Access's. A value this
+    library adds to such a table is read back as written, and text that begins with U+FEFF that would not be is
+    refused.
+  - **A table Access made, without Unicode compression, that such a version wrote to** - a Text column DAO's
+    `CreateField` made, or one of DDL without `WITH COMPRESSION`. Its compressed Text values read as Access reads
+    them from the table, as UTF-16LE: `Alice` as U+FEFF U+6C41 U+6369, and U+FFFD for the odd byte at the end,
+    which DAO leaves out. Nothing tells them from UTF-16LE Access wrote. Earlier versions of this library read them
+    as compressed text; this one reads them as Access does. Memo values kept in the row read as written, as Access
+    reads them. Writing the right text over such a value mends it.
 - **Tables without properties**, so with no Required or Allow Zero Length to hold rows to:
   [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 
@@ -179,7 +193,11 @@ this library changed at those commits (`tools/earlier-extended-date-keys.ps1`). 
 holds values in the layout DAO's table-type recordset writes, beside the other two, keyed by ACE as DAO added them
 (`tools/ace-extended-date-table-type.ps1`), and `engine-c89bfe4-table-type-keys.accdb` is a copy c89bfe4 changed
 (`tools/earlier-extended-date-table-type-keys.ps1`). The files of long keys are listed under
-[Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes).
+[Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes). `engine-1.2.2-created-table.mdb` and
+`engine-8e41563-created-table.mdb` are databases the JackcessDotNet 1.2.2 package and a build of 8e41563 created,
+with a table each made; `engine-8e41563-filled-table.mdb` is a table DAO made, without Unicode compression, that
+8e41563 wrote to; `earlier-created-tables.tsv` is what DAO reads of them (`tools/earlier-created-tables.ps1`, which
+also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews).
 
 [Back to contents](README.md)
 
@@ -187,3 +205,4 @@ holds values in the layout DAO's table-type recordset writes, beside the other t
 [#51]: https://github.com/markmario/jackcess-dotnet/issues/51
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
+[#93]: https://github.com/markmario/jackcess-dotnet/issues/93
