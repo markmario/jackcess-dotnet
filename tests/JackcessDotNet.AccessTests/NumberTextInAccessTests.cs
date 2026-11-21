@@ -22,6 +22,10 @@ namespace JackcessDotNet.AccessTests
     /// and reads them all again once DAO has compacted the file. A sample of the numbers is drawn unless
     /// JACKCESS_FULL_SWEEPS=1. Text of doubles from 1E-308 to 1E-304, and under 1E-321, is left out: there ACE stores
     /// some numbers one place from the double their first 20 digits are nearest, which the engine does not (#136).
+    /// 32-bit ACE reads some text otherwise than 64-bit ACE 16, which the engine follows on every target: in such a
+    /// process the stored values may differ only as that engine was measured to differ (<see cref="Otherwise"/>), and
+    /// everything else is asserted as in a 64-bit one; with a 32-bit ACE not measured, that one comparison is skipped,
+    /// naming the engine.
     /// </summary>
     public class NumberTextInAccessTests : IDisposable
     {
@@ -130,16 +134,63 @@ namespace JackcessDotNet.AccessTests
                 r => Convert.ToInt32(r["Id"]),
                 r => Bits(r["D"]) + " " + Bits(r["S"]) + " " + (r["T"] as string ?? "null"));
 
-        // ACE finds each row of the engine's table through the index on its column, by the value ACE stored in its own.
-        private static void AssertAceFindsEach(string path, Dictionary<int, string> ace, int rows, string when)
+        /// <summary>
+        /// What the ACE in this process was measured to store otherwise than 64-bit ACE 16, which the engine follows
+        /// (docs/data-types.md, tools/ace-text-to-float.ps1): 32-bit ACE reads some text for a Double one unit in the
+        /// last place from the double of its first 20 digits - its arithmetic is the x87's, and rounds twice, but not
+        /// exactly as rounding to 64 bits and then to 53 would - and Access 2007's 32-bit ACE 12 also refuses text of
+        /// the largest double and writes -0 and 999999999999999.5 as text otherwise. Null where nothing differs.
+        /// </summary>
+        private sealed class Otherwise
+        {
+            public string Engine;
+            public bool DoubleOneUnit;
+            public bool RefusesLargest;
+            public Dictionary<string, string> Text = new Dictionary<string, string>();
+        }
+
+        private static string ThisAce => (Environment.Is64BitProcess ? "64" : "32") + "-bit ACE " + AceBuild;
+
+        // Null for 64-bit ACE, which the engine follows exactly; the measured differences of a 32-bit ACE; or a skip of
+        // the comparison of stored values, naming the engine, for a 32-bit ACE not measured.
+        private static Otherwise MeasuredOtherwise()
+        {
+            if (Environment.Is64BitProcess) return null;
+            if (AceVersion == 12)
+                return new Otherwise
+                {
+                    Engine = ThisAce, DoubleOneUnit = true, RefusesLargest = true,
+                    Text = { ["-0"] = "0", ["1000000000000000"] = "1E+15" },
+                };
+            if (AceBuild == "16.0.5011.1000") return new Otherwise { Engine = ThisAce, DoubleOneUnit = true };
+            return null;
+        }
+
+        private static bool Measured => Environment.Is64BitProcess || AceVersion == 12 || AceBuild == "16.0.5011.1000";
+
+        // Whether ACE's value of a column is the engine's, or differs from it only as this ACE was measured to.
+        private static bool Allowed(Otherwise otherwise, string column, object engine, object ace)
+        {
+            if (Bits(engine) + (engine as string) == Bits(ace) + (ace as string)) return true;
+            if (otherwise == null) return false;
+            if (column == "D" && otherwise.DoubleOneUnit && engine is double e && ace is double a)
+            {
+                long p = BitConverter.DoubleToInt64Bits(e), q = BitConverter.DoubleToInt64Bits(a);
+                return (p < 0) == (q < 0) && Math.Abs(p - q) == 1;
+            }
+            return column == "T" && engine is string et && otherwise.Text.TryGetValue(et, out var at) && at == (ace as string);
+        }
+
+        // ACE finds each row of the engine's table through the index on its column, by the value the engine stored.
+        private static void AssertAceFindsEach(string path, int rows, string when)
         {
             using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
             {
                 connection.Open();
-                var own = AceRows(connection, "SELECT Id, D, S, T FROM A").ToDictionary(r => Convert.ToInt32(r["Id"]));
+                var own = AceRows(connection, "SELECT Id, D, S, T FROM E").ToDictionary(r => Convert.ToInt32(r["Id"]));
                 for (int id = 0; id < rows; id++)
                 {
-                    if (!own.TryGetValue(id, out var row)) continue;   // refused by both
+                    if (!own.TryGetValue(id, out var row)) continue;   // refused
                     string column = row["D"] is double ? "D" : row["S"] is float ? "S" : "T";
                     using (var command = new OleDbCommand("SELECT Id FROM E WHERE " + column + " = ?", connection))
                     {
@@ -147,7 +198,7 @@ namespace JackcessDotNet.AccessTests
                         var found = new List<int>();
                         using (var reader = command.ExecuteReader())
                             while (reader.Read()) found.Add(reader.GetInt32(0));
-                        Assert.True(found.Contains(id), column + " of row " + id + " (" + ace[id] + ") " + when + ": ACE finds " + string.Join(", ", found));
+                        Assert.True(found.Contains(id), column + " of row " + id + " (" + Bits(row[column]) + (row[column] as string) + ") " + when + ": ACE finds " + string.Join(", ", found));
                     }
                 }
             }
@@ -194,21 +245,40 @@ namespace JackcessDotNet.AccessTests
                     catch (OleDbException) { refusedByAce.Add(id); }
                 }
             }
-            Assert.Equal(refusedByAce.OrderBy(i => i), refusedByEngine.OrderBy(i => i));
+            var otherwise = MeasuredOtherwise();
+            var engineRows = AceRows(path, "SELECT Id, D, S, T FROM E").ToDictionary(r => Convert.ToInt32(r["Id"]));
+            var aceRows = AceRows(path, "SELECT Id, D, S, T FROM A").ToDictionary(r => Convert.ToInt32(r["Id"]));
 
-            // The engine wrote what ACE wrote, and ACE finds each row through the engine's indexes.
+            // ACE refuses what the engine refuses - and ACE 12 in a 32-bit process also text of the largest double,
+            // which the engine stores as it.
+            var refusedOtherwise = refusedByAce.Except(refusedByEngine).ToList();
+            Assert.True(refusedByEngine.IsSubsetOf(refusedByAce), "the engine refused " + string.Join(", ", refusedByEngine.Except(refusedByAce).Select(i => values[i].Value)) + ", which " + ThisAce + " stores");
+            Assert.True(refusedOtherwise.All(i => otherwise != null && otherwise.RefusesLargest
+                    && values[i].Column == "D" && Math.Abs((double)engineRows[i]["D"]) == double.MaxValue),
+                ThisAce + " refused " + string.Join(", ", refusedOtherwise.Select(i => values[i].Value)) + ", which the engine stores");
+
+            // The engine wrote what ACE wrote, or what this ACE was measured to write otherwise; an ACE not measured is
+            // not compared, and says so once the rest of the test has run.
+            int differed = 0;
+            var wrong = new List<string>();
+            foreach (var p in aceRows)
+            {
+                string column = values[p.Key].Column;
+                object mine = engineRows[p.Key][column], its = p.Value[column];
+                if (Bits(mine) + (mine as string) == Bits(its) + (its as string)) continue;
+                differed++;
+                if (!Measured || !Allowed(otherwise, column, mine, its))
+                    wrong.Add(column + " " + values[p.Key].Value + ": the engine wrote " + Bits(mine) + (mine as string) + ", " + ThisAce + " " + Bits(its) + (its as string));
+            }
+            if (Measured) Assert.True(wrong.Count == 0, wrong.Count + " values differ from " + ThisAce + "'s:\n" + string.Join("\n", wrong));
+            AssertAceFindsEach(path, values.Count, "in the file the engine wrote");
+
             var engine = Stored(path, "E");
-            var ace = Stored(path, "A");
-            var wrong = ace.Where(p => engine[p.Key] != p.Value)
-                .Select(p => values[p.Key].Column + " " + values[p.Key].Value + ": the engine wrote " + engine[p.Key] + ", ACE " + p.Value).ToList();
-            Assert.True(wrong.Count == 0, string.Join("\n", wrong.Take(40)));
-            AssertAceFindsEach(path, ace, values.Count, "in the file the engine wrote");
-
             var compacted = Compact(path);
             try
             {
                 Assert.Equal(engine.OrderBy(p => p.Key), Stored(compacted, "E").OrderBy(p => p.Key));
-                AssertAceFindsEach(compacted, ace, values.Count, "after DAO compacted the file");
+                AssertAceFindsEach(compacted, values.Count, "after DAO compacted the file");
             }
             finally { File.Delete(compacted); }
 
@@ -228,16 +298,26 @@ namespace JackcessDotNet.AccessTests
                 {
                     if (refusedByAce.Contains(id)) continue;
                     var (column, _) = values[id];
-                    object stored = rows[id][column];
+                    // Each row is found through the engine's index by its own value: ACE's row holds what ACE stores,
+                    // which is the engine's value or differs from it as compared above.
+                    object stored = rows[id][column], added = rows[id + 100000][column];
                     var byIndex = table.CreateIndexCursor("By" + column).FindRowsByEntry(stored).Select(r => (int)r["Id"]).ToList();
-                    Assert.True(byIndex.Contains(id) && byIndex.Contains(id + 100000),
-                        column + " " + values[id].Value + ": the engine's index finds " + string.Join(", ", byIndex));
-                    Assert.Equal(Bits(stored) + (stored as string), Bits(rows[id + 100000][column]) + (rows[id + 100000][column] as string));
+                    var itsByIndex = table.CreateIndexCursor("By" + column).FindRowsByEntry(added).Select(r => (int)r["Id"]).ToList();
+                    Assert.True(byIndex.Contains(id) && itsByIndex.Contains(id + 100000),
+                        column + " " + values[id].Value + ": the engine's index finds " + string.Join(", ", byIndex) + " and " + string.Join(", ", itsByIndex));
+                    if (Measured)
+                        Assert.True(Allowed(otherwise, column, stored, added),
+                            column + " " + values[id].Value + ": the engine wrote " + Bits(stored) + (stored as string) + ", " + ThisAce + " " + Bits(added) + (added as string));
                 }
             }
             var again = Compact(path);
-            try { Assert.Equal(2 * (values.Count - refusedByAce.Count), AceRows(again, "SELECT Id FROM E").Count); }
+            try { Assert.Equal(2 * values.Count - refusedByAce.Count - refusedByEngine.Count, AceRows(again, "SELECT Id FROM E").Count); }
             finally { File.Delete(again); }
+
+            if (!Measured)
+                Assert.Skip("Everything but one comparison ran. What " + ThisAce + " stores for text in a Double or a Single, and "
+                    + "writes for a number as text, has not been measured, so its values were not compared with the engine's ("
+                    + differed + " differed); 64-bit ACE 16, 32-bit ACE 12 and 32-bit ACE 16.0.5011.1000 have been.");
         }
     }
 }
