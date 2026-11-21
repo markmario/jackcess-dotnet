@@ -177,9 +177,9 @@ $pieces = @{
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 530
+        FileSharingInAccessTests = 42
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
-        RoomReuseInAccessTests = 188
+        RoomReuseInAccessTests = 67
         AccdbFormatsInAccessTests = 41; Access97InAccessTests = 3; CorpusInAccessTests = 12; 'CorpusInAccessTests.ReadsAccdb' = 129
         'CorpusInAccessTests.ReadsMdb' = 48; 'CorpusInAccessTests.the_engine_reads-others' = 7; CursorsAndRowsInAccessTests = 32
         'CursorsAndRowsInAccessTests.TAccessKeyed' = 107; 'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 57
@@ -200,9 +200,9 @@ $table = @{
     }
     full = @{
         BinaryLengthInAccessTests = 20; CurrencyInAccessTests = 11; ExtendedDateLayoutsInAccessTests = 4; FailedWritesInAccessTests = 69
-        FileSharingInAccessTests = 530
+        FileSharingInAccessTests = 42
         ImporterInAccessTests = 19; LookupsInAccessTests = 6; ProtectedFilesInAccessTests = 44
-        RoomReuseInAccessTests = 188
+        RoomReuseInAccessTests = 67
         AccdbFormatsInAccessTests = 28; Access97InAccessTests = 2; CorpusInAccessTests = 24; 'CorpusInAccessTests.ReadsAccdb' = 131
         'CorpusInAccessTests.ReadsMdb' = 56; 'CorpusInAccessTests.the_engine_reads-others' = 6; CursorsAndRowsInAccessTests = 49
         'CursorsAndRowsInAccessTests.TAccessKeyed' = 256; 'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 231
