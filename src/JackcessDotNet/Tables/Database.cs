@@ -1159,6 +1159,10 @@ public sealed class Database : IDisposable
         // A table an earlier version of this library created: its text is read by its bytes (#93).
         foreach (var column in info.Columns)
             column.ReadsTextByContent = readsTextByContent && column.DataType is DataType.Text or DataType.Memo;
+        // The catalog: the name of a table an earlier version created is read by its bytes, as the catalog lists it (#121).
+        if (tdefPageNum == JetFormat.PageSystemCatalog)
+            foreach (var column in info.Columns)
+                column.IsCatalogName = column.DataType == DataType.Text && SystemCatalog.IsNameColumn(column);
 
         var tableDef = new TableDefinition(name, info.Columns)
         {

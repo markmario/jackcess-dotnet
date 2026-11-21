@@ -172,6 +172,26 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     packages wrote read as null, as they did before: their long-value references are not Access's. A value this
     library adds to such a table is read back as written, and text that begins with U+FEFF that would not be is
     refused.
+    - **Its row of MSysObjects, read as a table** (`GetTable("MSysObjects")`, by its rows, a cursor, a search or
+      `ToDataTable`), gives the name the table is listed and found under, `People`, as earlier versions gave it
+      ([#121]). Only that column of that row is read so: every other value of the catalog is read as its column
+      says. Access reads the row otherwise, measured with DAO and ACE 16 on the two test files
+      (`tools/earlier-created-catalog-names.ps1`): a table-type recordset and an OLE DB query read the bytes as
+      UTF-16LE, U+FEFF U+6550 U+706F U+656C, as they read such text in any table Access made; a DAO snapshot reads
+      `People`; a dynaset, and a query that selects by Id, ParentId or Name, do not come to the row at all. Since
+      Access cannot open the table under either name, this library keeps to the name it lists, so that a name read
+      from the catalog is one `GetTable` takes.
+    - **The row is in none of the catalog's indexes**: those versions left it out. A rename or a drop of the table
+      is refused without `VerifyIndexes`, as Access refuses such a change ([above](#indexes-that-do-not-hold-every-row)),
+      and made with it. The refusal quotes the table's name as it is listed.
+    - **Compacting the file in Access drops the table.** `DBEngine.CompactDatabase` of either test file leaves out
+      the table and its row, and adds MSysCompactError, with "The search key was not found in any record" for
+      MSysObjects. To keep its rows, copy them into a table this version creates before the file is compacted.
+    - **A table the 1.x packages created takes no change to its definition.** Its definition does not end as this
+      library reads one to change it, so adding, dropping or renaming a column, adding an index and dropping the
+      table are refused with `NotSupportedException` before anything is written; and its Memo column has no pages
+      of long values of its own, so a Memo value longer than the row can hold is refused ("Row is too large for
+      format"). Versions before [#93] refused the same. A table 8e41563 created takes them all.
   - **A table Access made, without Unicode compression, that such a version wrote to** - a Text column DAO's
     `CreateField` made, or one of DDL without `WITH COMPRESSION`. Its compressed Text values read as Access reads
     them from the table, as UTF-16LE: `Alice` as U+FEFF U+6C41 U+6369, and U+FFFD for the odd byte at the end,
@@ -197,7 +217,8 @@ holds values in the layout DAO's table-type recordset writes, beside the other t
 `engine-8e41563-created-table.mdb` are databases the JackcessDotNet 1.2.2 package and a build of 8e41563 created,
 with a table each made; `engine-8e41563-filled-table.mdb` is a table DAO made, without Unicode compression, that
 8e41563 wrote to; `earlier-created-tables.tsv` is what DAO reads of them (`tools/earlier-created-tables.ps1`, which
-also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews).
+also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews). `tools/earlier-created-catalog-names.ps1`
+reads the first two's MSysObjects with DAO and ACE.
 
 [Back to contents](README.md)
 
@@ -206,3 +227,4 @@ also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews).
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
+[#121]: https://github.com/markmario/jackcess-dotnet/issues/121

@@ -69,6 +69,50 @@ public sealed class EarlierVersionTablesTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// The catalog read as a table gives such a table's row the name the table is listed under, as the catalog reads it
+    /// to list the table - by a scan, a cursor either way, a search by name and an export - and every other row's name
+    /// as it is stored. The row is in none of the catalog's indexes (those versions left it out), so an index cursor
+    /// does not come to it, as a DAO dynaset does not.
+    /// </summary>
+    [Theory]
+    [InlineData("engine-1.2.2-created-table.mdb")]
+    [InlineData("engine-8e41563-created-table.mdb")]
+    public void The_catalog_read_as_a_table_names_such_a_table_as_it_is_listed(string asset)
+    {
+        using var db = Database.Open(Copy(asset));
+        var catalog = db.GetTable("MSysObjects");
+        static bool Earlier(Row row) => row["ParentId"] is 0 && row["Type"] is (short)1;
+
+        var rows = catalog.Rows.ToList();
+        Assert.Equal("People", Assert.Single(rows, Earlier)["Name"]);
+        Assert.Equal("People", Assert.Single(catalog.CreateCursor(), Earlier)["Name"]);
+        Assert.Equal("People", Assert.Single(catalog.CreateCursor().EnumerateBackward(), Earlier)["Name"]);
+        Assert.Equal(rows.Single(Earlier)["Id"], catalog.CreateCursor().FindRow("Name", "People")?["Id"]);
+        Assert.Equal("People", Assert.Single(catalog.ToDataTable().Rows.Cast<System.Data.DataRow>(),
+            row => row["ParentId"] is 0 && row["Type"] is (short)1)["Name"]);
+        // The system tables, every other row of a table, are named as they are stored.
+        Assert.All(rows.Where(row => row["Type"] is (short)1 && !Earlier(row)),
+            row => Assert.StartsWith("MSys", (string)row["Name"]!, StringComparison.Ordinal));
+        foreach (var index in catalog.Indexes)
+            Assert.DoesNotContain(catalog.CreateIndexCursor(index.Name), Earlier);
+    }
+
+    /// <summary>
+    /// Renaming such a table is refused without <see cref="Database.VerifyIndexes"/>, as those versions left its row out
+    /// of the catalog's indexes, and the refusal quotes the name the table is listed under.
+    /// </summary>
+    [Theory]
+    [InlineData("engine-1.2.2-created-table.mdb")]
+    [InlineData("engine-8e41563-created-table.mdb")]
+    public void A_refused_rename_of_such_a_table_quotes_its_name(string asset)
+    {
+        using var db = Database.Open(Copy(asset));
+        var refused = Assert.Throws<NotSupportedException>(() => db.RenameTable("People", "Persons"));
+        Assert.Contains("'People' for Name", refused.Message);
+        Assert.Contains("People", db.GetTableNames());
+    }
+
     [Fact]
     public void The_engine_adds_to_such_a_table_what_it_reads_back_and_refuses_what_it_would_not()
     {
