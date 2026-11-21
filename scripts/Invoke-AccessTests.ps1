@@ -50,7 +50,10 @@
 # the full sweeps (JACKCESS_FULL_SWEEPS=1, see tests/JackcessDotNet.AccessTests/Support/Sweeps.cs). A piece missing
 # there is taken to be slow, and named in a warning; one that takes far longer than its number is too, in the job's
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
-# makes one shard longer, and leaves nothing out.
+# makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
+# missing from any table - the samples', the full sweeps' or the 32-bit run's - a failure rather than a warning, so that
+# the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error says what each table it
+# is missing from wants: the seconds it took, in this run's own table.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
@@ -67,6 +70,7 @@ param(
     [ValidateRange(1, 64)] [int] $Shards = 1,
     [ValidateRange(1, 8)] [int] $Parallel = 1,
     [ValidateRange(0, 64)] [int] $ProcessorsEach = 0,
+    [switch] $RequireTimings,
     [switch] $X86
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
@@ -183,6 +187,8 @@ $pieces = @{
 # Seconds each piece took in a process of its own on a windows-latest runner, two at a time, for the samples (run
 # 44844453781) and for the full sweeps (the mean of runs 44846769290 and 44847393534), from the line "Seconds each
 # process took" of each shard's log. The first lines of each are classes with no sweep, timed in each mode's runs.
+# TextMarkerInAccessTests, the last line of each, is the mean of five pull requests' runs, 44860480279 to 44865291603,
+# and of five runs on main, 44860125207 to 44866192633 (2026-11-21).
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 13; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 61
@@ -207,6 +213,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 9; 'SortOrdersInAccessTests.WalkHebrew' = 5; 'SortOrdersInAccessTests.WalkItalian' = 9
         'SortOrdersInAccessTests.WalkPortuguese' = 7
         BulkIndexesInAccessTests = 60; MemoStorageInAccessTests = 12; 'SchemaChangesInAccessTests.Names' = 13; ValuesAndEntriesInAccessTests = 14
+        TextMarkerInAccessTests = 23
     }
     full = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 16; ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 66
@@ -231,6 +238,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 92; 'SortOrdersInAccessTests.WalkHebrew' = 56; 'SortOrdersInAccessTests.WalkItalian' = 78
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
+        TextMarkerInAccessTests = 25
     }
     # The samples in a 32-bit process (-X86), three processes at a time, against the redistributable's 32-bit ACE 16:
     # run 44877333525. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests, the Seeks).
@@ -341,6 +349,15 @@ if ($covered -ne $listed.Count) { throw "The pieces take $covered of the $($list
 # A 32-bit run is balanced by its own numbers, of the samples, which CI runs there whatever the event.
 $seconds = if ($X86) { $table.x86 } else { $table[$mode] }
 function Get-Seconds([string] $unit) { if ($seconds.ContainsKey($unit)) { $seconds[$unit] } else { $unknownSeconds } }
+# Every piece of every shard missing from any table - the samples', the full sweeps', the 32-bit run's - and from which.
+# A piece is one of this run's, so one that only the other mode has (a theory's "-others" piece whose cases a mode's
+# pieces all take, say) is checked only by a run in that mode; none does so today, both modes having the same pieces.
+$thisTable = if ($X86) { 'x86' } else { $mode }
+$untimed = [ordered]@{}
+foreach ($unit in $units) {
+    $from = @('samples', 'full', 'x86' | Where-Object { -not $table[$_].ContainsKey($unit.Name) })
+    if ($from.Count) { $untimed[$unit.Name] = $from }
+}
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.
 $ordered = @($units | Sort-Object @{ Expression = { Get-Seconds $_.Name }; Descending = $true }, @{ Expression = { $_.Name } })
@@ -355,7 +372,7 @@ if ($Shards -gt 1) {
     }
     $ordered = @($mine)
     Write-Host "Shard $Shard of $Shards`: $(($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum) tests in $($ordered.Count) processes, about $($load[$Shard - 1]) s of them: $(($ordered.Name | Sort-Object) -join ', ')"
-    foreach ($unit in ($ordered | Where-Object { -not $seconds.ContainsKey($_.Name) })) {
+    foreach ($unit in ($ordered | Where-Object { -not $RequireTimings -and -not $seconds.ContainsKey($_.Name) })) {
         Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 ($mode), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
     }
 }
@@ -431,7 +448,8 @@ $running = [System.Collections.Generic.List[object]]::new()
 $ran = 0
 $failed = [System.Collections.Generic.List[string]]::new()
 $failCode = 0
-$took = [ordered]@{}
+$took = [ordered]@{}       # every attempt's seconds, summed: what the run spent
+$lastTook = @{}            # the last attempt's: what a piece takes, for its number in a table
 $notes = @{}
 $aceWroteNoMessage = '^System\.Data\.OleDb\.OleDbException : (\s|$)'
 
@@ -499,6 +517,7 @@ while ($queue.Count -or $running.Count) {
         $free = [math]::Round((New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($run.Temp))).AvailableFreeSpace / 1GB, 1)
         $elapsed = [math]::Round($run.Clock.Elapsed.TotalSeconds)
         $took[$unit.Name] = $elapsed + $(if ($took.Contains($unit.Name)) { $took[$unit.Name] } else { 0 })
+        $lastTook[$unit.Name] = $elapsed
         $report = Read-Report $run.Report
 
         if ($code -eq 0 -and $report -and -not $report.Errors) {
@@ -568,6 +587,27 @@ foreach ($unit in ($ordered | Sort-Object { if ($took.Contains($_.Name)) { $took
     $summary.Add("| $($unit.Name) | $($unit.Tests.Count) | $measured | $number | $note |")
 }
 if ($env:GITHUB_STEP_SUMMARY) { ($summary + '') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }
+
+if ($RequireTimings -and $untimed.Count) {
+    foreach ($name in $untimed.Keys) {
+        # What each table it is missing from wants. This run measures its own table's number (its last attempt's, if it
+        # was run again); the samples' and the full sweeps' stand in for each other until a run of the other measures it;
+        # a 32-bit number comes from a 32-bit shard's error, and a 64-bit one from a 64-bit shard's.
+        $wants = foreach ($t in $untimed[$name]) {
+            $measured = if ($lastTook.Contains($name)) { "$($lastTook[$name]), the seconds it took in this shard" }
+                        else { 'the seconds the shard of this run that ran it gives in its error' }
+            if ($t -eq $thisTable) { "`$table.$t`: $measured" }
+            elseif ($t -ne 'x86' -and $thisTable -ne 'x86') { "`$table.$t`: the same as `$table.$thisTable, until a run of the $(if ($t -eq 'full') { 'full sweeps' } else { 'samples' }) measures it" }
+            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its error" }
+            else { "`$table.$t`: the seconds a 64-bit shard gives in its error" }
+        }
+        Write-Host "::error::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
+    }
+    if (-not $failed.Count) {
+        Write-Host "::error::$($untimed.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($untimed.Keys -join ', ')"
+        exit 1
+    }
+}
 
 if ($failed.Count) {
     Write-Host "::error::$($failed.Count) of $($ordered.Count) processes failed: $($failed -join ', ')"

@@ -7,13 +7,18 @@
 # one shard longer, and leaves nothing out. A shard runs its classes in one process, and fails unless every test
 # method the listing gives them ran, as its report says, and nothing else did. Methods, not tests: a theory whose data
 # cannot be listed case by case is listed once and runs each case, so a shard runs more tests than it lists.
+#
+# -RequireTimings, which CI gives a pull request's run, makes a class with no row a failure rather than a warning, so
+# that the table cannot fall behind the tests unnoticed. The shard still runs its tests first, and its error gives the
+# seconds the class took here, which is the number its row wants in this configuration's column.
 param(
     [Parameter(Mandatory)] [string] $Framework,
     [Parameter(Mandatory)] [string] $TrxName,
     [ValidateRange(1, 64)] [int] $Shard = 1,
     [ValidateRange(1, 64)] [int] $Shards = 1,
     # MSBuild properties the build was given (-p:NetStandardAsset=true), so that the same build is listed and run.
-    [string[]] $Properties = @()
+    [string[]] $Properties = @(),
+    [switch] $RequireTimings
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
@@ -53,9 +58,10 @@ $classOf = { param([string] $name) $method = & $methodOf $name; $method.Substrin
 $classes = @($listed | ForEach-Object { & $classOf $_ } | Sort-Object -Unique)
 
 # Seconds each class took on a windows-latest runner, in each configuration: the mean of runs 44859335561, 44860125207
-# and 44860480279 (2026-11-21), from their test reports. ns- is the netstandard2.0 assembly on that framework, and x86
-# the 32-bit process. Every class has a row: one that is missing is counted as 1 s and named in a warning, so a table
-# that has fallen behind the tests shows in the log. Each shard's summary shows what each class took beside its number.
+# and 44860480279 (2026-11-21), from their test reports; OADateTests the mean of runs 44864425043, 44865291603 and
+# 44866192633. ns- is the netstandard2.0 assembly on that framework, and x86 the 32-bit process. Every class has a row,
+# in the order of the names: one that is missing is counted as 1 s and named in a warning, or with -RequireTimings an
+# error. Each shard's summary shows what each class took beside its number.
 $timings = @'
 Class                                     net10.0    net11.0      net48  net48-x86 ns-net10.0   ns-net48
 AccdbCreationTests                            1.8        1.9        4.4        5.9        1.7        5.0
@@ -145,6 +151,7 @@ MemoCompressionTests                          0.0        0.0        0.1        0
 MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
 NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
 NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+OADateTests                                   0.3        0.4        0.5        0.6        0.3        0.6
 ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
 OfficeCryptTests                              3.5        2.5        6.6       10.7        2.3        9.5
 OneToOneRelationshipTests                     0.0        0.0        0.2        0.0        0.0        0.1
@@ -193,7 +200,7 @@ $seconds = @{}
 foreach ($row in ($timings | Select-Object -Skip 1)) { $cells = $row.Trim() -split '\s+'; $seconds[$cells[0]] = [double] $cells[$column] }
 function Get-Seconds([string] $class) { $short = $class.Substring($namespace.Length); if ($seconds.ContainsKey($short)) { $seconds[$short] } else { 1 } }
 $untimed = @($classes | ForEach-Object { $_.Substring($namespace.Length) } | Where-Object { -not $seconds.ContainsKey($_) })
-if ($untimed.Count) { Write-Host "::warning::$($untimed.Count) test classes have no row in the timing table of scripts/Invoke-TestShard.ps1 and are counted as 1 s each, so the shards may not be balanced: $($untimed -join ', ')" }
+if ($untimed.Count -and -not $RequireTimings) { Write-Host "::warning::$($untimed.Count) test classes have no row in the timing table of scripts/Invoke-TestShard.ps1 and are counted as 1 s each, so the shards may not be balanced: $($untimed -join ', ')" }
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.
 $load = New-Object 'double[]' $Shards
@@ -211,34 +218,52 @@ Write-Host "$Framework, shard $Shard of $Shards`: $($expected.Count) of the $($l
 $filters = @($mine | ForEach-Object { '--filter-class'; $_ })
 & dotnet test --project $project --configuration Release --no-build --framework $Framework @Properties @filters `
     --results-directory $results --report-xunit-trx --report-xunit-trx-filename $TrxName
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-# What ran, from the report: each result's class and method.
-[xml] $report = Get-Content -LiteralPath (Join-Path $results $TrxName) -Raw
-$ns = New-Object Xml.XmlNamespaceManager $report.NameTable
-$ns.AddNamespace('t', $report.DocumentElement.NamespaceURI)
-$ran = @($report.SelectNodes('//t:UnitTest/t:TestMethod', $ns) | ForEach-Object { "$($_.className).$($_.name)" })
-$missing = @($methods | Where-Object { $ran -notcontains $_ })
-$others = @($ran | Sort-Object -Unique | Where-Object { $methods -notcontains $_ })
+# A test that failed fails the shard, but after what the report says of each class's time, so that a missing row is
+# named in the same run.
+$testExit = $LASTEXITCODE
+$trx = Join-Path $results $TrxName
+$report = $null
+if (Test-Path -LiteralPath $trx) { [xml] $report = Get-Content -LiteralPath $trx -Raw }
 
 # How long each class took, beside what $seconds says, in the job's summary; a class far slower than its number - a
 # new one, say - is named in a warning, since it makes its shard the run's longest.
-$classOfTest = @{}
-foreach ($test in $report.SelectNodes('//t:UnitTest', $ns)) { $classOfTest[$test.id] = $test.SelectSingleNode('t:TestMethod', $ns).className }
 $took = @{}
-foreach ($result in $report.SelectNodes('//t:UnitTestResult', $ns)) {
-    if ($result.duration) { $took[$classOfTest[$result.testId]] += [TimeSpan]::Parse($result.duration).TotalSeconds }
+if ($report) {
+    $ns = New-Object Xml.XmlNamespaceManager $report.NameTable
+    $ns.AddNamespace('t', $report.DocumentElement.NamespaceURI)
+    $classOfTest = @{}
+    foreach ($test in $report.SelectNodes('//t:UnitTest', $ns)) { $classOfTest[$test.id] = $test.SelectSingleNode('t:TestMethod', $ns).className }
+    foreach ($result in $report.SelectNodes('//t:UnitTestResult', $ns)) {
+        if ($result.duration) { $took[$classOfTest[$result.testId]] += [TimeSpan]::Parse($result.duration).TotalSeconds }
+    }
+    $rows = $took.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object {
+        $table = Get-Seconds $_.Key
+        if ($_.Value -gt 2 * $table + 10) { Write-Host "::warning::$($_.Key.Substring($namespace.Length)) took $([math]::Round($_.Value)) s on $Framework; scripts/Invoke-TestShard.ps1 has it at $table s. Update the number, or the shards will not be balanced." }
+        "| $($_.Key.Substring($namespace.Length)) | $([math]::Round($_.Value)) | $table |"
+    }
+    if ($env:GITHUB_STEP_SUMMARY) {
+        @("### $Framework$(if ($Properties) { " ($($Properties -join ' '))" }), shard $Shard of $Shards", '', '| Class | Seconds | In the table |', '|---|---|---|') + @($rows) + '' |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+    }
 }
-$rows = $took.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object {
-    $table = Get-Seconds $_.Key
-    if ($_.Value -gt 2 * $table + 10) { Write-Host "::warning::$($_.Key.Substring($namespace.Length)) took $([math]::Round($_.Value)) s on $Framework; scripts/Invoke-TestShard.ps1 has it at $table s. Update the number, or the shards will not be balanced." }
-    "| $($_.Key.Substring($namespace.Length)) | $([math]::Round($_.Value)) | $table |"
+if ($RequireTimings) {
+    foreach ($class in $untimed) {
+        $here = if ($took.ContainsKey("$namespace$class")) { "$([math]::Round($took["$namespace$class"], 1)) in the $($columns[$column - 1]) column, the seconds it took in this job" }
+                else { "in the $($columns[$column - 1]) column the seconds it took in the shard of this configuration that ran it, whose log gives them" }
+        Write-Host "::error::$class has no row in the timing table of scripts/Invoke-TestShard.ps1. Add one, in the order of the names, with $here. The other columns are in the other configurations' errors; a configuration that does not compile the class names it in none, and has 0 in its column."
+    }
 }
-if ($env:GITHUB_STEP_SUMMARY) {
-    @("### $Framework$(if ($Properties) { " ($($Properties -join ' '))" }), shard $Shard of $Shards", '', '| Class | Seconds | In the table |', '|---|---|---|') + @($rows) + '' |
-        Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+if ($testExit -ne 0) { exit $testExit }
+if (-not $report) {
+    Write-Host "::error::$Framework, shard $Shard of $Shards`: the tests wrote no report, $trx."
+    exit 1
 }
-if ($missing.Count -or $others.Count) {
+
+# What ran, from the report: each result's class and method.
+$ran = @($report.SelectNodes('//t:UnitTest/t:TestMethod', $ns) | ForEach-Object { "$($_.className).$($_.name)" })
+$missing = @($methods | Where-Object { $ran -notcontains $_ })
+$others = @($ran | Sort-Object -Unique | Where-Object { $methods -notcontains $_ })
+if ($missing.Count -or $others.Count -or ($RequireTimings -and $untimed.Count)) {
     if ($missing.Count) { Write-Host "::error::$Framework, shard $Shard of $Shards`: $($missing.Count) test methods listed for it did not run: $($missing -join ', ')" }
     if ($others.Count) { Write-Host "::error::$Framework, shard $Shard of $Shards`: $($others.Count) test methods not listed for it ran: $($others -join ', ')" }
     exit 1

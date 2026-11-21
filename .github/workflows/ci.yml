@@ -211,10 +211,12 @@ jobs:
         run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework ${{ matrix.framework }} ${{ matrix.properties }}
 
       # This shard's classes, in one process. A report to a job, named for it,
-      # since every job would write the same name.
+      # since every job would write the same name. On a pull request a test
+      # class with no row in the script's timing table fails the job, after its
+      # tests have run, with an error that says what to add.
       - name: Test
         shell: pwsh
-        run: ./scripts/Invoke-TestShard.ps1 -Framework ${{ matrix.framework }} -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Properties '${{ matrix.properties }}' -TrxName test-results-${{ matrix.id }}-${{ matrix.shard }}.trx
+        run: ./scripts/Invoke-TestShard.ps1 -Framework ${{ matrix.framework }} -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Properties '${{ matrix.properties }}' -TrxName test-results-${{ matrix.id }}-${{ matrix.shard }}.trx ${{ github.event_name == 'pull_request' && '-RequireTimings' || '' }}
 
       - name: Upload test results
         if: always()
@@ -448,12 +450,14 @@ jobs:
           & $shell -NoProfile -NonInteractive -File $probe
           if ($LASTEXITCODE) { throw "The probe of ACE failed (exit $LASTEXITCODE)." }
 
+      # On a pull request a piece with no time in the script's tables fails the
+      # job, after its tests have run, with an error that says what to add.
       - name: Test
         shell: pwsh
         env:
           JACKCESS_FULL_SWEEPS: ${{ matrix.arch == 'x86' && '0' || env.JACKCESS_FULL_SWEEPS }}
         run: |
-          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel ${{ matrix.parallel }} -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}.trx" ${{ matrix.arch == 'x86' && '-X86' || '' }}
+          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel ${{ matrix.parallel }} -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}.trx" ${{ matrix.arch == 'x86' && '-X86' || '' }} ${{ github.event_name == 'pull_request' && '-RequireTimings' || '' }}
           exit $LASTEXITCODE
 
       - name: Upload test results
