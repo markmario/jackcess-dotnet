@@ -82,8 +82,9 @@ public sealed class LongValueRoomTests : IDisposable
         Assert.True(readsLate <= readsEarly + 4 * Window,
             $"the last {Window} inserts read {readsLate} pages, the first {Window} read {readsEarly}");
 
-        // And the time, loosely - the count above is the test; this is what it was failing to hold.
-        Assert.True(late <= TimeSpan.FromTicks(early.Ticks * 4) + TimeSpan.FromSeconds(1),
+        // The time is shown, not asserted: the counts above pin the cost on any machine, and a busy one can stall
+        // for longer than a window of inserts takes.
+        TestContext.Current.TestOutputHelper?.WriteLine(
             $"the last {Window} inserts took {late.TotalMilliseconds:F0} ms, the first {Window} took {early.TotalMilliseconds:F0} ms");
     }
 
