@@ -298,6 +298,16 @@ jobs:
       # any preinstalled Office components. It is started first, in a process of
       # its own, and waited for before the tests: it takes about as long as the
       # checkout and the download, and neither needs the other.
+      #
+      # A download can be cut off by the remote host, so it is tried up to four
+      # times, 15 s apart, and the installer is run only when it is whole: as
+      # long as the server said, and signed by Microsoft, which a file cut short
+      # or changed in transit is not. The signature is checked, not a pinned
+      # hash: Microsoft publishes a new file at the same address from time to
+      # time, and a pinned hash would fail every run from then on. Each shard
+      # downloads its own: the download takes seconds and overlaps the checkout,
+      # where handing 83 MB on from access-build would lengthen that job and
+      # start the install only after an artifact's download.
       - name: Install Access Database Engine 2016 (x64), in the background
         shell: pwsh
         run: |
@@ -306,8 +316,33 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:RUNNER_TEMP 'ace-install.log'
           try {
+            $url = 'https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe'
             $exe = Join-Path $env:RUNNER_TEMP 'AccessDatabaseEngine_X64.exe'
-            Invoke-WebRequest -Uri 'https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe' -OutFile $exe
+            $attempts = 4
+            for ($attempt = 1; ; $attempt++) {
+              try {
+                Remove-Item -LiteralPath $exe -ErrorAction SilentlyContinue
+                # A connection that stalls fails, and is tried again, rather than hold the job to its timeout.
+                $response = Invoke-WebRequest -Uri $url -OutFile $exe -PassThru -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 60
+                $length = (Get-Item -LiteralPath $exe).Length
+                $sent = @($response.Headers['Content-Length'])[0]
+                if ($sent -and [long]$sent -ne $length) { throw "the file is $length bytes, where the server said $sent" }
+                $signature = Get-AuthenticodeSignature -LiteralPath $exe
+                if ($signature.Status -ne 'Valid') { throw "the file's signature is $($signature.Status): $($signature.StatusMessage)" }
+                if ($signature.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') { throw "the file is signed by $($signature.SignerCertificate.Subject)" }
+                "Downloaded the installer, $length bytes signed by Microsoft, at attempt $attempt." | Add-Content -LiteralPath $log
+                break
+              } catch {
+                $why = "attempt $attempt of ${attempts}: $($_.Exception.Message.TrimEnd('.'))"
+                if ($attempt -ge $attempts) {
+                  "The download failed, $why. The installer was not run." | Add-Content -LiteralPath $log
+                  Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ace-download.failed') -Value $why
+                  return
+                }
+                "The download failed, $why. Trying again in 15 s." | Add-Content -LiteralPath $log
+                Start-Sleep -Seconds 15
+              }
+            }
             $installer = Start-Process -FilePath $exe -ArgumentList '/quiet' -Wait -PassThru
             "The installer ended with exit code $($installer.ExitCode)." | Add-Content -LiteralPath $log
           } catch {
@@ -346,7 +381,8 @@ jobs:
           Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
 
       # The installer started above, finished and registered. Should its
-      # process have gone without finishing, it is run here instead.
+      # process have gone without finishing, it is run here instead. A download
+      # that failed every attempt fails here, saying so, before ACE is asked.
       - name: Access Database Engine 2016 (x64) installed
         shell: pwsh
         run: |
@@ -362,6 +398,10 @@ jobs:
           }
           Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ace-install.log')
           "Waited $([math]::Round($clock.Elapsed.TotalSeconds)) s for it."
+          $failed = Join-Path $env:RUNNER_TEMP 'ace-download.failed'
+          if (Test-Path -LiteralPath $failed) {
+            throw "The download of the Access Database Engine installer failed, $((Get-Content -LiteralPath $failed -Raw).Trim()). Nothing was installed; running the job again may get it."
+          }
           "Processors: $([Environment]::ProcessorCount)"
           # ACE's first use on the machine, in this one process before the tests start theirs side by side. Asked
           # for a file that is not there, the provider loads and answers; one that is not registered fails here.
