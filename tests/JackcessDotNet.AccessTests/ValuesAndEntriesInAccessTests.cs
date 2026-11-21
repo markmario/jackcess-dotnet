@@ -272,10 +272,9 @@ namespace JackcessDotNet.AccessTests
 
         [Theory]
         [InlineData(FileFormat.Access2000, ".mdb")]
-        [InlineData(FileFormat.Access2016, ".accdb")]
+        [InlineData(FileFormat.Access2010, ".accdb")]
         public void DAO_changes_the_design_of_tables_the_engine_made_and_compacts_them_whole(FileFormat format, string extension)
         {
-            if (format == FileFormat.Access2016) AccessReferee.SkipUnlessAceHas(LargeNumber);
             var path = Path.ChangeExtension(_tmp.NewMdbPath(), extension);
             var columns = new List<ColumnDefinition>
             {
@@ -287,10 +286,20 @@ namespace JackcessDotNet.AccessTests
                 new ColumnDefinition("eOle", DataType.OleObject), new ColumnDefinition("eMemo", DataType.Memo),
                 new ColumnDefinition("eGuid", DataType.Guid), new ColumnDefinition("eDec", DataType.Decimal) { Precision = 10, Scale = 2 },
             };
-            if (format == FileFormat.Access2016)
+            // In an .accdb, a Large Number and a Date/Time Extended column too, each where ACE here makes one (the 2016
+            // redistributable makes neither), in the Access 2016 format that comes with them.
+            if (format != FileFormat.Access2000)
             {
-                columns.Add(new ColumnDefinition("eBig", DataType.Int64));
-                columns.Add(new ColumnDefinition("eDte", DataType.DateTimeExtended));
+                if (AceHas(LargeNumber))
+                {
+                    columns.Add(new ColumnDefinition("eBig", DataType.Int64));
+                    format = FileFormat.Access2016;
+                }
+                if (AceHas(DateTimeExtended))
+                {
+                    columns.Add(new ColumnDefinition("eDte", DataType.DateTimeExtended));
+                    format = FileFormat.Access2016;
+                }
             }
             using (var db = Database.Create(path, format))
             {

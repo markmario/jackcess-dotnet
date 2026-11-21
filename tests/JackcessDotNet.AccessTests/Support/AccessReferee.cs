@@ -391,6 +391,19 @@ namespace JackcessDotNet.AccessTests.Support
         /// </summary>
         public static void SkipUnlessAceHas(string sqlType)
         {
+            var why = WhyAceLacksType(sqlType);
+            if (why != null)
+                Assert.Skip("ACE on this machine makes no " + sqlType + " column, so there is no referee here for a file that has one: " + why);
+        }
+
+        /// <summary>Whether ACE on this machine makes a column of <paramref name="sqlType"/>, asked as <see cref="SkipUnlessAceHas"/> asks it.</summary>
+        public static bool AceHas(string sqlType)
+        {
+            return WhyAceLacksType(sqlType) == null;
+        }
+
+        private static string WhyAceLacksType(string sqlType)
+        {
             string why;
             if (!WhyAceLacks.TryGetValue(sqlType, out why))
             {
@@ -408,8 +421,7 @@ namespace JackcessDotNet.AccessTests.Support
                 finally { File.Delete(probe); }
                 WhyAceLacks[sqlType] = why;
             }
-            if (why != null)
-                Assert.Skip("ACE on this machine makes no " + sqlType + " column, so there is no referee here for a file that has one: " + why);
+            return why;
         }
 
         private static bool _askedAbout2010;
