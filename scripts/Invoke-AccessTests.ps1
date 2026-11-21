@@ -50,7 +50,10 @@
 # the full sweeps (JACKCESS_FULL_SWEEPS=1, see tests/JackcessDotNet.AccessTests/Support/Sweeps.cs). A piece missing
 # there is taken to be slow, and named in a warning; one that takes far longer than its number is too, in the job's
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
-# makes one shard longer, and leaves nothing out.
+# makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
+# missing from either table - the samples' or the full sweeps' - a failure rather than a warning, so that the tables
+# cannot fall behind the tests unnoticed. The pieces still run first, and the error gives the seconds the piece took,
+# which is the number it wants in the samples' table, and in the full sweeps' until a run of them measures it.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
@@ -63,7 +66,8 @@ param(
     [ValidateRange(1, 64)] [int] $Shard = 1,
     [ValidateRange(1, 64)] [int] $Shards = 1,
     [ValidateRange(1, 8)] [int] $Parallel = 1,
-    [ValidateRange(0, 64)] [int] $ProcessorsEach = 0
+    [ValidateRange(0, 64)] [int] $ProcessorsEach = 0,
+    [switch] $RequireTimings
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
@@ -179,6 +183,8 @@ $pieces = @{
 # Seconds each piece took in a process of its own on a windows-latest runner, two at a time, for the samples (run
 # 44844453781) and for the full sweeps (the mean of runs 44846769290 and 44847393534), from the line "Seconds each
 # process took" of each shard's log. The first lines of each are classes with no sweep, timed in each mode's runs.
+# TextMarkerInAccessTests, the last line of each, is the mean of five pull requests' runs, 44860480279 to 44865291603,
+# and of five runs on main, 44860125207 to 44866192633 (2026-11-21).
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 13; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 61
@@ -203,6 +209,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 9; 'SortOrdersInAccessTests.WalkHebrew' = 5; 'SortOrdersInAccessTests.WalkItalian' = 9
         'SortOrdersInAccessTests.WalkPortuguese' = 7
         BulkIndexesInAccessTests = 60; MemoStorageInAccessTests = 12; 'SchemaChangesInAccessTests.Names' = 13; ValuesAndEntriesInAccessTests = 14
+        TextMarkerInAccessTests = 23
     }
     full = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 16; ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 66
@@ -227,6 +234,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 92; 'SortOrdersInAccessTests.WalkHebrew' = 56; 'SortOrdersInAccessTests.WalkItalian' = 78
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
+        TextMarkerInAccessTests = 25
     }
 }
 
@@ -308,6 +316,12 @@ if ($covered -ne $listed.Count) { throw "The pieces take $covered of the $($list
 
 $seconds = $table[$mode]
 function Get-Seconds([string] $unit) { if ($seconds.ContainsKey($unit)) { $seconds[$unit] } else { $unknownSeconds } }
+# Every piece of every shard missing from either table, and from which.
+$untimed = [ordered]@{}
+foreach ($unit in $units) {
+    $from = @('samples', 'full' | Where-Object { -not $table[$_].ContainsKey($unit.Name) })
+    if ($from.Count) { $untimed[$unit.Name] = $from }
+}
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.
 $ordered = @($units | Sort-Object @{ Expression = { Get-Seconds $_.Name }; Descending = $true }, @{ Expression = { $_.Name } })
@@ -322,7 +336,7 @@ if ($Shards -gt 1) {
     }
     $ordered = @($mine)
     Write-Host "Shard $Shard of $Shards`: $(($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum) tests in $($ordered.Count) processes, about $($load[$Shard - 1]) s of them: $(($ordered.Name | Sort-Object) -join ', ')"
-    foreach ($unit in ($ordered | Where-Object { -not $seconds.ContainsKey($_.Name) })) {
+    foreach ($unit in ($ordered | Where-Object { -not $RequireTimings -and -not $seconds.ContainsKey($_.Name) })) {
         Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 ($mode), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
     }
 }
@@ -535,6 +549,19 @@ foreach ($unit in ($ordered | Sort-Object { if ($took.Contains($_.Name)) { $took
     $summary.Add("| $($unit.Name) | $($unit.Tests.Count) | $measured | $number | $note |")
 }
 if ($env:GITHUB_STEP_SUMMARY) { ($summary + '') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }
+
+if ($RequireTimings -and $untimed.Count) {
+    foreach ($name in $untimed.Keys) {
+        $here = if ($took.Contains($name)) { "$($took[$name]), the seconds it took in this shard ($(if ($full) { 'the full sweeps' } else { 'the samples' }))" }
+                else { 'the seconds it took in the shard that ran it, whose error gives them' }
+        $where = ($untimed[$name] | ForEach-Object { "`$table.$_" }) -join ' and '
+        Write-Host "::error::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $where, with $here; in the other mode's table the same number serves until a run in that mode measures it."
+    }
+    if (-not $failed.Count) {
+        Write-Host "::error::$($untimed.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($untimed.Keys -join ', ')"
+        exit 1
+    }
+}
 
 if ($failed.Count) {
     Write-Host "::error::$($failed.Count) of $($ordered.Count) processes failed: $($failed -join ', ')"

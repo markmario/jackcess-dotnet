@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -68,16 +69,34 @@ public sealed class FileSharingTests : IDisposable
         return refused;
     }
 
-    /// <summary>Windows refusing a program's open of the file, as it refuses ACE's and DAO's: a sharing violation.</summary>
-    private static void AssertRefusedByWindows(Action open)
-        => Assert.Equal(SharingViolation, Assert.ThrowsAny<IOException>(open).HResult);
+    // EWOULDBLOCK on Linux: the HResult of the IOException .NET gives where the advisory lock it takes for a handle's
+    // sharing is held by another handle (measured with .NET 10, #122).
+    private const int LinuxLockHeld = 11;
+
+    /// <summary>
+    /// The operating system refusing a program's open of the file, as Windows refuses ACE's and DAO's: a sharing
+    /// violation on Windows, and on Linux the advisory lock .NET takes held by another handle.
+    /// </summary>
+    private static void AssertRefusedByTheSystem(Action open)
+    {
+        var refused = Assert.ThrowsAny<IOException>(open);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) Assert.Equal(SharingViolation, refused.HResult);
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) Assert.Equal(LinuxLockHeld, refused.HResult);
+    }
+
+    // Whether the operating system keeps to a handle's sharing for reading only, so that such a handle keeps writers
+    // out: Windows does. On Linux .NET takes a shared advisory lock for every handle that shares the file at all, so a
+    // handle that shares it for reading only lets a writer in, and only one that shares nothing keeps anyone out; the
+    // On_Linux_ test pins that. Where it does not, a test asserts only what holds there.
+    private static bool SharingIsKeptTo => PageFile.OSEnforcesSharing;
 
     // ── A database opened to be written ──────────────────────────────────────
 
     // While a database has the file open to be written, Access cannot open it to write - shared or exclusively - and
     // a second Database is refused; Access with it open read-only, and a Database opened only to be read, can open it.
     // The file was shared for writing, so Access's opens to write were let in and wrote over the pages the database
-    // kept track of (two writers lost rows and broke a primary key in the review of #59).
+    // kept track of (two writers lost rows and broke a primary key in the review of #59). On Linux the shared open and
+    // the second Database are let in, and only the rest is asserted.
     [Theory]
     [MemberData(nameof(Formats))]
     public void A_database_opened_to_be_written_keeps_every_other_writer_out_and_lets_readers_in(FileFormat format)
@@ -86,9 +105,12 @@ public sealed class FileSharingTests : IDisposable
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("T");
-            AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
-            AssertRefusedByWindows(() => AsAccessHasItExclusively(path).Dispose());
-            AssertInUse(() => Database.Open(path).Dispose(), path);
+            AssertRefusedByTheSystem(() => AsAccessHasItExclusively(path).Dispose());
+            if (SharingIsKeptTo)
+            {
+                AssertRefusedByTheSystem(() => AsAccessShares(path).Dispose());
+                AssertInUse(() => Database.Open(path).Dispose(), path);
+            }
 
             using (AsAccessReads(path)) { }
             using (var reader = Database.Open(path, ReadOnly))
@@ -108,6 +130,26 @@ public sealed class FileSharingTests : IDisposable
             Assert.Equal(11, db.GetTable("T").RowCount);
     }
 
+    // On Linux .NET keeps to a handle's sharing by an advisory lock, shared for every handle that shares the file at
+    // all: a database opened to be written lets a second writer in - Access's shared open, and a second Database, which
+    // writes - and keeps out only a handle that shares nothing, and Create. Keep to one writer there: the first keeps
+    // the pages it has read, and does not know of the second's. Measured with .NET 10 on Linux (#122).
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void On_Linux_a_second_writer_is_let_in_and_only_a_handle_sharing_nothing_is_kept_out(FileFormat format)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            Assert.Skip("What a database opened to be written lets in off Windows was measured on Linux; Windows keeps every other writer out.");
+        string path = NewDatabase(format);
+
+        using var db = Database.Open(path);
+        using (AsAccessShares(path)) { }
+        using (var second = Database.Open(path))
+            second.GetTable("T").Insert(new Row { ["Id"] = 11, ["V"] = "row 11" });
+        AssertRefusedByTheSystem(() => AsAccessHasItExclusively(path).Dispose());
+        AssertInUse(() => Database.Create(path).Dispose(), path);
+    }
+
     // A database just created has the file to itself until it is disposed, as DAO holds a database it creates: writers
     // and readers are kept out, Access in every mode and every Database. Disposed, it is anyone's, and opened again it is
     // shared with readers. It shared the file with readers, through a handle opened after another, sharing nothing, had
@@ -121,8 +163,8 @@ public sealed class FileSharingTests : IDisposable
         string path = NewPath(format == FileFormat.Access2000 ? ".mdb" : ".accdb");
         using (var db = Database.Create(path, format))
         {
-            AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
-            AssertRefusedByWindows(() => AsAccessReads(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessShares(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessReads(path).Dispose());
             AssertInUse(() => Database.Open(path).Dispose(), path);
             AssertInUse(() => Database.Open(path, ReadOnly).Dispose(), path);
             db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id");
@@ -143,7 +185,11 @@ public sealed class FileSharingTests : IDisposable
         string path = NewDatabase(format);
         byte[] before = File.ReadAllBytes(path);
 
-        foreach (var hold in new Func<string, FileStream>[] { AsAccessShares, AsAccessHasItExclusively })
+        // On Linux Access's shared open does not keep a writer out (the On_Linux_ test); its exclusive one does.
+        var holders = SharingIsKeptTo
+            ? new Func<string, FileStream>[] { AsAccessShares, AsAccessHasItExclusively }
+            : new Func<string, FileStream>[] { AsAccessHasItExclusively };
+        foreach (var hold in holders)
         {
             using (hold(path))
             {
