@@ -74,30 +74,11 @@ namespace JackcessDotNet.AccessTests
             return column.DataType != DataType.Complex && Enum.IsDefined(typeof(DataType), column.DataType) && !column.IsCalculated;
         }
 
-        /// <summary>
-        /// DAO's engine, given the user's Access workgroup file where there is one. Access keeps its system tables
-        /// from a reader until it is given leave to read them, which takes a workgroup file: the one Access makes
-        /// for a user the first time it runs. Without it those tables have no second reader here. The engine takes
-        /// the file only as it starts, and stays started while anything of it is held, so every use here names it.
-        /// </summary>
-        private static dynamic NewDao()
-        {
-            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
-            dynamic dbe = Activator.CreateInstance(dbeType);
-            if (File.Exists(Workgroup))
-            {
-                dbe.SystemDB = Workgroup;
-                dbe.DefaultUser = "Admin";
-                dbe.DefaultPassword = "";
-            }
-            return dbe;
-        }
-
         /// <summary>The rows of <paramref name="table"/> as DAO reads them: what ACE's OLE DB provider refuses, DAO often reads.</summary>
         private static List<Values> DaoRows(string path, string table, IList<Column> columns)
         {
             var rows = new List<Values>();
-            dynamic dbe = NewDao();
+            dynamic dbe = Dao.NewEngine();
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, false);
@@ -150,7 +131,7 @@ namespace JackcessDotNet.AccessTests
         {
             var tables = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             knowsCalculatedFields = false;
-            dynamic dbe = NewDao();
+            dynamic dbe = Dao.NewEngine();
             try
             {
                 // Calculated fields came with Access 2010, DAO 14: 32-bit ACE 12 is Access 2007's and shows none.
@@ -258,7 +239,7 @@ namespace JackcessDotNet.AccessTests
                 return "its calculated fields are newer than the reader";
             // System tables are read through DAO with the user's Access workgroup file; a machine without one
             // (a build agent) has no second reader for those ACE's provider refuses.
-            if (table.StartsWith("MSys", StringComparison.Ordinal) && !File.Exists(Workgroup)) return "no Access workgroup file on this machine";
+            if (table.StartsWith("MSys", StringComparison.Ordinal) && !File.Exists(Dao.Workgroup)) return "no Access workgroup file on this machine";
             return null;
         }
 
@@ -272,8 +253,6 @@ namespace JackcessDotNet.AccessTests
         {
             return message.Contains("Unrecognized database format") || message.Contains("requires a newer version of Microsoft Access");
         }
-
-        private static readonly string Workgroup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Access", "System.mdw");
 
         [Theory]
         [MemberData(nameof(Files))]

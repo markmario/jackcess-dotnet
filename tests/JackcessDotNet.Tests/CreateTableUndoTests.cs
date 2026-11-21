@@ -1,6 +1,7 @@
 using System.Data;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using Xunit;
 
@@ -339,12 +340,17 @@ public sealed class CreateTableUndoTests : IDisposable
     [Fact]
     public void A_database_whose_writing_fails_and_whose_file_cannot_be_removed_says_the_file_is_left()
     {
-        _file = _path + ".mdb";
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && Environment.UserName == "root")
+            Assert.Skip("root removes a file from a folder it cannot write to, which is how this test keeps the file off Windows.");
+        string folder = _path + "_folder";
+        Directory.CreateDirectory(folder);
+        _file = Path.Combine(folder, "left.mdb");
         var file = new PageFile(_file, JetFormat.For(FileFormat.Access2000), FileMode.Create) { WritesBeforeFailure = 3 };
-        // The file made read-only while it is being written: the incomplete file cannot be removed. (No other handle
-        // can hold it meanwhile: a file made anew is shared with no one until it is closed, as DAO holds a database
-        // it creates - #62. An attribute is set without one.)
-        File.SetAttributes(_file, FileAttributes.ReadOnly);
+        // The incomplete file cannot be removed, kept while it is being written: on Windows by its read-only attribute,
+        // and elsewhere, where that attribute does not keep a file from being removed, by a folder of its own that
+        // cannot be written to. (No other handle can hold it meanwhile: a file made anew is shared with no one until it
+        // is closed, as DAO holds a database it creates - #62. Neither needs one.)
+        KeepFromRemoval(_file, folder, true);
         try
         {
             var left = Assert.Throws<IOException>(() => Database.CreateIn(file));
@@ -355,10 +361,24 @@ public sealed class CreateTableUndoTests : IDisposable
         }
         finally
         {
-            File.SetAttributes(_file, FileAttributes.Normal);
+            KeepFromRemoval(_file, folder, false);
         }
         // The file is the caller's to delete, and nothing of this library holds it.
         Assert.True(File.Exists(_file));
         File.Delete(_file);
+        Directory.Delete(folder);
+    }
+
+    private static void KeepFromRemoval(string file, string folder, bool keep)
+    {
+#if NET
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = UnixFileMode.UserRead | UnixFileMode.UserExecute;
+            File.SetUnixFileMode(folder, keep ? mode : mode | UnixFileMode.UserWrite);
+            return;
+        }
+#endif
+        File.SetAttributes(file, keep ? FileAttributes.ReadOnly : FileAttributes.Normal);
     }
 }

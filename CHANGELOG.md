@@ -804,6 +804,12 @@ changes with them.
   with the runtime's own, which gives the same results over millions of inputs in every configuration the tests run
   in; the integers, in a third of the time they first took or less, are any other process's (#125). A scan of
   200,000 rows of four Date/Time columns on .NET 10 takes what it took with the runtime's conversion.
+- **On Linux, a file in use is refused with `DatabaseInUseException`** (#122). There .NET refuses an open by the
+  advisory lock it takes for a handle's sharing, with an `IOException` whose HResult is the errno, 11, and not
+  Windows' sharing violation: `Database.Create` beside any open handle, and any open beside Access holding the file
+  exclusively or beside a database just created, threw that `IOException` as it was. They are
+  `DatabaseInUseException`, with the sharing violation's HResult, as on Windows. What Linux keeps out and what it
+  lets in, measured in CI's Linux job: [Sharing a file with Access](docs/sharing.md#what-each-open-does).
 
 ## [1.2.2]
 
