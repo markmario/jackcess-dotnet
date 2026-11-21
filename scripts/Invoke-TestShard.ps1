@@ -2,11 +2,11 @@
 # by side (.github/workflows/ci.yml), each class to one of them.
 #
 # Every shard lists the tests the same way and splits the classes the same way, so the shards run every class once
-# between them. The split balances the classes' running times from $seconds below, as measured on CI; a class missing
-# there counts as a second. The numbers only balance the shards: a wrong or stale one makes one shard longer, and leaves
-# nothing out. A shard runs its classes in one process, and fails unless every test method the listing gives them ran,
-# as its report says, and nothing else did. Methods, not tests: a theory whose data cannot be listed case by case is
-# listed once and runs each case, so a shard runs more tests than it lists.
+# between them. The split balances the classes' running times from $timings below, as measured on CI; a class missing
+# there counts as a second, and is named in a warning. The numbers only balance the shards: a wrong or stale one makes
+# one shard longer, and leaves nothing out. A shard runs its classes in one process, and fails unless every test
+# method the listing gives them ran, as its report says, and nothing else did. Methods, not tests: a theory whose data
+# cannot be listed case by case is listed once and runs each case, so a shard runs more tests than it lists.
 param(
     [Parameter(Mandatory)] [string] $Framework,
     [Parameter(Mandatory)] [string] $TrxName,
@@ -52,33 +52,151 @@ $methodOf = {
 $classOf = { param([string] $name) $method = & $methodOf $name; $method.Substring(0, $method.LastIndexOf('.')) }
 $classes = @($listed | ForEach-Object { & $classOf $_ } | Sort-Object -Unique)
 
-# Seconds a class took on a windows-latest runner (run 44515421617, 2026-11-19): on .NET Framework (net48, and the
-# netstandard2.0 assembly on it), and on .NET (net10.0, net11.0, and the netstandard2.0 assembly on net10.0). Only the
-# slow ones. ExtendedDateFormsTests and ProtectedFileTests came after that run: theirs are a local run's, scaled by how
-# much slower CI was for the rest. Each shard's summary shows what each class took beside its number here.
-$seconds = if ($Framework -like 'net4*') {
-    @{
-        CursorThirdReviewTests = 117; SecondaryIndexTests = 68; AccessMadeIndexTests = 56; LongValueRoomTests = 46
-        EngineReviewTests = 45; StableRowTests = 33; UniqueIndexTrustTests = 22; ForeignKeyCascadeTestsThroughIndexes = 22
-        SecondReviewTests = 21; ExtendedDateFormsTests = 20; TrustedIndexTests = 17; IndexCursorTests = 14
-        ForeignKeyCascadeTestsByScan = 14; ProtectedFileTests = 14; IncompleteIndexTests = 8; AddIndexTests = 8
-        PrimaryKeyMaintenanceTests = 7; CursorOperationTests = 6; AccdbCreationTests = 6; ReviewFindingsTests = 6
-        AccessEntriesTests = 6; SchemaChangeUndoTests = 6; LargeNumberExtendedDateTests = 6; SchemaRemovalTests = 4
-        EntriesOfNoRowTests = 4; AccessCatalogTests = 3; AddPrimaryKeyTests = 3; GeneralSortOrderTests = 3
-    }
-} else {
-    @{
-        SecondaryIndexTests = 50; CursorThirdReviewTests = 47; LongValueRoomTests = 36; EngineReviewTests = 30
-        ForeignKeyCascadeTestsThroughIndexes = 10; UniqueIndexTrustTests = 9; StableRowTests = 8; AccessMadeIndexTests = 7
-        ForeignKeyCascadeTestsByScan = 7; TrustedIndexTests = 7; ReviewFindingsTests = 6; PrimaryKeyMaintenanceTests = 5
-        IncompleteIndexTests = 4; IndexCursorTests = 4; AccessCatalogTests = 4; AddIndexTests = 3; SchemaRemovalTests = 3
-        SecondReviewTests = 3; SchemaChangeUndoTests = 3
-    }
-}
+# Seconds each class took on a windows-latest runner, in each configuration: the mean of runs 44859335561, 44860125207
+# and 44860480279 (2026-11-21), from their test reports. ns- is the netstandard2.0 assembly on that framework, and x86
+# the 32-bit process. Every class has a row: one that is missing is counted as 1 s and named in a warning, so a table
+# that has fallen behind the tests shows in the log. Each shard's summary shows what each class took beside its number.
+$timings = @'
+Class                                     net10.0    net11.0      net48  net48-x86 ns-net10.0   ns-net48
+AccdbCreationTests                            1.8        1.9        4.4        5.9        1.7        5.0
+Access97ReadOnlyTests                         0.6        0.6        0.7        0.9        0.6        1.1
+Access97ReadTests                             1.0        0.9        1.6        2.2        1.0        1.9
+Access97TextKeyTests                          0.2        0.2        0.2        0.2        0.1        0.2
+AccessCatalogTests                            1.5        1.5        2.4        3.1        3.2        2.7
+AccessControlEntryTests                       0.0        0.0        0.0        0.0        0.0        0.0
+AccessEntriesTests                            1.7        2.1        5.9        5.5        1.3        4.5
+AccessInteropRegressionTests                  0.1        0.1        0.1        0.1        0.1        0.1
+AccessLargeNumberExtendedDateTests            0.0        0.0        0.1        0.0        0.0        0.0
+AccessMadeIndexTests                          7.1        7.2       48.4       47.1        5.9       45.6
+AddColumnNewTypesTests                        0.0        0.0        0.0        0.0        0.1        0.0
+AddColumnTests                                0.3        0.3        0.3        0.8        0.3        0.4
+AddIndexTests                                 1.5        1.4        5.0        5.1        1.2        4.5
+AddPrimaryKeyTests                            0.1        0.1        0.1        0.2        0.1        0.2
+AutomationDecimalTests                        0.4        0.0        1.0        0.6        0.2        0.9
+AutoNumberTests                               0.4        0.2        0.3        0.6        0.1        0.2
+BinaryLengthTests                             0.2        0.0        0.0        0.0        0.0        0.0
+BulkInsertTests                               6.8        6.6       16.4       18.7        6.1       17.4
+CodecTests                                    0.0        0.0        0.0        0.0        0.0        0.0
+ColumnDefinitionTests                         0.2        0.2        0.2        0.2        0.1        0.3
+ColumnRuleTests                               0.1        0.1        0.1        0.6        0.3        0.1
+CompositePrimaryKeyTests                      0.0        0.0        0.0        0.0        0.0        0.1
+CorpusTests                                   5.6        5.2        8.9        7.9        4.6        6.7
+CreateRelationshipTests                       0.6        0.6        1.0        1.1        0.5        0.9
+CreateTableUndoTests                          1.1        1.2        1.7        1.7        0.9        1.8
+CrossSessionFreedSpaceTests                   0.0        0.0        0.4        0.0        0.0        0.0
+CurrencyRoundingTests                         0.0        0.0        0.0        0.0        0.1        0.0
+CurrencyValueTests                            1.1        1.1        1.1        1.1        1.0        0.9
+CursorEdgeCaseTests                           0.0        0.0        0.0        0.0        0.0        0.1
+CursorOperationTests                          2.2        1.9        3.9        5.7        2.0        6.3
+CursorPassModelTests                          0.9        0.9        1.2        1.6        0.7        1.5
+CursorReviewTests                             0.2        0.2        0.4        0.3        0.1        0.2
+CursorTests                                   0.0        0.0        0.0        0.0        0.0        0.0
+CursorThirdReviewTests                       31.7       28.5       71.9      103.5       25.9       81.5
+CutKeyTests                                   0.5        0.2        0.6        0.8        0.5        0.9
+DamagedIndexTests                             0.6        0.7        0.6        0.8        1.1        0.8
+DatabaseAndTableShapeTests                    0.3        0.2        0.8        0.7        0.2        0.5
+DatabaseExporterTests                         0.1        0.3        1.2        0.3        0.1        0.2
+DatabaseHeaderTests                           0.0        0.0        0.0        0.0        0.0        0.0
+DatabaseImporterTests                         0.3        0.2        1.0        0.9        0.3        0.5
+DataTypeExtensionsTests                       0.0        0.0        0.0        0.0        0.0        0.0
+DataTypeRoundTripTests                        0.1        0.1        0.1        0.1        0.1        0.4
+DecimalBeyondPrecisionTests                   0.1        0.1        0.1        0.1        0.1        0.1
+DecimalPlacesTests                            1.6        1.6        1.9        2.6        1.3        2.0
+EarlierVersionTablesTests                     0.0        0.0        0.0        0.0        0.0        0.0
+EcmaStandardTests                             0.3        0.4        1.5        1.6        0.3        1.2
+EngineReviewTests                            34.9       30.8       32.2       55.3       30.6       47.7
+EntriesOfNoRowTests                           1.5        1.4        2.7        4.2        1.5        4.2
+ExtendedDateFormsTests                        6.0        5.9       11.5       15.9        4.9       17.0
+ExtendedDateReadingTests                      0.0        0.0        0.0        0.0        0.0        0.0
+ExtendedDateTableTypeTests                    4.4        4.4        8.0       11.2        3.7        9.3
+FileSharingTests                              0.1        0.1        0.1        0.1        0.1        0.1
+FileSizeLimitTests                            0.1        0.0        0.1        0.1        0.1        0.1
+FloatingKeyTests                              0.0        0.0        0.1        0.1        0.0        0.1
+ForeignKeyCascadeTestsByScan                  6.8        6.5       15.9       17.9        6.4       14.5
+ForeignKeyCascadeTestsThroughIndexes         10.3        9.4       29.2       28.4        9.8       21.7
+ForeignKeyEnforcementTests                    0.0        0.0        0.0        0.0        0.0        0.0
+FreedSpaceTests                               0.5        0.5        1.3        1.2        0.5        1.1
+GeneralForeignKeyTests                        0.1        0.1        0.2        0.2        0.1        0.2
+GeneralSortOrderTests                         0.7        0.7        2.9        2.6        0.7        2.2
+ImportConversionTests                         2.3        2.6        1.1        1.6        2.3        2.0
+ImportExactnessTests                          0.4        0.3        0.4        0.4        0.5        0.4
+IncompleteIndexTests                          3.5        2.9        5.8        8.3        2.6        8.3
+IndexAndRelationshipFlagTests                 0.0        0.0        0.0        0.0        0.0        0.0
+IndexCursorTests                              2.0        0.8        0.9        1.8        0.7        2.0
+IndexMetadataTests                            0.0        0.0        0.0        0.0        0.0        0.0
+IndexReaderTests                              1.2        1.4        1.5        1.5        1.2        2.2
+InsertRangeTests                              0.2        0.2        0.3        0.4        0.3        0.8
+InsertRefusalTests                            0.1        0.1        0.1        0.1        0.1        0.1
+JetCryptKeyDerivationTests                    0.0        0.0        0.0        0.0        0.0        0.1
+JetFormatTests                                0.0        0.0        0.0        0.0        0.0        0.0
+JoinerTests                                   0.1        0.1        0.1        0.1        0.1        0.1
+KeepWritersOutTests                           2.8        4.8        6.7        6.5        2.4        5.2
+KitchenSinkTests                              0.0        0.0        0.0        0.0        0.0        0.0
+LargeFileTests                                0.7        0.7        0.8        0.9        0.6        1.1
+LargeNumberExtendedDateTests                  2.7        1.6        6.6        5.7        1.3        5.2
+LegacyIncompleteIndexTests                    0.0        0.0        0.0        0.0        0.0        0.1
+LegacyLongKeyTests                            0.2        0.2        0.9        1.3        0.2        0.7
+LegacyUniqueIndexTests                        0.0        0.0        0.0        0.0        0.0        0.0
+LibraryAssemblyTests                          0.0        0.0        0.0        0.0        0.0        0.0
+LocaleSortOrderTests                          0.0        0.0        0.0        0.0        0.0        0.0
+LongValueRoomTests                           38.6       43.8       37.7       50.6       35.4       55.2
+LookupMatchTests                              0.0        0.1        0.1        0.1        0.0        0.2
+MemoCompressionTests                          0.0        0.0        0.1        0.1        0.0        0.0
+MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
+NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
+NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
+OfficeCryptTests                              3.5        2.5        6.6       10.7        2.3        9.5
+OneToOneRelationshipTests                     0.0        0.0        0.2        0.0        0.0        0.1
+PkIndexRoundTripTests                         0.4        0.3        0.9        0.9        0.3        0.7
+PrimaryKeyMaintenanceTests                    5.1        5.0        9.2        8.5        4.5        6.9
+PropertyMapAccessTests                        0.0        0.0        0.0        0.0        0.0        0.0
+PropertyMapTests                              0.0        0.0        0.0        0.0        0.0        0.0
+PropertyReviewTests                           0.1        0.1        0.1        0.1        0.0        0.1
+PropertyWriteTests                            0.2        0.1        0.3        0.2        0.1        0.2
+ProtectedFileTests                            4.5        4.6       12.4       18.4        3.8       13.8
+ReaderBesideWriterTests                       0.7        0.7        1.4        1.6        0.7        1.3
+ReadOnlyOpenTests                             3.5        2.4        2.3        3.4        2.1        3.4
+RefusalTypeTests                              0.0        0.0        0.0        0.0        0.0        0.1
+RefusedWritesTests                            0.2        0.3        0.4        0.4        0.2        0.3
+RelationshipTests                             0.0        0.0        0.0        0.0        0.0        0.0
+ReviewFindingsTests                           5.4        5.3        5.8        5.1        5.5        5.5
+RoomReuseTests                               10.1        9.8       61.5       76.9       10.0       89.8
+RowLayoutTests                                0.6        0.5        0.5        0.8        1.2        0.6
+RowTests                                      0.0        0.0        0.1        0.0        0.0        0.0
+RowUpdateDeleteTests                          0.1        0.2        0.3        0.8        0.1        0.6
+SchemaChangeUndoTests                         0.2        0.2        0.3        0.3        0.2        0.2
+SchemaRemovalTests                            1.7        1.7        3.2        3.3        1.5        2.6
+SchemaRenameTests                             0.2        0.2        0.7        0.2        0.4        0.2
+SecondaryIndexTests                          59.6       60.0       91.6       86.6       49.9       69.5
+SecondReviewTests                             2.3        2.4       23.0       20.1        1.9       18.9
+SmokeTests                                    0.1        0.1        0.1        0.1        0.1        0.1
+StableRowTests                                5.6        4.0        7.9        8.7        3.9        7.4
+StoredRangeTests                              0.0        0.0        0.0        0.0        0.0        0.0
+TextColumnLengthTests                         0.0        0.0        0.0        0.0        0.0        0.0
+TextIndexKeyTests                             0.0        0.0        0.0        0.0        0.0        0.1
+TextMarkerTests                               0.1        0.1        0.1        0.1        0.5        0.7
+TrustedIndexTests                             6.4        5.4       20.8       20.4        4.8       15.6
+UndoJournalTests                              0.1        0.1        0.2        0.2        0.1        0.1
+UniqueIndexTrustTests                         8.0        9.3       22.4       24.8        6.4       19.9
+UsageMapTests                                 0.0        0.0        0.0        0.0        0.0        0.0
+WideDecimalTests                              0.1        0.1        0.0        0.0        0.1        0.1
+'@ -split '\r?\n'
+$columns = @($timings[0].Trim() -split '\s+' | Select-Object -Skip 1)
+$configuration = $Framework
+if ($Properties -match '^[-/]p(roperty)?:TestX86=true$') { $configuration = "$configuration-x86" }
+if ($Properties -match '^[-/]p(roperty)?:NetStandardAsset=true$') { $configuration = "ns-$configuration" }
+# A configuration CI does not run is balanced by the net48 column on .NET Framework and the net10.0 column otherwise.
+if ($columns -notcontains $configuration) { $configuration = if ($Framework -like 'net4*') { 'net48' } else { 'net10.0' } }
+$column = [array]::IndexOf($columns, $configuration) + 1
+$seconds = @{}
+foreach ($row in ($timings | Select-Object -Skip 1)) { $cells = $row.Trim() -split '\s+'; $seconds[$cells[0]] = [double] $cells[$column] }
 function Get-Seconds([string] $class) { $short = $class.Substring($namespace.Length); if ($seconds.ContainsKey($short)) { $seconds[$short] } else { 1 } }
+$untimed = @($classes | ForEach-Object { $_.Substring($namespace.Length) } | Where-Object { -not $seconds.ContainsKey($_) })
+if ($untimed.Count) { Write-Host "::warning::$($untimed.Count) test classes have no row in the timing table of scripts/Invoke-TestShard.ps1 and are counted as 1 s each, so the shards may not be balanced: $($untimed -join ', ')" }
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.
-$load = New-Object 'int[]' $Shards
+$load = New-Object 'double[]' $Shards
 $mine = [System.Collections.Generic.List[string]]::new()
 foreach ($class in ($classes | Sort-Object @{ Expression = { Get-Seconds $_ }; Descending = $true }, @{ Expression = { $_ } })) {
     $least = 0
@@ -88,7 +206,7 @@ foreach ($class in ($classes | Sort-Object @{ Expression = { Get-Seconds $_ }; D
 }
 $expected = @($listed | Where-Object { $mine.Contains((& $classOf $_)) })
 $methods = @($expected | ForEach-Object { & $methodOf $_ } | Sort-Object -Unique)
-Write-Host "$Framework, shard $Shard of $Shards`: $($expected.Count) of the $($listed.Count) tests listed, in $($mine.Count) of the $($classes.Count) classes, about $($load[$Shard - 1]) s: $(($mine | ForEach-Object { $_.Substring($namespace.Length) }) -join ', ')"
+Write-Host "$Framework, shard $Shard of $Shards`: $($expected.Count) of the $($listed.Count) tests listed, in $($mine.Count) of the $($classes.Count) classes, about $([math]::Round($load[$Shard - 1])) s: $(($mine | ForEach-Object { $_.Substring($namespace.Length) }) -join ', ')"
 
 $filters = @($mine | ForEach-Object { '--filter-class'; $_ })
 & dotnet test --project $project --configuration Release --no-build --framework $Framework @Properties @filters `
