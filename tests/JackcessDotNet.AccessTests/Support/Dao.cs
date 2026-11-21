@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace JackcessDotNet.AccessTests.Support
@@ -19,6 +21,30 @@ namespace JackcessDotNet.AccessTests.Support
     /// </summary>
     internal static class Dao
     {
+        /// <summary>The user's Access workgroup file, which Access makes for a user the first time it runs.</summary>
+        public static readonly string Workgroup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Access", "System.mdw");
+
+        /// <summary>
+        /// DAO's engine - ACE's (DAO.DBEngine.120) where it is installed, else Jet 4.0's (DAO.DBEngine.36) - given
+        /// the user's workgroup file where there is one. Access keeps its system tables from a reader until it is
+        /// given leave to read them, which takes a workgroup file. The engine takes the file only as it starts, and
+        /// stays started while anything of it is held - in a 32-bit process it is shared with ACE's OLE DB
+        /// provider - so an engine started without it keeps the system tables from every later reader in the
+        /// process. Every engine that may start it first names the file.
+        /// </summary>
+        public static object NewEngine()
+        {
+            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
+            var dbe = Activator.CreateInstance(dbeType);
+            if (File.Exists(Workgroup))
+            {
+                dbeType.InvokeMember("SystemDB", BindingFlags.SetProperty, null, dbe, new object[] { Workgroup });
+                dbeType.InvokeMember("DefaultUser", BindingFlags.SetProperty, null, dbe, new object[] { "Admin" });
+                dbeType.InvokeMember("DefaultPassword", BindingFlags.SetProperty, null, dbe, new object[] { "" });
+            }
+            return dbe;
+        }
+
         public static void Release(object engine)
         {
             Collect();
