@@ -499,8 +499,9 @@ public sealed class Table
     /// </summary>
     /// <exception cref="ArgumentException">
     /// Two of the row's names go to one column ("x" and "X" for a column "x"); or a number column's value is of a kind
-    /// no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>. Nothing of the row is written, and the
-    /// counter and <paramref name="row"/> are as they were.
+    /// no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>; or a Text or Memo value begins with
+    /// U+FEFF, the byte order mark, where Access would read it back changed (#93). Nothing of the row is written, and
+    /// the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
     /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
@@ -994,7 +995,8 @@ public sealed class Table
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
     /// table's. Or two of the names it assigns go to one column, or a value it assigns to a number column is of a
-    /// kind no number is made of (<see cref="Insert"/>). Nothing is written.
+    /// kind no number is made of, or a Text or Memo value it assigns begins with U+FEFF where Access would read it
+    /// back changed (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="FormatException">
     /// A value <paramref name="row"/> assigns to a number column is text that does not read as a number

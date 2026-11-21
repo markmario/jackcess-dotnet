@@ -14,8 +14,7 @@ namespace JackcessDotNet.AccessTests
     /// too: the engine writes text that begins with U+FEFF as ACE writes it, and text that begins with another
     /// character whose low byte is 0xFF as UTF-16LE, which it read as text of one byte a character. ACE, the engine
     /// and DAO each read back what was written, by scan, through the primary key and after a compact. Text that
-    /// begins with U+FEFF that Access itself does not keep - it writes UTF-16LE and reads it back as compressed text -
-    /// the engine reads as ACE reads it.
+    /// begins with U+FEFF that Access itself would read back changed the engine refuses (TextMarkerTests).
     /// </summary>
     public class TextMarkerInAccessTests : IDisposable
     {
@@ -120,32 +119,6 @@ namespace JackcessDotNet.AccessTests
             }
             AssertTableIs(path, "T", "Id", rows, "after the engine updated every row");
             AssertSame(Written(rows), Written(DaoRows(path, "T", "pk")), "T as DAO reads it from the table, after the update");
-        }
-
-        [Theory]
-        [MemberData(nameof(Formats))]
-        public void Text_Access_does_not_keep_is_read_as_Access_reads_it(int daoVersion, string extension)
-        {
-            var path = NewFile(daoVersion, extension);
-            var given = new[]
-            {
-                V("Id", 1, "TC", Bom.ToString(), "MC", Bom + "aaaa", "MU", Bom + "abc"),
-                V("Id", 2, "TC", Bom + "abc", "MC", Bom + Of('\u30C6', 40), "MU", Bom + Of('\u30C6', 3)),
-                V("Id", 3, "TC", Bom + "ab\u30C6Q2Z", "MC", Bom + Of('\u4141', 50), "MU", Bom + "\u0100aaaaaa"),
-                V("Id", 4, "TC", Bom + Of('\u30C6', 3), "MC", Bom + "aaa" + "\u0000aaa", "MU", Bom + "aaaa"),
-            };
-            using (var db = Database.Open(path))
-            {
-                var table = db.GetTable("T");
-                foreach (var row in given) table.Insert(EngineRow(row));
-            }
-
-            var ace = AssertEngineReadsWhatAceReads(path, "T");
-            AssertSame(Written(ace), Written(DaoRows(path, "T", "pk")), "T as DAO reads it from the table");
-            // None of it is read back as it was given.
-            foreach (var row in ace)
-                foreach (var column in new[] { "TC", "MC", "MU" })
-                    Assert.NotEqual(given[(int)row["Id"] - 1][column], row[column]);
         }
     }
 }

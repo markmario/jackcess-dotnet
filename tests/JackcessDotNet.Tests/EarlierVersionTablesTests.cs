@@ -70,13 +70,16 @@ public sealed class EarlierVersionTablesTests : IDisposable
     }
 
     [Fact]
-    public void The_engine_adds_to_such_a_table_what_it_reads_back()
+    public void The_engine_adds_to_such_a_table_what_it_reads_back_and_refuses_what_it_would_not()
     {
         using (var db = Database.Open(Copy("engine-8e41563-created-table.mdb")))
         {
             var table = db.GetTable("People");
             table.Insert(new Row { ["Id"] = 9, ["Name"] = "Dora", ["Notes"] = "\uFEFFabQ1Z" });
             table.Insert(new Row { ["Id"] = 10, ["Name"] = "\uFEFFaaaa", ["Notes"] = "\u65E5\u672C" });
+            // Read by its bytes, UTF-16LE that begins 0xFF 0xFE would read back changed, wherever it is kept.
+            Assert.Throws<ArgumentException>(() => table.Insert(new Row { ["Id"] = 11, ["Name"] = "\uFEFFabc" }));
+            Assert.Throws<ArgumentException>(() => table.Insert(new Row { ["Id"] = 11, ["Notes"] = "\uFEFF" + new string('\u30C6', 3000) }));
         }
         using (var db = Database.Open(_path))
         {
@@ -84,6 +87,7 @@ public sealed class EarlierVersionTablesTests : IDisposable
             Assert.Equal("\uFEFFabQ1Z", table.FindRowByPrimaryKey(9)!["Notes"]);
             Assert.Equal("\uFEFFaaaa", table.FindRowByPrimaryKey(10)!["Name"]);
             Assert.Equal("Alice", table.FindRowByPrimaryKey(1)!["Name"]);
+            Assert.Null(table.FindRowByPrimaryKey(11));
         }
     }
 

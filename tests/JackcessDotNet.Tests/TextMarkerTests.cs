@@ -80,19 +80,34 @@ public sealed class TextMarkerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// What Access reads back as it was written the engine writes with the bytes Access keeps, where Access keeps them,
+    /// and reads back. What Access reads back changed - or, for one value, fails to read - the engine refuses before
+    /// anything is written.
+    /// </summary>
     [Theory]
     [MemberData(nameof(Measured))]
-    public void The_engine_keeps_and_reads_the_text_as_Access_does(string column, string value, string place, string stored, string read)
+    public void The_engine_keeps_what_Access_reads_back_and_refuses_the_rest(string column, string value, string place, string stored, string read)
     {
         string text = Text(value);
         File.Copy(Asset("ace-text-marker.mdb"), _path);
+        if (read != "same")
+        {
+            using (var refused = Database.Open(_path))
+            {
+                var e = Assert.Throws<ArgumentException>(() => refused.GetTable("T").Insert(new Row { ["Id"] = 1, [column] = text }));
+                Assert.Contains("U+FEFF, the byte order mark", e.Message);
+            }
+            Assert.Equal(File.ReadAllBytes(Asset("ace-text-marker.mdb")), File.ReadAllBytes(_path));
+            return;
+        }
+
         using var db = Database.Open(_path);
         var table = db.GetTable("T");
         var row = new Row { ["Id"] = 1, [column] = text };
         table.Insert(row);
 
         var (enginePlace, bytes) = Stored(db, row, column);
-        var engineRead = (string?)table.FindRowByPrimaryKey(1)![column];
         // ACE keeps a value of more than 3,816 bytes as a chain, and the engine one of up to 4,076 bytes in one
         // long-value row (LongValuesInAccessTests). In a column without Unicode compression both are read as UTF-16LE;
         // in one with it, text that begins with U+FEFF is made a chain, as ACE makes it.
@@ -102,9 +117,87 @@ public sealed class TextMarkerTests : IDisposable
         // compresses a Memo kept in the row, and the engine does not.
         if (text.StartsWith("\uFEFF", StringComparison.Ordinal) || column != "MU")
             Assert.Equal(stored == "plain" ? Encoding.Unicode.GetBytes(text) : Runs(text), bytes);
-        // The value ACE cannot read: it fails, and DAO reads null. The engine reads it as compressed text.
-        if (read != "error")
-            Assert.Equal(Read(text, read), engineRead);
+        Assert.Equal(text, table.FindRowByPrimaryKey(1)![column]);
+    }
+
+    /// <summary>
+    /// Text that begins with U+FEFF is refused where Access would read it back changed - it writes UTF-16LE, and reads
+    /// 0xFF 0xFE as the mark of compressed text: in a Text column with Unicode compression unless compressed in runs is
+    /// no longer than UTF-16LE (and no NUL or character with a low byte of 0x00 is in it); in a Memo kept in the row,
+    /// or in one long-value row of a column with Unicode compression, unless compressed in runs is shorter. Each
+    /// boundary, from both sides.
+    /// </summary>
+    [Theory]
+    [InlineData("TC", "FEFF 0061*3", false)]              // runs 9 bytes, UTF-16LE 8
+    [InlineData("TC", "FEFF 0061*4", true)]               // 10 and 10: a Text value is compressed at a tie
+    [InlineData("TC", "FEFF 0061*4 30C6", false)]
+    [InlineData("TC", "FEFF 0061*5 30C6", true)]
+    [InlineData("TC", "FEFF 0061*10 0100", false)]        // U+0100's low byte is 0x00
+    [InlineData("TC", "FEFF 0061*10 0101", true)]
+    [InlineData("TC", "FEFF 0061*10 0000", false)]        // NUL
+    [InlineData("TC", "FEFF", false)]
+    [InlineData("TU", "FEFF", true)]                      // a column without Unicode compression keeps UTF-16LE as it is
+    [InlineData("TU", "FEFF 0061*3", true)]
+    [InlineData("MC", "FEFF 0061*4", false)]              // in the row; a Memo is compressed only when that is shorter
+    [InlineData("MC", "FEFF 0061*5", true)]
+    [InlineData("MC", "FEFF 30C6*40", false)]             // one long-value row
+    [InlineData("MC", "FEFF 30C6*40 0061*5", true)]       // compressed in runs, 91 bytes against 92
+    [InlineData("MC", "FEFF 30C6*1907", false)]           // 3,816 bytes: the longest single row ACE keeps
+    [InlineData("MC", "FEFF 30C6*1908", true)]            // 3,818 bytes: a chain
+    [InlineData("MC", "FEFF 0061*1908", true)]
+    [InlineData("MU", "FEFF 0061*4", false)]              // a Memo in the row is read as compressed text in any column
+    [InlineData("MU", "FEFF 0061*5", true)]
+    [InlineData("MU", "FEFF 30C6*31", false)]             // 64 bytes, in the row
+    [InlineData("MU", "FEFF 30C6*32", true)]              // 66 bytes, on a long-value page of a column without compression
+    public void Text_that_begins_with_U_FEFF_is_kept_only_where_Access_reads_it_back(string column, string value, bool kept)
+    {
+        string text = Text(value);
+        File.Copy(Asset("ace-text-marker.mdb"), _path);
+        using var db = Database.Open(_path);
+        var table = db.GetTable("T");
+        if (!kept)
+        {
+            Assert.Throws<ArgumentException>(() => table.Insert(new Row { ["Id"] = 1, [column] = text }));
+            Assert.Null(table.FindRowByPrimaryKey(1));
+            return;
+        }
+        var row = new Row { ["Id"] = 1, [column] = text };
+        table.Insert(row);
+        Assert.Equal(text, table.FindRowByPrimaryKey(1)![column]);
+        if (column == "MC" && text.Length * 2 > 3816) Assert.Equal("chain", Stored(db, row, column).Place);
+    }
+
+    [Fact]
+    public void An_update_a_batch_and_an_import_are_refused_too_and_leave_the_file_as_it_was()
+    {
+        File.Copy(Asset("ace-text-marker.mdb"), _path);
+        using (var db = Database.Open(_path))
+            db.GetTable("T").Insert(new Row { ["Id"] = 1, ["TC"] = "\uFEFFabQ1Z" });
+        byte[] before = File.ReadAllBytes(_path);
+
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            var row = table.FindRowByPrimaryKey(1)!;
+            row["TC"] = "\uFEFFabc";
+            Assert.Throws<ArgumentException>(() => table.Update(row));
+            var batch = Assert.Throws<BatchInsertException>(() => table.InsertRange(new[]
+            {
+                new Row { ["Id"] = 2, ["TC"] = "kept" },
+                new Row { ["Id"] = 3, ["MU"] = "\uFEFFabc" },
+            }));
+            Assert.Equal(1, batch.RowIndex);
+            Assert.IsType<ArgumentException>(batch.InnerException);
+
+            var data = new System.Data.DataTable("Imported");
+            data.Columns.Add("Name", typeof(string));
+            data.Rows.Add("kept");
+            data.Rows.Add("\uFEFFabc");
+            var e = Assert.Throws<ArgumentException>(() => db.ImportTable(data));
+            Assert.Contains("U+FEFF, the byte order mark", e.Message);
+            Assert.DoesNotContain("Imported", db.GetTableNames());
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
     }
 
     /// <summary>Where the row keeps a value (row, inline, page or chain), and its bytes.</summary>

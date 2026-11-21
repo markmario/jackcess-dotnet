@@ -400,6 +400,10 @@ internal sealed class RowEncoder
             // (VARBINARY, DAO's dbBinary) or the fixed-length ones (BINARY, dbFixedField) (#45).
             if (col.DataType == DataType.Binary && col.LengthInBytes > 0 && value is byte[] binary && binary.Length > col.LengthInBytes)
                 throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length, stored);
+            // Text that begins with U+FEFF that Access would read back changed (#93).
+            if (!stored && col.DataType is DataType.Text or DataType.Memo
+                && WhyNotKept(col, Convert.ToString(value) ?? string.Empty, InRow(col)) is { } why)
+                throw new ArgumentException(why + ". Nothing was written.", col.Name);
             if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
             int maxChars = col.LengthInBytes / 2;
@@ -476,8 +480,43 @@ internal sealed class RowEncoder
             ? Util.ByteUtil.EncodeText(text)
             : Util.ByteUtil.EncodeUtf16(text);
 
+    /// <summary>Whether a long value of so many bytes is kept in the row (<see cref="PrepareLongValue"/>).</summary>
+    private Func<int, bool> InRow(Column col)
+    {
+        bool hasPages = _lvalWriters?.ContainsKey(col.Name) == true;
+        return length => length <= InlineLvalThreshold || !hasPages;
+    }
+
     /// <summary>The most bytes ACE keeps in one long-value row: a longer value is a chain of them.</summary>
     internal const int AccessLongestValueRow = 3816;
+
+    /// <summary>
+    /// Why <paramref name="text"/> cannot be stored in <paramref name="col"/> so that Access reads it back, or null when
+    /// it can (#93). Text that begins with U+FEFF has UTF-16LE that begins 0xFF 0xFE, the mark of compressed text. It is
+    /// kept, as ACE keeps it, compressed in runs where that is no longer than UTF-16LE in a Text column and shorter in a
+    /// Memo of up to 1,908 characters; otherwise it is UTF-16LE, which Access reads back changed - as compressed text -
+    /// where it reads 0xFF 0xFE as that mark (<see cref="Column.TextMayBeCompressed"/>): a Text column with Unicode
+    /// compression, a Memo kept in the row (<paramref name="inRow"/> says where a Memo of that many bytes goes), and a
+    /// Memo in one long-value row of a column with it. A Memo of more than 3,816 bytes in such a column is a chain,
+    /// which Access reads as UTF-16LE, and is kept. In a table an earlier version created, read by its bytes
+    /// (<see cref="Column.ReadsTextByContent"/>), a value is read as compressed text wherever it is kept.
+    /// </summary>
+    internal static string? WhyNotKept(Column col, string text, Func<int, bool> inRow)
+    {
+        if (!Util.ByteUtil.BeginsWithMarker(text)) return null;
+        bool readBack = col.DataType switch
+        {
+            DataType.Text => !col.TextMayBeCompressed || Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: true) is not null,
+            DataType.Memo => EncodeMemo(col, text) is var bytes
+                             && (bytes.Length != 2 * text.Length                                // compressed in runs
+                                 || !inRow(bytes.Length)
+                                    && (!col.TextMayBeCompressed || !col.ReadsTextByContent && bytes.Length > AccessLongestValueRow)),
+            _ => true,
+        };
+        return readBack ? null : $"The text for {col.Name} begins with U+FEFF, the byte order mark, and cannot be stored in this column so "
+                               + "that it reads back: Access keeps it as UTF-16LE, and reads the bytes 0xFF 0xFE it begins with as the mark "
+                               + "of compressed text, here";
+    }
 
     private byte[] WriteVariableValue(Column col, object value)
     {
