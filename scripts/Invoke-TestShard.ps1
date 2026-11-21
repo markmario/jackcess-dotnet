@@ -53,7 +53,8 @@ $classOf = { param([string] $name) $method = & $methodOf $name; $method.Substrin
 $classes = @($listed | ForEach-Object { & $classOf $_ } | Sort-Object -Unique)
 
 # Seconds each class took on a windows-latest runner, in each configuration: the mean of runs 44859335561, 44860125207
-# and 44860480279 (2026-11-21), from their test reports. ns- is the netstandard2.0 assembly on that framework, and x86
+# and 44860480279 (2026-11-21), from their test reports; OADateTests the mean of runs 44864425043, 44865291603 and
+# 44866192633. ns- is the netstandard2.0 assembly on that framework, and x86
 # the 32-bit process. Every class has a row: one that is missing is counted as 1 s and named in a warning, so a table
 # that has fallen behind the tests shows in the log. Each shard's summary shows what each class took beside its number.
 $timings = @'
@@ -145,6 +146,7 @@ MemoCompressionTests                          0.0        0.0        0.1        0
 MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
 NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
 NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+OADateTests                                   0.3        0.4        0.5        0.6        0.3        0.6
 ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
 OfficeCryptTests                              3.5        2.5        6.6       10.7        2.3        9.5
 OneToOneRelationshipTests                     0.0        0.0        0.2        0.0        0.0        0.1

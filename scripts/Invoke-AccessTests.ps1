@@ -179,6 +179,8 @@ $pieces = @{
 # Seconds each piece took in a process of its own on a windows-latest runner, two at a time, for the samples (run
 # 44844453781) and for the full sweeps (the mean of runs 44846769290 and 44847393534), from the line "Seconds each
 # process took" of each shard's log. The first lines of each are classes with no sweep, timed in each mode's runs.
+# TextMarkerInAccessTests, the last line of each, is the mean of five pull requests' runs, 44860480279 to 44865291603,
+# and of five runs on main, 44860125207 to 44866192633 (2026-11-21).
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 13; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 61
@@ -203,6 +205,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 9; 'SortOrdersInAccessTests.WalkHebrew' = 5; 'SortOrdersInAccessTests.WalkItalian' = 9
         'SortOrdersInAccessTests.WalkPortuguese' = 7
         BulkIndexesInAccessTests = 60; MemoStorageInAccessTests = 12; 'SchemaChangesInAccessTests.Names' = 13; ValuesAndEntriesInAccessTests = 14
+        TextMarkerInAccessTests = 23
     }
     full = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 16; ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 66
@@ -227,6 +230,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 92; 'SortOrdersInAccessTests.WalkHebrew' = 56; 'SortOrdersInAccessTests.WalkItalian' = 78
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
+        TextMarkerInAccessTests = 25
     }
 }
 
