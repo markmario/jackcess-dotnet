@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace JackcessDotNet.Util;
 
 /// <summary>
@@ -11,9 +13,19 @@ namespace JackcessDotNet.Util;
 /// process reads (5.7870370370370361E-09, a little under half a millisecond after midnight, as midnight rather than
 /// 00:00:00.001); and of 3.4 million dates, 783 were written as the double one above or below. Integers compute alike
 /// on every runtime and in every state of the unit.
+/// <para>
+/// The 64-bit runtimes compute doubles with SSE2, not the x87 unit, and there the runtime's two conversions give
+/// exactly what the integer ones do, five to ten times as fast (#125): so a 64-bit process converts with the
+/// runtime's, and any other with the integers, decided once. OADateChoiceTests holds the two to each other over
+/// millions of inputs in every configuration the tests run in. A number out of range is refused by both with an
+/// <see cref="ArgumentException"/> of the same message and no parameter name, as the runtime throws it.
+/// </para>
 /// </summary>
 internal static class OADate
 {
+    /// <summary>Whether this process converts with the runtime's own conversions: a 64-bit one.</summary>
+    internal static readonly bool RuntimeConverts = Environment.Is64BitProcess;
+
     private const long MillisPerDay = 86_400_000;
 
     // 86,400,000 is 84,375 × 2^10.
@@ -32,6 +44,27 @@ internal static class OADate
     /// </summary>
     /// <exception cref="OverflowException"><paramref name="date"/> is before 1 January 100.</exception>
     internal static double FromDateTime(DateTime date)
+        => RuntimeConverts ? RuntimeFromDateTime(date) : FromDateTimeInIntegers(date);
+
+    // The runtime's conversion; out of line in the builds .NET Framework runs, where inlined it slowed the integers'
+    // branch of a 32-bit process by half.
+#if NETFRAMEWORK || NETSTANDARD2_0
+    [MethodImpl(MethodImplOptions.NoInlining)]
+#endif
+    private static double RuntimeFromDateTime(DateTime date) => date.ToOADate();
+
+    /// <summary>
+    /// The <see cref="DateTime"/> <paramref name="days"/> reads as: <see cref="DateTime.FromOADate"/>'s, to the
+    /// millisecond, as a 64-bit process reads it (<see cref="ToDateTimeInIntegers"/>).
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="days"/> is not above -657435 and below 2958466, or rounds
+    /// to a time past the last <see cref="DateTime"/>.</exception>
+    internal static DateTime ToDateTime(double days)
+        => RuntimeConverts ? DateTime.FromOADate(days) : ToDateTimeInIntegers(days);
+
+    /// <summary><see cref="FromDateTime"/> in integer arithmetic, in any process.</summary>
+    /// <exception cref="OverflowException"><paramref name="date"/> is before 1 January 100.</exception>
+    internal static double FromDateTimeInIntegers(DateTime date)
     {
         long ticks = date.Ticks;
         if (ticks == 0) return 0.0;
@@ -45,76 +78,69 @@ internal static class OADate
             long time = millis % MillisPerDay;
             if (time != 0) millis -= (MillisPerDay + time) * 2;
         }
-        return Quotient(millis, MillisPerDay);
+        return Days(millis);
     }
 
     /// <summary>
-    /// The <see cref="DateTime"/> <paramref name="days"/> reads as: <see cref="DateTime.FromOADate"/>'s, to the
-    /// millisecond. As that rounds it, the number of milliseconds is the double product of the days and 86,400,000, and
-    /// a half added to that (taken from it, below zero) as doubles add, cut toward zero: so a number a hair under a
-    /// millisecond's half can read as the next millisecond, as it does in a 64-bit process.
+    /// <see cref="ToDateTime"/> in integer arithmetic, in any process. As <see cref="DateTime.FromOADate"/> rounds it,
+    /// the number of milliseconds is the double product of the days and 86,400,000, and a half added to that (taken
+    /// from it, below zero) as doubles add, cut toward zero: so a number a hair under a millisecond's half can read as
+    /// the next millisecond, as it does in a 64-bit process.
     /// </summary>
     /// <exception cref="ArgumentException"><paramref name="days"/> is not above -657435 and below 2958466, or rounds
     /// to a time past the last <see cref="DateTime"/>.</exception>
-    internal static DateTime ToDateTime(double days)
+    internal static DateTime ToDateTimeInIntegers(double days)
     {
-        if (!(days < 2958466.0) || !(days > -657435.0)) throw new ArgumentException("Not a legal OleAut date.", nameof(days));
+        // Refused as DateTime.FromOADate refuses it: the same messages, and no parameter name.
+        if (!(days < 2958466.0) || !(days > -657435.0)) throw new ArgumentException("Not a legal OleAut date.");
         long millis = Millis(days);
         if (millis < 0) millis -= millis % MillisPerDay * 2;
         millis += EpochMillis;
-        if (millis < 0 || millis >= EndMillis) throw new ArgumentException("OleAut date did not convert to a DateTime correctly.", nameof(days));
+        if (millis < 0 || millis >= EndMillis)
+            throw new ArgumentException("OleAut date did not convert to a DateTime correctly.");
         return new DateTime(millis * TimeSpan.TicksPerMillisecond);
     }
 
     // (long)(days * 86400000 + (days >= 0 ? 0.5 : -0.5)) as doubles compute it: the product rounded to 53 bits, half to
     // even; the half added and that rounded likewise; cut toward zero. Rounding half to even is the same either side of
-    // zero, so this is the magnitude's, with the sign of the days. |days| is under 2958466, so the product is under 2^48.
+    // zero, so this is the magnitude's, with the sign of the days.
+    //
+    // |days| is under 2958466, under 2^22 (ToDateTimeInIntegers), and a magnitude under 2^-28 is 0: its product is
+    // under a third, and with the half added still under one. Every other is a normal double, of a mantissa of 53 bits
+    // and an exponent from -80 to -31, so the product with 84,375 has 69 or 70 bits, and the power of two each step
+    // leaves is below zero: no length has to be counted.
     private static long Millis(double days)
     {
         long bits = BitConverter.DoubleToInt64Bits(days);
         int field = (int)((bits >> 52) & 0x7FF);
-        ulong mantissa = (ulong)(bits & 0xF_FFFF_FFFF_FFFF);
-        if (field != 0) mantissa |= 1UL << 52;
-        if (mantissa == 0) return 0;
-        int exponent = (field == 0 ? 1 : field) - 1075;   // |days| = mantissa × 2^exponent
+        if (field < 1023 - 28) return 0;
+        ulong mantissa = (ulong)(bits & 0xF_FFFF_FFFF_FFFF) | (1UL << 52);
+        int power = field - 1075 + MillisPerDayTwos;   // |days| × 86,400,000 = mantissa × 84,375 × 2^power
 
-        // The product, mantissa × 84,375 × 2^(exponent + 10), in two halves: under 2^70.
+        // The product, mantissa × 84,375: 69 or 70 bits, cut to 53, half to even.
+#if NETFRAMEWORK || NETSTANDARD2_0
         ulong low = (mantissa & 0xFFFF_FFFF) * MillisPerDayOdd;
         ulong middle = (mantissa >> 32) * MillisPerDayOdd + (low >> 32);
-        ulong high = middle >> 32;
+        ulong high = middle >> 32;   // under 2^6
         low = (middle << 32) | (low & 0xFFFF_FFFF);
-        int length = high != 0 ? 64 + BitLength(high) : BitLength(low);
-        int power = exponent + MillisPerDayTwos;
-        ulong product = low;
-        if (length > 53)
-        {
-            int cut = length - 53;
-            ulong kept = (high << (64 - cut)) | (low >> cut);
-            product = RoundedHalfToEven(kept, low & ((1UL << cut) - 1), cut, ref power);
-        }
+#else
+        ulong high = Math.BigMul(mantissa, MillisPerDayOdd, out ulong low);   // high under 2^6
+#endif
+        int cut = high >= 1UL << 5 ? 17 : 16;
+        ulong product = RoundedHalfToEven((high << (64 - cut)) | (low >> cut), low & ((1UL << cut) - 1), cut,
+                                          ref power);
 
-        // product × 2^power; the half added. A product under a quarter is still under one with it.
-        long magnitude;
-        if (power >= 0)
-            magnitude = (long)(product << power);   // a whole number, of fewer than 49 bits: the half is kept and cut off
-        else if (BitLength(product) + power <= -2)
-            magnitude = 0;
-        else
-        {
-            ulong sum = product + (1UL << (-power - 1));   // (product × 2^power + 1/2) × 2^-power, under 2^55
-            int sumLength = BitLength(sum);
-            if (sumLength > 53)
-            {
-                int cut = sumLength - 53;
-                sum = RoundedHalfToEven(sum >> cut, sum & ((1UL << cut) - 1), cut, ref power);
-            }
-            magnitude = power >= 0 ? (long)(sum << power) : -power >= 64 ? 0 : (long)(sum >> -power);
-        }
+        // product × 2^power, from 2^-54 to 2^-2 a unit; the half added, under 2^54 of those units, so at most one bit
+        // too many to round off.
+        ulong sum = product + (1UL << (-power - 1));
+        if (sum >= 1UL << 53) sum = RoundedHalfToEven(sum >> 1, sum & 1, 1, ref power);
+        long magnitude = (long)(sum >> -power);
         return bits < 0 ? -magnitude : magnitude;
     }
 
     // 'kept', the bits above the 'cut' bits 'dropped', rounded by them half to even; 'power' raised by the bits cut,
     // and by one more where rounding up carried into a 54th bit.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ulong RoundedHalfToEven(ulong kept, ulong dropped, int cut, ref int power)
     {
         ulong half = 1UL << (cut - 1);
@@ -128,28 +154,29 @@ internal static class OADate
         return kept;
     }
 
-    // The double nearest numerator / denominator, half to even, as a double division of the two gives it. The
-    // numerator's magnitude is under 2^53, so it is a double itself; the denominator is above 0 and under 2^32.
-    private static double Quotient(long numerator, long denominator)
+    // The double nearest millis / 86,400,000, half to even, as a double division of the two gives it. The magnitude of
+    // millis is under 2^53, so it is a double itself. 86,400,000 is 84,375 × 2^10: the quotient by 84,375, a constant
+    // the compiler divides by without a division where it can, is scaled by 2^-10.
+    private static double Days(long millis)
     {
-        if (numerator == 0) return 0.0;
-        ulong n = (ulong)(numerator < 0 ? -numerator : numerator), d = (ulong)denominator;
-        ulong quotient = n / d, remainder = n % d;
-        int power = 0;   // the number is (quotient + remainder / d) × 2^power
+        if (millis == 0) return 0.0;
+        ulong n = (ulong)(millis < 0 ? -millis : millis);
+        ulong quotient = n / MillisPerDayOdd, remainder = n % MillisPerDayOdd;
+        int power = -MillisPerDayTwos;   // the number is (quotient + remainder / 84,375) × 2^power
 
-        // Bits of the quotient until there are 53: at most 32 at a time, as the remainder is under 2^32.
+        // Bits of the quotient until there are 53: at most 47 at a time, as the remainder is under 2^17.
         while (quotient < 1UL << 52)
         {
-            int take = Math.Min(32, 53 - BitLength(quotient));
+            int take = Math.Min(47, 53 - BitLength(quotient));
             remainder <<= take;
-            quotient = (quotient << take) | (remainder / d);
-            remainder %= d;
+            quotient = (quotient << take) | (remainder / MillisPerDayOdd);
+            remainder %= MillisPerDayOdd;
             power -= take;
         }
 
-        // The rest, remainder / d, against a half.
+        // The rest, remainder / 84,375, against a half.
         ulong twice = remainder << 1;
-        if (twice > d || (twice == d && (quotient & 1) != 0))
+        if (twice > MillisPerDayOdd || (twice == MillisPerDayOdd && (quotient & 1) != 0))
         {
             quotient++;
             if (quotient == 1UL << 53)
@@ -159,17 +186,46 @@ internal static class OADate
             }
         }
         long bits = ((long)(power + 52 + 1023) << 52) | (long)(quotient & 0xF_FFFF_FFFF_FFFF);
-        return BitConverter.Int64BitsToDouble(numerator < 0 ? bits | long.MinValue : bits);
+        return BitConverter.Int64BitsToDouble(millis < 0 ? bits | long.MinValue : bits);
     }
 
+    // The number of bits of the value, 0 for 0: by the processor's count of leading zeros where the runtime has it, and
+    // otherwise halving the value to a byte and looking that up, in 32-bit arithmetic past the first step.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int BitLength(ulong value)
     {
+#if NETFRAMEWORK || NETSTANDARD2_0
         int length = 0;
-        while (value != 0)
+        uint word = (uint)value;
+        if (value >> 32 != 0)
         {
-            value >>= 1;
-            length++;
+            word = (uint)(value >> 32);
+            length = 32;
         }
-        return length;
+        if (word >> 16 != 0)
+        {
+            word >>= 16;
+            length += 16;
+        }
+        if (word >> 8 != 0)
+        {
+            word >>= 8;
+            length += 8;
+        }
+        return length + ByteBitLengths[word];
+#else
+        return 64 - System.Numerics.BitOperations.LeadingZeroCount(value);
+#endif
     }
+
+#if NETFRAMEWORK || NETSTANDARD2_0
+    private static readonly byte[] ByteBitLengths = MakeByteBitLengths();
+
+    private static byte[] MakeByteBitLengths()
+    {
+        var lengths = new byte[256];
+        for (int i = 1; i < lengths.Length; i++) lengths[i] = (byte)(lengths[i >> 1] + 1);
+        return lengths;
+    }
+#endif
 }

@@ -76,6 +76,22 @@ its first 20 digits: 73 of the 13,276 texts measured, all in those ranges. "2.47
 between 0 and the least double, is 0 to ACE. Its arithmetic there was not found; this library stores the nearest
 ([#136]).
 
+**32-bit ACE reads some text otherwise.** All of the above is 64-bit ACE 16, today's Access, which this library
+follows on every target and in a process of either bitness: a file holds one number for a text, whatever wrote it.
+32-bit ACE computes with the x87 unit, and stores some text for a Double one unit in the last place from that
+number, anywhere in the range and not only near a half:
+- Access 2007's 32-bit ACE 12 (this repository's measuring machine; `tools/ace-text-to-float.ps1 -Picks 3` in the
+  32-bit Windows PowerShell): 377 of 3,957 texts one unit off as a Double, 2 of 311 as a property's value, and none
+  as a Single. It also refuses text of the largest double, which 64-bit ACE stores (13 texts), and writes as text -0.0
+  as "0", 999999999999999.5 and the double before 1E+15 as "1E+15", and NaN and the infinities as "-1.#IND",
+  "1.#QNAN", "1.#INF" and "-1.#INF".
+- The Access Database Engine 2016 redistributable's 32-bit ACE 16 (16.0.5011.1000, on CI's runners, by the referee
+  test's sample): every text for a Double it stored otherwise one unit off, 39 seen; no Single otherwise; and as text
+  -0.0 as "0" and 999999999999999.5 as "1E+15", as ACE 12 writes them.
+
+Neither is rounding the text's first 20 digits to the x87's 64 bits and then to a double's 53: that fits 38 of the 39
+of ACE 16, and leaves 199 of ACE 12's 3,957 texts unexplained, so this library does not imitate either.
+
 A range or the closest row through an index takes these values the same way; an equality takes text and a `bool`
 for no number ([Numbers](cursors-and-rows.md#numbers)). The importer keeps its own rule: only a value a column holds
 exactly ([type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet)).
@@ -172,6 +188,10 @@ provider leaves the thread that ran a statement with that unit at 64 bits of pre
 beside the one a 64-bit process reads; of 3.4 million dates, 783 were written as the double beside. As a 64-bit
 process reads it, a number's product with 86,400,000 is rounded to a double before the half is added, so a number a
 hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads as 00:00:00.001 on 30 December 1899.
+A 64-bit process's runtime computes doubles with SSE2, not the x87 unit, and there the runtime's two conversions give
+exactly what the integers do, five to ten times as fast: a 64-bit process converts with them, and a 32-bit one with
+the integers ([#125]). A number out of range is refused alike by both, with
+an `ArgumentException` of the same message and no parameter name.
 
 ## Text and Memo
 
@@ -278,6 +298,7 @@ are each refused with `NotSupportedException`.
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
 [#100]: https://github.com/markmario/jackcess-dotnet/issues/100
 [#124]: https://github.com/markmario/jackcess-dotnet/issues/124
+[#125]: https://github.com/markmario/jackcess-dotnet/issues/125
 [#129]: https://github.com/markmario/jackcess-dotnet/issues/129
 [#136]: https://github.com/markmario/jackcess-dotnet/issues/136
 [#138]: https://github.com/markmario/jackcess-dotnet/issues/138

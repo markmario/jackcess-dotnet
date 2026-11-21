@@ -818,7 +818,11 @@ changes with them.
   as the double beside. At 53 bits nothing differed. The engine converts in integers, giving exactly what a 64-bit
   process gives: the same conversions agree in all three states, and a table of 20,000 rows is written byte for byte
   as a 64-bit process writes it. A double or a float to a Decimal, a double to a Currency, and a decimal to a Double
-  or a Single were measured alike and do not depend on the unit.
+  or a Single were measured alike and do not depend on the unit. A 64-bit process, whose runtime computes doubles
+  with SSE2 and not the x87 unit, converts with the runtime's own, which gives the same results over millions of
+  inputs in every configuration the tests run in; any other process converts with the integers, which in a 32-bit
+  .NET Framework process take 0.31 to 0.36 of the time they first took (#125). A scan of 200,000 rows of four
+  Date/Time columns on .NET 10 takes what it took with the runtime's conversion.
 - **Text given for a Double or a Single column is stored as Access stores it, on every target** (#124). It was read
   by the runtime's parse, which stored another number on each kind of target: .NET rounded every digit, and a
   Single through no double; .NET Framework took some text to one double in a 64-bit process and another in a 32-bit

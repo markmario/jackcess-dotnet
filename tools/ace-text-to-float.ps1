@@ -30,6 +30,8 @@
 
     Run it in Windows PowerShell 5.1, which has System.Data.OleDb, with a 64-bit ACE:
       powershell.exe -File tools\ace-text-to-float.ps1 -Out <full path>\ace-text-to-float.tsv
+    or in the 32-bit Windows PowerShell with a 32-bit ACE, which reads some text otherwise (docs/data-types.md):
+      C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -File tools\ace-text-to-float.ps1 -Out <full path> -Provider Microsoft.ACE.OLEDB.12.0
 
     tests/JackcessDotNet.Tests/Assets/ace-text-to-float.tsv is this script run with -Picks 3 on an en-AU machine:
     4,375 lines, which runs on two machines wrote alike. NumberTextTests pins it by its SHA-256; to change it, run
@@ -58,7 +60,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not [IO.Path]::IsPathRooted($Out)) { throw "Out must be a full path." }
-if (-not [Environment]::Is64BitProcess) { throw "Run this in a 64-bit Windows PowerShell, for a 64-bit ACE." }
+$bits = if ([Environment]::Is64BitProcess) { '64' } else { '32' }
 Add-Type -AssemblyName System.Data
 
 Add-Type -ReferencedAssemblies System.Numerics -Language CSharp -TypeDefinition @'
@@ -478,7 +480,7 @@ try {
 
 $connection.Open()
 $lines = New-Object 'System.Collections.Generic.List[string]'
-$lines.Add("# culture $($culture.Name); $Provider; .NET Framework $([Environment]::Version) in a 64-bit process; picks $Picks")
+$lines.Add("# culture $($culture.Name); $Provider; .NET Framework $([Environment]::Version) in a $bits-bit process; picks $Picks")
 $lines.Add("# text`tfamily`tform`ttext`tnearest double`tace literal`tace parameter`tdao`tdouble.Parse`tnearest single`tsingle via double`tace literal`tace parameter`tdao`tfloat.Parse")
 try {
     foreach ($case in $cases) {
