@@ -73,6 +73,7 @@ namespace JackcessDotNet.AccessTests.Support
         /// </summary>
         public static void Release(object engine)
         {
+            if (Environment.GetEnvironmentVariable("JACKCESS_DAO_TRIAL") == "nocollect") return;   // TRIAL (#145)
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
