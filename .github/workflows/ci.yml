@@ -305,12 +305,12 @@ jobs:
       # download and install.
       matrix:
         include:
-          - { arch: x64, shard: 1, shards: 4 }
-          - { arch: x64, shard: 2, shards: 4 }
-          - { arch: x64, shard: 3, shards: 4 }
-          - { arch: x64, shard: 4, shards: 4 }
-          - { arch: x86, shard: 1, shards: 2 }
-          - { arch: x86, shard: 2, shards: 2 }
+          - { arch: x64, shard: 1, shards: 4, parallel: 2 }
+          - { arch: x64, shard: 2, shards: 4, parallel: 2 }
+          - { arch: x64, shard: 3, shards: 4, parallel: 2 }
+          - { arch: x64, shard: 4, shards: 4, parallel: 2 }
+          - { arch: x86, shard: 1, shards: 2, parallel: 3 }
+          - { arch: x86, shard: 2, shards: 2, parallel: 3 }
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:
@@ -466,7 +466,7 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
-          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}.trx" ${{ matrix.arch == 'x86' && '-X86' || '' }}
+          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel ${{ matrix.parallel }} -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}.trx" ${{ matrix.arch == 'x86' && '-X86' || '' }}
           exit $LASTEXITCODE
 
       - name: Upload test results

@@ -17,8 +17,9 @@ namespace JackcessDotNet.AccessTests
     /// that order's keys for is to find a row through a text index instead of reading the table for it: a key that
     /// is not the one in the file finds nothing. Microsoft's engine is the referee, and only a 32-bit one makes or
     /// opens an Access 97 file - the ACE 12.0 of Access 2007, or Jet 4.0 - so these run in a 32-bit process
-    /// and are skipped, saying so, anywhere else: 64-bit ACE 16 refuses such a file
-    /// ("Cannot open a database created with a previous version of your application").
+    /// and are skipped, saying so, anywhere else: 64-bit ACE 16, and the 32-bit ACE 16 of the Access Database Engine
+    /// 2016 redistributable, refuse such a file ("Cannot open a database created with a previous version of your
+    /// application"; AccessReferee.SkipUnlessAceOpensAccess97).
     /// </summary>
     public class Access97InAccessTests : IDisposable
     {
@@ -151,8 +152,7 @@ namespace JackcessDotNet.AccessTests
         [MemberData(nameof(Access97Files))]
         public void the_engine_finds_by_its_text_every_row_of_a_file_access_97_wrote_as_ace_does(string file)
         {
-            if (Environment.Is64BitProcess)
-                Assert.Skip("64-bit ACE does not open an Access 97 file, so there is no referee here for one: run these tests in a 32-bit process.");
+            AccessReferee.SkipUnlessAceOpensAccess97();
 
             var path = _tmp.NewMdbPath();
             File.Copy(Path.Combine(CorpusRoot(), "V1997", file), path);

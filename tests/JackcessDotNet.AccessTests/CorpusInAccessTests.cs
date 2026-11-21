@@ -279,6 +279,8 @@ namespace JackcessDotNet.AccessTests
         [MemberData(nameof(Files))]
         public void the_engine_reads_every_table_of_a_file_access_wrote_as_a_second_reader_reads_it(string file)
         {
+            // Access 97: listed only in a 32-bit process, and refereed only by a 32-bit ACE that opens such a file.
+            if (file.StartsWith("V1997/", StringComparison.Ordinal)) SkipUnlessAceOpensAccess97();
             var path = Path.Combine(_tmp.Dir, Path.GetFileName(file));
             File.Copy(Path.Combine(CorpusRoot(), file.Replace('/', Path.DirectorySeparatorChar)), path);
 
