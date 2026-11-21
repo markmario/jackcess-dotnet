@@ -148,8 +148,14 @@ internal static class SchemaRename
         // where it would read back changed (#129).
         if (db.Catalog.IsAnEarlierVersionsTable(tdefPage)
             && catalog.Columns.FirstOrDefault(c => c.IsCatalogName) is { } nameColumn
-            && RowEncoder.WhyNotKept(nameColumn, newName, _ => true, byContent: true) is { } why)
-            throw new ArgumentException($"Table '{oldName}' was not renamed. {why}. Nothing was changed.", nameof(newName));
+            && RowEncoder.WhyNotKept(nameColumn, newName, _ => true, byContent: true) is not null)
+            throw new ArgumentException(
+                $"Table '{oldName}' was not renamed: an earlier version of this library created it, and this " +
+                "library reads its name in the catalog by its bytes, as compressed text where they begin 0xFF 0xFE. " +
+                "The new name begins with U+FEFF, the byte order mark, and cannot be written so that it reads back: " +
+                "compressed in runs it would be longer than as UTF-16LE, or it has a character whose low byte is 0x00. " +
+                "Nothing was changed.",
+                nameof(newName));
         SchemaRemoval.EnsureRowsCanBeChanged(catalog);
 
         // The rows of MSysRelationships that name the table: those whose name a lookup among the catalog's tables finds

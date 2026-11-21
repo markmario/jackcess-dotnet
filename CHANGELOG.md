@@ -24,9 +24,10 @@ changed since 1.2.2.
     `CreateField`, DDL without `WITH COMPRESSION`), to which the JackcessDotNet packages to 1.2.2 or this
     repository's builds before 442bbf8 wrote, compressing every value of characters 0x01 to 0xFF. Earlier versions
     read `Alice` there; this one reads what Access reads from the table, U+FEFF U+6C41 U+6369 (and U+FFFD for the
-    odd byte at the end). Nothing tells such a value from Access's own. That is Access's direct read - a DAO
-    table-type recordset or dynaset, an ACE query that does not sort; a DAO snapshot and an ACE query that sorts
-    read the bytes as compressed text (`tools/earlier-filled-text-readers.ps1`, #129).
+    odd byte at the end). Nothing tells such a value from Access's own. That is what a DAO table-type recordset
+    reads, and a DAO dynaset of the table and an ACE query of it; some other readings - a DAO snapshot of a query
+    of one row, an ACE query of one row sorted by Name - read the bytes as compressed text, and others fail on them
+    (`tools/earlier-filled-text-readers.ps1`, #129).
   - A table those versions created - its catalog row has ParentId 0 and no owner - is read by its bytes, as they
     wrote it: it is listed and found by its name, which Access cannot do, and its values read as written. Its
     row of MSysObjects read as a table gives that name too, as earlier versions gave it, and a refused rename

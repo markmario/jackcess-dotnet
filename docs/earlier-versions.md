@@ -186,12 +186,15 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
       and made with it. The refusal quotes the table's name as it is listed.
     - **A new name that begins with U+FEFF** is one Access takes for a table it made, and for a column and an
       index, and keeps as written: measured with Microsoft 365's DAO 16.0 by `tools/dao-feff-names.ps1`, which
-      creates and renames each so and reads the names back ([#129]). The catalog reads such a table's name by its
-      bytes, so the name is written as the table's Text values are, compressed in runs, and refused as they are -
-      with an `ArgumentException`, before anything is written - where it would read back changed: U+FEFF with
-      three characters 0x01 to 0xFF or fewer, or followed mostly by other characters, or with a character above
-      0xFF whose low byte is 0x00 (U+0100, U+3000) ([Text and Memo](data-types.md#text-and-memo)). Its columns'
-      and indexes' names are read from its definition as written, and take such a name.
+      creates and renames each so and reads the names back ([#129]). This library reads such a table's name in
+      the catalog by its bytes, so the name is written as the table's Text values are, compressed in runs:
+      0xFF 0xFE, then a byte for each character 0x01 to 0xFF and two for each other, with a 0x00 byte where one
+      kind of run gives way to the other, the first run being of single bytes. A name is refused, with an
+      `ArgumentException` before anything is written, where that would not read back: where it is longer than the
+      name's UTF-16LE, or where the name has a character above 0xFF whose low byte is 0x00 (U+0100, U+3000).
+      `"\uFEFFaaaa"` is kept (10 bytes either way); `"\uFEFFabc"` (9 against 8) and `"\uFEFFaaaa\uFEFF"` (13
+      against 12) are refused ([Text and Memo](data-types.md#text-and-memo)). Its columns' and indexes' names are
+      read from its definition as written, and take such a name.
     - **Compacting the file in Access drops the table.** `DBEngine.CompactDatabase` of either test file leaves out
       the table and its row, and adds MSysCompactError, with "The search key was not found in any record" for
       MSysObjects. To keep its rows, copy them into a table this version creates before the file is compacted.
@@ -206,14 +209,15 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     which DAO leaves out. Nothing tells them from UTF-16LE Access wrote. Earlier versions of this library read them
     as compressed text; this one reads them as Access does. Memo values kept in the row read as written, as Access
     reads them. Writing the right text over such a value mends it.
-    - **Access's other ways of reading differ** ([#129]). The reading this library follows is the direct one: a
-      DAO table-type recordset or dynaset, and an ACE query that does not sort. A DAO snapshot, of the table or of
-      a query, and an ACE query that sorts read such a value as compressed text, as earlier versions of this
-      library did: measured with Microsoft 365's ACE 16 and DAO 16.0 by `tools/earlier-filled-text-readers.ps1` on
-      `engine-8e41563-filled-table.mdb`, row 7 of `Filled` reads `Long` there and U+FEFF U+6F4C U+676E directly;
-      a value of an odd number of bytes - `Alice`, `Bob`, `Zoë`, `Mixed` - fails there with "Number of bytes of a
-      UNICODE string is not even", and a snapshot of the whole table fails as it opens. Text such a version wrote
-      that begins with U+FEFF, `"\uFEFFab"` as `FF FE 61 00 62 00`, reads as `ab` there.
+    - **Some of Access's other ways of reading differ** ([#129]). The reading this library follows is a DAO
+      table-type recordset's, which a DAO dynaset of the table and an ACE query of it give too. Measured with
+      Microsoft 365's ACE 16 and DAO 16.0 by `tools/earlier-filled-text-readers.ps1` on
+      `engine-8e41563-filled-table.mdb`: a DAO snapshot of a query of row 7 of `Filled` alone, and an ACE query
+      of it sorted by Name, read `Long` where the others read U+FEFF U+6F4C U+676E; a value of an odd number of
+      bytes - `Alice`, `Bob`, `Zoë`, `Mixed` - fails there with "Number of bytes of a UNICODE string is not even";
+      and a snapshot of the whole table, a dynaset sorted by Name and an ACE query sorted by Id fail as they open
+      ([Text and Memo](data-types.md#text-and-memo) lists each reading). Text such a version wrote that begins
+      with U+FEFF, `"\uFEFFab"` as `FF FE 61 00 62 00`, reads as `ab` through a snapshot of its row alone.
 - **Tables without properties**, so with no Required or Allow Zero Length to hold rows to:
   [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 

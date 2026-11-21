@@ -10,11 +10,14 @@
     engine-8e41563-filled-table.mdb (tools/earlier-created-tables.ps1), which DAO made without Unicode compression and
     8e41563 filled, in each of these ways, and writes for each row the code units each read, or why it could not:
 
-      - DAO (DAO.DBEngine.120): a table-type recordset, a dynaset of the table, a snapshot of the table, and a
-        snapshot of a query of it, unsorted and sorted;
-      - ACE through OLE DB (Microsoft.ACE.OLEDB.16.0): a query of the table, unsorted and sorted.
+      - DAO (DAO.DBEngine.120): a table-type recordset; a dynaset and a snapshot of the table; a dynaset and a
+        snapshot of a query of it, unsorted, sorted by Id and sorted by Name; and a dynaset and a snapshot of a query
+        of each row alone;
+      - ACE through OLE DB (Microsoft.ACE.OLEDB.16.0): a query of the table, unsorted, sorted by Id and sorted by
+        Name; and a query of each row alone, unsorted and sorted by Name.
 
-    It reads only; the file is opened read-only.
+    A reading that meets a value it cannot read can fail as it opens, so each row is read alone as well. It reads
+    only; the file is opened read-only.
 
     Run it in PowerShell 7 (pwsh), with Access in 64 bits, from the repository's root:
       pwsh -Command "& tools\earlier-filled-text-readers.ps1 -File '<full path>'"
@@ -29,6 +32,8 @@ function Format-Units([object] $value) {
     return ($value.ToString().ToCharArray() | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ' '
 }
 
+function Get-Message($exception) { if ($exception.InnerException) { $exception.InnerException.Message } else { $exception.Message } }
+
 "# tools/earlier-filled-text-readers.ps1: Filled.Name as each of Access's readers reads it"
 "# reader`tId`tName (code units in hex, or the error)"
 $dbe = New-Object -ComObject DAO.DBEngine.120
@@ -36,28 +41,34 @@ try {
     "# DAO $($dbe.Version)"
     $db = $dbe.OpenDatabase($File, $false, $true)
     try {
-        foreach ($read in @(@('DAO table-type', 'Filled', 1), @('DAO dynaset', 'Filled', 2), @('DAO snapshot of the table', 'Filled', 4),
-                            @('DAO snapshot of a query', 'SELECT Id, Name FROM Filled', 4),
-                            @('DAO snapshot of a query by Id', 'SELECT Id, Name FROM Filled ORDER BY Id', 4))) {
+        $reads = @(@('DAO table-type', 'Filled', 1), @('DAO dynaset of the table', 'Filled', 2), @('DAO snapshot of the table', 'Filled', 4))
+        foreach ($kind in @(@('dynaset', 2), @('snapshot', 4))) {
+            $reads += , @("DAO $($kind[0]) of a query", 'SELECT Id, Name FROM Filled', $kind[1])
+            $reads += , @("DAO $($kind[0]) of a query by Id", 'SELECT Id, Name FROM Filled ORDER BY Id', $kind[1])
+            $reads += , @("DAO $($kind[0]) of a query by Name", 'SELECT Id, Name FROM Filled ORDER BY Name', $kind[1])
+        }
+        foreach ($read in $reads) {
             try {
                 $rs = $db.OpenRecordset($read[1], $read[2])
                 while (-not $rs.EOF) {
                     $id = $rs.Fields.Item('Id').Value
-                    try { $units = Format-Units $rs.Fields.Item('Name').Value } catch { $units = "cannot read: $($_.Exception.Message)" }
+                    try { $units = Format-Units $rs.Fields.Item('Name').Value } catch { $units = "cannot read: $(Get-Message $_.Exception)" }
                     "$($read[0])`t$id`t$units"
                     $rs.MoveNext()
                 }
                 $rs.Close()
-            } catch { "$($read[0])`t`tcannot read: $($_.Exception.Message)" }
+            } catch { "$($read[0])`t`tcannot read: $(Get-Message $_.Exception)" }
         }
-        # A snapshot that meets a value it cannot read fails as it opens, so each row is read by a snapshot of its own.
-        foreach ($id in 1..8) {
-            try {
-                $rs = $db.OpenRecordset("SELECT Id, Name FROM Filled WHERE Id = $id", 4)
-                if ($rs.EOF) { "DAO snapshot of a query of one row`t$id`tno such row" }
-                else { "DAO snapshot of a query of one row`t$id`t$(Format-Units $rs.Fields.Item('Name').Value)" }
-                $rs.Close()
-            } catch { "DAO snapshot of a query of one row`t$id`tcannot read: $($_.Exception.Message)" }
+        foreach ($kind in @(@('dynaset', 2), @('snapshot', 4))) {
+            foreach ($id in 1..8) {
+                $what = "DAO $($kind[0]) of a query of one row"
+                try {
+                    $rs = $db.OpenRecordset("SELECT Id, Name FROM Filled WHERE Id = $id", $kind[1])
+                    if ($rs.EOF) { "$what`t$id`tno such row" }
+                    else { "$what`t$id`t$(Format-Units $rs.Fields.Item('Name').Value)" }
+                    $rs.Close()
+                } catch { "$what`t$id`tcannot read: $(Get-Message $_.Exception)" }
+            }
         }
     } finally { $db.Close() }
 } finally {
@@ -67,26 +78,31 @@ try {
 $connection = New-Object System.Data.OleDb.OleDbConnection("Provider=Microsoft.ACE.OLEDB.16.0;Data Source=$File;Mode=Read")
 try {
     $connection.Open()
-    foreach ($read in @(@('ACE OLE DB query', 'SELECT Id, Name FROM Filled'), @('ACE OLE DB query by Id', 'SELECT Id, Name FROM Filled ORDER BY Id'))) {
+    $queries = @(@('ACE OLE DB query', 'SELECT Id, Name FROM Filled'), @('ACE OLE DB query by Id', 'SELECT Id, Name FROM Filled ORDER BY Id'),
+                 @('ACE OLE DB query by Name', 'SELECT Id, Name FROM Filled ORDER BY Name'))
+    foreach ($read in $queries) {
         $command = $connection.CreateCommand()
         $command.CommandText = $read[1]
         try {
             $reader = $command.ExecuteReader()
             while ($reader.Read()) {
-                try { $units = Format-Units $reader.GetValue(1) } catch { $units = "cannot read: $($_.Exception.Message)" }
+                try { $units = Format-Units $reader.GetValue(1) } catch { $units = "cannot read: $(Get-Message $_.Exception)" }
                 "$($read[0])`t$($reader.GetValue(0))`t$units"
             }
             $reader.Close()
-        } catch { "$($read[0])`t`tcannot read: $($_.Exception.Message)" }
+        } catch { "$($read[0])`t`tcannot read: $(Get-Message $_.Exception)" }
     }
-    foreach ($id in 1..8) {
-        $command = $connection.CreateCommand()
-        $command.CommandText = "SELECT Id, Name FROM Filled WHERE Id = $id ORDER BY Name"
-        try {
-            $reader = $command.ExecuteReader()
-            if ($reader.Read()) { "ACE OLE DB query of one row by Name`t$id`t$(Format-Units $reader.GetValue(1))" }
-            else { "ACE OLE DB query of one row by Name`t$id`tno such row" }
-            $reader.Close()
-        } catch { "ACE OLE DB query of one row by Name`t$id`tcannot read: $($_.Exception.InnerException.Message)" }
+    foreach ($order in @(@('', ''), @(' by Name', ' ORDER BY Name'))) {
+        foreach ($id in 1..8) {
+            $what = "ACE OLE DB query of one row$($order[0])"
+            $command = $connection.CreateCommand()
+            $command.CommandText = "SELECT Id, Name FROM Filled WHERE Id = $id$($order[1])"
+            try {
+                $reader = $command.ExecuteReader()
+                if ($reader.Read()) { "$what`t$id`t$(Format-Units $reader.GetValue(1))" }
+                else { "$what`t$id`tno such row" }
+                $reader.Close()
+            } catch { "$what`t$id`tcannot read: $(Get-Message $_.Exception)" }
+        }
     }
 } finally { $connection.Dispose() }
