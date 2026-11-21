@@ -668,8 +668,10 @@ public sealed class Table
     /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
     /// its column, <see cref="ArgumentException"/> for two of the row's names that go to one column,
     /// <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
-    /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="NotSupportedException"/> for a table that
-    /// takes no row (<see cref="InsertRefusal"/>),
+    /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="ArgumentException"/>
+    /// for a Text or Memo value that begins with U+FEFF where Access would read it back changed, judged where the
+    /// insert would keep it, <see cref="InvalidOperationException"/> for a row too large for its page,
+    /// <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
     /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
     /// does not take, a zero-length string in a column that does not allow one, or a
     /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
@@ -690,7 +692,9 @@ public sealed class Table
             FillAutoNumbers(asWritten);
         }
         asWritten = RowValues.AsWritten(asWritten, _definition);
-        new RowEncoder(_file.Format, _definition).Validate(asWritten);
+        // As the insert encodes it, long values placed by the table's own pages: where a Memo goes decides whether
+        // Access reads text that begins with U+FEFF back, and whether the row fits its page (#141).
+        _dataWriter.EnsureInsertable(_definition, asWritten);
         EnsureColumnRules(asWritten, assignedOnly: false);
         _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
     }

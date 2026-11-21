@@ -39,6 +39,10 @@ int loaded = people.BulkInsert(ReadRowsFromSomewhere());
   differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter or
   digit, "ß" and "ss", "æ" and "ae") is one key; a leading space, an accent or other punctuation is another.
   `Validate` looks at one row against the table; this looks at a batch.
+- **`Validate(row)` encodes the row as `Insert` would, and writes nothing**: each Memo or OLE value is placed where
+  the insert would put it - in the row, in one long-value row, or a chain - by the table's own long-value pages, so
+  a Memo that begins with U+FEFF is refused only where the insert refuses it, and a row too large for its page is
+  refused with `InvalidOperationException` as the insert refuses it ([#141]).
 
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
@@ -264,3 +268,4 @@ where Jackcess finds one.
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65
 [#80]: https://github.com/markmario/jackcess-dotnet/issues/80
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
+[#141]: https://github.com/markmario/jackcess-dotnet/issues/141

@@ -807,6 +807,12 @@ changes with them.
   exclusively or beside a database just created, threw that `IOException` as it was. They are
   `DatabaseInUseException`, with the sharing violation's HResult, as on Windows. What Linux keeps out and what it
   lets in, measured in CI's Linux job: [Sharing a file with Access](docs/sharing.md#what-each-open-does).
+- **`Table.Validate` refuses what `Insert` refuses where that depends on where a long value goes** (#141).
+  `Validate` checked a row with an encoder that had none of the table's long-value pages, so it took every Memo as
+  kept in the row: it refused a Memo that begins with U+FEFF long enough to be a chain, 1,909 characters or more
+  with the mark, which `Insert` writes and Access reads back whole; and it did not refuse a row too large for its
+  page, which `Insert` refuses with `InvalidOperationException`. It now encodes the row as the insert does, by the
+  table's own pages, and writes nothing.
 
 ## [1.2.2]
 

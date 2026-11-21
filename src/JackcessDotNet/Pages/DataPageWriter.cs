@@ -63,6 +63,14 @@ internal sealed class DataPageWriter
         return Place(tableDef, encoder, encoder.Prepare(row, keptVariableValues, null));
     }
 
+    /// <summary>
+    /// Refuses <paramref name="row"/> for everything <see cref="InsertRow(TableDefinition, Row)"/> refuses it for - a
+    /// value its column cannot hold, a long value where it would go, a row too large for its page - with each long
+    /// value placed as the insert would place it, by the table's own long-value pages. Nothing is written.
+    /// </summary>
+    internal void EnsureInsertable(TableDefinition tableDef, Row row)
+        => new RowEncoder(_file.Format, tableDef, LvalWritersFor(tableDef)).Prepare(row, null, null);
+
     // Writes a prepared row's long values and then the row. Only the file can fail here.
     private int Place(TableDefinition tableDef, RowEncoder encoder, RowEncoder.PreparedRow prepared)
     {
