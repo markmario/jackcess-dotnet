@@ -45,6 +45,10 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
 - Those are the six configurations, and CI runs each on every pull request, the .NET Framework ones split into
   shards that run side by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
+- The shards are balanced by tables of the seconds each test class took on CI, in `scripts/Invoke-TestShard.ps1`
+  and, for the Access referee tests, `scripts/Invoke-AccessTests.ps1`. A new test class needs a row in each table
+  that runs it: on a pull request, a class with none fails its job once its tests have run, with an error that
+  names the row to add and gives the seconds the class took.
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.
 - A few tests are skipped unless an environment variable gives them what they need, each saying so:
