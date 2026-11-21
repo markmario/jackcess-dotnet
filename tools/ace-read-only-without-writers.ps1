@@ -127,7 +127,7 @@ foreach ($ext in $extensions) {
     $held = Hold $path
     try {
         foreach ($mode in $aceModes) {
-            $name = if ($mode) { "ACE Mode=$mode" } else { 'ACE default' }
+            $name = if ($mode) { "$Provider Mode=$mode" } else { "$Provider, default mode" }
             try {
                 $c = Ace-Open $path $mode
                 try { "1. held; $name opens: count $(Ace-Count $c); $(Ace-TryInsert $c); while open $(Lock-State $path)" }
@@ -160,7 +160,7 @@ foreach ($ext in $extensions) {
 
     # 2. ACE or DAO first, then the held handle.
     foreach ($mode in $aceModes) {
-        $name = if ($mode) { "ACE Mode=$mode" } else { 'ACE default' }
+        $name = if ($mode) { "$Provider Mode=$mode" } else { "$Provider, default mode" }
         $path = New-Database $ext
         try { $c = Ace-Open $path $mode } catch { "2. $name did not open a free file: $($_.Exception.Message)"; continue }
         try {
@@ -185,7 +185,7 @@ foreach ($ext in $extensions) {
     $held = Hold $path
     $c = Ace-Open $path $null
     $held.Dispose()
-    try { "4. ACE default, opened beside the held file, after it was let go: its handle by probes: $(Probe $path); $(Ace-TryInsert $c); $(Lock-State $path)" }
+    try { "4. $Provider, default mode, opened beside the held file, after it was let go: its handle by probes: $(Probe $path); $(Ace-TryInsert $c); $(Lock-State $path)" }
     finally { $c.Dispose(); [System.Data.OleDb.OleDbConnection]::ReleaseObjectPool() }
 }
 Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
