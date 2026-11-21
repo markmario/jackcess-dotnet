@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace JackcessDotNet;
 
@@ -32,9 +33,16 @@ public sealed class DatabaseInUseException : IOException
     public DatabaseInUseException(string message, Exception? innerException) : base(message, innerException)
         => HResult = SharingViolation;
 
+    // On Linux, the errno .NET gives the IOException when the advisory lock it takes for a handle's sharing (flock) is
+    // held against it: EWOULDBLOCK, 11. Measured with .NET 10 on Linux (#122).
+    private const int LinuxLockHeld = 11;
+
     /// <summary>
-    /// Whether <paramref name="e"/> is Windows refusing to open a file because of how another handle has it open: a
-    /// sharing violation (ERROR_SHARING_VIOLATION) or a lock violation (ERROR_LOCK_VIOLATION).
+    /// Whether <paramref name="e"/> is the operating system refusing to open a file because of how another handle has
+    /// it open: on Windows a sharing violation (ERROR_SHARING_VIOLATION) or a lock violation (ERROR_LOCK_VIOLATION),
+    /// and on Linux the advisory lock .NET takes for a handle's sharing held by another (EWOULDBLOCK).
     /// </summary>
-    internal static bool IsSharingViolation(IOException e) => e.HResult is SharingViolation or LockViolation;
+    internal static bool IsSharingViolation(IOException e)
+        => e.HResult is SharingViolation or LockViolation
+        || (e.HResult == LinuxLockHeld && RuntimeInformation.IsOSPlatform(OSPlatform.Linux));
 }

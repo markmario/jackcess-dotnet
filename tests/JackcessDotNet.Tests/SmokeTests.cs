@@ -34,6 +34,9 @@ public sealed class SmokeTests : IDisposable
     [Fact]
     public void A_file_a_database_has_open_is_refused_to_a_second_opener_and_left_as_it_was()
     {
+        // FileSharingTests has what Linux does instead.
+        if (!PageFile.OSEnforcesSharing)
+            Assert.Skip("This operating system does not keep to a handle's sharing for reading only, so no second writer is kept out here.");
         Database.Create(_path).Dispose();
         using var first = Database.Open(_path);
         var people = first.CreateTable("People", PeopleColumns(), "Id");
