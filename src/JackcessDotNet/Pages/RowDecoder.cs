@@ -80,7 +80,7 @@ internal sealed class RowDecoder
 
         switch (col.DataType)
         {
-            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format, col.TextMayBeCompressed || byContent);
+            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format, col.TextMayBeCompressed || byContent || NamesAnEarlierVersionsTable(rowBytes, col));
             case DataType.Binary: return rowBytes.Slice(start, start + length);
             case DataType.Memo:   return DecodeMemoLvRef(col, rowBytes, start, length, byContent);
             case DataType.OleObject:    return DecodeOleLvRef (rowBytes, start, length);
@@ -318,6 +318,11 @@ internal sealed class RowDecoder
         int lvalPage = row[start + 5] | (row[start + 6] << 8) | (row[start + 7] << 16);
         return _lvalReader.Read(lvalPage, lvalRow, dataLen, chained);
     }
+
+    // Whether col is the catalog's Name and the row is that of a table an earlier version of this library created, whose
+    // name is read by its bytes in the catalog read as a table as the catalog reads it to list the table (#121).
+    private bool NamesAnEarlierVersionsTable(byte[] rowBytes, Column col)
+        => col.IsCatalogName && SystemCatalog.IsAnEarlierVersionsTable(this, rowBytes, _columns);
 
     // ACE reads a Memo value's bytes as compressed text when they are kept in the row, or in one long-value row of a
     // column with Unicode compression; in one of a column without it, and in a chain, they are UTF-16LE (#93). A column

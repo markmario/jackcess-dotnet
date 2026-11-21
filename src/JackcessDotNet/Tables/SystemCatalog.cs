@@ -281,11 +281,24 @@ internal sealed class SystemCatalog
     /// every value of characters 0x01 to 0xFF, compressed in a column without Unicode compression, and Access neither
     /// lists nor reads the table; the name and the table's text are read by their bytes (#93).
     /// </summary>
-    private static bool IsAnEarlierVersionsTable(RowDecoder decoder, byte[] rowBytes, Column? colType, Column? colParent, Column? colOwner)
+    internal static bool IsAnEarlierVersionsTable(RowDecoder decoder, byte[] rowBytes, Column? colType, Column? colParent, Column? colOwner)
         => colType is not null && colParent is not null && colOwner is not null
            && decoder.Decode(rowBytes, colType) is short type && type == JetFormat.CatalogTypeTable
            && decoder.Decode(rowBytes, colParent) is int parent && parent == 0
            && decoder.Decode(rowBytes, colOwner) is null;
+
+    /// <summary>
+    /// <see cref="IsAnEarlierVersionsTable(RowDecoder, byte[], Column?, Column?, Column?)"/>, with the catalog's Type,
+    /// ParentId and Owner found among <paramref name="columns"/>, the catalog's.
+    /// </summary>
+    internal static bool IsAnEarlierVersionsTable(RowDecoder decoder, byte[] rowBytes, IReadOnlyList<Column> columns)
+        => IsAnEarlierVersionsTable(decoder, rowBytes,
+               columns.FirstOrDefault(c => c.Name.Equals(ColType,     StringComparison.OrdinalIgnoreCase)),
+               columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase)),
+               columns.FirstOrDefault(c => c.Name.Equals(ColOwner,    StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>Whether <paramref name="column"/>, one of the catalog's, is its Name.</summary>
+    internal static bool IsNameColumn(Column column) => column.Name.Equals(ColName, StringComparison.OrdinalIgnoreCase);
 
     // The catalog's name of an object, read by its bytes for a table an earlier version created.
     private static string? NameOf(RowDecoder decoder, byte[] rowBytes, Column colName, bool byAnEarlierVersion)

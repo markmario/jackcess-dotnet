@@ -51,6 +51,14 @@ public sealed class Column
     internal bool TextMayBeCompressed => IsCompressedUnicode || ReadsTextByContent;
 
     /// <summary>
+    /// Whether the column is the Name of the catalog (MSysObjects) read as a table. In the row of a table an earlier
+    /// version of this library created (<see cref="SystemCatalog.IsAnEarlierVersionsTable(RowDecoder, byte[], IReadOnlyList{Column})"/>) its value is read by its
+    /// bytes, as the catalog reads it to list and find the table; in every other row, as the column's Unicode
+    /// compression says (#121).
+    /// </summary>
+    internal bool IsCatalogName { get; set; }
+
+    /// <summary>
     /// The column's number in its table's definition, counted from 0: its position among the table's columns,
     /// except that Access does not renumber the columns left when one is deleted, so the numbers of a table that
     /// has had a column deleted have gaps.
@@ -179,6 +187,7 @@ public sealed class Column
         copy.IsCodePageText   = false;
         // The table being created is one Access lists, whose text is read as Access reads it.
         copy.ReadsTextByContent = false;
+        copy.IsCatalogName      = false;
         if (DataType is DataType.Text or DataType.Memo) copy.SortOrder = textOrder;
         return copy;
     }
