@@ -185,10 +185,12 @@ internal static class ByteUtil
     }
 
     /// <summary>
-    /// Compressed text as ACE reads it (measured with ACE 16 and DAO, #93): after 0xFF 0xFE, a byte a character with a
-    /// high byte of 0x00, until a 0x00 byte, which switches to two bytes a character (UTF-16LE); two bytes at a time
-    /// until a pair begins with 0x00, which switches back. A byte left alone at the end is U+FFFD, as
-    /// <see cref="DecodeUtf16"/> reads one.
+    /// Compressed text as ACE reads it (measured with ACE 16 and DAO, #93; TextMarkerInAccessTests plants such bytes):
+    /// after 0xFF 0xFE, a byte a character with a high byte of 0x00, until a 0x00 byte, which switches to two bytes a
+    /// character (UTF-16LE); two bytes at a time until a pair begins with 0x00, which switches back, a 0x00 as a pair's
+    /// second byte being none. A byte left alone at the end of two bytes a character is U+FFFD, as
+    /// <see cref="DecodeUtf16"/> reads one: that is this library's choice, as ACE reads the memory past the value there
+    /// (FF FE 61 00 41 42 43 44 45 it read as U+0061 U+4241 U+4443 U+0945).
     /// </summary>
     private static string DecodeCompressed(byte[] data, int offset, int length)
     {

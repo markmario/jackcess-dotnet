@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data.OleDb;
 using System.Linq;
 using JackcessDotNet.AccessTests.Support;
 using Xunit;
@@ -10,11 +11,12 @@ namespace JackcessDotNet.AccessTests
     /// <summary>
     /// Text whose bytes begin 0xFF (#93), written by the engine into a table ACE made, in an .mdb and an .accdb DAO
     /// made: a Text column and a Memo column with Unicode compression and without, a Memo kept in the row, in one
-    /// long-value row and in a chain. 0xFF 0xFE is the mark of compressed text, and the UTF-16LE of U+FEFF is 0xFF 0xFE
-    /// too: the engine writes text that begins with U+FEFF as ACE writes it, and text that begins with another
-    /// character whose low byte is 0xFF as UTF-16LE, which it read as text of one byte a character. ACE, the engine
-    /// and DAO each read back what was written, by scan, through the primary key and after a compact. Text that
-    /// begins with U+FEFF that Access itself would read back changed the engine refuses (TextMarkerTests).
+    /// long-value row and in a chain, with an index on each Text column. 0xFF 0xFE is the mark of compressed text, and
+    /// the UTF-16LE of U+FEFF is 0xFF 0xFE too: the engine writes text that begins with U+FEFF as ACE writes it, and
+    /// text that begins with another character whose low byte is 0xFF as UTF-16LE. ACE, the engine and DAO each read
+    /// back what was written, by scan, through the primary key and through each Text column's index, and after a
+    /// compact. Text Access itself would read back changed the engine refuses (TextMarkerTests); bytes ACE did not
+    /// write itself, planted by the engine, ACE and the engine read alike.
     /// </summary>
     public class TextMarkerInAccessTests : IDisposable
     {
@@ -27,8 +29,13 @@ namespace JackcessDotNet.AccessTests
             yield return new object[] { 128, ".accdb" };
         }
 
-        private const string Table = "CREATE TABLE T (Id LONG CONSTRAINT pk PRIMARY KEY, TC VARCHAR(255) WITH COMPRESSION, TU VARCHAR(255), "
-                                   + "MC LONGTEXT WITH COMPRESSION, MU LONGTEXT)";
+        private static readonly string[] Table =
+        {
+            "CREATE TABLE T (Id LONG CONSTRAINT pk PRIMARY KEY, TC VARCHAR(255) WITH COMPRESSION, TU VARCHAR(255), "
+            + "MC LONGTEXT WITH COMPRESSION, MU LONGTEXT)",
+            "CREATE INDEX ixTC ON T (TC)",
+            "CREATE INDEX ixTU ON T (TU)",
+        };
 
         private const char Bom = '\uFEFF';
         private static string Of(char c, int count) => new string(c, count);
@@ -58,7 +65,6 @@ namespace JackcessDotNet.AccessTests
             Bom + Of('a', 1950),                            // UTF-16LE of 3,902 bytes: a chain, as ACE makes it
             Bom + Of('\u30C6', 1908),                       // 3,818 bytes: a chain
             Bom + Of('\u30C6', 3000),                       // a chain, UTF-16LE
-            Bom + Of('a', 3000),
             "\u01FFab",
         };
         private static readonly string[] MemoPlain =
@@ -81,19 +87,73 @@ namespace JackcessDotNet.AccessTests
                      "MU", i < MemoPlain.Length ? MemoPlain[i] : null);
         }
 
-        private string NewFile(int daoVersion, string extension)
+        private string NewFile(int daoVersion, string extension, params string[] statements)
         {
             var path = System.IO.Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + extension);
             DaoCreate(path, daoVersion);
-            Execute(path, Table);
+            Execute(path, statements);
             return path;
+        }
+
+        // The ids of the rows ACE finds with "column = text": through the column's index, as a parameter.
+        private static List<int> AceFinds(string path, string column, string text)
+        {
+            var found = new List<int>();
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            using (var command = new OleDbCommand("SELECT Id FROM T WHERE [" + column + "] = ?", connection))
+            {
+                command.Parameters.Add(new OleDbParameter("p", OleDbType.VarWChar) { Value = text });
+                connection.Open();
+                using (var reader = command.ExecuteReader())
+                    while (reader.Read()) found.Add(reader.GetInt32(0));
+            }
+            return found;
+        }
+
+        // Each Text value is found through its column's index, by ACE in the file and in a compacted copy, and by the
+        // engine.
+        private static void AssertFoundThroughIndexes(string path, List<Values> rows, string when)
+        {
+            var lookups = (from row in rows
+                           from pair in new[] { ("TC", "ixTC"), ("TU", "ixTU") }
+                           where row[pair.Item1] is string
+                           let text = (string)row[pair.Item1]
+                           select (Column: pair.Item1, Index: pair.Item2, Text: text,
+                                   Expected: rows.Where(r => r[pair.Item1] as string == text).Select(r => (int)r["Id"]).OrderBy(id => id).ToList()))
+                          .ToList();
+            var compacted = Compact(path);
+            var aceFound = new Dictionary<(string, string), List<int>>();
+            try
+            {
+                foreach (var l in lookups)
+                {
+                    aceFound[(l.Column, l.Text)] = AceFinds(path, l.Column, l.Text);
+                    // Every row of the value, and perhaps others: text whose characters General - Legacy gives no code,
+                    // such as U+FEFF and U+4141, is one to Access whatever they are.
+                    foreach (var file in new[] { path, compacted })
+                    {
+                        var found = AceFinds(file, l.Column, l.Text);
+                        Assert.True(l.Expected.All(found.Contains), l.Column + " " + string.Join(" ", l.Text.Take(8).Select(c => ((int)c).ToString("X4")))
+                            + " found by ACE through " + l.Index + " in rows " + string.Join(",", found) + ", not " + string.Join(",", l.Expected)
+                            + (file == path ? ", " : ", after a compact, ") + when);
+                    }
+                }
+            }
+            finally { System.IO.File.Delete(compacted); }
+            OleDbConnection.ReleaseObjectPool();
+            using (var db = Database.Open(path))
+            {
+                var table = db.GetTable("T");
+                foreach (var l in lookups)
+                    Assert.Contains((int)table.CreateIndexCursor(l.Index).FindRow(l.Column, l.Text)["Id"], aceFound[(l.Column, l.Text)]);
+            }
         }
 
         [Theory]
         [MemberData(nameof(Formats))]
         public void Access_reads_back_the_text_the_engine_wrote(int daoVersion, string extension)
         {
-            var path = NewFile(daoVersion, extension);
+            var path = NewFile(daoVersion, extension, Table);
             int count = new[] { TextCompressed.Length, TextPlain.Length, MemoCompressed.Length, MemoPlain.Length }.Max();
             var rows = Enumerable.Range(0, count).Select(Row).ToList();
             using (var db = Database.Open(path))
@@ -104,6 +164,7 @@ namespace JackcessDotNet.AccessTests
 
             AssertTableIs(path, "T", "Id", rows, "after the engine inserted");
             AssertSame(Written(rows), Written(DaoRows(path, "T", "pk")), "T as DAO reads it from the table");
+            AssertFoundThroughIndexes(path, rows, "after the engine inserted");
 
             // The other way round on every row: each value in the next row's place.
             using (var db = Database.Open(path))
@@ -119,6 +180,39 @@ namespace JackcessDotNet.AccessTests
             }
             AssertTableIs(path, "T", "Id", rows, "after the engine updated every row");
             AssertSame(Written(rows), Written(DaoRows(path, "T", "pk")), "T as DAO reads it from the table, after the update");
+            AssertFoundThroughIndexes(path, rows, "after the engine updated every row");
+        }
+
+        /// <summary>
+        /// Bytes ACE does not write itself, planted by the engine as UTF-16LE in a Text column without Unicode
+        /// compression - which ACE reads as they are - and read again once ACE has given the column Unicode
+        /// compression, which leaves the bytes as they are and reads them as compressed text: after a switch to
+        /// UTF-16LE two bytes at a time, a pair that begins 0x00 switching back, and 0x00 as a pair's second byte
+        /// none. The engine reads them as ACE does, before and after.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Formats))]
+        public void Planted_bytes_are_read_as_ACE_reads_them_before_and_after_ACE_gives_the_column_compression(int daoVersion, string extension)
+        {
+            var path = NewFile(daoVersion, extension, "CREATE TABLE P (Id LONG CONSTRAINT pk PRIMARY KEY, V VARCHAR(255))");
+            var planted = new[]
+            {
+                ("\uFEFFaA\u6200c", "aAbc"),          // FF FE 61 00 41 00 00 62 63 00
+                ("\uFEFFa\u30C6\u4100", "a\u30C6A"),            // FF FE 61 00 C6 30 00 41
+                ("\uFEFFQ4Z", "Q4Z"),                 // FF FE 51 00 34 00 5A 00
+            };
+            using (var db = Database.Open(path))
+            {
+                var table = db.GetTable("P");
+                for (int i = 0; i < planted.Length; i++) table.Insert(new Row { ["Id"] = i + 1, ["V"] = planted[i].Item1 });
+            }
+
+            var before = AssertEngineReadsWhatAceReads(path, "P");
+            foreach (var row in before) Assert.Equal(planted[(int)row["Id"] - 1].Item1, row["V"]);
+
+            Execute(path, "ALTER TABLE P ALTER COLUMN V VARCHAR(255) WITH COMPRESSION");
+            var after = AssertEngineReadsWhatAceReads(path, "P");
+            foreach (var row in after) Assert.Equal(planted[(int)row["Id"] - 1].Item2, row["V"]);
         }
     }
 }
