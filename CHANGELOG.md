@@ -814,8 +814,9 @@ changes with them.
   stored a double other than ACE's for 1,025 and a single for 1,793; .NET Framework's a double for 1,620 in a 64-bit
   process and 402 in a 32-bit one, and a single for 1,882. In two ranges of the least doubles, from 1E-308 to 1E-304
   and under 1E-321, ACE stored 73 of the texts one place from that double; this library does not follow it there
-  (#136). Text of `-0` is -0.0, as in ACE, where .NET Framework's parse gave 0. A Double or Single property given text takes it the same way, in the invariant culture as before. A number
-  given as a `double`, a `float`, a `decimal` or an integer does not go this way, and is stored as before.
+  (#136). Text of `-0` is -0.0, as in ACE, where .NET Framework's parse gave 0. A Double or Single property given
+  text takes it the same way, in the invariant culture as before. A number given as a `double`, a `float`, a
+  `decimal` or an integer does not go this way, and is stored as before.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target**
   (#124): 15 significant digits for a double and 7 for a single, a half away from zero, written out below 10^15
   (10^7) unless that takes more than 15 (7) places after the point, and otherwise with an exponent of two digits or
@@ -825,6 +826,12 @@ changes with them.
   and DAO (`AddNew`, and a Text property), which write the same. The row, its index keys and a lookup of the column
   by a double take that text. A Text property given a double or a float is written the same, in the invariant
   culture.
+- **On Linux, a file in use is refused with `DatabaseInUseException`** (#122). There .NET refuses an open by the
+  advisory lock it takes for a handle's sharing, with an `IOException` whose HResult is the errno, 11, and not
+  Windows' sharing violation: `Database.Create` beside any open handle, and any open beside Access holding the file
+  exclusively or beside a database just created, threw that `IOException` as it was. They are
+  `DatabaseInUseException`, with the sharing violation's HResult, as on Windows. What Linux keeps out and what it
+  lets in, measured in CI's Linux job: [Sharing a file with Access](docs/sharing.md#what-each-open-does).
 
 ## [1.2.2]
 
