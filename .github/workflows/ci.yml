@@ -370,7 +370,7 @@ jobs:
           ${{ fromJSON(format('[{0}{1}]',
           '{"arch":"x64","shard":1,"shards":4,"parallel":2},{"arch":"x64","shard":2,"shards":4,"parallel":2},{"arch":"x64","shard":3,"shards":4,"parallel":2},{"arch":"x64","shard":4,"shards":4,"parallel":2}',
           (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:access-x86'))
-          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3},{"arch":"x86","shard":2,"shards":2,"parallel":3}' || '')) }}
+          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3,"trial":"baseline"},{"arch":"x86","shard":2,"shards":2,"parallel":3,"trial":"shared"},{"arch":"x86","shard":3,"shards":3,"parallel":3,"trial":"nofinal"}' || '')) }}
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:
@@ -455,11 +455,15 @@ jobs:
         run: |
           $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
           New-Item -ItemType Directory -Force $dumps | Out-Null
-          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
-          New-Item -Path $key -Force | Out-Null
-          Set-ItemProperty -Path $key -Name DumpFolder -Value $dumps -Type ExpandString
-          Set-ItemProperty -Path $key -Name DumpType -Value 1 -Type DWord
-          Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
+          # Both registry views: a 32-bit process's crash left no dump with the
+          # 64-bit one alone (run 44888628752, #145).
+          foreach ($key in 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps',
+                           'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\Windows Error Reporting\LocalDumps') {
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name DumpFolder -Value $dumps -Type ExpandString
+            Set-ItemProperty -Path $key -Name DumpType -Value 1 -Type DWord
+            Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
+          }
 
       # The installer started above, finished and registered. Should its
       # process have gone without finishing, it is run here instead. A download
@@ -507,7 +511,14 @@ jobs:
       # sweeps' table - or, in a 32-bit shard, in the 32-bit one - fails the
       # job, after its tests have run, with an error that says what to add;
       # anywhere else it is a warning that says the same.
+      # TRIAL (#145, removed before review).
+      - name: Trial
+        if: matrix.trial
+        shell: pwsh
+        run: ./scripts/_trial-uengine.ps1 -Trial ${{ matrix.trial }} -Times 30 -Parallel 3 -X86
+
       - name: Test
+        if: ${{ !matrix.trial }}
         shell: pwsh
         env:
           JACKCESS_FULL_SWEEPS: ${{ matrix.arch == 'x86' && '0' || env.JACKCESS_FULL_SWEEPS }}
@@ -523,6 +534,7 @@ jobs:
           path: |
             TestResults/*.trx
             TestResults/*.xml
+            TestResults/trial-*.log
           if-no-files-found: warn
 
       - name: Upload crash dumps

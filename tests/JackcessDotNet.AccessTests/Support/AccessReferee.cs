@@ -593,7 +593,7 @@ namespace JackcessDotNet.AccessTests.Support
         public static List<Values> DaoRows(string path, string source, string index = null)
         {
             var rows = new List<Values>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.EngineForReading();
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);

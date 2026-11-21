@@ -45,11 +45,24 @@ namespace JackcessDotNet.AccessTests.Support
             return dbe;
         }
 
+        // TRIAL (#145, removed before review): which way of using DAO a run tries.
+        internal static readonly string Trial = Environment.GetEnvironmentVariable("JACKCESS_DAO_TRIAL") ?? "baseline";
+
         public static void Release(object engine)
         {
+            if (Trial == "shared" && ReferenceEquals(engine, _shared)) return;
             Collect();
-            if (engine != null && Marshal.IsComObject(engine)) Marshal.FinalReleaseComObject(engine);
+            if (Trial != "nofinal" && engine != null && Marshal.IsComObject(engine)) Marshal.FinalReleaseComObject(engine);
             Collect();
+        }
+
+        private static object _shared;
+
+        /// <summary>TRIAL: the engine DaoRows reads with.</summary>
+        internal static object EngineForReading()
+        {
+            if (Trial == "shared") return _shared ?? (_shared = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true)));
+            return Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
         }
 
         private static void Collect()
