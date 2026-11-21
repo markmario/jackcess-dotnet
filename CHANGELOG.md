@@ -750,6 +750,16 @@ changes with them.
   between them, and the halving never ended: FindRowByEntry, a range or a join on a Date/Time spun for ever. The
   halving is now of the doubles' places in order, integers, and ends within 64 steps on every runtime. The tests run
   in a 32-bit process too (-p:TestX86=true, and a CI job).
+- **A Date/Time is read and written alike whatever the state of the x87 unit** (#100). `DateTime.FromOADate` and
+  `ToOADate`, which the engine read and wrote a Date/Time with, compute in doubles. In a 32-bit .NET Framework
+  process with the unit at 64 bits of precision, as ACE leaves the thread that ran a statement (measured with 32-bit
+  ACE 12), of 15 million stored numbers chosen either side of a millisecond's half 241 read as the millisecond
+  beside the one a 64-bit process reads (5.7870370370370361E-09 as midnight on 30 December 1899, not 00:00:00.001),
+  and a lookup by that date missed the row; of 3.4 million dates 783 were written, in the row and in the index key,
+  as the double beside. At 53 bits nothing differed. The engine converts in integers, giving exactly what a 64-bit
+  process gives: the same conversions agree in all three states, and a table of 20,000 rows is written byte for byte
+  as a 64-bit process writes it. A double or a float to a Decimal, a double to a Currency, and a decimal to a Double
+  or a Single were measured alike and do not depend on the unit.
 
 ## [1.2.2]
 
