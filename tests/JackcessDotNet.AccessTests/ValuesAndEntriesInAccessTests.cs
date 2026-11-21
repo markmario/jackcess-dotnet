@@ -275,6 +275,7 @@ namespace JackcessDotNet.AccessTests
         [InlineData(FileFormat.Access2010, ".accdb")]
         public void DAO_changes_the_design_of_tables_the_engine_made_and_compacts_them_whole(FileFormat format, string extension)
         {
+            if (format != FileFormat.Access2000) SkipUnlessAceOpensAccess2010();
             var path = Path.ChangeExtension(_tmp.NewMdbPath(), extension);
             var columns = new List<ColumnDefinition>
             {

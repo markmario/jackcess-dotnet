@@ -370,7 +370,7 @@ jobs:
           ${{ fromJSON(format('[{0}{1}]',
           '{"arch":"x64","shard":1,"shards":4,"parallel":2},{"arch":"x64","shard":2,"shards":4,"parallel":2},{"arch":"x64","shard":3,"shards":4,"parallel":2},{"arch":"x64","shard":4,"shards":4,"parallel":2}',
           (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:access-x86'))
-          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3},{"arch":"x86","shard":2,"shards":2,"parallel":3},{"arch":"x86","shard":3,"shards":3,"parallel":3,"trial":"one-engine"}' || '')) }}
+          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3,"trial":"one-engine"},{"arch":"x86","shard":2,"shards":2,"parallel":3,"trial":"nocollect"}' || '')) }}
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:
@@ -515,7 +515,7 @@ jobs:
       - name: Trial
         if: matrix.trial
         shell: pwsh
-        run: ./scripts/_trial-uengine.ps1 -Trial ${{ matrix.trial }} -Times 30 -Parallel 3 -X86
+        run: ./scripts/_trial-uengine.ps1 -Trial ${{ matrix.trial }} -Times 60 -Parallel 3 -X86
 
       - name: Test
         if: ${{ !matrix.trial }}
