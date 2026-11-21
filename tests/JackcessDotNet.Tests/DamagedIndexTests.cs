@@ -11,7 +11,7 @@ namespace JackcessDotNet.Tests;
 /// ACE 16 and DAO). Made, the update left the row in the index twice, under 30 and 33, and DAO's compaction copied
 /// the row twice and dropped the primary key. With <see cref="Database.VerifyIndexes"/> the change is made, and
 /// mends the index (#66). What Access makes of what is left - read, sought, added to and compacted - is refereed
-/// by tests still to come into this repository (#96).
+/// by ValuesAndEntriesInAccessTests.
 /// <para>
 /// The file is Assets/damaged-primary-key.mdb, which <see cref="Make"/> made (and
 /// <see cref="The_file_is_the_one_Make_makes"/> holds it to).

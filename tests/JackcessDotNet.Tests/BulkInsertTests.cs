@@ -9,7 +9,7 @@ namespace JackcessDotNet.Tests;
 /// <see cref="Table.InsertRange"/>. Each tree holds the entries an insert of each row would have given it, in a tree
 /// that keeps Access's rules, read back from the file's pages (<see cref="IndexChecks"/>); a duplicate is refused with
 /// the later row named and the file byte for byte as it was; and a table that has rows is filled row by row as
-/// before. What Access makes of a tree built so is refereed by tests still to come into this repository (#96).
+/// before. What Access makes of a tree built so is refereed by BulkIndexesInAccessTests.
 /// </summary>
 public sealed class BulkInsertTests : IDisposable
 {

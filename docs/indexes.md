@@ -64,7 +64,14 @@ against the tree. This library writes, for a tree built whole, the number of its
 inserted under a key no other row had, in the write of the table's definition the insert makes anyway; an update
 or a delete changes nothing. Beside ACE's twin of an export the counts are equal in every index ([#88]). Access's
 own updates and deletes move it in ways not fully measured: after ACE deleted rows of a table, one count went from
-5,000 to 2,833 with 4,333 rows left.
+5,000 to 2,833 with 4,333 rows left. In another, of 3,000 rows whose trees this library built whole, each count was
+the one Access gives the tree it builds again when DAO compacts the file - the exact one
+(`BulkIndexesInAccessTests`). Then, measured with Microsoft 365's ACE 16 and with the Access
+Database Engine 2016 redistributable, each change by ACE against the exact count: an insert added each new key,
+exactly; an update of a row's own key to a new one left the count, as the exact count is left; an update to a new
+value from one other rows also have added no key, where the exact count goes up by one; a delete of a row whose
+keys were its own took none off, where the exact count goes down by one; and an insert refused as a duplicate added
+one to the primary key's count, where the exact count does not move. DAO's compact makes every count exact again.
 
 ## An index is trusted
 

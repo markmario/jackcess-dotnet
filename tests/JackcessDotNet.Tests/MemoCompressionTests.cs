@@ -8,8 +8,7 @@ namespace JackcessDotNet.Tests;
 /// Memo columns have Unicode compression: "" is no bytes; 1 or 2 characters are UTF-16LE; 3 to 1,908 characters that
 /// are all 0x01-0xFF are 0xFF 0xFE and a byte each; 1,909 and more are UTF-16LE, a chain from 3,818 bytes. Text mixing
 /// those characters with others ACE compresses in runs; this library writes it as UTF-16LE, which ACE reads the same.
-/// The values are read back from the file's own bytes. What ACE makes of them is refereed by tests still to come
-/// into this repository (#96).
+/// The values are read back from the file's own bytes. What ACE makes of them is refereed by MemoStorageInAccessTests.
 /// </summary>
 public sealed class MemoCompressionTests : IDisposable
 {
