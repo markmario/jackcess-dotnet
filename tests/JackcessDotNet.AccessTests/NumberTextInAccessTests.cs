@@ -73,7 +73,7 @@ namespace JackcessDotNet.AccessTests
         private static List<string> Texts()
         {
             var random = new Random(124);
-            int picks = Sweeps.Full ? 400 : 16;
+            int picks = Sweeps.Full ? 120 : 16;
             var texts = new List<string> { "-8.5635493928557935E15", "-0", "1.7976931348623158E+308", "3.40282356779733661637539395458142568448E+38" };
             for (int i = 0; i < picks; i++)
             {

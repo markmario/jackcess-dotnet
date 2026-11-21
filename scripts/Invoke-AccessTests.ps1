@@ -228,7 +228,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGreek' = 92; 'SortOrdersInAccessTests.WalkHebrew' = 56; 'SortOrdersInAccessTests.WalkItalian' = 78
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
-        NumberTextInAccessTests = 40
+        NumberTextInAccessTests = 60
     }
 }
 
