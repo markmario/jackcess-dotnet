@@ -297,6 +297,15 @@ internal sealed class SystemCatalog
                columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase)),
                columns.FirstOrDefault(c => c.Name.Equals(ColOwner,    StringComparison.OrdinalIgnoreCase)));
 
+    /// <summary>
+    /// <see cref="IsAnEarlierVersionsTable(RowDecoder, byte[], Column?, Column?, Column?)"/> of a catalog row as values
+    /// by column name: the row a change of the catalog writes, whose Name is then written as it is read, by its bytes.
+    /// </summary>
+    internal static bool IsAnEarlierVersionsTable(Row row)
+        => row.TryGetValue(ColType, out var type) && type is short t && t == JetFormat.CatalogTypeTable
+           && row.TryGetValue(ColParentId, out var parent) && parent is int p && p == 0
+           && (!row.TryGetValue(ColOwner, out var owner) || RowValues.IsNull(owner));
+
     /// <summary>Whether <paramref name="column"/>, one of the catalog's, is its Name.</summary>
     internal static bool IsNameColumn(Column column) => column.Name.Equals(ColName, StringComparison.OrdinalIgnoreCase);
 
