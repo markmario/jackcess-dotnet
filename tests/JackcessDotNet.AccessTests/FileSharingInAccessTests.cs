@@ -409,12 +409,12 @@ namespace JackcessDotNet.AccessTests
 
         // An Access 97 file is only ever read, so the engine opens it beside DAO writing to it, where the header was read
         // without sharing writing and refused it; DAO goes on writing, and every row is there for DAO after. Only a 32-bit
-        // engine opens an Access 97 file - ACE 12's DAO, or Jet 4.0's DAO 3.6 - so this runs in a 32-bit process.
+        // engine opens an Access 97 file - ACE 12's DAO, or Jet 4.0's DAO 3.6 - so this runs in a 32-bit process, and
+        // not under the redistributable's 32-bit ACE 16, which does not open one either.
         [Fact]
         public void the_engine_reads_an_access_97_file_dao_is_writing_to_and_dao_loses_nothing()
         {
-            if (Environment.Is64BitProcess)
-                Assert.Skip("64-bit ACE does not open an Access 97 file, so there is no referee here for one: run these tests in a 32-bit process.");
+            SkipUnlessAceOpensAccess97();
 
             var path = _tmp.NewMdbPath();
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
