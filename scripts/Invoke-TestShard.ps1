@@ -60,7 +60,7 @@ $classes = @($listed | ForEach-Object { & $classOf $_ } | Sort-Object -Unique)
 
 # Seconds each class took on a windows-latest runner, in each configuration: the mean of runs 44859335561, 44860125207
 # and 44860480279 (2026-11-21), from their test reports; OADateTests the mean of runs 44864425043, 44865291603 and
-# 44866192633. ns- is the netstandard2.0 assembly on that framework, and x86 the 32-bit process. Every class has a row,
+# 44866192633; NumberTextTests as it ran on a developer's machine, until a run's report times it. ns- is the netstandard2.0 assembly on that framework, and x86 the 32-bit process. Every class has a row,
 # in the order of the names: one that is missing is counted as 1 s and named in a warning, or with -RequireTimings an
 # error. Each shard's summary shows what each class took beside its number.
 $timings = @'
@@ -152,6 +152,7 @@ MemoCompressionTests                          0.0        0.0        0.1        0
 MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
 NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
 NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+NumberTextTests                               1.0        1.0        1.5        1.5        1.0        1.5
 OADateChoiceTests                             0.9        0.8        0.7        2.3        0.7        0.9
 OADateTests                                   0.3        0.4        0.5        0.6        0.3        0.6
 ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
