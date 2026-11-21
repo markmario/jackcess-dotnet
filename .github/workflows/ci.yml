@@ -170,9 +170,10 @@ jobs:
       # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
       # A job spends about a minute besides its tests: setup, checkout, the build and the listing. One job to a .NET
-      # configuration, whose tests take 4.5 to 5.5 minutes, and three to a .NET Framework one, whose shards take
-      # 3.5 to 4.5: no job takes longer than access-build and the longest Access shard, about 6.5 minutes, and a run
-      # has as few jobs as that allows. Two to a .NET Framework configuration would take about 7 minutes each.
+      # configuration, whose tests take 3.5 to 6 minutes on a runner, and three to a .NET Framework one, whose
+      # shards take 3 to 5: each job takes about as long as access-build and the longest Access shard, 6 to 7
+      # minutes, or less, and a run has as few jobs as that allows. Two to a .NET Framework configuration would take
+      # 6 to 7.5 minutes each.
       matrix:
         include:
           - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 1, shards: 1 }
