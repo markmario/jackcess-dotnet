@@ -9,13 +9,15 @@ namespace JackcessDotNet.AccessTests.Support
     ///
     /// A test used to make an engine of its own each time it asked DAO something and end it after - many a test, in
     /// one process, between ACE's OLE DB connections writing to the same files. In a 32-bit process the 2016
-    /// redistributable's ACE 16 faulted at the start of such an engine, or at its first call, about one run in five:
-    /// an access violation that ended the process (0xC0000005), 0xC000041D, or RPC_E_SERVERFAULT from a DAO call (#145).
-    /// Measured on CI's 32-bit runners with CursorsAndRowsInAccessTests' piece that makes one engine for each index at
-    /// each of its checks, 30 runs each: engines made and ended as before, 6 of 30 died; one engine for the process,
-    /// none of 30; engines left for .NET to end rather than ended at once, 28 of 30 failed. The engine is therefore
-    /// made once, the first time a test asks for it, and kept until the process ends; a test lets go of the databases,
-    /// recordsets and the rest it got (<see cref="Release"/>), and never of the engine.
+    /// redistributable's ACE 16 failed about one run in five of CursorsAndRowsInAccessTests' piece that makes one
+    /// engine for each index at each of its checks: an access violation that ended the process (0xC0000005),
+    /// 0xC000041D, or RPC_E_SERVERFAULT from a DAO call (#145). Measured on CI's 32-bit runners, that piece run again
+    /// and again, three processes at a time: engines made and ended at once, as before, 6 of 30 runs died (two of
+    /// 0xC0000005, four of 0xC000041D); engines left for .NET to end, 28 of 30 failed; one engine for the process, 2 of
+    /// 90 died, both of 0xC000041D - the redistributable's own death, which Invoke-AccessTests.ps1 runs again - and
+    /// none of 0xC0000005 or RPC_E_SERVERFAULT. The engine is therefore made once, the first time a test asks for it,
+    /// and kept until the process ends; a test lets go of the databases, recordsets and the rest it got
+    /// (<see cref="Release"/>), and never of the engine.
     ///
     /// Before that, in the same redistributable: an engine left alive by the wrappers it had handed out, then an OLE DB
     /// connection writing to an .accdb file, then a second engine, was an access violation inside Office's shared
@@ -73,7 +75,6 @@ namespace JackcessDotNet.AccessTests.Support
         /// </summary>
         public static void Release(object engine)
         {
-            if (Environment.GetEnvironmentVariable("JACKCESS_DAO_TRIAL") == "nocollect") return;   // TRIAL (#145)
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
