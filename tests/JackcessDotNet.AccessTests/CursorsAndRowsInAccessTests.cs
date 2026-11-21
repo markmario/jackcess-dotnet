@@ -711,6 +711,99 @@ namespace JackcessDotNet.AccessTests
             }
         }
 
+        // ── Dates a hair from a millisecond's rounding ───────────────────────────
+
+        // Numbers a hair from a millisecond's half, and the date a 64-bit process reads each as; dates, and the number a
+        // 64-bit process writes for each. In a 32-bit process with the x87 unit at 64 bits of precision, as ACE leaves
+        // the thread that ran a statement, the runtime's own conversions read each number as the millisecond beside it
+        // and wrote each date as the double beside it (#100).
+        private static readonly (long Number, DateTime Date)[] NumbersAHairFromAHalf =
+        {
+            (0x3E38DAEA1D7F4CF6, new DateTime(1899, 12, 30, 0, 0, 0, 1)),
+            (unchecked((long)0xC11E17619CC339D9), new DateTime(550, 3, 1, 9, 40, 26, 844)),
+            (unchecked((long)0xC0E35DB93D517005), new DateTime(1791, 5, 29, 18, 55, 46, 714)),
+            (0x410B2163ECCE6C58, new DateTime(2508, 7, 2, 11, 46, 30, 267)),
+            (0x4133B9623D5E4EC8, new DateTime(5439, 2, 17, 5, 45, 11, 831)),
+            (0x41467E048670F3B2, new DateTime(9971, 8, 20, 1, 12, 27, 822)),
+        };
+
+        private static readonly (DateTime Date, long Number)[] DatesWrittenAHairApart =
+        {
+            (new DateTime(104, 11, 5, 9, 4, 37, 269), unchecked((long)0xC1240262C1A4A099)),
+            (new DateTime(1518, 7, 23, 18, 50, 2, 758), unchecked((long)0xC10101B6472D2E2F)),
+            (new DateTime(2132, 9, 10, 22, 31, 7, 4), 0x40F4BFFF032D2E2F),
+            (new DateTime(5349, 3, 17, 19, 33, 48, 314), 0x41333917D0AD2E2F),
+            (new DateTime(9988, 6, 22, 9, 17, 58, 627), 0x41468A083199144B),
+        };
+
+        [Fact]
+        public void a_number_a_hair_from_a_millisecond_s_half_and_a_date_written_after_ace_ran_a_statement_are_those_of_a_64_bit_process()
+        {
+            var path = _tmp.NewMdbPath();
+            DaoCreate(path, 64);
+            Execute(path, "CREATE TABLE A (Id LONG CONSTRAINT pk PRIMARY KEY, D DATETIME)", "CREATE INDEX ByD ON A (D)",
+                          "CREATE TABLE E (Id LONG CONSTRAINT pk PRIMARY KEY, D DATETIME)", "CREATE INDEX ByD ON E (D)");
+
+            // ACE writes the numbers, given as doubles: it keeps each as it is. Read through OLE DB, each is the date a
+            // 64-bit process reads; in a 32-bit one OLE DB converts with the runtime's own conversion, in the state ACE
+            // has left the unit in, so that is asked only of a 64-bit process.
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                for (var i = 0; i < NumbersAHairFromAHalf.Length; i++)
+                    using (var insert = new OleDbCommand("INSERT INTO A (Id, D) VALUES (?, ?)", connection))
+                    {
+                        insert.Parameters.Add("Id", OleDbType.Integer).Value = i;
+                        insert.Parameters.Add("D", OleDbType.Double).Value = BitConverter.Int64BitsToDouble(NumbersAHairFromAHalf[i].Number);
+                        insert.ExecuteNonQuery();
+                    }
+                foreach (var row in AceRows(connection, "SELECT Id, CDbl(D) AS V, D FROM A"))
+                {
+                    var expected = NumbersAHairFromAHalf[Convert.ToInt32(row["Id"])];
+                    Assert.Equal(expected.Number, BitConverter.DoubleToInt64Bits((double)row["V"]));
+                    if (Environment.Is64BitProcess) Assert.Equal(expected.Date, row["D"]);
+                }
+            }
+
+            // The engine, on this thread - where, in a 32-bit process, ACE has left the unit at 64 bits - reads ACE's
+            // numbers as those dates, finds each through ACE's index by its date, and writes the dates.
+            using (var db = Database.Open(path))
+            {
+                var a = db.GetTable("A");
+                for (var i = 0; i < NumbersAHairFromAHalf.Length; i++)
+                {
+                    Assert.Equal(NumbersAHairFromAHalf[i].Date, a.FindRowByPrimaryKey(i)["D"]);
+                    Assert.Equal(i, a.CreateIndexCursor("ByD").FindRowByEntry(NumbersAHairFromAHalf[i].Date)["Id"]);
+                }
+                var e = db.GetTable("E");
+                for (var i = 0; i < DatesWrittenAHairApart.Length; i++)
+                    e.Insert(new Row { ["Id"] = i, ["D"] = DatesWrittenAHairApart[i].Date });
+            }
+
+            // ACE reads the numbers the engine wrote, by a scan and through the engine's index by each number, and again
+            // after DAO has compacted the file.
+            foreach (var read in new[] { path, Compact(path) })
+            {
+                var numbers = AceRows(read, "SELECT Id, CDbl(D) AS V FROM E").ToDictionary(r => Convert.ToInt32(r["Id"]), r => (double)r["V"]);
+                using (var connection = new OleDbConnection(AceVerification.ConnectionString(read)))
+                {
+                    connection.Open();
+                    for (var i = 0; i < DatesWrittenAHairApart.Length; i++)
+                    {
+                        var number = BitConverter.Int64BitsToDouble(DatesWrittenAHairApart[i].Number);
+                        Assert.Equal(DatesWrittenAHairApart[i].Number, BitConverter.DoubleToInt64Bits(numbers[i]));
+                        using (var find = new OleDbCommand("SELECT Id FROM E WHERE D = ?", connection))
+                        {
+                            find.Parameters.Add("D", OleDbType.Double).Value = number;
+                            Assert.Equal(i, Convert.ToInt32(find.ExecuteScalar()));
+                        }
+                    }
+                }
+                Assert.Equal(DatesWrittenAHairApart.Length, DaoRows(read, "E", "ByD").Count);
+                if (read != path) File.Delete(read);
+            }
+        }
+
         // ── Ranges of dates and of numbers ───────────────────────────────────────
 
         [Fact]
