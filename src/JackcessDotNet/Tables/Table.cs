@@ -690,7 +690,9 @@ public sealed class Table
     /// A number column's value is one its type does not hold - a Byte of 256, an Integer of 32,768, a Long given a
     /// number past its range - or a Currency column's is one no Currency holds.
     /// </exception>
-    /// <exception cref="InvalidCastException">A Date/Time column's value is not a date: text that does not read as one, say.</exception>
+    /// <exception cref="InvalidCastException">
+    /// A Date/Time column's value is not a date: text that does not read as one, say.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The row is too large for its page; or an OLE Object column's value is not bytes.
     /// </exception>
@@ -718,7 +720,10 @@ public sealed class Table
         CheckInsert(RowValues.AsWritten(asWritten, _definition));
     }
 
-    /// <summary>What <see cref="CheckInsert"/> found and made of a row: its index entries, the writer that looked for duplicates, and its encoding.</summary>
+    /// <summary>
+    /// What <see cref="CheckInsert"/> found and made of a row: its index entries, the writer that looked for
+    /// duplicates, and its encoding.
+    /// </summary>
     private readonly record struct CheckedInsert(IReadOnlyList<TableIndexes.Entry> Entries, IndexWriter? Looked,
                                                  DataPageWriter.PreparedInsert Row);
 
