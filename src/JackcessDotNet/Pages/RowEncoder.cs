@@ -81,7 +81,7 @@ internal sealed class RowEncoder
     /// </summary>
     internal sealed class PreparedRow
     {
-        internal PreparedRow(byte[] bytes, List<(int At, LvalWriter Writer, byte[] Data)> longValues)
+        internal PreparedRow(byte[] bytes, List<(int At, LvalWriter Writer, byte[] Data, bool Chain)> longValues)
         {
             Bytes = bytes;
             LongValues = longValues;
@@ -89,7 +89,7 @@ internal sealed class RowEncoder
 
         /// <summary>The row, with twelve empty bytes where each of <see cref="LongValues"/>' references goes.</summary>
         internal byte[] Bytes { get; }
-        internal List<(int At, LvalWriter Writer, byte[] Data)> LongValues { get; }
+        internal List<(int At, LvalWriter Writer, byte[] Data, bool Chain)> LongValues { get; }
     }
 
     /// <summary>
@@ -153,7 +153,7 @@ internal sealed class RowEncoder
             fixedDataSize = MinFixedDataWithoutVariableColumns;
         pos = fixedDataStart + fixedDataSize;
 
-        var longValues = new List<(int At, LvalWriter Writer, byte[] Data)>();
+        var longValues = new List<(int At, LvalWriter Writer, byte[] Data, bool Chain)>();
         int varColumnCount = _layout.MaxVarColumnCount;
         if (varColumnCount > 0)
         {
@@ -172,7 +172,7 @@ internal sealed class RowEncoder
                 // The value's bytes in the row: the old row's own, for a column an update leaves alone; or the
                 // value encoded; or, for a long value bound for pages of its own, room for its reference.
                 byte[]? varData = null;
-                (LvalWriter Writer, byte[] Data)? toPages = null;
+                (LvalWriter Writer, byte[] Data, bool Chain)? toPages = null;
                 if (keptVariableValues is not null && keptVariableValues.TryGetValue(col, out var kept))
                     varData = kept;
                 else if (row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v))
@@ -191,7 +191,7 @@ internal sealed class RowEncoder
                         throw new InvalidOperationException("Row is too large for format.");
 
                     if (varData is not null) Array.Copy(varData, 0, buffer, pos, length);
-                    else longValues.Add((pos, toPages!.Value.Writer, toPages.Value.Data));
+                    else longValues.Add((pos, toPages!.Value.Writer, toPages.Value.Data, toPages.Value.Chain));
                     pos += length;
                 }
 
@@ -236,9 +236,9 @@ internal sealed class RowEncoder
     /// </summary>
     internal byte[] Complete(PreparedRow prepared)
     {
-        foreach (var (at, writer, data) in prepared.LongValues)
+        foreach (var (at, writer, data, chain) in prepared.LongValues)
         {
-            byte[] reference = writer.Write(data);
+            byte[] reference = writer.Write(data, chain);
             Array.Copy(reference, 0, prepared.Bytes, at, LongValueReferenceSize);
         }
         return prepared.Bytes;
@@ -258,7 +258,7 @@ internal sealed class RowEncoder
     /// there. A Memo value's bytes are those Access writes (<see cref="EncodeMemo"/>): compressed only when it is short
     /// enough for one long-value row, as ACE fails to decode compressed text spread across chunks.
     /// </summary>
-    private (byte[]? InRow, (LvalWriter Writer, byte[] Data)? ToPages) PrepareLongValue(Column col, object value)
+    private (byte[]? InRow, (LvalWriter Writer, byte[] Data, bool Chain)? ToPages) PrepareLongValue(Column col, object value)
     {
         LvalWriter? writer = null;
         _lvalWriters?.TryGetValue(col.Name, out writer);
@@ -266,15 +266,19 @@ internal sealed class RowEncoder
         if (col.DataType == DataType.Memo)
         {
             byte[] textBytes = EncodeMemo(col, Convert.ToString(value) ?? string.Empty);
+            // UTF-16LE of more than 3,816 bytes that begins 0xFF 0xFE, in a column with Unicode compression, is a chain
+            // as ACE keeps it, which Access reads as UTF-16LE: in one long-value row it would read compressed text (#93).
+            bool chain = col.IsCompressedUnicode && textBytes.Length > AccessLongestValueRow
+                         && textBytes[0] == 0xFF && textBytes[1] == 0xFE;
             return textBytes.Length > InlineLvalThreshold && writer is not null
-                ? (null, (writer, textBytes))
+                ? (null, (writer, textBytes, chain))
                 : (BuildInlineLvRef(textBytes), null);
         }
 
         if (value is not byte[] bytes)
             throw new InvalidOperationException("OLE column value must be a byte array.");
         return bytes.Length > InlineLvalThreshold && writer is not null
-            ? (null, (writer, bytes))
+            ? (null, (writer, bytes, false))
             : (BuildInlineLvRef(bytes), null);
     }
 
@@ -471,6 +475,9 @@ internal sealed class RowEncoder
         => col.IsCompressedUnicode || col.ReadsTextByContent && Util.ByteUtil.BeginsWithMarker(text)
             ? Util.ByteUtil.EncodeText(text)
             : Util.ByteUtil.EncodeUtf16(text);
+
+    /// <summary>The most bytes ACE keeps in one long-value row: a longer value is a chain of them.</summary>
+    internal const int AccessLongestValueRow = 3816;
 
     private byte[] WriteVariableValue(Column col, object value)
     {

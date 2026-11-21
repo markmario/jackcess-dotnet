@@ -93,18 +93,11 @@ public sealed class TextMarkerTests : IDisposable
 
         var (enginePlace, bytes) = Stored(db, row, column);
         var engineRead = (string?)table.FindRowByPrimaryKey(1)![column];
-        if (place == "chain" && text.Length * 2 <= 4076)
-        {
-            // ACE keeps a value of more than 3,816 bytes as a chain, and the engine keeps one of up to 4,076 bytes in
-            // one long-value row. In a column with Unicode compression ACE reads that row as compressed text, and so
-            // does the engine: text that begins with U+FEFF, of 1,909 to 2,038 characters, is read back changed there
-            // (#93). Elsewhere the engine reads the row as ACE reads the chain.
-            Assert.Equal("page", enginePlace);
-            Assert.Equal(Encoding.Unicode.GetBytes(text), bytes);
-            Assert.Equal(column == "MC" ? text.Substring(1) : text, engineRead);
-            return;
-        }
-        Assert.Equal(place, enginePlace);
+        // ACE keeps a value of more than 3,816 bytes as a chain, and the engine one of up to 4,076 bytes in one
+        // long-value row (LongValuesInAccessTests). In a column without Unicode compression both are read as UTF-16LE;
+        // in one with it, text that begins with U+FEFF is made a chain, as ACE makes it.
+        if (place == "chain" && column == "MU" && bytes.Length <= 4076) Assert.Equal("page", enginePlace);
+        else Assert.Equal(place, enginePlace);
         // Text that does not begin with U+FEFF is written as before: in a column without Unicode compression ACE
         // compresses a Memo kept in the row, and the engine does not.
         if (text.StartsWith("\uFEFF", StringComparison.Ordinal) || column != "MU")

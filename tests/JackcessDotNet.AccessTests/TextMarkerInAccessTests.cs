@@ -56,6 +56,8 @@ namespace JackcessDotNet.AccessTests
             Bom + "\u30C6E\u30C6EEEEEE",
             Bom + Of('a', 1000),                            // one long-value row, in runs
             Bom + Of('a', 1907),                            // 1,908 characters: the most ACE compresses
+            Bom + Of('a', 1950),                            // UTF-16LE of 3,902 bytes: a chain, as ACE makes it
+            Bom + Of('\u30C6', 1908),                       // 3,818 bytes: a chain
             Bom + Of('\u30C6', 3000),                       // a chain, UTF-16LE
             Bom + Of('a', 3000),
             "\u01FFab",
