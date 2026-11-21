@@ -105,6 +105,12 @@ internal sealed class TableDefinition
     /// </summary>
     internal ObjectNames Names { get; set; } = ObjectNames.GeneralLegacy;
 
+    /// <summary>
+    /// Whether an earlier version of this library created the table, so that its Text and Memo values are read by
+    /// their bytes (<see cref="Column.ReadsTextByContent"/>, #93).
+    /// </summary>
+    internal bool ReadsTextByContent { get; set; }
+
     private HashSet<string>? _columnNameSet;
 
     /// <summary>The names of the table's columns, exactly as the definition has them.</summary>

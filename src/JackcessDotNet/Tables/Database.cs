@@ -1104,7 +1104,7 @@ public sealed class Database : IDisposable
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Table name must not be empty.", nameof(name));
 
-        int tdefPageNum = _catalog.FindTable(name, out string? listedName, out var readProperties);
+        int tdefPageNum = _catalog.FindTable(name, out string? listedName, out var readProperties, out bool byAnEarlierVersion);
         if (tdefPageNum < 0)
         {
             table = null;
@@ -1121,7 +1121,7 @@ public sealed class Database : IDisposable
             try { properties = PropertyMapReader.Read(readProperties!(), _file.Format); }
             catch (Exception e) when (e is IOException or ArgumentException or IndexOutOfRangeException) { }
 
-            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum, ColumnNames), owningDb: this, properties);
+            table = new Table(_file, _allocator, ReadDefinition(_file, listedName!, tdefPageNum, ColumnNames, byAnEarlierVersion), owningDb: this, properties);
             _tables[tdefPageNum] = table;
         }
         return true;
@@ -1133,11 +1133,14 @@ public sealed class Database : IDisposable
     /// the table has been given a column or an index. Its columns' and indexes' names are compared by
     /// <paramref name="columnNames"/>, the database's rule for them (<see cref="ColumnNames"/>).
     /// </summary>
-    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum, ObjectNames columnNames)
+    internal static TableDefinition ReadDefinition(PageFile file, string name, int tdefPageNum, ObjectNames columnNames, bool readsTextByContent)
     {
         var format   = file.Format;
         var tdefPage = TdefBuffer.Read(file, tdefPageNum, out _, out bool isBroken);
         var info     = TdefReader.Read(tdefPage, format);
+        // A table an earlier version of this library created: its text is read by its bytes (#93).
+        foreach (var column in info.Columns)
+            column.ReadsTextByContent = readsTextByContent && column.DataType is DataType.Text or DataType.Memo;
 
         var tableDef = new TableDefinition(name, info.Columns)
         {
@@ -1152,6 +1155,7 @@ public sealed class Database : IDisposable
             MaxVarColumnCount = info.MaxVarColumnCount,
             HasUnreadColumns  = info.HasUnreadColumns || isBroken,
             Names             = columnNames,
+            ReadsTextByContent = readsTextByContent,
         };
 
         foreach (var kvp in info.LvalColumnUmapPages)
@@ -1359,7 +1363,9 @@ public sealed class Database : IDisposable
     /// the open table's, or read from its pages - with no reading of the catalog, which listed it.
     /// </summary>
     internal TableDefinition DefinitionAt(string listedName, int tdefPage)
-        => _tables.TryGetValue(tdefPage, out var open) ? open.Definition : ReadDefinition(_file, listedName, tdefPage, ColumnNames);
+        => _tables.TryGetValue(tdefPage, out var open)
+            ? open.Definition
+            : ReadDefinition(_file, listedName, tdefPage, ColumnNames, _catalog.IsAnEarlierVersionsTable(tdefPage));
 
     /// <summary>
     /// Refuses, before anything is written, <paramref name="newName"/> for a column, an index or a relationship in a

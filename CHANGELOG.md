@@ -13,6 +13,32 @@ changed since 1.2.2.
 
 ### Changed
 
+- **Breaking: text whose bytes begin 0xFF is read and written as Access reads and writes it** (#93). 0xFF 0xFE is
+  the mark of compressed text, and the UTF-16LE of U+FEFF is 0xFF 0xFE too. Measured with Microsoft 365's ACE 16
+  and DAO (`tools/ace-text-marker.ps1`):
+  - Bytes that begin 0xFF 0xFE are read as compressed text where ACE reads them so - a Text column with Unicode
+    compression, a Memo kept in the row, a Memo in one long-value row of a column with Unicode compression - reading
+    two bytes at a time after a switch to UTF-16LE; and as UTF-16LE in a Text column without it, on a long-value
+    page of such a Memo column and in a chain. Earlier versions read every such value as compressed text.
+  - **Which files read differently:** a table Access made whose Text column has no Unicode compression (DAO's
+    `CreateField`, DDL without `WITH COMPRESSION`), to which the JackcessDotNet packages to 1.2.2 or this
+    repository's builds before 442bbf8 wrote, compressing every value of characters 0x01 to 0xFF. Earlier versions
+    read `Alice` there; this one reads what Access reads from the table, U+FEFF U+6C41 U+6369 (and U+FFFD for the
+    odd byte at the end). Nothing tells such a value from Access's own.
+  - A table those versions created - its catalog row has ParentId 0 and no owner - is read by its bytes, as they
+    wrote it: it is listed and found by its name, which Access cannot do, and its values read as written.
+  - Text that begins with U+FEFF is written as ACE writes it: compressed in runs where that is no longer than
+    UTF-16LE in a Text column with Unicode compression, and shorter in a Memo; `"\uFEFFabQ1Z"` was UTF-16LE, which
+    ACE read back as `"abQ1Z"`. Over 3,816 bytes of UTF-16LE in a Memo of such a column, it is a chain, as ACE makes
+    it.
+  - Text that begins with U+FEFF that Access would read back changed is refused with an `ArgumentException`, by
+    insert, update, batch insert and import, before anything is written: in a Text column with Unicode
+    compression unless compressed in runs it is no longer than UTF-16LE (U+FEFF alone, or with three Latin
+    characters or fewer, or followed mostly by other characters, is refused); in a Memo kept in the row, or in one
+    long-value row of a column with Unicode compression, unless compressed in runs it is shorter.
+  - 0xFF followed by another byte was read as the mark of text a byte a character, which no version of this
+    repository wrote: `"\u01FFab"`, stored as `FF 01 61 00 62 00`, read as other characters. It is UTF-16LE.
+
 - **A memo's text is stored as Access stores it** (#87). It was UTF-16LE whenever it went to a long-value page,
   and a zero-length memo the two-byte compression marker. Measured with ACE 16: no text is no bytes, 1 or 2
   characters UTF-16LE, and 3 to 1,908 characters that are all 0x01 to 0xFF compressed, a byte a character after

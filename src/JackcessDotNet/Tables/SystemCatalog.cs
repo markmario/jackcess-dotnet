@@ -234,17 +234,23 @@ internal sealed class SystemCatalog
     /// its row - in <paramref name="readProperties"/>: from the row as this pass read it, so reading them reads
     /// no page again, and only the pages of a value too long for its row. The scan stops at the table: the table of
     /// exactly that name, and when there is none, a second scan for one whose name Access takes as one with it
-    /// (<see cref="ObjectNames.Find"/>).
+    /// (<see cref="ObjectNames.Find"/>). <paramref name="byAnEarlierVersion"/> says whether an earlier version of this
+    /// library created the table, whose text is then read by its bytes (<see cref="Column.ReadsTextByContent"/>).
     /// </summary>
-    internal int FindTable(string tableName, out string? listedName, out Func<byte[]?>? readProperties)
+    internal int FindTable(string tableName, out string? listedName, out Func<byte[]?>? readProperties, out bool byAnEarlierVersion)
     {
         // A name given exactly is its table's, though another's is one with it to Access: a file can hold both.
         var row = FindRow((_, name, _, type) => type == JetFormat.CatalogTypeTable && name == tableName)
                ?? FindByRule(tableName);
-        listedName     = row?.Name;
-        readProperties = row?.ReadProperties;
+        listedName         = row?.Name;
+        readProperties     = row?.ReadProperties;
+        byAnEarlierVersion = row?.ByAnEarlierVersion ?? false;
         return row?.Id ?? -1;
     }
+
+    /// <summary>Whether an earlier version of this library created the table whose definition is on <paramref name="tdefPage"/>.</summary>
+    internal bool IsAnEarlierVersionsTable(int tdefPage)
+        => FindRow((id, _, _, type) => id == tdefPage && type == JetFormat.CatalogTypeTable) is { ByAnEarlierVersion: true };
 
     // The table whose name Access takes as one with tableName, for a name no table has exactly: the first by the
     // catalog's index key, and then the first at all (ObjectNames.Find).
@@ -265,7 +271,25 @@ internal sealed class SystemCatalog
     }
 
     // A row of the catalog as a scan found it; ReadProperties reads its LvProp from the bytes the scan read.
-    private readonly record struct CatalogRow(int Id, string? Name, int RowPointer, Func<byte[]?> ReadProperties);
+    // ByAnEarlierVersion: a table an earlier version of this library created (IsAnEarlierVersionsTable).
+    private readonly record struct CatalogRow(int Id, string? Name, int RowPointer, Func<byte[]?> ReadProperties, bool ByAnEarlierVersion = false);
+
+    /// <summary>
+    /// Whether the catalog row is a table's that an earlier version of this library created: ParentId 0 and no Owner,
+    /// where Access gives a table the Tables container's Id and an owner, and no row Access wrote has ParentId 0. Such a
+    /// version - the JackcessDotNet packages to 1.2.2 and this repository's builds before 442bbf8 - wrote the name, and
+    /// every value of characters 0x01 to 0xFF, compressed in a column without Unicode compression, and Access neither
+    /// lists nor reads the table; the name and the table's text are read by their bytes (#93).
+    /// </summary>
+    private static bool IsAnEarlierVersionsTable(RowDecoder decoder, byte[] rowBytes, Column? colType, Column? colParent, Column? colOwner)
+        => colType is not null && colParent is not null && colOwner is not null
+           && decoder.Decode(rowBytes, colType) is short type && type == JetFormat.CatalogTypeTable
+           && decoder.Decode(rowBytes, colParent) is int parent && parent == 0
+           && decoder.Decode(rowBytes, colOwner) is null;
+
+    // The catalog's name of an object, read by its bytes for a table an earlier version created.
+    private static string? NameOf(RowDecoder decoder, byte[] rowBytes, Column colName, bool byAnEarlierVersion)
+        => (byAnEarlierVersion ? decoder.DecodeByContent(rowBytes, colName) : decoder.Decode(rowBytes, colName)) as string;
 
     // The first row of the catalog whose id, name, parent's id and type match.
     private CatalogRow? FindRow(Func<int, string?, int?, short?, bool> match)
@@ -276,6 +300,7 @@ internal sealed class SystemCatalog
         Column? colName   = columns.FirstOrDefault(c => c.Name.Equals(ColName,     StringComparison.OrdinalIgnoreCase));
         Column? colParent = columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase));
         Column? colType   = columns.FirstOrDefault(c => c.Name.Equals(ColType,     StringComparison.OrdinalIgnoreCase));
+        Column? colOwner  = columns.FirstOrDefault(c => c.Name.Equals(ColOwner,    StringComparison.OrdinalIgnoreCase));
         Column? colLvProp = columns.FirstOrDefault(c => c.Name.Equals(ColLvProp,   StringComparison.OrdinalIgnoreCase));
         if (colId is null || colName is null || colParent is null || colType is null) return null;
 
@@ -291,10 +316,12 @@ internal sealed class SystemCatalog
                 byte[]? rowBytes = ReadRowBytes(dp, r, _format);
                 if (rowBytes is null) continue;
                 if (decoder.Decode(rowBytes, colId) is not int id) continue;
-                string? name = decoder.Decode(rowBytes, colName) as string;
+                bool byAnEarlierVersion = IsAnEarlierVersionsTable(decoder, rowBytes, colType, colParent, colOwner);
+                string? name = NameOf(decoder, rowBytes, colName, byAnEarlierVersion);
                 if (!match(id, name, decoder.Decode(rowBytes, colParent) as int?, decoder.Decode(rowBytes, colType) as short?)) continue;
                 return new CatalogRow(id, name, RowPointer.Pack(pageNum, r),
-                    () => colLvProp is null ? null : ReadVariableColumnRawBytes(rowBytes, colLvProp, columns, new LvalReader(_file)));
+                    () => colLvProp is null ? null : ReadVariableColumnRawBytes(rowBytes, colLvProp, columns, new LvalReader(_file)),
+                    byAnEarlierVersion);
             }
         }
         return null;
@@ -525,6 +552,11 @@ internal sealed class SystemCatalog
         var wanted  = def.Columns.Where(c => columns.Contains(c.Name, StringComparer.OrdinalIgnoreCase)).ToList();
         var decoder = new RowDecoder(_format, def.Columns);
         var rows    = new List<Row>();
+        // The catalog's own rows: a table an earlier version created has its name read by its bytes.
+        bool isCatalog    = def.TdefPageNumber == JetFormat.PageSystemCatalog;
+        Column? colType   = def.Columns.FirstOrDefault(c => c.Name.Equals(ColType,     StringComparison.OrdinalIgnoreCase));
+        Column? colParent = def.Columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase));
+        Column? colOwner  = def.Columns.FirstOrDefault(c => c.Name.Equals(ColOwner,    StringComparison.OrdinalIgnoreCase));
 
         byte[] umapPage = _file.ReadPage(def.UmapPageNumber);
         foreach (int pageNum in UsageMap.GetOwnedPages(umapPage, def.OwnedPagesRow, _format, _file))
@@ -536,8 +568,11 @@ internal sealed class SystemCatalog
                 byte[]? rowBytes = ReadRowBytes(dp, r, _format);
                 if (rowBytes is null) continue;
                 var row = new Row();
+                bool byAnEarlierVersion = isCatalog && IsAnEarlierVersionsTable(decoder, rowBytes, colType, colParent, colOwner);
                 foreach (var column in wanted)
-                    row.Put(column.Name, decoder.Decode(rowBytes, column));
+                    row.Put(column.Name, byAnEarlierVersion && column.Name.Equals(ColName, StringComparison.OrdinalIgnoreCase)
+                        ? decoder.DecodeByContent(rowBytes, column)
+                        : decoder.Decode(rowBytes, column));
                 rows.Add(row);
             }
         }
@@ -800,6 +835,8 @@ internal sealed class SystemCatalog
         Column? colName  = columns.FirstOrDefault(c => c.Name.Equals(ColName,  StringComparison.OrdinalIgnoreCase));
         Column? colType  = columns.FirstOrDefault(c => c.Name.Equals(ColType,  StringComparison.OrdinalIgnoreCase));
         Column? colFlags = columns.FirstOrDefault(c => c.Name.Equals(ColFlags, StringComparison.OrdinalIgnoreCase));
+        Column? colParent = columns.FirstOrDefault(c => c.Name.Equals(ColParentId, StringComparison.OrdinalIgnoreCase));
+        Column? colOwner  = columns.FirstOrDefault(c => c.Name.Equals(ColOwner,    StringComparison.OrdinalIgnoreCase));
 
         if (colId is null || colName is null || colType is null)
             throw new InvalidOperationException(
@@ -822,8 +859,8 @@ internal sealed class SystemCatalog
                 if (typeVal is not short typeShort || typeShort != JetFormat.CatalogTypeTable)
                     continue;
 
-                object? nameVal = decoder.Decode(rowBytes, colName);
-                if (nameVal is not string name) continue;
+                if (NameOf(decoder, rowBytes, colName, IsAnEarlierVersionsTable(decoder, rowBytes, colType, colParent, colOwner))
+                    is not string name) continue;
 
                 object? idVal = decoder.Decode(rowBytes, colId);
                 if (idVal is not int id) continue;

@@ -113,6 +113,11 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   ([Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes)).
 - **A Decimal past 96 bits** reads as its low 96 bits, as Access reads it; Java Jackcess returns all 128 bits as a
   `BigDecimal`, which a `decimal` cannot hold ([Decimal](data-types.md#decimal)).
+- **Text whose bytes begin 0xFF 0xFE** is read as ACE reads it: as compressed text only in a Text column with
+  Unicode compression, a Memo kept in its row and a Memo in one long-value row of a compressed column, and after a
+  switch to UTF-16LE two bytes at a time. Java Jackcess reads such bytes as compressed text in every column and
+  switches at every 0x00 byte. Text that begins with U+FEFF is written in runs where ACE writes it so, where
+  Jackcess writes it as UTF-16LE ([Text and Memo](data-types.md#text-and-memo)).
 - **A batch insert** goes in whole or not at all, where Jackcess's `addRows` leaves the rows before a refused one
   in the table ([CHANGELOG](../CHANGELOG.md#added)).
 - **Cursors** have no column matchers of a caller's own (Jackcess's `ColumnMatcher`), and do not find a null by

@@ -41,12 +41,14 @@ internal sealed class LvalWriter
     ///                             0x00000000 OTHER_PAGES - chunk chain
     ///   [firstRow:1][firstPage:3 LE][unknown:4 = 0]
     /// OTHER_PAGE chunk rows contain raw data. OTHER_PAGES chunk rows are
-    /// [nextRow:1][nextPage:3][payload], nextPage == 0 terminating the chain.
+    /// [nextRow:1][nextPage:3][payload], nextPage == 0 terminating the chain. <paramref name="chain"/> makes a chain of
+    /// a value that would fit one chunk: text that begins with U+FEFF, which Access reads as UTF-16LE only in a chain
+    /// (#93).
     /// </summary>
-    public byte[] Write(byte[] data)
+    public byte[] Write(byte[] data, bool chain = false)
     {
         if (data is null) throw new ArgumentNullException(nameof(data));
-        if (!_file.ShareLongValuePages) return WriteAsAccessDoes(data);
+        if (!_file.ShareLongValuePages) return WriteAsAccessDoes(data, chain);
 
         // Access's own chunk rows are PageSize - 20 bytes (4076 for Jet4) -
         // matches Java Jackcess MAX_LONG_VALUE_ROW_SIZE. Larger rows make ACE
@@ -54,7 +56,7 @@ internal sealed class LvalWriter
         int maxChunkRowSize = _format.PageSize - 20;
         int totalLen = data.Length;
 
-        if (totalLen <= maxChunkRowSize)
+        if (totalLen <= maxChunkRowSize && !chain)
         {
             // Single chunk - OTHER_PAGE. The chunk row is the raw data.
             var single = new PagePicker(this);
@@ -116,10 +118,10 @@ internal sealed class LvalWriter
     /// one long value through Access left the others on pages Access then wrote over.
     /// </para>
     /// </summary>
-    private byte[] WriteAsAccessDoes(byte[] data)
+    private byte[] WriteAsAccessDoes(byte[] data, bool chain)
     {
         int maxChunkRowSize = _format.PageSize - 20;
-        if (data.Length <= maxChunkRowSize)
+        if (data.Length <= maxChunkRowSize && !chain)
         {
             int page = PageOfSingleChunks(data.Length + JetFormat.SizeRowEntry);
             int row  = WriteChunkRowOnPage(page, data, out _, out int room);

@@ -109,18 +109,16 @@ internal static class ByteUtil
     // ── String helpers ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Encodes a string as compressed or uncompressed UTF-16LE for Jet Text columns.
-    /// Jet uses a simple compression: if all code points fit in the Latin-1 range (0x00-0xFF)
-    /// and the first byte is 0xFF (compression marker), then single bytes are used.
-    /// We always write uncompressed UTF-16LE prefixed with the 0xFF 0xFE BOM marker approach,
-    /// but Jet Text fields use the 0xFF marker for compressed mode.
+    /// A Text value's bytes in a column with Unicode compression, as ACE writes them. Text of characters 0x01 to 0xFF
+    /// is compressed: 0xFF 0xFE and a byte a character. Text that begins with U+FEFF, whose UTF-16LE begins 0xFF 0xFE
+    /// like compressed text, is written as ACE writes it (#93): compressed in runs where that is no longer than
+    /// UTF-16LE (<see cref="CompressInRuns"/>), and otherwise UTF-16LE, which ACE then reads as compressed text, as it
+    /// reads its own. Any other text is UTF-16LE; ACE compresses text that mixes characters in runs too, and reads the
+    /// UTF-16LE the same.
     /// </summary>
     public static byte[] EncodeText(string value)
     {
-        // Try compressed encoding when all chars fit in Latin-1.
-        // Access uses a 2-byte marker (0xFF 0xFE) so the decoder can distinguish
-        // compressed text from uncompressed UTF-16LE. NUL is excluded: inside a
-        // compressed stream 0x00 is the segment-mode toggle, not a character.
+        // NUL is left out: inside compressed text 0x00 switches between one byte a character and two.
         bool canCompress = value.All(c => c >= 0x01 && c <= 0xFF);
         if (canCompress)
         {
@@ -131,69 +129,82 @@ internal static class ByteUtil
                 bytes[i + 2] = (byte)value[i];
             return bytes;
         }
+        if (BeginsWithMarker(value) && CompressInRuns(value, evenIfNoShorter: true) is { } runs) return runs;
         return EncodeUtf16(value);
     }
 
+    /// <summary>Whether the text's UTF-16LE begins 0xFF 0xFE, the mark of compressed text: it begins with U+FEFF.</summary>
+    internal static bool BeginsWithMarker(string text) => text.Length > 0 && text[0] == '\uFEFF';
+
     /// <summary>
-    /// Jet4 text decoder. The 0xFF 0xFE marker introduces Jet's compressed text
-    /// format: the stream starts in compressed mode (one byte per char, high
-    /// byte implicitly 0x00) and every 0x00 byte TOGGLES between compressed and
-    /// uncompressed (UTF-16LE) segments. Real Access routinely writes mixed
-    /// streams (e.g. an ASCII prefix compressed, then Japanese uncompressed),
-    /// so decoding everything after the marker as Latin-1 corrupts non-Latin1
-    /// text. Algorithm ported from Java Jackcess ColumnImpl.decodeTextValue.
-    /// Text without the marker is plain UTF-16LE.
+    /// Text compressed in runs, as ACE compresses it (measured with ACE 16 and DAO, #93): 0xFF 0xFE, then each run of
+    /// characters 0x01 to 0xFF a byte a character and each run of other characters two bytes a character, with a 0x00
+    /// between runs; the first run is of one byte a character, and empty when the text begins with another. Null when
+    /// that is longer than UTF-16LE (or as long, unless <paramref name="evenIfNoShorter"/>: ACE compresses a Text value
+    /// as long either way, and a Memo value only when it is shorter), or when the text holds a character no run can:
+    /// NUL, or one above 0xFF with a low byte of 0x00, either of which reads as the 0x00 between runs.
+    /// </summary>
+    internal static byte[]? CompressInRuns(string text, bool evenIfNoShorter)
+    {
+        int length = 2;
+        bool oneByte = true;
+        foreach (char c in text)
+        {
+            if (c == 0 || c > 0xFF && (c & 0xFF) == 0) return null;
+            bool latin = c <= 0xFF;
+            if (latin != oneByte) { length++; oneByte = latin; }
+            length += latin ? 1 : 2;
+        }
+        int plain = 2 * text.Length;
+        if (length > plain || length == plain && !evenIfNoShorter) return null;
+
+        var bytes = new byte[length];
+        bytes[0] = 0xFF;
+        bytes[1] = 0xFE;
+        int at = 2;
+        oneByte = true;
+        foreach (char c in text)
+        {
+            bool latin = c <= 0xFF;
+            if (latin != oneByte) { bytes[at++] = 0x00; oneByte = latin; }
+            bytes[at++] = (byte)c;
+            if (!latin) bytes[at++] = (byte)(c >> 8);
+        }
+        return bytes;
+    }
+
+    /// <summary>
+    /// A Jet4 text value from bytes that may be compressed: bytes that begin 0xFF 0xFE are compressed text
+    /// (<see cref="DecodeCompressed"/>), and any others UTF-16LE.
     /// </summary>
     public static string DecodeText(byte[] data, int offset, int length)
     {
-        if (length == 0) return string.Empty;
         if (length >= 2 && data[offset] == 0xFF && data[offset + 1] == 0xFE)
-        {
-            var text = new StringBuilder(length);
-            int end = offset + length;
-            int segStart = offset + 2;
-            int pos = segStart;
-            bool inCompressedMode = true;
-            while (pos < end)
-            {
-                if (data[pos] == 0x00)
-                {
-                    DecodeTextSegment(data, segStart, pos, inCompressedMode, text);
-                    inCompressedMode = !inCompressedMode;
-                    pos++;
-                    segStart = pos;
-                }
-                else
-                {
-                    pos++;
-                }
-            }
-            DecodeTextSegment(data, segStart, end, inCompressedMode, text);
-            return text.ToString();
-        }
-        if (data[offset] == 0xFF && data[offset + 1] != 0x00)
-        {
-            // Legacy single-byte marker (text written by earlier versions of
-            // this library). The second-byte guard keeps genuine UTF-16LE that
-            // begins with U+00FF ('ÿ' encodes as FF 00) out of this branch.
-            return EncodingCompat.Latin1.GetString(data, offset + 1, length - 1);
-        }
+            return DecodeCompressed(data, offset, length);
         return DecodeUtf16(data, offset, length);
     }
 
-    private static void DecodeTextSegment(byte[] data, int start, int end, bool compressed, StringBuilder text)
+    /// <summary>
+    /// Compressed text as ACE reads it (measured with ACE 16 and DAO, #93; TextMarkerInAccessTests plants such bytes):
+    /// after 0xFF 0xFE, a byte a character with a high byte of 0x00, until a 0x00 byte, which switches to two bytes a
+    /// character (UTF-16LE); two bytes at a time until a pair begins with 0x00, which switches back, a 0x00 as a pair's
+    /// second byte being none. A byte left alone at the end of two bytes a character is U+FFFD, as
+    /// <see cref="DecodeUtf16"/> reads one: that is this library's choice, as ACE reads the memory past the value there
+    /// (FF FE 61 00 41 42 43 44 45 it read as U+0061 U+4241 U+4443 U+0945).
+    /// </summary>
+    private static string DecodeCompressed(byte[] data, int offset, int length)
     {
-        if (end <= start) return;
-        if (compressed)
+        var text = new StringBuilder(length);
+        int end = offset + length;
+        bool oneByte = true;
+        for (int at = offset + 2; at < end;)
         {
-            // Each byte is a UTF-16 code unit with an implicit 0x00 high byte.
-            for (int i = start; i < end; i++)
-                text.Append((char)data[i]);
+            if (data[at] == 0x00) { oneByte = !oneByte; at++; }
+            else if (oneByte) text.Append((char)data[at++]);
+            else if (at + 1 < end) { text.Append((char)(data[at] | data[at + 1] << 8)); at += 2; }
+            else { text.Append('\uFFFD'); at++; }
         }
-        else
-        {
-            text.Append(DecodeUtf16(data, start, end - start));
-        }
+        return text.ToString();
     }
 
     /// <summary>
@@ -224,16 +235,19 @@ internal static class ByteUtil
     }
 
     /// <summary>
-    /// Format-aware text decoder.
-    /// Jet3 text fields are stored directly as the database charset (cp1252) — no compression marker.
-    /// Jet4 text fields use UTF-16LE with an optional 0xFF compression marker for Latin-1 strings.
+    /// A text value in a file of <paramref name="format"/>. Access 97 keeps text in the database's code page. A later
+    /// format keeps it as UTF-16LE, or compressed where ACE reads it as compressed (<paramref name="mayBeCompressed"/>):
+    /// a Text value in a column with Unicode compression, a Memo value kept in its row, and a Memo value in one
+    /// long-value row of a column with Unicode compression. A Text value in a column without it, a Memo value on a
+    /// long-value page of such a column, and a Memo value in a chain of long-value rows are UTF-16LE however they
+    /// begin, as ACE 16 reads them (#93).
     /// </summary>
-    public static string DecodeText(byte[] data, int offset, int length, JetFormat format)
+    public static string DecodeText(byte[] data, int offset, int length, JetFormat format, bool mayBeCompressed)
     {
         if (length == 0) return string.Empty;
         if (format.Version == FileFormat.Access97)
             return format.TextEncoding.GetString(data, offset, length);
-        return DecodeText(data, offset, length);
+        return mayBeCompressed ? DecodeText(data, offset, length) : DecodeUtf16(data, offset, length);
     }
 
     // ── Misc ──────────────────────────────────────────────────────────────────
