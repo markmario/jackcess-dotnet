@@ -26,6 +26,13 @@
 # code is any unhandled exception's, so it is run again only when the output names that exception, raised under
 # System.Data.OleDb, and no test failed.
 #
+# And a third, in the 32-bit process: exit code -1073741819 (0xC0000005), an access violation that ended the process
+# with no managed exception written and no test failed - CursorsAndRowsInAccessTests.UEngine, 8 s into its one test,
+# in run 44888628752 (#145). No dump was kept and no stack written, so where it died is not known; neither the library
+# nor these tests have native code, so it is native code's - the runtime's, ACE's or DAO's - and is run again on the
+# same terms as the others: only with no test failed and no unhandled exception in the output, which is what a fault
+# in managed code would have left. What a test's COM calls may have provoked in the engine cannot be told apart.
+#
 # And one way of failing a test: an OleDbException whose message ACE did not write - it begins with a space,
 # " in query expression '?'." - raised by ACE's own work, on a file ACE made, and passing when run again. A piece whose
 # only failures are such is run once more, with a warning naming each test. Any other OleDbException fails at once: a
@@ -84,6 +91,7 @@ $results = Join-Path $root 'TestResults'
 $namespace = 'JackcessDotNet.AccessTests.'
 $crashedInAce = -1073740771            # 0xC000041D
 $crashedInOleDb = -532462766           # an unhandled .NET exception; which one is read from the output
+$accessViolation = -1073741819         # 0xC0000005, with no managed exception made of it
 $attempts = 3
 $unknownSeconds = 240                  # what a piece missing from the table is taken to take
 $full = $env:JACKCESS_FULL_SWEEPS -eq '1'
@@ -549,6 +557,17 @@ while ($queue.Count -or $running.Count) {
             if ($text -match 'Unhandled Exception:[^\n]*System\.AccessViolationException[^\n]*\n\s*at System\.Data\.OleDb\.' -and
                 -not ($output | Where-Object { $_ -match '\[FAIL\]' })) {
                 $retry = "died of an access violation in OleDbConnection.Open (exit $code)"
+                $limit = $attempts
+            }
+        } elseif ($code -eq $accessViolation) {
+            # An access violation that ended the process without .NET Framework making an exception of it: a fault in
+            # native code on a thread with no managed code to raise one on, or one the runtime could not report. Neither
+            # the library nor these tests have native code (no unsafe code, no P/Invoke; COM objects are only released),
+            # so it is in the runtime, ACE, DAO or what they load. Run again only with no test failed and no unhandled
+            # exception written: a managed fault, the library's or a test's, would have been raised as an exception and
+            # named in the output. Which native module it was is not known from the code alone.
+            if (-not ($output | Where-Object { $_ -match '\[FAIL\]' -or $_ -match 'Unhandled Exception' })) {
+                $retry = "died of an access violation in native code, with no managed exception (exit $code)"
                 $limit = $attempts
             }
         } elseif ($code -eq 1 -and $report -and -not $report.Errors -and $report.Failures.Count -and -not $entry.Flaked -and
