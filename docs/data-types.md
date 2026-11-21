@@ -85,8 +85,9 @@ number, anywhere in the range and not only near a half:
   as a Single. It also refuses text of the largest double, which 64-bit ACE stores (13 texts), and writes as text -0.0
   as "0", 999999999999999.5 and the double before 1E+15 as "1E+15", and NaN and the infinities as "-1.#IND",
   "1.#QNAN", "1.#INF" and "-1.#INF".
-- The Access Database Engine 2016 redistributable's 32-bit ACE 16 (16.0.5011.1000, on CI's runners): every text for a
-  Double it stored otherwise, 39 seen, one unit off; no Single, and no number as text, otherwise.
+- The Access Database Engine 2016 redistributable's 32-bit ACE 16 (16.0.5011.1000, on CI's runners, by the referee
+  test's sample): every text for a Double it stored otherwise one unit off, 39 seen; no Single otherwise; and as text
+  -0.0 as "0" and 999999999999999.5 as "1E+15", as ACE 12 writes them.
 
 Neither is rounding the text's first 20 digits to the x87's 64 bits and then to a double's 53: that fits 38 of the 39
 of ACE 16, and leaves 199 of ACE 12's 3,957 texts unexplained, so this library does not imitate either.

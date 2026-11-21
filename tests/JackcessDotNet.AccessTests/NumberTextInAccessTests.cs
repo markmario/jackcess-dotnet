@@ -138,8 +138,8 @@ namespace JackcessDotNet.AccessTests
         /// What the ACE in this process was measured to store otherwise than 64-bit ACE 16, which the engine follows
         /// (docs/data-types.md, tools/ace-text-to-float.ps1): 32-bit ACE reads some text for a Double one unit in the
         /// last place from the double of its first 20 digits - its arithmetic is the x87's, and rounds twice, but not
-        /// exactly as rounding to 64 bits and then to 53 would - and Access 2007's 32-bit ACE 12 also refuses text of
-        /// the largest double and writes -0 and 999999999999999.5 as text otherwise. Null where nothing differs.
+        /// exactly as rounding to 64 bits and then to 53 would - and writes -0 and 999999999999999.5 as text otherwise;
+        /// Access 2007's 32-bit ACE 12 also refuses text of the largest double. Null where nothing differs.
         /// </summary>
         private sealed class Otherwise
         {
@@ -162,7 +162,8 @@ namespace JackcessDotNet.AccessTests
                     Engine = ThisAce, DoubleOneUnit = true, RefusesLargest = true,
                     Text = { ["-0"] = "0", ["1000000000000000"] = "1E+15" },
                 };
-            if (AceBuild == "16.0.5011.1000") return new Otherwise { Engine = ThisAce, DoubleOneUnit = true };
+            if (AceBuild == "16.0.5011.1000")
+                return new Otherwise { Engine = ThisAce, DoubleOneUnit = true, Text = { ["-0"] = "0", ["1000000000000000"] = "1E+15" } };
             return null;
         }
 
