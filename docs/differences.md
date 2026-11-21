@@ -124,7 +124,10 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   double; and **a number given for a Text column** is written as Access writes it, 15 or 7 significant digits, where
   Jackcess writes Java's own text of it, `1.0E-5` for what Access writes `0.00001`
   ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number),
-  [Text and Memo](data-types.md#text-and-memo)).
+  [Text and Memo](data-types.md#text-and-memo)). The Access followed is 64-bit ACE 16: 32-bit ACE stores some text
+  for a Double one unit in the last place from it, and ACE 12 writes some numbers as text otherwise, which this
+  library does not follow in a process of either bitness
+  ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
 - **A batch insert** goes in whole or not at all, where Jackcess's `addRows` leaves the rows before a refused one
   in the table ([CHANGELOG](../CHANGELOG.md#added)).
 - **Cursors** have no column matchers of a caller's own (Jackcess's `ColumnMatcher`), and do not find a null by
