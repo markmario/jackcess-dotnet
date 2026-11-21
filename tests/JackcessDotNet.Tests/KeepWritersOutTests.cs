@@ -64,6 +64,16 @@ public sealed class KeepWritersOutTests : IDisposable
 
     private static readonly int SharingViolation = unchecked((int)0x80070020);
 
+    /// <summary>
+    /// Passes over a test of what the operating system's keeping to a handle's sharing gives - writers refused - where
+    /// it does not keep to it: anywhere but Windows.
+    /// </summary>
+    private static void OnlyWhereSharingIsKeptTo()
+    {
+        if (!PageFile.OSEnforcesSharing)
+            Assert.Skip("This operating system does not keep to a handle's sharing, so no writer is kept out here.");
+    }
+
     private static DatabaseInUseException AssertInUse(Action open, string path)
     {
         var refused = Assert.Throws<DatabaseInUseException>(open);
@@ -107,7 +117,8 @@ public sealed class KeepWritersOutTests : IDisposable
 
     // Opened to keep writers out, a reading reads the pages a database opened to be written reads - every one - and not
     // the pages a database opened only to be read beside a writer reads again at each move: a page or more a row.
-    // Counted in pages read, which are the same on every machine.
+    // Counted in pages read, which are the same on every machine. (Where the operating system does not keep writers out,
+    // it reads as one beside a writer does: Where_sharing_is_not_kept_to_....)
     [Theory]
     [MemberData(nameof(FormatsAndReadings))]
     public void Kept_writers_out_a_reading_reads_the_pages_one_opened_to_be_written_reads(FileFormat format, string reading)
@@ -117,13 +128,15 @@ public sealed class KeepWritersOutTests : IDisposable
         long shared   = PagesRead(path, ReadOnly, t => Read(t, reading), 3000);
         long keptOut  = PagesRead(path, KeepingWritersOut, t => Read(t, reading), 3000);
 
+        OnlyWhereSharingIsKeptTo();
         Assert.Equal(written, keptOut);
         Assert.True(shared >= 3000, $"read-only beside a writer read {shared} pages for 3,000 rows: a page a row was expected");
         Assert.True(keptOut * 5 < shared, $"kept writers out, {keptOut} pages were read; beside a writer, {shared}");
     }
 
     // An Access 97 file is only ever read, and is opened beside a writer - its pages read again at every move - unless
-    // it is opened to keep writers out; then a cursor reads each of its data pages once.
+    // it is opened only to be read keeping writers out; then a cursor reads each of its data pages once, and the file is
+    // left as it was.
     [Fact]
     public void An_Access_97_file_opened_to_keep_writers_out_reads_each_page_once()
     {
@@ -135,10 +148,13 @@ public sealed class KeepWritersOutTests : IDisposable
         using (var db = Database.Open(path))
             dataPages = db.GetTable("Keys").Rows.Select(r => r.Id!.Value.PageNumber).Distinct().Count();
 
+        byte[] before = File.ReadAllBytes(path);
+        OnlyWhereSharingIsKeptTo();
         long beside = PagesReadOfKeys(path, new DatabaseOpenOptions());
-        long keptOut = PagesReadOfKeys(path, new DatabaseOpenOptions { KeepWritersOut = true });
+        long keptOut = PagesReadOfKeys(path, KeepingWritersOut);
         Assert.InRange(beside, 1500, 1500 + dataPages + 2);
         Assert.InRange(keptOut, dataPages, dataPages + 2);
+        Assert.Equal(before, File.ReadAllBytes(path));
 
         static long PagesReadOfKeys(string path, DatabaseOpenOptions options)
         {
@@ -162,6 +178,7 @@ public sealed class KeepWritersOutTests : IDisposable
     [MemberData(nameof(Formats))]
     public void While_it_is_open_every_writer_is_kept_out_and_readers_are_let_in(FileFormat format)
     {
+        OnlyWhereSharingIsKeptTo();
         string path = ThreeThousandRows(format);
         byte[] before = File.ReadAllBytes(path);
 
@@ -211,6 +228,7 @@ public sealed class KeepWritersOutTests : IDisposable
     [MemberData(nameof(Writers))]
     public void A_file_a_writer_has_open_is_refused_and_left_as_it_was(string holder)
     {
+        OnlyWhereSharingIsKeptTo();
         string path = ThreeThousandRows(FileFormat.Access2010);
         byte[] before = File.ReadAllBytes(path);
 
@@ -289,19 +307,95 @@ public sealed class KeepWritersOutTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
-    // Set on a file opened to be written, it changes nothing: such a file keeps writers out already, and is written to.
-    [Fact]
-    public void Set_on_a_file_opened_to_be_written_it_changes_nothing()
+    // Where the operating system does not keep to a handle's sharing - anywhere but Windows - a file opened to keep
+    // writers out can be written to by another program all the same, so it is read as one opened with ReadOnly alone is:
+    // its pages again at every move. The seam stands in for such a system here; CI's Linux jobs run on one.
+    [Theory]
+    [MemberData(nameof(FormatsAndReadings))]
+    public void Where_sharing_is_not_kept_to_a_reading_reads_again_as_one_beside_a_writer_does(FileFormat format, string reading)
     {
-        string path = ThreeThousandRows(FileFormat.Access2010);
-        using (var db = Database.Open(path, new DatabaseOpenOptions { KeepWritersOut = true }))
+        string path = ThreeThousandRows(format);
+        long shared = PagesRead(path, ReadOnly, t => Read(t, reading), 3000);
+        PageFile.OSEnforcesSharingForTests = false;
+        try
         {
-            Assert.False(db.IsReadOnly);
-            AssertInUse(() => Database.Open(path).Dispose(), path);
-            using (AsAccessReads(path)) { }
-            db.GetTable("T").Insert(new Row { ["Id"] = 3001, ["V"] = "row 3001" });
+            using (var db = Database.Open(path, KeepingWritersOut))
+                Assert.True(db.File.SharedWithWriters);
+            Assert.Equal(shared, PagesRead(path, KeepingWritersOut, t => Read(t, reading), 3000));
         }
-        using var again = Database.Open(path, ReadOnly);
-        Assert.Equal(3001, again.GetTable("T").RowCount);
+        finally { PageFile.OSEnforcesSharingForTests = null; }
+    }
+
+    public static IEnumerable<object[]> FilesOfEveryFormat() => new[]
+    {
+        new object[] { "Access 2000" }, new object[] { "Access 2010" }, new object[] { "Access 97" },
+    };
+
+    private string FileOf(string kind)
+    {
+        if (kind != "Access 97") return ThreeThousandRows(kind == "Access 2000" ? FileFormat.Access2000 : FileFormat.Access2010);
+        string path = NewPath(".mdb");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Assets", "access97-jet40.mdb"), path);
+        File.SetAttributes(path, FileAttributes.Normal);
+        return path;
+    }
+
+    // KeepWritersOut keeps writers out of a file opened only to be read: set without ReadOnly it is refused, in every
+    // format, before the file is opened - here a file Access holds exclusively, which any handle would be refused -
+    // and the file is as it was, and opens.
+    [Theory]
+    [MemberData(nameof(FilesOfEveryFormat))]
+    public void Without_ReadOnly_it_is_refused_before_the_file_is_opened(string kind)
+    {
+        string path = FileOf(kind);
+        byte[] before = File.ReadAllBytes(path);
+        using (AsAccessHasItExclusively(path))
+        {
+            var refused = Assert.Throws<ArgumentException>(() => Database.Open(path, new DatabaseOpenOptions { KeepWritersOut = true }).Dispose());
+            Assert.Contains(nameof(DatabaseOpenOptions.KeepWritersOut), refused.Message);
+            Assert.Contains(nameof(DatabaseOpenOptions.ReadOnly), refused.Message);
+        }
+        Assert.Throws<ArgumentException>(() => Database.Open(path + ".none", new DatabaseOpenOptions { KeepWritersOut = true }).Dispose());
+        Assert.Equal(before, File.ReadAllBytes(path));
+        using (var db = Database.Open(path, KeepingWritersOut))
+            Assert.True(db.IsReadOnly);
+        using (var db = Database.Open(path))
+            Assert.Equal(kind == "Access 97", db.IsReadOnly);
+    }
+
+    // Opened so, a file of any format - one marked read-only among them - opens and reads, and is left as it was: no
+    // lock file is made, its bytes and its last write time are the same, and nothing is written through the handle.
+    [Theory]
+    [MemberData(nameof(FilesOfEveryFormat))]
+    public void A_file_of_any_format_or_marked_read_only_is_read_and_left_as_it_was(string kind)
+    {
+        string path = FileOf(kind);
+        File.SetLastWriteTimeUtc(path, new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            byte[] before = File.ReadAllBytes(path);
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            string lockFile = Path.ChangeExtension(path, kind == "Access 2010" ? ".laccdb" : ".ldb");
+
+            using (var db = Database.Open(path, KeepingWritersOut))
+            {
+                Assert.True(db.IsReadOnly);
+                Assert.Equal(PageFile.OSEnforcesSharing, !db.File.SharedWithWriters);
+                foreach (string name in db.GetTableNames())
+                {
+                    var table = db.GetTable(name);
+                    Assert.Equal(table.RowCount, table.Rows.Count());
+                    Assert.Equal(table.RowCount, table.CreateCursor().Count());
+                }
+                Assert.False(File.Exists(lockFile));
+                Assert.Equal(0, db.File.WriteCount);
+            }
+
+            Assert.False(File.Exists(lockFile));
+            Assert.Equal(before, File.ReadAllBytes(path));
+            Assert.Equal(written, File.GetLastWriteTimeUtc(path));
+        }
+        finally { File.SetAttributes(path, FileAttributes.Normal); }
     }
 }

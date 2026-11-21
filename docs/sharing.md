@@ -49,14 +49,18 @@ And the other way about, with Access - or another `Database` - there first:
   file is changed.
 - The sharing is Windows', where Access runs, on a local disk and on a network share alike. Elsewhere .NET keeps to a
   file's sharing only by advisory locks, which do not keep every second writer out - and on iOS and tvOS by none - so
-  there a second `Database` opened to be written is not sure to be refused: keep to one writer there.
+  there a second `Database` opened to be written is not sure to be refused: keep to one writer there. Nor is a writer
+  sure to be kept out by a `Database` opened with `KeepWritersOut` (measured in Linux on ext4: beside a handle
+  sharing the file for reading only, the library's own open to write opened the file and wrote), so there such a
+  database reads as one opened `ReadOnly` alone does, its pages again at every move.
 - A database opened `ReadOnly` is held by a handle that cannot write, and every change - a row inserted, updated or
   deleted, a table or column made, dropped or renamed, a property saved, an import - is refused with
   `NotSupportedException` before anything happens (`Database.IsReadOnly`). A file marked read-only opens this way.
 - A database opened `ReadOnly` with `KeepWritersOut` is held as Access holds a database it opens exclusively and
-  read-only: by a handle that only reads, sharing the file for reading only, with no lock file. No one writes to the
-  file while it is open, so every reading is of one state of it, and it is read as a database opened to be written
-  reads it, keeping the page a cursor is on from one move to the next. A file a writer has open - Access with the
+  read-only: by a handle that only reads, sharing the file for reading only, with no lock file. On Windows no one
+  writes to the file while it is open, so every reading is of one state of it, and it is read as a database opened
+  to be written reads it, keeping the page a cursor is on from one move to the next; elsewhere a writer is not kept
+  out, and it is read as `ReadOnly` alone reads, as the bullet above says. A file a writer has open - Access with the
   database open shared, or a `Database` opened to be written - is refused with `DatabaseInUseException` and is as it
   was; to read it beside the writer, open it with `ReadOnly` alone:
 
@@ -67,8 +71,8 @@ And the other way about, with Access - or another `Database` - there first:
   ```
 
   It keeps Access from writing for as long as it is open, so it suits a reading that loads what it needs and closes
-  the database. `KeepWritersOut` without `ReadOnly` changes nothing for a file opened to be written, which keeps
-  writers out already.
+  the database. `KeepWritersOut` is for a file opened only to be read: set without `ReadOnly` it is refused with
+  `ArgumentException` before the file is opened, whatever its format.
 - `Database.Create` replaces a file only when no one has it open, readers included. It emptied a file Access had
   open, under Access. The handle that finds the file free is the one that empties it, and it is kept until the new
   database is disposed, so no one comes between to read a file that has become another.
@@ -76,8 +80,8 @@ And the other way about, with Access - or another `Database` - there first:
   write to it meanwhile, so it is read as a `ReadOnly` database is, its pages read again at every move, opened with
   `ReadOnly` or not - and pays what that costs. Measured by the review of #73 over the ten Access 97 files of the
   test corpus, every table and index walked 20 times: 78,420 pages read before, 612,280 now; about 0.55 s and 2.8 s
-  on .NET 10, 0.85 s and 6.9 s on .NET Framework. Opened with `KeepWritersOut`, it keeps writers out and is read
-  without reading its pages again ([#84]). What else is particular to an Access 97 file:
+  on .NET 10, 0.85 s and 6.9 s on .NET Framework. Opened with `ReadOnly` and `KeepWritersOut`, it keeps writers out
+  and, on Windows, is read without reading its pages again ([#84]). What else is particular to an Access 97 file:
   [Access 97 files are read-only](file-formats.md#access-97-files-are-read-only).
 - Access's lock file (`.ldb`, `.laccdb`) is neither made nor read. Measured with ACE 16 and DAO 16, and DAO 3.6 for an
   Access 97 file: Access makes one when it opens a database shared or read-only - 64 bytes a user, the machine's name
@@ -124,8 +128,8 @@ ms (5,383 and 55,383), `Table.Rows` 28 ms and 168 ms (5,383 and 55,001). Measure
 over 500,000 rows: 53,694 pages read opened to be written, 550,002 opened `ReadOnly`; about 0.3 s and 1.7 s on .NET
 10, 0.5 s and 2.1 s on .NET Framework. An Access 97 file is read so too ([What each open does](#what-each-open-does)).
 
-Opened `ReadOnly` with `KeepWritersOut`, no page is read again for want of a writer, and a reading reads the pages one
-opened to be written reads ([#84]). A table of 500,000 rows (Id, the primary key; a text of about 70 characters; a
+Opened `ReadOnly` with `KeepWritersOut`, on Windows, no page is read again for want of a writer, and a reading reads
+the pages one opened to be written reads ([#84]); elsewhere it reads what `ReadOnly` alone reads. A table of 500,000 rows (Id, the primary key; a text of about 70 characters; a
 300-character Memo in every tenth row), each reading made five times:
 
 | Reading | Opened to be written | `ReadOnly` | `ReadOnly` and `KeepWritersOut` |

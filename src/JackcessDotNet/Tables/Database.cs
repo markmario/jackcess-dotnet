@@ -28,8 +28,8 @@ namespace JackcessDotNet;
 /// can have the file open beside it, and read it as it is written: such a reading can miss rows, give a row twice or
 /// with a value of another row's, or fail, and one that agrees with itself needs no writer while it is made
 /// (<see cref="DatabaseOpenOptions.ReadOnly"/> says what it can and cannot give). A database opened only to be read
-/// with <see cref="DatabaseOpenOptions.KeepWritersOut"/> keeps every writer out instead, as one opened to be written
-/// does, and lets readers in. A database made by
+/// with <see cref="DatabaseOpenOptions.KeepWritersOut"/> keeps every writer out instead, on Windows, as one opened to
+/// be written does, and lets readers in. A database made by
 /// <see cref="Create(string)"/> is shared with no one, readers included, until it is disposed, as DAO holds a
 /// database it creates. Access's lock file (.ldb, .laccdb) is neither made nor read, as Access makes none for a
 /// database it opens exclusively.
@@ -416,6 +416,10 @@ public sealed class Database : IDisposable
     /// <param name="options">What is known about the file.</param>
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="DatabaseOpenOptions.KeepWritersOut"/> is set without <see cref="DatabaseOpenOptions.ReadOnly"/>, in
+    /// any format. The file is not opened.
+    /// </exception>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
@@ -426,6 +430,11 @@ public sealed class Database : IDisposable
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
+        if (options.KeepWritersOut && !options.ReadOnly)
+            throw new ArgumentException(
+                $"{nameof(DatabaseOpenOptions.KeepWritersOut)} is set without {nameof(DatabaseOpenOptions.ReadOnly)}: it keeps " +
+                $"writers out of a file opened only to be read, so set {nameof(DatabaseOpenOptions.ReadOnly)} too. " +
+                $"'{path}' was not opened.", nameof(options));
         return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly,
                         options.KeepWritersOut);
     }
@@ -586,7 +595,8 @@ public sealed class Database : IDisposable
     /// imported - is refused with <see cref="NotSupportedException"/> before anything is written. Such a file is
     /// opened as one opened with <see cref="DatabaseOpenOptions.ReadOnly"/> is, beside a writer - DAO and ACE can write
     /// to it meanwhile - and so it is read as such a one is, its pages read again at every move; opened with
-    /// <see cref="DatabaseOpenOptions.KeepWritersOut"/>, it keeps writers out instead.
+    /// <see cref="DatabaseOpenOptions.ReadOnly"/> and <see cref="DatabaseOpenOptions.KeepWritersOut"/>, it keeps
+    /// writers out instead.
     /// </para>
     /// </summary>
     /// <param name="path">The path of the file to open.</param>

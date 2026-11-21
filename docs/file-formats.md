@@ -66,8 +66,8 @@ a table. `Database.Create(path, FileFormat.Access97)` is refused the same way, a
 decides it ([What a file is](#what-a-file-is)), and `Database.IsReadOnly` says which a database is. No row or
 table definition is made in Access 97's format either: `RowEncoder` and `TableDefinition.Serialize` refuse it.
 It opens while Access has it open, as a file opened `ReadOnly` does, and its pages are read again at every move,
-since DAO and ACE can write to it meanwhile - unless it is opened with `KeepWritersOut`, which keeps them out; what
-that costs is under [What each open does](sharing.md#what-each-open-does). Earlier versions wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data
+since DAO and ACE can write to it meanwhile - unless it is opened with `ReadOnly` and `KeepWritersOut`, which keeps
+them out; what that costs is under [What each open does](sharing.md#what-each-open-does). Earlier versions wrote to such a file, and wrote rows Access 97's format does not have: the end of a row's data
 and its count of variable-length columns in two bytes each, where Jet 3 has one, so that the row's text read back
 as null ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)).
 

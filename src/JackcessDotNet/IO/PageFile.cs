@@ -10,6 +10,7 @@ internal sealed class PageFile : IDisposable
     private readonly bool _readOnly;
     private readonly bool _openedToRead;
     private readonly bool _keepsWritersOut;
+    private readonly bool _sharingEnforced;
 
     private bool _disposed;
 
@@ -59,9 +60,27 @@ internal sealed class PageFile : IDisposable
     /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>). Its pages can change between two readings though nothing is
     /// written here, so <see cref="ChangeStamp"/> says nothing of them, and a reader keeps a page no longer than one
     /// move of a cursor (#62). A file held so that no one else can write to it - opened to be written, or opened to
-    /// keep writers out - changes only through this handle, and a reader keeps a page while the stamp is unchanged.
+    /// keep writers out where the operating system keeps to a handle's sharing (<see cref="OSEnforcesSharing"/>) -
+    /// changes only through this handle, and a reader keeps a page while the stamp is unchanged. Where the operating
+    /// system does not keep to it, a file opened to keep writers out may be written to by another program all the same,
+    /// and is read again at every move.
     /// </summary>
-    internal bool SharedWithWriters => (_openedToRead || _readOnly) && !_keepsWritersOut;
+    internal bool SharedWithWriters => (_openedToRead || _readOnly) && !(_keepsWritersOut && _sharingEnforced);
+
+    /// <summary>
+    /// Whether the operating system keeps to the sharing a handle asks for, so that one that shares a file for reading
+    /// only keeps every writer out: Windows does. Elsewhere .NET keeps to it only by advisory locks, which let a second
+    /// handle open the file to write beside one that shares it for reading only.
+    /// </summary>
+    internal static bool OSEnforcesSharing
+        => OSEnforcesSharingForTests ?? System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows);
+
+    /// <summary>
+    /// For tests on Windows of what a file opened to keep writers out does where the operating system does not keep to
+    /// a handle's sharing: when set, <see cref="OSEnforcesSharing"/> is this, for files opened on this thread. Null
+    /// (always, outside a test) for the operating system's own answer.
+    /// </summary>
+    [ThreadStatic] internal static bool? OSEnforcesSharingForTests;
 
     /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written
@@ -192,6 +211,7 @@ internal sealed class PageFile : IDisposable
             access = FileAccess.Read;
         }
         _keepsWritersOut = keepWritersOut && access == FileAccess.Read;
+        _sharingEnforced = OSEnforcesSharing;
         _stream = OpenShared(path, mode, access, _keepsWritersOut);
     }
 
