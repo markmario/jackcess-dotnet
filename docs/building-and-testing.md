@@ -49,8 +49,10 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
 - CI also runs the tests on .NET 10 on Linux (`ubuntu-latest`), in one job. The `netstandard2.0` assembly on .NET 10
   passed there too, in one run of that job (44875892154), and is left to the Windows job: both in one job took 8m40s,
   longer than any other. Off Windows, build and test one framework at a time, and not the solution: the .NET
-  Framework tests run on Windows only. On Linux a test of a writer kept out by how a handle shares the file skips,
-  saying why, and one that pins what Linux does instead runs:
+  Framework tests run on Windows only. On Linux a writer is kept out only by a handle that shares nothing, so the
+  tests of a writer kept out by how a handle shares the file assert there only what holds - two of `FileSharingTests`' and
+  one case of `KeepWritersOutTests`' run, leaving out the refusals Linux does not make, and the rest skip, saying
+  why - and two tests pin what Linux does instead:
   [Sharing a file with Access](sharing.md#what-each-open-does).
 - The shards are balanced by tables of the seconds each test class took on CI, in `scripts/Invoke-TestShard.ps1`
   and, for the Access referee tests, `scripts/Invoke-AccessTests.ps1`. A new test class needs a row in each table
