@@ -42,8 +42,8 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
   redistributable's x86 installer. Where that is Access 2007's ACE 12, which some machines have beside a 64-bit
   ACE 16, a test that needs an Access 2010 file is skipped, saying so, and one that pins what an ACE version does
   pins ACE 12's or is skipped (#101).
-- Those are the six configurations, and CI runs each on every pull request, each split into shards that run side
-  by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
+- Those are the six configurations, and CI runs each on every pull request, the .NET Framework ones split into
+  shards that run side by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
   A TRX report: `--report-xunit-trx --report-xunit-trx-filename test-results.trx`, written to `TestResults/`.

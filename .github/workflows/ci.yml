@@ -9,9 +9,9 @@
 #
 # The jobs run side by side, each on a runner of its own: one builds every
 # target, and the test jobs each build one framework alone and run a share of
-# its tests - four shares on .NET Framework, whose run takes some nine minutes,
-# and two on .NET (scripts/Invoke-TestShard.ps1). One after another on one
-# runner they took 13 minutes, and one job to a framework ten.
+# its tests - three shares on .NET Framework, whose tests take 10 to 12 minutes
+# one after another, and all of them in one job on .NET, where they take about
+# five (scripts/Invoke-TestShard.ps1).
 #
 # The Access referee tests (tests/JackcessDotNet.AccessTests) need Microsoft
 # Access's own engine, which hosted runners lack: access-build builds them once,
@@ -169,26 +169,24 @@ jobs:
     strategy:
       # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
+      # A job spends about a minute besides its tests: setup, checkout, the build and the listing. One job to a .NET
+      # configuration, whose tests take 4.5 to 5.5 minutes, and three to a .NET Framework one, whose shards take
+      # 3.5 to 4.5: no job takes longer than access-build and the longest Access shard, about 6.5 minutes, and a run
+      # has as few jobs as that allows. Two to a .NET Framework configuration would take about 7 minutes each.
       matrix:
         include:
-          - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 1, shards: 2 }
-          - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 2, shards: 2 }
-          - { name: net11.0, id: net11.0, framework: net11.0, sdks: 11.0.x, shard: 1, shards: 2 }
-          - { name: net11.0, id: net11.0, framework: net11.0, sdks: 11.0.x, shard: 2, shards: 2 }
-          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 1, shards: 4 }
-          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 2, shards: 4 }
-          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 3, shards: 4 }
-          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 4, shards: 4 }
-          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 1, shards: 4 }
-          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 2, shards: 4 }
-          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 3, shards: 4 }
-          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 4, shards: 4 }
-          - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 1, shards: 2 }
-          - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 2, shards: 2 }
-          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 1, shards: 4 }
-          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 2, shards: 4 }
-          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 3, shards: 4 }
-          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 4, shards: 4 }
+          - { name: net10.0, id: net10.0, framework: net10.0, sdks: "10.0.x\n11.0.x", shard: 1, shards: 1 }
+          - { name: net11.0, id: net11.0, framework: net11.0, sdks: 11.0.x, shard: 1, shards: 1 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 1, shards: 3 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 2, shards: 3 }
+          - { name: net48, id: net48, framework: net48, sdks: 11.0.x, shard: 3, shards: 3 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 1, shards: 3 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 2, shards: 3 }
+          - { name: "net48, 32-bit", id: net48-x86, framework: net48, properties: -p:TestX86=true, sdks: 11.0.x, shard: 3, shards: 3 }
+          - { name: netstandard2.0 on net10.0, id: netstandard2.0-net10.0, framework: net10.0, properties: -p:NetStandardAsset=true, sdks: "10.0.x\n11.0.x", shard: 1, shards: 1 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 1, shards: 3 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 2, shards: 3 }
+          - { name: netstandard2.0 on net48, id: netstandard2.0-net48, framework: net48, properties: -p:NetStandardAsset=true, sdks: 11.0.x, shard: 3, shards: 3 }
     steps:
       - uses: actions/checkout@v7
 
@@ -284,8 +282,9 @@ jobs:
       # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
       # Four: with the samples, access-build and the longest of four shards take about as long as the longest
-      # framework job, so more shards would not shorten a pull request's run, and each would take a runner from
-      # the account's limit of jobs at once. Each shard also pays about 25 s of checkout, download and install.
+      # framework job, a .NET configuration's one, so more shards would not shorten a pull request's run, and each
+      # would take a runner from the account's limit of jobs at once. Each shard also pays about 25 s of checkout,
+      # download and install.
       matrix:
         include:
           - { shard: 1, shards: 4 }
