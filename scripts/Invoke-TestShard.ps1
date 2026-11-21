@@ -217,14 +217,20 @@ $methods = @($expected | ForEach-Object { & $methodOf $_ } | Sort-Object -Unique
 Write-Host "$Framework, shard $Shard of $Shards`: $($expected.Count) of the $($listed.Count) tests listed, in $($mine.Count) of the $($classes.Count) classes, about $([math]::Round($load[$Shard - 1])) s: $(($mine | ForEach-Object { $_.Substring($namespace.Length) }) -join ', ')"
 
 $filters = @($mine | ForEach-Object { '--filter-class'; $_ })
+# A report a run before this one left is not this run's: it goes first, so that only this run's is read.
+$trx = Join-Path $results $TrxName
+Remove-Item -LiteralPath $trx -ErrorAction SilentlyContinue
 & dotnet test --project $project --configuration Release --no-build --framework $Framework @Properties @filters `
     --results-directory $results --report-xunit-trx --report-xunit-trx-filename $TrxName
 # A test that failed fails the shard, but after what the report says of each class's time, so that a missing row is
-# named in the same run.
+# named in the same run. A report that does not parse - one the test process did not finish - is none, and the run's
+# own exit code is the shard's.
 $testExit = $LASTEXITCODE
-$trx = Join-Path $results $TrxName
 $report = $null
-if (Test-Path -LiteralPath $trx) { [xml] $report = Get-Content -LiteralPath $trx -Raw }
+if (Test-Path -LiteralPath $trx) {
+    try { [xml] $report = Get-Content -LiteralPath $trx -Raw }
+    catch { Write-Host "::warning::$trx does not parse, and is not read: $($_.Exception.Message)"; $report = $null }
+}
 
 # How long each class took, beside what $seconds says, in the job's summary; a class far slower than its number - a
 # new one, say - is named in a warning, since it makes its shard the run's longest.

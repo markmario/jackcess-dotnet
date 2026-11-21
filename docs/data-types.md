@@ -76,8 +76,9 @@ Text, a `bool` and a date are taken as every number column takes them
 ([A bool, text or a date for a number](#a-bool-text-or-a-date-for-a-number)) and the number they make is taken to
 four places so. A `Guid`, bytes or a `char` is refused with `ArgumentException`, and text that reads as no number
 with `FormatException`. NaN, an infinity and a number past -922,337,203,685,477.5808 to
-922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"), and
-writes NaN as the least Currency, which this library does not. How a caller's number is taken to one when it is
+922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"). 64-bit ACE
+16 writes NaN as the least Currency, which this library does not; 32-bit ACE 12, and the 32-bit ACE 16 of the 2016
+redistributable, refuse it ("Overflow"). How a caller's number is taken to one when it is
 looked for: [Currency](cursors-and-rows.md#currency).
 
 **A file an earlier version wrote holds that version's rounding.** 1.2.2, and this library until [#65], rounded a
@@ -176,8 +177,23 @@ hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads
   - Bytes that begin 0xFF 0xFE are compressed text in a Text column with Unicode compression, in a Memo kept in
     its row, whatever its column, and in a Memo in one long-value row of a column with Unicode compression. In a
     Text column without it, on a long-value page of such a column, and in a chain of long-value rows, they are
-    UTF-16LE. (A query of ACE's that sorts, and a DAO snapshot, read a copy ACE writes again, and read such a Text
-    value of a column without Unicode compression as compressed text; the table holds it as written.)
+    UTF-16LE.
+  - **This library reads such bytes as Access's table-type recordset does** ([#129]): in a Text column without
+    Unicode compression, as UTF-16LE. Not every way Access reads gives that. Measured with Microsoft 365's ACE 16
+    and DAO 16.0 (16.0.20625.20102, 64-bit) by `tools/earlier-filled-text-readers.ps1`, on
+    `engine-8e41563-filled-table.mdb`, whose `Filled` has such values
+    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). The Name of
+    row 7 is `FF FE 4C 6F 6E 67`, and of row 1 `Alice`'s `FF FE 41 6C 69 63 65`, an odd number of bytes:
+    - Row 7 reads as UTF-16LE, U+FEFF U+6F4C U+676E, and row 1 as U+FEFF U+6C41 U+6369, through a DAO table-type
+      recordset; a DAO dynaset of the table, of a query of it, of a query sorted by Id, and of a query of the one
+      row; and an ACE query of the table, and of the one row.
+    - Row 7 reads as compressed text, `Long`, and row 1 fails with "Number of bytes of a UNICODE string is not
+      even", through a DAO snapshot of a query of the one row, and an ACE query of the one row sorted by Name.
+    - Every other DAO snapshot - of the table, of a query of it, sorted or not - a DAO dynaset of a query sorted by
+      Name, and an ACE query of the table sorted by Id or by Name, fail as they open, with the same message.
+
+    So the line falls neither between a dynaset and a snapshot nor between a query that sorts and one that does
+    not. The table holds the bytes as written.
   - So Access reads back changed the text that begins with U+FEFF that it keeps as UTF-16LE where it reads
     compressed text, and **this library refuses such text**, with an `ArgumentException` (by insert, update, batch
     insert and import) before anything is written. The rule: text that begins with U+FEFF is refused
@@ -196,7 +212,8 @@ hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads
   - A table an earlier version of this library created - its catalog row has ParentId 0 and no owner, where Access
     gives a table the Tables container and an owner - has its name and its Text and Memo values read by their bytes:
     as compressed text wherever they begin 0xFF 0xFE, as those versions wrote them
-    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)).
+    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). A name that
+    begins with U+FEFF given to such a table is written and refused as its Text values are ([#129]).
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and
@@ -232,3 +249,4 @@ are each refused with `NotSupportedException`.
 [#80]: https://github.com/markmario/jackcess-dotnet/issues/80
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
 [#100]: https://github.com/markmario/jackcess-dotnet/issues/100
+[#129]: https://github.com/markmario/jackcess-dotnet/issues/129

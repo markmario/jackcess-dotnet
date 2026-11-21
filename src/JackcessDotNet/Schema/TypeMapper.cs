@@ -289,7 +289,7 @@ internal static class TypeMapper
     // Text that begins with U+FEFF that Access would read back changed (#93); a long value of more than 64 bytes goes
     // to pages of its own.
     private static string Kept(string text, Column column)
-        => RowEncoder.WhyNotKept(column, text, length => length <= RowEncoder.InlineLvalThreshold) is { } why
+        => RowEncoder.WhyNotKept(column, text, length => length <= RowEncoder.InlineLvalThreshold, column.ReadsTextByContent) is { } why
             ? throw new NotHeldException(why)
             : text;
 

@@ -742,5 +742,41 @@ namespace JackcessDotNet.AccessTests
                 });
             }
         }
+
+        // ── A table an earlier release created, renamed (#129) ───────────────
+
+        /// <summary>The tables ACE lists of the file at <paramref name="path"/>, system tables among them, in order.</summary>
+        private static List<string> AceTables(string path)
+        {
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                return connection.GetSchema("Tables").Rows.Cast<System.Data.DataRow>()
+                    .Select(row => (string)row["TABLE_NAME"]).OrderBy(name => name, StringComparer.Ordinal).ToList();
+            }
+        }
+
+        /// <summary>
+        /// A table an earlier release created (engine-8e41563-created-table.mdb) is one Access neither lists nor reads.
+        /// The engine renames it, with its indexes verified, to a name that begins with U+FEFF, which it writes in the
+        /// catalog compressed in runs, as it reads that table's name. Access then opens the file, lists its tables and
+        /// compacts it as it does the file before the rename, and the engine finds the table by its new name.
+        /// </summary>
+        [Fact]
+        public void access_takes_a_file_whose_earlier_table_the_engine_gave_a_name_that_begins_with_u_feff_as_it_took_it_before()
+        {
+            var before = EarlierEngineFile("engine-8e41563-created-table.mdb");
+            var path = EarlierEngineFile("engine-8e41563-created-table.mdb");
+            using (var db = Database.Open(path))
+            {
+                db.VerifyIndexes = true;
+                db.RenameTable("People", "\uFEFFaaaa");
+            }
+
+            Assert.Equal(AceTables(before), AceTables(path));
+            Assert.Equal(AceTables(AccessReferee.Compact(before)), AceTables(AccessReferee.Compact(path)));
+            using (var db = Database.Open(path))
+                Assert.Contains("\uFEFFaaaa", db.GetTableNames());
+        }
     }
 }
