@@ -232,6 +232,34 @@ $table = @{
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
     }
+    # The samples in a 32-bit process (-X86), three processes at a time, against the redistributable's 32-bit ACE 16:
+    # run 44877333525. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests, the Seeks).
+    x86 = @{
+        AccdbFormatsInAccessTests = 60; Access97InAccessTests = 2; BinaryLengthInAccessTests = 9
+        BulkIndexesInAccessTests = 196; CorpusInAccessTests = 13; 'CorpusInAccessTests.ReadsAccdb' = 31
+        'CorpusInAccessTests.ReadsMdb' = 16; 'CorpusInAccessTests.the_engine_reads-others' = 5; CurrencyInAccessTests = 12
+        CursorsAndRowsInAccessTests = 36; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 71
+        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 35; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 72
+        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 48; 'CursorsAndRowsInAccessTests.UAccess' = 34
+        'CursorsAndRowsInAccessTests.UEngine' = 32; CutKeysInAccessTests = 22; DivergentKeysInAccessTests = 2
+        EarlierEngineFilesInAccessTests = 11; EngineIndexesInAccessTests = 70; 'EngineIndexesInAccessTests.EveryType' = 57
+        EngineTablesInAccessTests = 45; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 30
+        FileSharingInAccessTests = 25; ForeignKeysInAccessTests = 100; 'ForeignKeysInAccessTests.Cascades' = 86
+        'ForeignKeysInAccessTests.Keys' = 105; ImporterInAccessTests = 12; LongValuesInAccessTests = 8
+        'LongValuesInAccessTests.Accdb' = 14; 'LongValuesInAccessTests.Mdb' = 12; LookupsInAccessTests = 4
+        MemoStorageInAccessTests = 9; OverflowRowsInAccessTests = 16; PropertiesInAccessTests = 40
+        ProtectedFilesInAccessTests = 54; RoomReuseInAccessTests = 64; RowLayoutInAccessTests = 22
+        'RowLayoutInAccessTests.ReplicationIdIndex' = 6; SchemaChangesInAccessTests = 95
+        'SchemaChangesInAccessTests.Boundaries' = 41; 'SchemaChangesInAccessTests.ColumnDrops' = 56
+        'SchemaChangesInAccessTests.Drops' = 100; 'SchemaChangesInAccessTests.Names' = 18
+        'SchemaChangesInAccessTests.RelationshipDrops' = 33; 'SchemaChangesInAccessTests.Relationships' = 79
+        'SchemaChangesInAccessTests.Renames' = 110; SortOrdersInAccessTests = 5; 'SortOrdersInAccessTests.Seeks' = 108
+        'SortOrdersInAccessTests.WalkArabic' = 9; 'SortOrdersInAccessTests.WalkCyrillic' = 9
+        'SortOrdersInAccessTests.WalkDutch' = 12; 'SortOrdersInAccessTests.WalkEnglishUK' = 23
+        'SortOrdersInAccessTests.WalkGerman' = 8; 'SortOrdersInAccessTests.WalkGreek' = 10
+        'SortOrdersInAccessTests.WalkHebrew' = 20; 'SortOrdersInAccessTests.WalkItalian' = 11
+        'SortOrdersInAccessTests.WalkPortuguese' = 24; TextMarkerInAccessTests = 36; ValuesAndEntriesInAccessTests = 5
+    }
 }
 
 $listing = @(& $exe -list tests/json -noLogo -noColor -preEnumerateTheories 2>&1)
@@ -310,7 +338,8 @@ foreach ($class in $classes) {
 $covered = ($units | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum
 if ($covered -ne $listed.Count) { throw "The pieces take $covered of the $($listed.Count) tests listed." }
 
-$seconds = $table[$mode]
+# A 32-bit run is balanced by its own numbers, of the samples, which CI runs there whatever the event.
+$seconds = if ($X86) { $table.x86 } else { $table[$mode] }
 function Get-Seconds([string] $unit) { if ($seconds.ContainsKey($unit)) { $seconds[$unit] } else { $unknownSeconds } }
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.

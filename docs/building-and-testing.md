@@ -39,9 +39,10 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
   That build goes to `bin/Release-x86`:
   `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net48 -p:TestX86=true`.
   The Access referee tests take the same switch, and then need 32-bit ACE: Access itself, 32-bit, or the
-  redistributable's x86 installer. Where that is Access 2007's ACE 12, which some machines have beside a 64-bit
-  ACE 16, a test that needs an Access 2010 file is skipped, saying so, and one that pins what an ACE version does
-  pins ACE 12's or is skipped (#101).
+  redistributable's x86 installer, which CI installs for its 32-bit shards. Where that is Access 2007's ACE 12, which
+  some machines have beside a 64-bit ACE 16, a test that needs an Access 2010 file is skipped, saying so; a test that
+  pins what ACE does pins what the process's own ACE does, or is skipped under one not measured (#101).
+  `Invoke-AccessTests.ps1 -X86` runs that build.
 - Those are the six configurations, and CI runs each on every pull request, the .NET Framework ones split into
   shards that run side by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
@@ -65,6 +66,9 @@ on Windows, and need one of:
   (what CI installs: `accessdatabaseengine_X64.exe /quiet`), or
 - Access itself, 64-bit (Microsoft 365's, say).
 
+CI runs them in a 32-bit process too, built with `-p:TestX86=true`, on runners of their own with the
+redistributable's x86 installer (`accessdatabaseengine.exe /quiet`): 32-bit ACE 16 and DAO 16.
+
 ```
 dotnet build tests/JackcessDotNet.AccessTests --configuration Release
 pwsh ./scripts/Invoke-AccessTests.ps1 -Parallel 2
@@ -84,7 +88,9 @@ project runs its tests one after another.
   The full sweeps take over an hour of test processes.
 - **What the redistributable lacks.** Tests of Large Number and Date/Time Extended columns need an ACE that makes
   them (Access 2016 and 2019 and later); with the 2016 redistributable they are skipped, saying so.
-- **Access 97 files** open in 32-bit ACE only, so their tests are skipped in the 64-bit process.
+- **Access 97 files** open in 32-bit ACE 12 only, so their tests are skipped, saying so, in a 64-bit process and
+  under the redistributable's 32-bit ACE 16, which says "Cannot open a database created with a previous version of
+  your application" of one. CI has no ACE that opens one, so they run only on a machine with Access 2007's ACE 12.
 - `JACKCESS_ACE_PROVIDER` names another OLE DB provider than `Microsoft.ACE.OLEDB.12.0` (`Microsoft.ACE.OLEDB.16.0`,
   say).
 
