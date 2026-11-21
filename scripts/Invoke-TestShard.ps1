@@ -190,6 +190,7 @@ TrustedIndexTests                             6.4        5.4       20.8       20
 UndoJournalTests                              0.1        0.1        0.2        0.2        0.1        0.1
 UniqueIndexTrustTests                         8.0        9.3       22.4       24.8        6.4       19.9
 UsageMapTests                                 0.0        0.0        0.0        0.0        0.0        0.0
+ValidateAsInsertTests                         0.4        0.3        0.9        1.0        0.5        0.6
 WideDecimalTests                              0.1        0.1        0.0        0.0        0.1        0.1
 '@ -split '\r?\n'
 $columns = @($timings[0].Trim() -split '\s+' | Select-Object -Skip 1)

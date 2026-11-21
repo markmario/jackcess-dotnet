@@ -63,6 +63,25 @@ internal sealed class DataPageWriter
         return Place(tableDef, encoder, encoder.Prepare(row, keptVariableValues, null));
     }
 
+    /// <summary>A row a new insert has encoded, with nothing written yet (<see cref="PrepareInsert"/>).</summary>
+    internal readonly record struct PreparedInsert(RowEncoder Encoder, RowEncoder.PreparedRow Row);
+
+    /// <summary>
+    /// <paramref name="row"/> encoded for a new row of <paramref name="tableDef"/> as
+    /// <see cref="InsertRow(TableDefinition, Row)"/> encodes it, refused for everything that refuses it there - a value its column cannot hold, a long value
+    /// where it would go, a row too large for its page - with each long value placed by the table's own long-value
+    /// pages. Nothing is written: <see cref="InsertPrepared"/> writes it.
+    /// </summary>
+    internal PreparedInsert PrepareInsert(TableDefinition tableDef, Row row)
+    {
+        var encoder = new RowEncoder(_file.Format, tableDef, LvalWritersFor(tableDef));
+        return new PreparedInsert(encoder, encoder.Prepare(row, null, null));
+    }
+
+    /// <summary>Writes a row <see cref="PrepareInsert"/> encoded, and returns its pointer.</summary>
+    internal int InsertPrepared(TableDefinition tableDef, PreparedInsert prepared)
+        => Place(tableDef, prepared.Encoder, prepared.Row);
+
     // Writes a prepared row's long values and then the row. Only the file can fail here.
     private int Place(TableDefinition tableDef, RowEncoder encoder, RowEncoder.PreparedRow prepared)
     {

@@ -773,8 +773,10 @@ public static class DatabaseImporter
     /// the first numbered before the second's number was seen.
     /// <para>
     /// What the table's indexes would refuse is refused here, with nothing written. Every row is checked as it
-    /// will be written (<see cref="Table.Validate"/>): a number a row of the table already has in its primary
-    /// key - or any value another row has in a unique index - is the refusal an insert of that row would be, in
+    /// will be written (<see cref="Table.ValidateAheadOfBatch"/>), but for its relationships, which each row's insert
+    /// checks: a row may refer to an earlier row of the batch, which is not in the table yet. A number a row of
+    /// the table already has in its primary key - or any value another row has in a unique index - is the refusal
+    /// an insert of that row would be, in
     /// the same words, made before the first row goes in and found through the index, not by reading the table.
     /// The rows of the batch are not in any index yet, so a number two of them bring for the primary key is
     /// looked for here. A column that is not a key may repeat a number, as it may in Access.
@@ -803,8 +805,10 @@ public static class DatabaseImporter
                         $"both hold {number} for {identity.Name}. Nothing was imported.");
         }
 
+        // Not the relationships: a row may refer to an earlier row of the batch, which is not in the table yet. Each
+        // row's insert looks at them.
         foreach (var row in batch)
-            target.Validate(row);
+            target.ValidateAheadOfBatch(row);
 
         target.RaiseLastAutoNumber(supplied.Max());
     }

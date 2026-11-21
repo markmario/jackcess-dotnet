@@ -39,6 +39,18 @@ int loaded = people.BulkInsert(ReadRowsFromSomewhere());
   differs only in case, in trailing spaces, or in a character Access sorts as another (a full-width letter or
   digit, "ß" and "ss", "æ" and "ae") is one key; a leading space, an accent or other punctuation is another.
   `Validate` looks at one row against the table; this looks at a batch.
+- **`Validate(row)` makes every check `Insert` makes, in the same order, and writes nothing** ([#141], [#143]): the
+  columns' rules, the table's relationships, its indexes, and then the row's encoding, with each Memo or OLE value
+  placed where the insert would put it - in the row, in one long-value row, or a chain - by the table's own
+  long-value pages. So it throws what the insert would, of the same type: a Memo that begins with U+FEFF is
+  refused only where the insert refuses it; a row too large for its page, or an OLE Object value that is not bytes,
+  with `InvalidOperationException`; a number its column's type does not hold (a Byte of 256, an Integer of 32,768)
+  with `OverflowException`; text that is not a date, in a Date/Time column, with `InvalidCastException`; a value
+  that is not a GUID with `FormatException`; and a foreign key that refers to no row, with
+  `EnforceForeignKeys` on, with `ConstraintViolationException`. The AutoNumber values it checks the row with are
+  not taken. It answers for the table as it is: a row that refers to another not yet inserted is refused, as its
+  insert would be now. An import that keeps its rows' numbers checks a batch ahead of inserting it, and leaves
+  relationships to each row's insert, so a row may refer to an earlier row of its batch.
 
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
@@ -264,3 +276,5 @@ where Jackcess finds one.
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65
 [#80]: https://github.com/markmario/jackcess-dotnet/issues/80
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
+[#141]: https://github.com/markmario/jackcess-dotnet/issues/141
+[#143]: https://github.com/markmario/jackcess-dotnet/issues/143

@@ -845,6 +845,23 @@ changes with them.
   exclusively or beside a database just created, threw that `IOException` as it was. They are
   `DatabaseInUseException`, with the sharing violation's HResult, as on Windows. What Linux keeps out and what it
   lets in, measured in CI's Linux job: [Sharing a file with Access](docs/sharing.md#what-each-open-does).
+- **`Table.Validate` refuses what `Insert` refuses, with the same exception** (#141, #143). The two share one
+  sequence of checks, in the insert's order - the columns' rules, the relationships, the indexes, the row's
+  encoding - which `Insert` then writes and `Validate` does not. Before:
+  - `Validate` checked the row with an encoder that had none of the table's long-value pages, so it took every Memo
+    as kept in the row: it refused a Memo that begins with U+FEFF long enough to be a chain, 1,909 characters or
+    more with the mark, which `Insert` writes and Access reads back whole.
+  - It checked some values without encoding the row, so it accepted what `Insert` refuses: a row too large for its page
+    and an OLE Object value that is not bytes (`InvalidOperationException`); a Byte of 256, an Integer of 32,768
+    and an Int32 given `long.MaxValue` (`OverflowException`); text that is not a date in a Date/Time column
+    (`InvalidCastException`); and a number for a Guid (`FormatException`). It refuses them now.
+  - It did not check relationships: with `EnforceForeignKeys` on, it accepted a row whose foreign key refers to no
+    row, which `Insert` refuses with `ConstraintViolationException`. It answers for the table as it is, so it
+    refuses a row that refers to one not yet inserted. An import that keeps its rows' numbers, which checks a
+    batch before inserting any of it, leaves relationships to each row's insert, so a row may still refer to an
+    earlier row of its batch.
+  - It encoded before it checked the columns' rules and the indexes, so a row with two faults could be refused
+    with another exception than `Insert`'s.
 
 ## [1.2.2]
 
