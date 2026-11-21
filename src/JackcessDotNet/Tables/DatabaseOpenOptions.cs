@@ -49,11 +49,12 @@ public sealed class DatabaseOpenOptions
     /// What such a database reads is the file as it is at each move of a cursor, and at each row of
     /// <see cref="Table.Rows"/>: the pages a move needs are read from the file again - a page or more at every row -
     /// and nothing read at one move is taken for what the file holds at the next, as another program may have written
-    /// to it in between. An Access 97 file, which is only ever read, is read so whether or not this is set. A table's
-    /// columns and indexes are as they were when the table was first got from the database. Access writes a change it
-    /// has committed once it has been idle for half a second, and can keep the last until it next changes something or
-    /// closes the database, so the last rows Access committed may not be read while Access has the file open; once it
-    /// has closed it, every one is.
+    /// to it in between. An Access 97 file, which is only ever read, is read so whether or not this is set. (With
+    /// <see cref="KeepWritersOut"/>, on Windows, no other program can write to it, and pages are kept as over a
+    /// database opened to be written.) A table's columns and indexes are as they were when the table was first got from the database.
+    /// Access writes a change it has committed once it has been idle for half a second, and can keep the last until it
+    /// next changes something or closes the database, so the last rows Access committed may not be read while Access
+    /// has the file open; once it has closed it, every one is.
     /// </para>
     /// <para>
     /// This library takes none of Access's locks, so nothing keeps a reading from meeting another program's change
@@ -71,8 +72,48 @@ public sealed class DatabaseOpenOptions
     /// opening the database exclusively, and so Access's Compact and Repair, and <see cref="Database.Create(string)"/>
     /// replacing the file (<see cref="DatabaseInUseException"/>). A reading that agrees with itself - every row once,
     /// each with its own values - needs no writer while it is made: read the file when no other program has it open
-    /// for writing. A database opened to be written keeps every writer out while it is open.
+    /// for writing. A database opened to be written keeps every writer out while it is open, and so, on Windows, does
+    /// one opened only to be read with <see cref="KeepWritersOut"/>.
     /// </para>
     /// </summary>
     public bool ReadOnly { get; set; }
+
+    /// <summary>
+    /// Whether a file opened only to be read (<see cref="ReadOnly"/>) keeps every writer out while it is open. Default
+    /// <c>false</c>: a file opened only to be read is shared for reading and writing, and opens beside a writer. Set
+    /// without <see cref="ReadOnly"/>, <see cref="Database.Open(string, DatabaseOpenOptions)"/> throws
+    /// <see cref="ArgumentException"/> before the file is opened, whatever its format.
+    /// <para>
+    /// <c>true</c> shares the file for reading only, as Access holds a database it opens exclusively and read-only
+    /// (DAO's <c>OpenDatabase</c> with both set, ACE's <c>Mode=Share Deny Write</c>). On Windows, while the database is
+    /// open no other program or <see cref="Database"/> opens the file for writing - Access opening it shared, or
+    /// exclusively, is told the file is "already in use", and ACE's default mode opens it read-only instead - and
+    /// readers - Access read-only, a <see cref="Database"/> opened only to be read - open it beside this one. So every
+    /// reading is of one state of the file, as it was when it was opened, and a cursor keeps the page it is on, and an
+    /// index cursor its leaf, from one move to the next, as over a database opened to be written, rather than reading
+    /// them again at every move; <see cref="Table.Rows"/> reads each page once.
+    /// </para>
+    /// <para>
+    /// Elsewhere .NET keeps to a file's sharing only by advisory locks, which let another program, or another
+    /// <see cref="Database"/>, open the file to write beside this one. There the file is still opened sharing reading
+    /// only, but a writer is not kept out, and the database reads as one opened with <see cref="ReadOnly"/> alone does
+    /// - its pages again at every move - so that a reading beside a writer gives what <see cref="ReadOnly"/> says it
+    /// can.
+    /// </para>
+    /// <para>
+    /// A file another program or <see cref="Database"/> has open for writing - Access, while the database is open in
+    /// it - is not opened: <see cref="DatabaseInUseException"/>, and nothing of the file is changed. To read it beside
+    /// the writer instead, open it again without this, as <see cref="ReadOnly"/> describes:
+    /// <code>
+    ///   Database db;
+    ///   try { db = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true, KeepWritersOut = true }); }
+    ///   catch (DatabaseInUseException) { db = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true }); }
+    /// </code>
+    /// </para>
+    /// <para>
+    /// An Access 97 file, which is only ever read, keeps writers out when it is opened with <see cref="ReadOnly"/> and
+    /// this; opened without either, it is shared with writers, as one opened with <see cref="ReadOnly"/> alone is.
+    /// </para>
+    /// </summary>
+    public bool KeepWritersOut { get; set; }
 }

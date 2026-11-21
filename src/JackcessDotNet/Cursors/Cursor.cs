@@ -24,10 +24,10 @@ namespace JackcessDotNet;
 /// </para>
 /// <para>
 /// Over a database opened only to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be
-/// writing to, it reads the pages a move needs at that move, keeping none from one move to the next. It is not told
-/// of the rows that program inserts, as it is of its own database's: one inserted on a page it listed, where it has
-/// still to come, is visited. <see cref="DatabaseOpenOptions.ReadOnly"/> says what a reading beside a writer can and
-/// cannot give.
+/// writing to - unless it keeps writers out (<see cref="DatabaseOpenOptions.KeepWritersOut"/>) - it reads the pages
+/// a move needs at that move, keeping none from one move to the next. It is not told of the rows that program
+/// inserts, as it is of its own database's: one inserted on a page it listed, where it has still to come, is visited.
+/// <see cref="DatabaseOpenOptions.ReadOnly"/> says what a reading beside a writer can and cannot give.
 /// </para>
 /// </summary>
 public class Cursor : IEnumerable<Row>

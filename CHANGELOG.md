@@ -752,6 +752,19 @@ changes with them.
   `Database.Create` replacing the file. A reading that agrees with itself needs no writer while it is made.
   [Sharing a file with Access](https://github.com/markmario/jackcess-dotnet/blob/main/docs/sharing.md) has what was
   measured.
+- **`DatabaseOpenOptions.KeepWritersOut`** (#84): a file opened only to be read keeps every writer out while it is
+  open, sharing the file for reading only, as Access holds a database it opens exclusively and read-only (DAO's
+  `OpenDatabase` with both set, ACE's `Mode=Share Deny Write`). Measured with ACE 16 and DAO 16, in an .mdb and an
+  .accdb: while it is open, DAO shared or exclusive and ACE exclusive are refused ("file already in use"), ACE's
+  default mode opens the database read-only and cannot write, and Access read-only opens it; the file is the same
+  bytes after. On Windows no one can write meanwhile, so it reads as a database opened to be written does, keeping
+  the page a cursor is on from one move to the next: over 500,000 rows, `Table.Rows` reads 61,109 pages where `ReadOnly` alone
+  reads 550,002, and an index cursor 61,941 where it reads 2,050,834 - the pages one opened to be written reads. A
+  file a writer has open is refused with `DatabaseInUseException`, unchanged; open it again with `ReadOnly` alone to
+  read it beside the writer. Elsewhere than Windows .NET's advisory locks do not keep a writer out, so there it reads
+  as `ReadOnly` alone does, its pages again at every move. It needs `ReadOnly`: set without it,
+  `ArgumentException`, before the file is opened, in every format; an Access 97 file opened with both keeps writers
+  out. `ReadOnly` alone, and an Access 97 file opened without either, are as they were.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.

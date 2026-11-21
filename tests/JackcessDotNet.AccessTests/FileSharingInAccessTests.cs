@@ -498,6 +498,121 @@ namespace JackcessDotNet.AccessTests
             AssertTableIs(path, "T", "Id", rows, "after Database.Create was refused the file ACE had open");
         }
 
+        // ── A database opened only to be read, keeping writers out ───────────
+
+        private static readonly DatabaseOpenOptions KeepingWritersOut = new DatabaseOpenOptions { ReadOnly = true, KeepWritersOut = true };
+
+        // While the engine has a file open only to be read, keeping writers out (#84), Access cannot write to it: DAO
+        // opening it shared or exclusively, and ACE exclusively, are refused ("file already in use"); ACE's default mode
+        // opens it read-only, and its INSERT fails. ACE read-only, DAO read-only and DAO exclusively and read-only open
+        // it and read it. The file is the same bytes after, and once the engine has closed it ACE writes to it. Measured
+        // first by tools/ace-read-only-without-writers.ps1, with a FileStream holding the file as the engine does.
+        [Theory]
+        [MemberData(nameof(Formats))]
+        public void while_the_engine_keeps_writers_out_ace_and_dao_only_read_the_file_and_it_is_unchanged(string extension)
+        {
+            var path = NewDatabase(extension);
+            var rows = new List<Values>();
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, Scene, "ace before");
+            byte[] before = File.ReadAllBytes(path);
+
+            using (var db = Database.Open(path, KeepingWritersOut))
+            {
+                Assert.True(db.IsReadOnly);
+                Assert.Contains("already in use", AceRefusal(path, "Share Exclusive"));
+                Assert.Contains("already in use", DaoRefusal(path, exclusive: false, readOnly: false));
+                Assert.Contains("already in use", DaoRefusal(path, exclusive: true, readOnly: false));
+
+                // ACE's default mode, which asks to write, is let in only to read.
+                using (var connection = Ace(path))
+                {
+                    Assert.Equal(rows.Count, AceCount(connection));
+                    using (var insert = new OleDbCommand("INSERT INTO T (Id, V) VALUES (99999, 'refused')", connection))
+                        Assert.Contains("updateable", Assert.Throws<OleDbException>(() => insert.ExecuteNonQuery()).Message);
+                }
+                using (var reader = Ace(path, "Read"))
+                    Assert.Equal(rows.Count, AceCount(reader));
+                Assert.Null(DaoRefusal(path, exclusive: false, readOnly: true));
+                Assert.Null(DaoRefusal(path, exclusive: true, readOnly: true));
+
+                // A second Database: refused to write, let in to read, either way.
+                Assert.Throws<DatabaseInUseException>(() => Database.Open(path).Dispose());
+                using (var second = Database.Open(path, KeepingWritersOut))
+                    AssertSame(Written(rows), Written(EngineRows(second)), "T as a second engine keeping writers out reads it");
+
+                AssertSame(Written(rows), Written(EngineRows(db)), "T as the engine keeping writers out reads it beside Access reading");
+                Assert.Equal("ace before 7", db.GetTable("T").FindRowByPrimaryKey(7)["V"]);
+            }
+            Assert.Equal(before, File.ReadAllBytes(path));
+
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1000, Scene, "ace after");
+            AssertTableIs(path, "T", "Id", rows, "after ACE wrote once the engine keeping writers out had closed");
+        }
+
+        // With ACE or DAO holding the file to write, the engine keeping writers out is refused - they cannot be kept out
+        // while one has it - and the file is as it was; opened only to be read without it, the engine reads beside the
+        // writer, as the refusal says. With ACE or DAO only reading - read-only, or exclusively and read-only - it opens.
+        [Theory]
+        [MemberData(nameof(FormatsAndWriters))]
+        public void the_engine_keeping_writers_out_is_refused_beside_ace_or_dao_writing_and_opens_beside_them_reading(string extension, string writer)
+        {
+            var path = NewDatabase(extension);
+            var rows = new List<Values>();
+            using (var connection = Ace(path)) AceInsertsAtOnce(connection, rows, 1, Scene, "ace");
+
+            Action refusedButReadsBeside = () =>
+            {
+                var refused = Assert.Throws<DatabaseInUseException>(() => Database.Open(path, KeepingWritersOut).Dispose());
+                Assert.Contains("KeepWritersOut", refused.Message);
+                using (var beside = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true }))
+                    AssertReadsOnlyRowsWritten(beside, rows, "beside " + writer + " writing");
+            };
+            Action opensAndReads = () =>
+            {
+                using (var db = Database.Open(path, KeepingWritersOut))
+                    AssertSame(Written(rows), Written(EngineRows(db)), "T as the engine keeping writers out reads it beside " + writer + " reading");
+            };
+
+            if (writer == "ACE")
+            {
+                using (var connection = Ace(path))
+                {
+                    refusedButReadsBeside();
+                    AceInserts(connection, rows, Scene + 1, OneAtATime, "ace beside the refusal");
+                }
+                foreach (var mode in new[] { "Read", "Share Deny Write" })
+                    using (var reader = Ace(path, mode))
+                    {
+                        opensAndReads();
+                        Assert.Equal(rows.Count, AceCount(reader));
+                    }
+            }
+            else
+            {
+                dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+                try
+                {
+                    dynamic dao = dbe.OpenDatabase(path, false, false);
+                    try
+                    {
+                        refusedButReadsBeside();
+                        DaoInserts(dao, rows, Scene + 1, OneAtATime, "dao beside the refusal");
+                    }
+                    finally { dao.Close(); }
+
+                    foreach (var exclusive in new[] { false, true })
+                    {
+                        dynamic reader = dbe.OpenDatabase(path, exclusive, true);
+                        try { opensAndReads(); }
+                        finally { reader.Close(); }
+                    }
+                }
+                finally { Dao.Release(dbe); }
+            }
+
+            AssertTableIs(path, "T", "Id", rows, "after " + writer + " wrote beside the engine refused to keep writers out");
+        }
+
         // ── A database opened only to be read, beside ACE writing ────────────
 
         // The review of the engine's #73, with ACE as the writer: a read-only Database's index cursor comes to the last

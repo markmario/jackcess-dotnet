@@ -132,6 +132,8 @@ JackcessDotNet.DatabaseOpenOptions
 JackcessDotNet.DatabaseOpenOptions.DatabaseOpenOptions() -> void
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileFormat?
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.set -> void
+JackcessDotNet.DatabaseOpenOptions.KeepWritersOut.get -> bool
+JackcessDotNet.DatabaseOpenOptions.KeepWritersOut.set -> void
 JackcessDotNet.DatabaseOpenOptions.Password.get -> string?
 JackcessDotNet.DatabaseOpenOptions.Password.set -> void
 JackcessDotNet.DatabaseOpenOptions.ReadOnly.get -> bool
