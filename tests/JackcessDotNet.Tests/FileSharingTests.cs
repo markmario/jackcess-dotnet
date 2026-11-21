@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -68,9 +69,24 @@ public sealed class FileSharingTests : IDisposable
         return refused;
     }
 
-    /// <summary>Windows refusing a program's open of the file, as it refuses ACE's and DAO's: a sharing violation.</summary>
-    private static void AssertRefusedByWindows(Action open)
-        => Assert.Equal(SharingViolation, Assert.ThrowsAny<IOException>(open).HResult);
+    /// <summary>
+    /// The operating system refusing a program's open of the file, as Windows refuses ACE's and DAO's: a sharing
+    /// violation on Windows, and on Linux the advisory lock .NET takes held by another handle.
+    /// </summary>
+    private static void AssertRefusedByTheSystem(Action open)
+        => Assert.True(DatabaseInUseException.IsSharingViolation(Assert.ThrowsAny<IOException>(open)));
+
+    /// <summary>
+    /// Passes over a test of a writer kept out by a handle that shares the file for reading, where the operating system
+    /// does not keep to that: anywhere but Windows. On Linux .NET takes a shared advisory lock for every handle that
+    /// shares the file at all, so a handle that shares it for reading only lets a writer in, and only one that shares
+    /// nothing keeps anyone out.
+    /// </summary>
+    private static void OnlyWhereSharingIsKeptTo()
+    {
+        if (!PageFile.OSEnforcesSharing)
+            Assert.Skip("This operating system does not keep to a handle's sharing for reading only, so no writer is kept out here.");
+    }
 
     // ── A database opened to be written ──────────────────────────────────────
 
@@ -82,12 +98,13 @@ public sealed class FileSharingTests : IDisposable
     [MemberData(nameof(Formats))]
     public void A_database_opened_to_be_written_keeps_every_other_writer_out_and_lets_readers_in(FileFormat format)
     {
+        OnlyWhereSharingIsKeptTo();
         string path = NewDatabase(format);
         using (var db = Database.Open(path))
         {
             var table = db.GetTable("T");
-            AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
-            AssertRefusedByWindows(() => AsAccessHasItExclusively(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessShares(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessHasItExclusively(path).Dispose());
             AssertInUse(() => Database.Open(path).Dispose(), path);
 
             using (AsAccessReads(path)) { }
@@ -108,6 +125,26 @@ public sealed class FileSharingTests : IDisposable
             Assert.Equal(11, db.GetTable("T").RowCount);
     }
 
+    // On Linux .NET keeps to a handle's sharing by an advisory lock, shared for every handle that shares the file at
+    // all: a database opened to be written lets a second writer in - Access's shared open, and a second Database, which
+    // writes - and keeps out only a handle that shares nothing, and Create. Keep to one writer there: the first keeps
+    // the pages it has read, and does not know of the second's. Measured in CI's Linux job (#122).
+    [Theory]
+    [MemberData(nameof(Formats))]
+    public void On_Linux_a_second_writer_is_let_in_and_only_a_handle_sharing_nothing_is_kept_out(FileFormat format)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            Assert.Skip("What a database opened to be written lets in off Windows was measured on Linux; Windows keeps every other writer out.");
+        string path = NewDatabase(format);
+
+        using var db = Database.Open(path);
+        using (AsAccessShares(path)) { }
+        using (var second = Database.Open(path))
+            second.GetTable("T").Insert(new Row { ["Id"] = 11, ["V"] = "row 11" });
+        AssertRefusedByTheSystem(() => AsAccessHasItExclusively(path).Dispose());
+        AssertInUse(() => Database.Create(path).Dispose(), path);
+    }
+
     // A database just created has the file to itself until it is disposed, as DAO holds a database it creates: writers
     // and readers are kept out, Access in every mode and every Database. Disposed, it is anyone's, and opened again it is
     // shared with readers. It shared the file with readers, through a handle opened after another, sharing nothing, had
@@ -121,8 +158,8 @@ public sealed class FileSharingTests : IDisposable
         string path = NewPath(format == FileFormat.Access2000 ? ".mdb" : ".accdb");
         using (var db = Database.Create(path, format))
         {
-            AssertRefusedByWindows(() => AsAccessShares(path).Dispose());
-            AssertRefusedByWindows(() => AsAccessReads(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessShares(path).Dispose());
+            AssertRefusedByTheSystem(() => AsAccessReads(path).Dispose());
             AssertInUse(() => Database.Open(path).Dispose(), path);
             AssertInUse(() => Database.Open(path, ReadOnly).Dispose(), path);
             db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id");
@@ -140,6 +177,7 @@ public sealed class FileSharingTests : IDisposable
     [MemberData(nameof(Formats))]
     public void A_file_Access_has_open_to_write_is_not_opened_to_be_written_and_is_left_as_it_was(FileFormat format)
     {
+        OnlyWhereSharingIsKeptTo();
         string path = NewDatabase(format);
         byte[] before = File.ReadAllBytes(path);
 

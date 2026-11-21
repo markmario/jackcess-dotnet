@@ -1,6 +1,7 @@
 using System.Data;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using Xunit;
 
@@ -339,6 +340,8 @@ public sealed class CreateTableUndoTests : IDisposable
     [Fact]
     public void A_database_whose_writing_fails_and_whose_file_cannot_be_removed_says_the_file_is_left()
     {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            Assert.Skip("Off Windows a file's read-only attribute does not keep it from being removed, which is how this test keeps the file.");
         _file = _path + ".mdb";
         var file = new PageFile(_file, JetFormat.For(FileFormat.Access2000), FileMode.Create) { WritesBeforeFailure = 3 };
         // The file made read-only while it is being written: the incomplete file cannot be removed. (No other handle

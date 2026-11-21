@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -324,6 +325,26 @@ public sealed class KeepWritersOutTests : IDisposable
             Assert.Equal(shared, PagesRead(path, KeepingWritersOut, t => Read(t, reading), 3000));
         }
         finally { PageFile.OSEnforcesSharingForTests = null; }
+    }
+
+    // On Linux .NET keeps to a handle's sharing by an advisory lock, shared for every handle that shares the file at
+    // all: a file opened to keep writers out lets them in all the same - Access's shared open, and a Database opened to
+    // be written, which writes, and the reading sees it - and keeps out only a handle that shares nothing. So there it
+    // is read as one opened with ReadOnly alone is (the test above). Measured in CI's Linux job (#122).
+    [Fact]
+    public void On_Linux_a_writer_is_let_in_and_only_a_handle_sharing_nothing_is_kept_out()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            Assert.Skip("What a file opened to keep writers out lets in off Windows was measured on Linux; Windows keeps every writer out.");
+        string path = ThreeThousandRows(FileFormat.Access2010);
+
+        using var db = Database.Open(path, KeepingWritersOut);
+        Assert.True(db.File.SharedWithWriters);
+        using (AsAccessShares(path)) { }
+        using (var writer = Database.Open(path))
+            writer.GetTable("T").Insert(new Row { ["Id"] = 3001, ["V"] = "row 3001" });
+        Assert.Equal("row 3001", db.GetTable("T").FindRowByPrimaryKey(3001)!["V"]);
+        Assert.True(DatabaseInUseException.IsSharingViolation(Assert.ThrowsAny<IOException>(() => AsAccessHasItExclusively(path).Dispose())));
     }
 
     public static IEnumerable<object[]> FilesOfEveryFormat() => new[]
