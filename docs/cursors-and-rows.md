@@ -48,7 +48,9 @@ int loaded = people.BulkInsert(ReadRowsFromSomewhere());
   with `OverflowException`; text that is not a date, in a Date/Time column, with `InvalidCastException`; a value
   that is not a GUID with `FormatException`; and a foreign key that refers to no row, with
   `EnforceForeignKeys` on, with `ConstraintViolationException`. The AutoNumber values it checks the row with are
-  not taken.
+  not taken. It answers for the table as it is: a row that refers to another not yet inserted is refused, as its
+  insert would be now. An import that keeps its rows' numbers checks a batch ahead of inserting it, and leaves
+  relationships to each row's insert, so a row may refer to an earlier row of its batch.
 
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's

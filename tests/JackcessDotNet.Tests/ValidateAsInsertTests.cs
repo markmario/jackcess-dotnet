@@ -309,6 +309,54 @@ public sealed class ValidateAsInsertTests : IDisposable
         AssertRandomRowsValidateAsTheyInsert(path, seed: 2000, count: 30);
     }
 
+    /// <summary>
+    /// An import that keeps its rows' numbers checks every row of a batch before it inserts any, and a row may refer to
+    /// an earlier row of the same batch: that check leaves relationships to each row's insert, so the batch goes in,
+    /// as it did before <see cref="Table.Validate"/> looked at relationships. A row that refers to no row is still
+    /// refused, and nothing of its batch is written. <see cref="Table.Validate"/> itself answers for the table as it
+    /// is, and refuses a row that refers to one not yet inserted.
+    /// </summary>
+    [Theory]
+    [InlineData(FileFormat.Access2000)]
+    [InlineData(FileFormat.Access2010)]
+    public void An_import_of_rows_that_refer_to_earlier_rows_of_its_batch_goes_in(FileFormat format)
+    {
+        string path = Path.Combine(_dir, Guid.NewGuid().ToString("N") + (format == FileFormat.Access2000 ? ".mdb" : ".accdb"));
+        using var db = Database.Create(path, format);
+        db.CreateTable("E", new[]
+        {
+            new ColumnDefinition("Id", DataType.Int32) { IsAutoNumber = true },
+            new ColumnDefinition("ParentId", DataType.Int32),
+            new ColumnDefinition("Name", DataType.Text) { MaxLength = 20 },
+        }, "Id");
+        db.CreateRelationship(new RelationshipDefinition("E", "Id", "E", "ParentId") { HasReferentialIntegrity = true });
+        db.EnforceForeignKeys = true;
+
+        static System.Data.DataTable Rows(int first, int last, Func<int, object> parent)
+        {
+            var table = new System.Data.DataTable("E");
+            table.Columns.Add("Id", typeof(int));
+            table.Columns.Add("ParentId", typeof(int));
+            table.Columns.Add("Name", typeof(string));
+            for (int id = first; id <= last; id++) table.Rows.Add(id, parent(id), "row " + id);
+            return table;
+        }
+        var options = new ImportOptions { AppendIfExists = true, KeepIdentity = true };
+
+        var e = db.ImportTable(Rows(1, 50, id => id == 1 ? DBNull.Value : id - 1), options);
+        Assert.Equal(50, e.Rows.Count());
+        Assert.Equal(49, e.FindRowByPrimaryKey(50)!["ParentId"]);
+
+        Assert.Throws<ConstraintViolationException>(() => db.ImportTable(Rows(51, 53, id => id == 52 ? 999 : id - 1), options));
+        Assert.Equal(50, e.Rows.Count());
+
+        // The next row is numbered 51: one that refers to 52, a row not inserted yet, is refused; one that refers to
+        // 50, or to itself, is not.
+        Assert.Throws<ConstraintViolationException>(() => e.Validate(new Row { ["ParentId"] = 52 }));
+        e.Validate(new Row { ["ParentId"] = 50 });
+        e.Validate(new Row { ["ParentId"] = 51 });
+    }
+
     /// <summary>A row whose foreign key refers to no row is refused by both, with referential integrity enforced (#143).</summary>
     [Fact]
     public void A_row_that_breaks_a_relationship_is_refused_by_both()

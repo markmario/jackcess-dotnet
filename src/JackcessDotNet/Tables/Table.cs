@@ -674,8 +674,9 @@ public sealed class Table
     /// indexes, and then the row's encoding, with each long value placed where the insert would put it (#141). The
     /// row is checked with the AutoNumber values the next insert would give it, which are not taken; and
     /// <paramref name="row"/> itself is not changed. A caller writing many rows can check them all first, so a
-    /// refused row stops the batch before any of it is in the file. Rows not yet written are not compared with one
-    /// another: a duplicate within the batch is refused when it is inserted.
+    /// refused row stops the batch before any of it is in the file. The answer is for the table as it is: rows not
+    /// yet written are not compared with one another - a duplicate within the batch is refused when it is inserted -
+    /// and a row whose foreign key refers to a row not yet inserted is refused, as its insert would be now.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
     /// <exception cref="ArgumentException">
@@ -706,7 +707,16 @@ public sealed class Table
     /// The table takes no row (<see cref="InsertRefusal"/>), or the row has a value in an indexed text column that no
     /// key is made for.
     /// </exception>
-    public void Validate(Row row)
+    public void Validate(Row row) => ValidateCore(row, relationships: true);
+
+    /// <summary>
+    /// <see cref="Validate(Row)"/> of a row checked ahead of the batch it is inserted with, the rows before it not
+    /// yet in the table: its relationships are not looked at, since its foreign key may refer to a row of the batch.
+    /// Each row's insert looks at them, in turn.
+    /// </summary>
+    internal void ValidateAheadOfBatch(Row row) => ValidateCore(row, relationships: false);
+
+    private void ValidateCore(Row row, bool relationships)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsureTakesRows();
@@ -717,7 +727,7 @@ public sealed class Table
             asWritten = new Row(row);
             FillAutoNumbers(asWritten);
         }
-        CheckInsert(RowValues.AsWritten(asWritten, _definition));
+        CheckInsert(RowValues.AsWritten(asWritten, _definition), relationships);
     }
 
     /// <summary>
@@ -731,13 +741,14 @@ public sealed class Table
     /// Everything an insert refuses <paramref name="written"/> for, in the insert's order, with nothing written: the
     /// columns' rules, the table's relationships, its indexes - a duplicate is looked for unless the indexes are
     /// built after a bulk insert - and the row's encoding, with each long value placed by the table's own pages.
-    /// <see cref="Insert"/> writes what this returns; <see cref="Validate"/> does no more than this, so the two
-    /// cannot refuse a row differently.
+    /// <see cref="Insert"/> writes what this returns; <see cref="Validate(Row)"/> does no more than this, so the two
+    /// cannot refuse a row differently. Without <paramref name="relationships"/> the relationships are left to the
+    /// insert (<see cref="ValidateAheadOfBatch"/>).
     /// </summary>
-    private CheckedInsert CheckInsert(Row written)
+    private CheckedInsert CheckInsert(Row written, bool relationships = true)
     {
         EnsureColumnRules(written, assignedOnly: false);
-        _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
+        if (relationships) _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
 
         var entries = _indexes.EntriesFor(written, enforce: true);
         // A bulk insert into a table with no rows builds the trees once its rows are in (BulkInsert): until then

@@ -852,7 +852,10 @@ changes with them.
     and an Int32 given `long.MaxValue` (`OverflowException`); text that is not a date in a Date/Time column
     (`InvalidCastException`); and a number for a Guid (`FormatException`). It refuses them now.
   - It did not check relationships: with `EnforceForeignKeys` on, it accepted a row whose foreign key refers to no
-    row, which `Insert` refuses with `ConstraintViolationException`.
+    row, which `Insert` refuses with `ConstraintViolationException`. It answers for the table as it is, so it
+    refuses a row that refers to one not yet inserted. An import that keeps its rows' numbers, which checks a
+    batch before inserting any of it, leaves relationships to each row's insert, so a row may still refer to an
+    earlier row of its batch.
   - It encoded before it checked the columns' rules and the indexes, so a row with two faults could be refused
     with another exception than `Insert`'s.
 
