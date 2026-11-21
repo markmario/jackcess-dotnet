@@ -224,14 +224,15 @@ jobs:
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
 
-  # The tests on Linux, where the library runs as well (#122): .NET 10, and the
-  # netstandard2.0 assembly on .NET 10, one after the other in one job, as an
-  # application on .NET 8 or 9 on Linux loads it. What differs there is how a
-  # file is shared: .NET keeps to a handle's sharing by advisory locks, so a
-  # test of a writer kept out skips, saying why, and FileSharingTests and
-  # KeepWritersOutTests pin what Linux does instead (docs/sharing.md).
+  # The tests on Linux, where the library runs as well (#122): .NET 10. What
+  # differs there is how a file is shared: .NET keeps to a handle's sharing by
+  # advisory locks, so a test of a writer kept out skips, saying why, and
+  # FileSharingTests and KeepWritersOutTests pin what Linux does instead
+  # (docs/sharing.md). The netstandard2.0 assembly on .NET 10 as well, one after
+  # the other, took 8m40s, longer than any other job; alone the tests take
+  # under four minutes. That assembly runs on .NET 10 on Windows, above.
   linux:
-    name: test (net10.0 and netstandard2.0 on net10.0, Linux)
+    name: test (net10.0, Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -248,21 +249,12 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-linux-${{ hashFiles('**/*.csproj', 'global.json') }}
 
-      - name: Build (net10.0)
+      - name: Build
         run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework net10.0
 
-      - name: Test (net10.0)
+      - name: Test
         shell: pwsh
         run: ./scripts/Invoke-TestShard.ps1 -Framework net10.0 -TrxName test-results-linux-net10.0.trx
-
-      - name: Build (netstandard2.0 on net10.0)
-        if: always()
-        run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true
-
-      - name: Test (netstandard2.0 on net10.0)
-        if: always()
-        shell: pwsh
-        run: ./scripts/Invoke-TestShard.ps1 -Framework net10.0 -Properties '-p:NetStandardAsset=true' -TrxName test-results-linux-netstandard2.0-net10.0.trx
 
       - name: Upload test results
         if: always()
