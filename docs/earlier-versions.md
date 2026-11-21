@@ -184,6 +184,17 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     - **The row is in none of the catalog's indexes**: those versions left it out. A rename or a drop of the table
       is refused without `VerifyIndexes`, as Access refuses such a change ([above](#indexes-that-do-not-hold-every-row)),
       and made with it. The refusal quotes the table's name as it is listed.
+    - **A new name that begins with U+FEFF** is one Access takes for a table it made, and for a column and an
+      index, and keeps as written: measured with Microsoft 365's DAO 16.0 by `tools/dao-feff-names.ps1`, which
+      creates and renames each so and reads the names back ([#129]). This library reads such a table's name in
+      the catalog by its bytes, so the name is written as the table's Text values are, compressed in runs:
+      0xFF 0xFE, then a byte for each character 0x01 to 0xFF and two for each other, with a 0x00 byte where one
+      kind of run gives way to the other, the first run being of single bytes. A name is refused, with an
+      `ArgumentException` before anything is written, where that would not read back: where it is longer than the
+      name's UTF-16LE, or where the name has a character above 0xFF whose low byte is 0x00 (U+0100, U+3000).
+      `"\uFEFFaaaa"` is kept (10 bytes either way); `"\uFEFFabc"` (9 against 8) and `"\uFEFFaaaa\uFEFF"` (13
+      against 12) are refused ([Text and Memo](data-types.md#text-and-memo)). Its columns' and indexes' names are
+      read from its definition as written, and take such a name.
     - **Compacting the file in Access drops the table.** `DBEngine.CompactDatabase` of either test file leaves out
       the table and its row, and adds MSysCompactError, with "The search key was not found in any record" for
       MSysObjects. To keep its rows, copy them into a table this version creates before the file is compacted.
@@ -198,6 +209,15 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     which DAO leaves out. Nothing tells them from UTF-16LE Access wrote. Earlier versions of this library read them
     as compressed text; this one reads them as Access does. Memo values kept in the row read as written, as Access
     reads them. Writing the right text over such a value mends it.
+    - **Some of Access's other ways of reading differ** ([#129]). The reading this library follows is a DAO
+      table-type recordset's, which a DAO dynaset of the table and an ACE query of it give too. Measured with
+      Microsoft 365's ACE 16 and DAO 16.0 by `tools/earlier-filled-text-readers.ps1` on
+      `engine-8e41563-filled-table.mdb`: a DAO snapshot of a query of row 7 of `Filled` alone, and an ACE query
+      of it sorted by Name, read `Long` where the others read U+FEFF U+6F4C U+676E; a value of an odd number of
+      bytes - `Alice`, `Bob`, `Zoë`, `Mixed` - fails there with "Number of bytes of a UNICODE string is not even";
+      and a snapshot of the whole table, a dynaset sorted by Name and an ACE query sorted by Id fail as they open
+      ([Text and Memo](data-types.md#text-and-memo) lists each reading). Text such a version wrote that begins
+      with U+FEFF, `"\uFEFFab"` as `FF FE 61 00 62 00`, reads as `ab` through a snapshot of its row alone.
 - **Tables without properties**, so with no Required or Allow Zero Length to hold rows to:
   [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 
@@ -218,7 +238,8 @@ holds values in the layout DAO's table-type recordset writes, beside the other t
 with a table each made; `engine-8e41563-filled-table.mdb` is a table DAO made, without Unicode compression, that
 8e41563 wrote to; `earlier-created-tables.tsv` is what DAO reads of them (`tools/earlier-created-tables.ps1`, which
 also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews). `tools/earlier-created-catalog-names.ps1`
-reads the first two's MSysObjects with DAO and ACE.
+reads the first two's MSysObjects with DAO and ACE, and `tools/earlier-filled-text-readers.ps1` the third's `Filled`
+by each of their ways of reading it.
 
 [Back to contents](README.md)
 
@@ -228,3 +249,4 @@ reads the first two's MSysObjects with DAO and ACE.
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
 [#121]: https://github.com/markmario/jackcess-dotnet/issues/121
+[#129]: https://github.com/markmario/jackcess-dotnet/issues/129
