@@ -51,9 +51,11 @@
 # there is taken to be slow, and named in a warning; one that takes far longer than its number is too, in the job's
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
 # makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
-# missing from any table - the samples', the full sweeps' or the 32-bit run's - a failure rather than a warning, so that
-# the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error says what each table it
-# is missing from wants: the seconds it took, in this run's own table.
+# missing from the samples' or the full sweeps' table - or, in a 32-bit run, from the 32-bit run's - a failure rather
+# than a warning, so that the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error
+# says what each table it is missing from wants: the seconds it took, in this run's own table. CI's 32-bit shards run
+# on a push to main, every night and in a run by hand, and on a pull request only when it asks (the ci:access-x86
+# label), so a piece missing from the 32-bit table is a warning in any other run, there and on main alike.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
@@ -588,8 +590,14 @@ foreach ($unit in ($ordered | Sort-Object { if ($took.Contains($_.Name)) { $took
 }
 if ($env:GITHUB_STEP_SUMMARY) { ($summary + '') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }
 
-if ($RequireTimings -and $untimed.Count) {
+# A piece missing from a table fails a run with -RequireTimings when the table is one that run's kind of run checks:
+# the samples' and the full sweeps' always, the 32-bit run's only in a 32-bit run, since a pull request's run - the one
+# given -RequireTimings - has no 32-bit shards unless it asks for them (.github/workflows/ci.yml). Otherwise it is a
+# warning, saying the same.
+$required = @($untimed.Keys | Where-Object { $RequireTimings -and @($untimed[$_] | Where-Object { $_ -ne 'x86' -or $X86 }).Count })
+if ($untimed.Count) {
     foreach ($name in $untimed.Keys) {
+        $level = if ($required -contains $name) { 'error' } else { 'warning' }
         # What each table it is missing from wants. This run measures its own table's number (its last attempt's, if it
         # was run again); the samples' and the full sweeps' stand in for each other until a run of the other measures it;
         # a 32-bit number comes from a 32-bit shard's error, and a 64-bit one from a 64-bit shard's.
@@ -601,10 +609,10 @@ if ($RequireTimings -and $untimed.Count) {
             elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its error" }
             else { "`$table.$t`: the seconds a 64-bit shard gives in its error" }
         }
-        Write-Host "::error::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
+        Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
-    if (-not $failed.Count) {
-        Write-Host "::error::$($untimed.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($untimed.Keys -join ', ')"
+    if ($required.Count -and -not $failed.Count) {
+        Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')"
         exit 1
     }
 }
