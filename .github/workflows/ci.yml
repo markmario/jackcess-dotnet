@@ -276,28 +276,14 @@ jobs:
   access-build:
     name: build (Access referee tests)
     runs-on: windows-latest
-    outputs:
-      # Whether this run has the 32-bit Access shards, for access-tests' matrix.
-      x86: ${{ steps.x86.outputs.x86 }}
+    env:
+      # Whether this run has the 32-bit Access shards, as access-tests' matrix says: the nightly run, a run by hand,
+      # and a pull request with the ci:access-x86 label.
+      X86: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:access-x86')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      # Whether this run has the 32-bit Access shards: on a push, the schedule
-      # and a run by hand, and on a pull request that changes the Access
-      # referee tests, scripts/Invoke-AccessTests.ps1 or this file's Access
-      # jobs, or that has the ci:access-x86 label (scripts/Get-AccessX86Run.ps1).
-      - name: Whether this run has the 32-bit Access shards
-        id: x86
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >
-          ./scripts/Get-AccessX86Run.ps1 -Event '${{ github.event_name }}'
-          -Labelled '${{ contains(github.event.pull_request.labels.*.name, 'ci:access-x86') }}'
-          -Repository '${{ github.repository }}' -PullRequest '${{ github.event.pull_request.number }}'
-          -BaseSha '${{ github.event.pull_request.base.sha }}' -HeadSha '${{ github.event.pull_request.head.sha }}'
 
       # Why these SDKs: the build job's.
       - uses: actions/setup-dotnet@v6
@@ -319,7 +305,7 @@ jobs:
 
       # The same, as a 32-bit program (bin/Release-x86), for the 32-bit shards.
       - name: Build (32-bit)
-        if: steps.x86.outputs.x86 == 'true'
+        if: env.X86 == 'true'
         run: >
           dotnet build tests/JackcessDotNet.AccessTests --configuration Release -p:TestX86=true
           -p:GeneratePackageOnBuild=false -p:ContinuousIntegrationBuild=true
@@ -333,7 +319,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the tests (32-bit)
-        if: steps.x86.outputs.x86 == 'true'
+        if: env.X86 == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: access-tests-x86
@@ -356,16 +342,15 @@ jobs:
   # redistributable's x86 installer - 32-bit ACE 16 and DAO 16 - on runners of
   # their own (#101). A 32-bit process is where .NET Framework computes doubles
   # with the x87 unit, whose precision ACE changes (#98), and where Access's own
-  # 32-bit engine answers. They take two more jobs of about seven minutes, so
-  # they run on a push to main, every night and in a run by hand, and on a pull
-  # request only when it changes what they run - the Access referee tests,
-  # scripts/Invoke-AccessTests.ps1, or access-build's and access-tests' lines
-  # here other than comments - or has the ci:access-x86 label, asked of GitHub
-  # as access-build runs (a label added later: push, or run the run again). A
-  # change under src/ alone does not bring
-  # them: main's run is the net for that. access-build says which
-  # (scripts/Get-AccessX86Run.ps1). The gate job needs access-tests whichever
-  # shards it has. They run the samples whatever the event: the full sweeps, over
+  # 32-bit engine answers. They run in the nightly run and in a run by hand,
+  # and on a pull request only with the ci:access-x86 label - not on a push to
+  # main, which they must not turn red, and not on any other pull request. The
+  # nightly run is where a 32-bit difference shows: a pull request that adds or
+  # changes a referee test should carry the label. The label is read from the
+  # event that starts the run, and one set as the pull request is created can
+  # miss its first run: label it, then push, or close and reopen it. The gate
+  # job needs access-tests whichever shards it has. They run the samples
+  # whatever the event: the full sweeps, over
   # an hour of processes in 64 bits, are the 64-bit shards', and some pieces
   # take three times as long in 32 bits.
   access-tests:
@@ -384,12 +369,13 @@ jobs:
       # download and install. Two in 32 bits, three processes at a time: their tests take some 38 minutes of
       # processes (run 44877333525), about seven minutes a shard, as long as the longest framework job.
       #
-      # The four 64-bit shards, and the two 32-bit ones where access-build says.
+      # The four 64-bit shards, and the two 32-bit ones in the nightly run, a run by hand, and a pull request with the
+      # ci:access-x86 label.
       matrix:
         include: >-
           ${{ fromJSON(format('[{0}{1}]',
           '{"arch":"x64","shard":1,"shards":4,"parallel":2},{"arch":"x64","shard":2,"shards":4,"parallel":2},{"arch":"x64","shard":3,"shards":4,"parallel":2},{"arch":"x64","shard":4,"shards":4,"parallel":2}',
-          needs.access-build.outputs.x86 == 'true'
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:access-x86'))
           && ',{"arch":"x86","shard":1,"shards":2,"parallel":3},{"arch":"x86","shard":2,"shards":2,"parallel":3}' || '')) }}
     env:
       JACKCESS_ACCESS_REQUIRED: '1'

@@ -80,15 +80,18 @@ on Windows, and need one of:
 - Access itself, 64-bit (Microsoft 365's, say).
 
 CI runs them in a 32-bit process too, built with `-p:TestX86=true`, on runners of their own with the
-redistributable's x86 installer (`accessdatabaseengine.exe /quiet`): 32-bit ACE 16 and DAO 16. That run is two jobs
-of about seven minutes, so it is made on a push to `main`, every night and in a run by hand, always with the
-samples, and on a pull request that changes what it runs: a file under `tests/JackcessDotNet.AccessTests/`,
-`scripts/Invoke-AccessTests.ps1` or `scripts/Get-AccessX86Run.ps1`, or the Access jobs of `.github/workflows/ci.yml`
-(not their comments). `scripts/Get-AccessX86Run.ps1` decides, from the pull request's files. Any other pull request
-gets it with the `ci:access-x86` label. The label is asked of GitHub as the run's `access-build` job starts, so one
-set with `gh pr create --label`, which GitHub adds just after the pull request is opened, counts for the first run; a
-label added later starts no run of its own: push, or run the last run again (`gh run rerun <id>`). A change under `src/` alone
-does not bring it, since nearly every pull request makes one; `main`'s run is the net for those.
+redistributable's x86 installer (`accessdatabaseengine.exe /quiet`): 32-bit ACE 16 and DAO 16, always with the
+samples. That run is made **every night and in a run by hand** - not on a push to `main`, which it must not turn red,
+and not on a pull request unless the pull request has the `ci:access-x86` label. So the nightly run is where a
+difference in 32 bits first shows. A pull request that adds or changes an Access referee test, or what runs them,
+should carry the label, so that it is refereed in 32 bits before it merges:
+
+- The label is read from the event that starts the run. One set as the pull request is created
+  (`gh pr create --label`) can be added after the event that starts the first run, and then that run has no 32-bit
+  shards: label the pull request, then push to it, or close and reopen it. A label added later starts no run of its
+  own; the next push or reopening has the shards.
+- A run by hand on the branch has them too: `gh workflow run ci.yml --ref <branch> -f full_sweeps=false`.
+
 A piece missing from its timing table (`$table.x86` in `Invoke-AccessTests.ps1`) is a warning, except in a 32-bit
 run of a pull request, where it fails as the other tables' do.
 
