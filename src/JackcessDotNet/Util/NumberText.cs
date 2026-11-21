@@ -36,7 +36,7 @@ internal static class NumberText
     /// <exception cref="OverflowException"><paramref name="text"/> is a number past what a double holds.</exception>
     internal static double ToDouble(string text, NumberStyles styles, IFormatProvider? provider)
     {
-        if (Read(text, styles, provider, out double symbol) is not { } number) return symbol;
+        if (Read(text, styles, provider, DoubleDigitsRead, out double symbol) is not { } number) return symbol;
         return number.Cut(DoubleDigitsRead).NearestDouble()
                ?? throw new OverflowException($"'{text}' is a number past what a Double holds.");
     }
@@ -46,17 +46,18 @@ internal static class NumberText
     /// <exception cref="OverflowException"><paramref name="text"/> is a number past what a single holds.</exception>
     internal static float ToSingle(string text, NumberStyles styles, IFormatProvider? provider)
     {
-        if (Read(text, styles, provider, out double symbol) is not { } number) return (float)symbol;
+        if (Read(text, styles, provider, SingleDigitsRead, out double symbol) is not { } number) return (float)symbol;
         return number.Cut(SingleDigitsRead).NearestSingle()
                ?? throw new OverflowException($"'{text}' is a number past what a Single holds.");
     }
 
-    // The number text denotes, exactly; or null, with the runtime's own number, for text it reads as NaN or an
+    // The number of the first 'digits' significant digits of text, cut toward zero - read in time in proportion to the
+    // text, however long; or null, with the runtime's own number, for text it reads as NaN or an
     // infinity by their symbols - and for any text the digits are not read from to its end, a form of a culture
     // ExactNumber.TryRead does not follow, which is taken as the runtime takes it rather than read in part. Whether
     // it is a number at all is the runtime's to say: .NET Framework refuses one past a double's range, which is a
     // number all the same.
-    private static ExactNumber? Read(string text, NumberStyles styles, IFormatProvider? provider, out double symbol)
+    private static ExactNumber? Read(string text, NumberStyles styles, IFormatProvider? provider, int digits, out double symbol)
     {
         var info = NumberFormatInfo.GetInstance(provider);
         bool past = false;
@@ -66,7 +67,7 @@ internal static class NumberText
             symbol = double.NaN;
             past = true;
         }
-        if (ExactNumber.TryRead(text, styles, info, out ExactNumber number)) return number;
+        if (ExactNumber.TryRead(text, styles, info, out ExactNumber number, keep: digits)) return number;
         if (past) throw new OverflowException($"'{text}' is a number past what a Double holds.");
         return null;
     }

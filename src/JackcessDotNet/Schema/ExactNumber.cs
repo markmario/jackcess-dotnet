@@ -373,10 +373,13 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
     /// exponent, each where the style allows it. Only the digits, the separators and the sign are read here: whether
     /// the text is a number at all is the runtime's to say, and is asked first
     /// (<see cref="double.Parse(string, NumberStyles, IFormatProvider)"/>). False for text without digits, which
-    /// the runtime reads as NaN or an infinity by their symbols, and for text not read to its end. A number more than ten to the power 100,000 from 1
-    /// is read as one that far, as <see cref="TryParse(string, out ExactNumber)"/> reads it.
+    /// the runtime reads as NaN or an infinity by their symbols, and for text not read to its end. A number more than
+    /// ten to the power 100,000 from 1 is read as one that far, as <see cref="TryParse(string, out ExactNumber)"/>
+    /// reads it. With <paramref name="keep"/>, the number is the text's first that many significant digits, cut
+    /// toward zero, as <see cref="Cut"/> cuts it: the digits after them are only counted, so that text of any length
+    /// is read in time in proportion to it.
     /// </summary>
-    internal static bool TryRead(string text, NumberStyles styles, NumberFormatInfo info, out ExactNumber number)
+    internal static bool TryRead(string text, NumberStyles styles, NumberFormatInfo info, out ExactNumber number, int keep = int.MaxValue)
     {
         number = default;
         int at = 0;
@@ -417,9 +420,11 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
             else break;
         }
 
-        // The digits, with a decimal separator among them and group separators before it.
+        // The digits, with a decimal separator among them and group separators before it. Past 'keep' significant
+        // digits a digit is only counted, before the point, for the power of ten of those kept.
         var digits = new System.Text.StringBuilder();
         int places = 0;
+        long dropped = 0;
         bool point = false, anyDigit = false;
         while (at < text.Length)
         {
@@ -428,8 +433,15 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
             if (c >= '0' && c <= '9')
             {
                 anyDigit = true;
-                if (digits.Length > 0 || c != '0') digits.Append(c);
-                if (point) places++;
+                if (digits.Length >= keep)
+                {
+                    if (!point) dropped++;
+                }
+                else
+                {
+                    if (digits.Length > 0 || c != '0') digits.Append(c);
+                    if (point) places++;
+                }
                 at++;
             }
             else if (!point && (styles & NumberStyles.AllowDecimalPoint) != 0
@@ -500,7 +512,7 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
         while (at < text.Length && text[at] == '\0') at++;
         if (at < text.Length) return false;
 
-        number = FromDigits(digits, places, exponent, negative);
+        number = FromDigits(digits, places, exponent + dropped, negative);
         return true;
     }
 
