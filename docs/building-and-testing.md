@@ -85,7 +85,9 @@ of about seven minutes, so it is made on a push to `main`, every night and in a 
 samples, and on a pull request that changes what it runs: a file under `tests/JackcessDotNet.AccessTests/`,
 `scripts/Invoke-AccessTests.ps1` or `scripts/Get-AccessX86Run.ps1`, or the Access jobs of `.github/workflows/ci.yml`
 (not their comments). `scripts/Get-AccessX86Run.ps1` decides, from the pull request's files. Any other pull request
-gets it with the `ci:access-x86` label, read when its run starts (label it, then push). A change under `src/` alone
+gets it with the `ci:access-x86` label. The label is asked of GitHub as the run's `access-build` job starts, so one
+set with `gh pr create --label`, which GitHub adds just after the pull request is opened, counts for the first run; a
+label added later starts no run of its own: push, or run the last run again (`gh run rerun <id>`). A change under `src/` alone
 does not bring it, since nearly every pull request makes one; `main`'s run is the net for those.
 A piece missing from its timing table (`$table.x86` in `Invoke-AccessTests.ps1`) is a warning, except in a 32-bit
 run of a pull request, where it fails as the other tables' do.

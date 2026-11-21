@@ -10,7 +10,11 @@
 #     after access-tests, without lines that are only a comment - a change elsewhere in ci.yml (the framework jobs,
 #     say), or to a comment, does not count;
 #
-# or when it has the ci:access-x86 label. A push to main, the nightly run and a run by hand always have them. A change
+# or when it has the ci:access-x86 label. The labels are asked of GitHub as the job runs, not read from the event that
+# started the run: `gh pr create --label` adds the label after the pull request is opened, so the event of its first run
+# may not carry it (#150's did not), and a run made again after labelling sees the label too. A label added to an open
+# pull request starts no run of its own: push, or run the last run again. A push to main, the nightly run and a run by
+# hand always have them. A change
 # under src/ alone does not bring them: nearly every pull request changes src/, and main's run, which has them, is the
 # net for what such a change does in 32 bits.
 #
@@ -37,6 +41,14 @@ function Write-Answer([bool] $x86, [string] $why) {
 
 if ($Event -ne 'pull_request') { Write-Answer $true "on a $Event" }
 if ($Labelled -eq 'true') { Write-Answer $true 'the pull request has the ci:access-x86 label' }
+try {
+    $labels = @(& gh api "repos/$Repository/issues/$PullRequest/labels" --jq '.[].name')
+    if ($LASTEXITCODE) { throw "gh api ... /issues/$PullRequest/labels ended with $LASTEXITCODE" }
+    if ($labels -contains 'ci:access-x86') { Write-Answer $true 'the pull request has the ci:access-x86 label (added after the event that started this run)' }
+} catch {
+    Write-Host "::warning::The pull request's labels could not be asked of GitHub ($($_.Exception.Message)), so this run has the 32-bit Access shards."
+    Write-Answer $true 'as GitHub could not be asked'
+}
 
 # ci.yml's Access jobs: from access-build's line to the line of the job after access-tests.
 function Get-AccessJobs([string] $text) {

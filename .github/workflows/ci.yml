@@ -360,8 +360,9 @@ jobs:
   # they run on a push to main, every night and in a run by hand, and on a pull
   # request only when it changes what they run - the Access referee tests,
   # scripts/Invoke-AccessTests.ps1, or access-build's and access-tests' lines
-  # here other than comments - or has the ci:access-x86 label, read when the
-  # run starts (label it, then push). A change under src/ alone does not bring
+  # here other than comments - or has the ci:access-x86 label, asked of GitHub
+  # as access-build runs (a label added later: push, or run the run again). A
+  # change under src/ alone does not bring
   # them: main's run is the net for that. access-build says which
   # (scripts/Get-AccessX86Run.ps1). The gate job needs access-tests whichever
   # shards it has. They run the samples whatever the event: the full sweeps, over
