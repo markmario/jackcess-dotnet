@@ -198,6 +198,14 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     which DAO leaves out. Nothing tells them from UTF-16LE Access wrote. Earlier versions of this library read them
     as compressed text; this one reads them as Access does. Memo values kept in the row read as written, as Access
     reads them. Writing the right text over such a value mends it.
+    - **Access's other ways of reading differ** ([#129]). The reading this library follows is the direct one: a
+      DAO table-type recordset or dynaset, and an ACE query that does not sort. A DAO snapshot, of the table or of
+      a query, and an ACE query that sorts read such a value as compressed text, as earlier versions of this
+      library did: measured with Microsoft 365's ACE 16 and DAO 16.0 by `tools/earlier-filled-text-readers.ps1` on
+      `engine-8e41563-filled-table.mdb`, row 7 of `Filled` reads `Long` there and U+FEFF U+6F4C U+676E directly;
+      a value of an odd number of bytes - `Alice`, `Bob`, `Zoë`, `Mixed` - fails there with "Number of bytes of a
+      UNICODE string is not even", and a snapshot of the whole table fails as it opens. Text such a version wrote
+      that begins with U+FEFF, `"\uFEFFab"` as `FF FE 61 00 62 00`, reads as `ab` there.
 - **Tables without properties**, so with no Required or Allow Zero Length to hold rows to:
   [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
 
@@ -218,7 +226,8 @@ holds values in the layout DAO's table-type recordset writes, beside the other t
 with a table each made; `engine-8e41563-filled-table.mdb` is a table DAO made, without Unicode compression, that
 8e41563 wrote to; `earlier-created-tables.tsv` is what DAO reads of them (`tools/earlier-created-tables.ps1`, which
 also runs the 1.0.0 and 1.2.0 packages, 442bbf8 and the 2.0.0 previews). `tools/earlier-created-catalog-names.ps1`
-reads the first two's MSysObjects with DAO and ACE.
+reads the first two's MSysObjects with DAO and ACE, and `tools/earlier-filled-text-readers.ps1` the third's `Filled`
+by each of their ways of reading it.
 
 [Back to contents](README.md)
 
@@ -228,3 +237,4 @@ reads the first two's MSysObjects with DAO and ACE.
 [#81]: https://github.com/markmario/jackcess-dotnet/issues/81
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
 [#121]: https://github.com/markmario/jackcess-dotnet/issues/121
+[#129]: https://github.com/markmario/jackcess-dotnet/issues/129
