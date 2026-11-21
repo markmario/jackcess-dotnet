@@ -22,9 +22,25 @@ public sealed class NumberTextTests : IDisposable
 
     public void Dispose() { if (File.Exists(_path)) File.Delete(_path); }
 
+    private static readonly string Asset = Path.Combine(AppContext.BaseDirectory, "Assets", "ace-text-to-float.tsv");
+
+    /// <summary>
+    /// The file is what <c>tools/ace-text-to-float.ps1 -Picks 3</c> wrote, 4,375 lines, which runs of it on two
+    /// machines wrote alike, line for line. It is pinned by its SHA-256, so that a change to it is made on purpose: by
+    /// running the script again and changing the hash here with it.
+    /// </summary>
+    [Fact]
+    public void The_measurements_are_the_ones_the_script_wrote()
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        string hash = BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Asset))).Replace("-", "");
+        Assert.Equal("42561551CEC128ACEBA247BB5D1D4437B23B76E1BE20E7083E58A3AD8B52E372", hash);
+        Assert.Equal(4375, File.ReadLines(Asset).Count());
+    }
+
     private static List<string[]> Lines(string kind)
     {
-        var lines = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Assets", "ace-text-to-float.tsv")).ToList();
+        var lines = File.ReadLines(Asset).ToList();
         Assert.StartsWith("# culture en-AU;", lines[0]);
         return lines.Where(l => l.StartsWith(kind + "\t", StringComparison.Ordinal)).Select(l => l.Split('\t')).ToList();
     }
@@ -231,6 +247,54 @@ public sealed class NumberTextTests : IDisposable
     }
 
     /// <summary>
+    /// A row an earlier version wrote with a double - its text the runtime's: "0.30000000000000004" on .NET, "1E-05"
+    /// on .NET Framework - is not found by that double, which is looked for as the text Access writes for it ("0.3",
+    /// "0.00001"); it is found by its text.
+    /// </summary>
+    [Fact]
+    public void A_row_an_earlier_version_wrote_with_a_double_is_found_by_its_text_and_not_by_the_double()
+    {
+        using var db = Database.Create(_path, FileFormat.Access2016);
+        var table = db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("T", DataType.Text) { MaxLength = 255 } }, new[] { "Id" });
+        table.AddIndex(new IndexDefinition("ixT", "T"));
+        InCulture("en-AU", () =>
+        {
+            table.Insert(new Row { ["Id"] = 1, ["T"] = "0.30000000000000004" });
+            table.Insert(new Row { ["Id"] = 2, ["T"] = "1E-05" });
+            foreach (var (id, number, text) in new[] { (1, 0.1 + 0.2, "0.30000000000000004"), (2, 1e-5, "1E-05") })
+            {
+                Assert.Null(table.CreateCursor().FindRow("T", number));
+                Assert.Null(table.CreateIndexCursor("ixT").FindRow("T", number));
+                Assert.Null(table.CreateIndexCursor("ixT").FindRowByEntry(number));
+                Assert.Equal(id, (int)table.CreateCursor().FindRow("T", text)!["Id"]!);
+                Assert.Equal(id, (int)table.CreateIndexCursor("ixT").FindRowByEntry(text)!["Id"]!);
+            }
+            return 0;
+        });
+    }
+
+    /// <summary>
+    /// Text of a million digits is read in time in proportion to it: only its first 20 (12) significant digits are
+    /// kept, the rest counted. Building a number of every digit took 18 s on .NET and three minutes on .NET
+    /// Framework; the bound here is far above what reading it takes and far below that.
+    /// </summary>
+    [Fact]
+    public void Text_of_a_million_digits_is_read_as_its_first_digits_and_quickly()
+    {
+        string text = "1." + new string('3', 1_000_000) + "7";
+        string written = "-0.000" + new string('9', 1_000_000) + "E+5";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        double d = NumberText.ToDouble(text, NumberStyles.Any, Invariant);
+        float f = NumberText.ToSingle(text, NumberStyles.Any, Invariant);
+        double w = NumberText.ToDouble(written, NumberStyles.Any, Invariant);
+        watch.Stop();
+        Assert.Equal(Bits(NumberText.ToDouble("1.3333333333333333333", NumberStyles.Any, Invariant)), Bits(d));
+        Assert.Equal(Bits(NumberText.ToSingle("1.33333333333", NumberStyles.Any, Invariant)), Bits(f));
+        Assert.Equal(Bits(NumberText.ToDouble("-0.00099999999999999999999E+5", NumberStyles.Any, Invariant)), Bits(w));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"{watch.Elapsed.TotalSeconds} s");
+    }
+
+    /// <summary>
     /// The digits of text are read as the runtime reads them in every culture it has: number and currency forms,
     /// group and decimal separators - a no-break space among them typed as a space too - signs and parentheses. Each
     /// number has nine digits or fewer, which every runtime reads exactly, so the digits read here must make the
@@ -266,19 +330,48 @@ public sealed class NumberTextTests : IDisposable
         Assert.True(wrong.Count == 0, string.Join("\n", wrong.Take(40)));
     }
 
+    /// <summary>
+    /// Text in a culture's own separators - "_" below stands for its group separator, whichever space it is - is
+    /// read whole, as the runtime reads it, on every target.
+    /// </summary>
     [Theory]
-    [InlineData("fr-FR", "1 234,5", 1234.5)]
-    [InlineData("fr-FR", "-1 234 567,25 €", -1234567.25)]
-    [InlineData("de-DE", "1.234,5", 1234.5)]
-    [InlineData("en-US", "($1,234.50)", -1234.5)]
+    [InlineData("fr-FR", "1_234,5", 1234.5)]
+    [InlineData("fr-FR", "-1_234_567,25 €", -1234567.25)]
+    [InlineData("de-DE", "1_234,5", 1234.5)]
+    [InlineData("en-US", "($1_234.50)", -1234.5)]
     [InlineData("en-US", "1.5-", -1.5)]
-    public void Text_with_a_culture_s_separators_is_read_whole(string culture, string text, double expected)
+    public void Text_with_a_culture_s_separators_is_read_whole(string culture, string given, double expected)
     {
         var info = new CultureInfo(culture);
-        try { double.Parse(text, NumberStyles.Any, info); }
-        catch (FormatException) { return; }   // a form this runtime's culture data does not take
+        string text = given.Replace("_", info.NumberFormat.NumberGroupSeparator);
+        Assert.Equal(expected, double.Parse(text, NumberStyles.Any, info));
         Assert.True(ExactNumber.TryRead(text, NumberStyles.Any, info.NumberFormat, out ExactNumber exact), "not read to its end");
         Assert.Equal(expected, exact.NearestDouble());
         Assert.Equal(expected, NumberText.ToDouble(text, NumberStyles.Any, info));
+    }
+
+    /// <summary>
+    /// A space typed for fr-FR's group separator, a narrow no-break space in the culture data of .NET and of
+    /// current Windows: .NET reads the space as it, and so does this library; .NET Framework matches a space only to
+    /// a no-break space, and refuses the text, and so does this library.
+    /// </summary>
+    [Fact]
+    public void A_space_typed_for_a_narrow_no_break_space_is_read_where_the_runtime_reads_it()
+    {
+        var info = new CultureInfo("fr-FR");
+        const string text = "1 234,5";
+        bool runtimeReads;
+        try { runtimeReads = double.Parse(text, NumberStyles.Any, info) == 1234.5; }
+        catch (FormatException) { runtimeReads = false; }
+        bool framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription.StartsWith(".NET Framework", StringComparison.Ordinal);
+        if (info.NumberFormat.NumberGroupSeparator == " ")
+            Assert.Equal(!framework, runtimeReads);
+        if (runtimeReads)
+        {
+            Assert.True(ExactNumber.TryRead(text, NumberStyles.Any, info.NumberFormat, out ExactNumber exact), "not read to its end");
+            Assert.Equal(1234.5, exact.NearestDouble());
+            Assert.Equal(1234.5, NumberText.ToDouble(text, NumberStyles.Any, info));
+        }
+        else Assert.Throws<FormatException>(() => NumberText.ToDouble(text, NumberStyles.Any, info));
     }
 }
