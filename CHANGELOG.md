@@ -24,11 +24,17 @@ changed since 1.2.2.
     `CreateField`, DDL without `WITH COMPRESSION`), to which the JackcessDotNet packages to 1.2.2 or this
     repository's builds before 442bbf8 wrote, compressing every value of characters 0x01 to 0xFF. Earlier versions
     read `Alice` there; this one reads what Access reads from the table, U+FEFF U+6C41 U+6369 (and U+FFFD for the
-    odd byte at the end). Nothing tells such a value from Access's own.
+    odd byte at the end). Nothing tells such a value from Access's own. That is what a DAO table-type recordset
+    reads, and a DAO dynaset of the table and an ACE query of it; some other readings - a DAO snapshot of a query
+    of one row, an ACE query of one row sorted by Name - read the bytes as compressed text, and others fail on them
+    (`tools/earlier-filled-text-readers.ps1`, #129).
   - A table those versions created - its catalog row has ParentId 0 and no owner - is read by its bytes, as they
     wrote it: it is listed and found by its name, which Access cannot do, and its values read as written. Its
     row of MSysObjects read as a table gives that name too, as earlier versions gave it, and a refused rename
-    quotes it (#121).
+    quotes it (#121). Renamed to a name that begins with U+FEFF, which Access takes for a table, a column and an
+    index (`tools/dao-feff-names.ps1`), such a table's name is written compressed in runs, as its text is, so that
+    it is found by it, and refused with an `ArgumentException`, with nothing changed, where it would read back
+    changed (#129).
   - Text that begins with U+FEFF is written as ACE writes it: compressed in runs where that is no longer than
     UTF-16LE in a Text column with Unicode compression, and shorter in a Memo; `"\uFEFFabQ1Z"` was UTF-16LE, which
     ACE read back as `"abQ1Z"`. Over 3,816 bytes of UTF-16LE in a Memo of such a column, it is a chain, as ACE makes

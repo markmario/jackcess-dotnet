@@ -178,7 +178,7 @@ internal sealed class RowEncoder
                 else if (row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v))
                 {
                     if (col.DataType.IsLongValue()) (varData, toPages) = PrepareLongValue(col, v!);
-                    else varData = WriteVariableValue(col, v!);
+                    else varData = WriteVariableValue(col, v!, ReadsByContent(col, row));
                 }
 
                 if (varData is not null || toPages is not null)
@@ -402,7 +402,7 @@ internal sealed class RowEncoder
                 throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length, stored);
             // Text that begins with U+FEFF that Access would read back changed (#93).
             if (!stored && col.DataType is DataType.Text or DataType.Memo
-                && WhyNotKept(col, Convert.ToString(value) ?? string.Empty, InRow(col)) is { } why)
+                && WhyNotKept(col, Convert.ToString(value) ?? string.Empty, InRow(col), ReadsByContent(col, row)) is { } why)
                 throw new ArgumentException(why + ". Nothing was written.", col.Name);
             if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
@@ -473,12 +473,20 @@ internal sealed class RowEncoder
     }
 
     // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
-    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16). In a table an earlier version created,
-    // whose text is read by its bytes (Column.ReadsTextByContent), text that begins with U+FEFF is compressed in runs.
-    private static byte[] EncodeText(Column col, string text)
-        => col.IsCompressedUnicode || col.ReadsTextByContent && Util.ByteUtil.BeginsWithMarker(text)
+    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16). Where the value is read by its bytes
+    // (ReadsByContent), text that begins with U+FEFF is compressed in runs.
+    private static byte[] EncodeText(Column col, string text, bool byContent)
+        => col.IsCompressedUnicode || byContent && Util.ByteUtil.BeginsWithMarker(text)
             ? Util.ByteUtil.EncodeText(text)
             : Util.ByteUtil.EncodeUtf16(text);
+
+    /// <summary>
+    /// Whether <paramref name="col"/>'s value in <paramref name="row"/> is read by its bytes: a column of a table an
+    /// earlier version of this library created (<see cref="Column.ReadsTextByContent"/>), and the catalog's Name in
+    /// the row of such a table (<see cref="Column.IsCatalogName"/>, #121), as <see cref="RowDecoder"/> reads them.
+    /// </summary>
+    private static bool ReadsByContent(Column col, Row row)
+        => col.ReadsTextByContent || col.IsCatalogName && SystemCatalog.IsAnEarlierVersionsTable(row);
 
     /// <summary>Whether a long value of so many bytes is kept in the row (<see cref="PrepareLongValue"/>).</summary>
     private Func<int, bool> InRow(Column col)
@@ -498,19 +506,21 @@ internal sealed class RowEncoder
     /// where it reads 0xFF 0xFE as that mark (<see cref="Column.TextMayBeCompressed"/>): a Text column with Unicode
     /// compression, a Memo kept in the row (<paramref name="inRow"/> says where a Memo of that many bytes goes), and a
     /// Memo in one long-value row of a column with it. A Memo of more than 3,816 bytes in such a column is a chain,
-    /// which Access reads as UTF-16LE, and is kept. In a table an earlier version created, read by its bytes
-    /// (<see cref="Column.ReadsTextByContent"/>), a value is read as compressed text wherever it is kept.
+    /// which Access reads as UTF-16LE, and is kept. Where the value is read by its bytes - in a table an earlier
+    /// version created (<see cref="Column.ReadsTextByContent"/>), and the catalog's Name in such a table's row:
+    /// <paramref name="byContent"/> - it is read as compressed text wherever it is kept.
     /// </summary>
-    internal static string? WhyNotKept(Column col, string text, Func<int, bool> inRow)
+    internal static string? WhyNotKept(Column col, string text, Func<int, bool> inRow, bool byContent)
     {
         if (!Util.ByteUtil.BeginsWithMarker(text)) return null;
+        bool mayBeCompressed = col.IsCompressedUnicode || byContent;
         bool readBack = col.DataType switch
         {
-            DataType.Text => !col.TextMayBeCompressed || Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: true) is not null,
+            DataType.Text => !mayBeCompressed || Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: true) is not null,
             DataType.Memo => EncodeMemo(col, text) is var bytes
                              && (bytes.Length != 2 * text.Length                                // compressed in runs
                                  || !inRow(bytes.Length)
-                                    && (!col.TextMayBeCompressed || !col.ReadsTextByContent && bytes.Length > AccessLongestValueRow)),
+                                    && (!mayBeCompressed || !byContent && bytes.Length > AccessLongestValueRow)),
             _ => true,
         };
         return readBack ? null : $"The text for {col.Name} begins with U+FEFF, the byte order mark, and cannot be stored in this column so "
@@ -518,12 +528,12 @@ internal sealed class RowEncoder
                                + "of compressed text, here";
     }
 
-    private byte[] WriteVariableValue(Column col, object value)
+    private byte[] WriteVariableValue(Column col, object value, bool byContent)
     {
         switch (col.DataType)
         {
             case DataType.Text:
-                return EncodeText(col, Convert.ToString(value) ?? string.Empty);
+                return EncodeText(col, Convert.ToString(value) ?? string.Empty, byContent);
             case DataType.Binary:
                 return (byte[])value;
             default:
