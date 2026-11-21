@@ -366,7 +366,7 @@ namespace JackcessDotNet.AccessTests.Support
         {
             var compacted = Path.Combine(Path.GetDirectoryName(path), Guid.NewGuid().ToString("N") + "-compacted" + Path.GetExtension(path));
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             catch (TargetInvocationException e) { throw new Xunit.Sdk.XunitException("DAO could not compact the file: " + e.InnerException.Message); }
             finally { Dao.Release(dbe); }
@@ -593,7 +593,7 @@ namespace JackcessDotNet.AccessTests.Support
         public static List<Values> DaoRows(string path, string source, string index = null)
         {
             var rows = new List<Values>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);
@@ -634,7 +634,7 @@ namespace JackcessDotNet.AccessTests.Support
         public static void DaoCreate(string path, int version)
         {
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try
             {
                 var db = dbeType.InvokeMember("CreateDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, ";LANGID=0x0409;CP=1252;COUNTRY=0", version });

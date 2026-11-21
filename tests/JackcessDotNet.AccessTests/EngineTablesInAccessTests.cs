@@ -167,7 +167,7 @@ namespace JackcessDotNet.AccessTests
 
             var compacted = Path.Combine(_tmp.Dir, "compacted.mdb");
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
 
@@ -322,7 +322,7 @@ namespace JackcessDotNet.AccessTests
             var compacted = AccessReferee.Compact(path);
             foreach (var file in new[] { path, compacted })
             {
-                var dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+                var dbe = Dao.Engine;
                 try { Assert.Equal("GenGUID()", DefaultValueOf(dbe, file, "Guids", "Key")); }
                 finally { Dao.Release(dbe); }
                 Assert.Equal(4L, Convert.ToInt64(Scalar(file, "SELECT COUNT(*) FROM Guids WHERE [Key] IS NOT NULL")));
@@ -403,7 +403,7 @@ namespace JackcessDotNet.AccessTests
         private static List<string> NotFoundBySeek(string path, string table, IEnumerable<string> codes)
         {
             var missing = new List<string>();
-            var dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var dbe = Dao.Engine;
             try
             {
                 var db = Com(dbe, "OpenDatabase", path);
@@ -577,7 +577,7 @@ namespace JackcessDotNet.AccessTests
 
             var compacted = Path.Combine(_tmp.Dir, "compacted.accdb");
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
 
@@ -769,7 +769,7 @@ namespace JackcessDotNet.AccessTests
 
             var compacted = Path.Combine(_tmp.Dir, "people-compacted" + Path.GetExtension(path));
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
             Assert.DoesNotContain("MSysCompactError", ListedTables(compacted));
@@ -915,7 +915,7 @@ namespace JackcessDotNet.AccessTests
 
             var compacted = Path.Combine(_tmp.Dir, "wide-compacted" + Path.GetExtension(path));
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
             Assert.DoesNotContain("MSysCompactError", ListedTables(compacted));
@@ -1039,7 +1039,7 @@ namespace JackcessDotNet.AccessTests
 
             var compacted = Path.Combine(_tmp.Dir, "whole-keys-compacted.mdb");
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
             Assert.DoesNotContain("MSysCompactError", ListedTables(compacted));
@@ -1055,7 +1055,7 @@ namespace JackcessDotNet.AccessTests
         private static List<Tuple<string, string>> RowsNotSoughtByTwo(string path, string table, string index, IEnumerable<Tuple<string, string>> pairs)
         {
             var missing = new List<Tuple<string, string>>();
-            var dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var dbe = Dao.Engine;
             try
             {
                 var db = Com(dbe, "OpenDatabase", path);

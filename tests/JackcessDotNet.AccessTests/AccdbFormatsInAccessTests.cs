@@ -76,7 +76,7 @@ namespace JackcessDotNet.AccessTests
         private static List<string> NotFoundBySeek(string path, IEnumerable<string> codes)
         {
             var missing = new List<string>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);
@@ -395,7 +395,7 @@ namespace JackcessDotNet.AccessTests
         private static List<long> NumbersNotFoundBySeek(string path, IEnumerable<long> numbers)
         {
             var missing = new List<long>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);

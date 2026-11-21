@@ -31,14 +31,14 @@ namespace JackcessDotNet.AccessTests
         /// <summary>
         /// A new Access 97 database made by DAO, or the test skipped where DAO's engine makes none. DAO's engine for
         /// an Access 97 file is ACE's (DAO.DBEngine.120) where it is installed, else Jet 4.0's (DAO.DBEngine.36),
-        /// which a 32-bit Windows has; every DAO call of these tests uses <see cref="Dao.NewEngine"/>, which starts
-        /// it with the user's workgroup file, so that a test of another class that runs after these in the process
-        /// is not kept from a file's system tables.
+        /// which a 32-bit Windows has; every DAO call of these tests uses <see cref="Dao.Engine"/>, the process's
+        /// engine, started with the user's workgroup file, so that a test of another class that runs after these in
+        /// the process is not kept from a file's system tables.
         /// </summary>
         private string NewAccess97Database()
         {
             var path = _tmp.NewMdbPath();
-            var dbe = Dao.NewEngine();
+            var dbe = Dao.Engine;
             var dbeType = dbe.GetType();
             string why = null;
             try
@@ -80,7 +80,7 @@ namespace JackcessDotNet.AccessTests
                 values.Add(string.Concat(Enumerable.Range(0, random.Next(3, 13)).Select(_ => characters[random.Next(characters.Count)])));
             values = values.Distinct(StringComparer.Ordinal).ToList();
 
-            dynamic dbe = Dao.NewEngine();
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path);

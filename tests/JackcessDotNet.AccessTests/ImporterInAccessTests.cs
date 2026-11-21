@@ -491,7 +491,7 @@ namespace JackcessDotNet.AccessTests
         private static Dictionary<string, bool> DaoRequired(string path, string table)
         {
             var required = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);
