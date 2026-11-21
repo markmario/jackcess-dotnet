@@ -559,13 +559,14 @@ while ($queue.Count -or $running.Count) {
                 $retry = "died of an access violation in OleDbConnection.Open (exit $code)"
                 $limit = $attempts
             }
-        } elseif ($code -eq $accessViolation) {
+        } elseif ($X86 -and $code -eq $accessViolation) {
             # An access violation that ended the process without .NET Framework making an exception of it: a fault in
             # native code on a thread with no managed code to raise one on, or one the runtime could not report. Neither
             # the library nor these tests have native code (no unsafe code, no P/Invoke; COM objects are only released),
             # so it is in the runtime, ACE, DAO or what they load. Run again only with no test failed and no unhandled
             # exception written: a managed fault, the library's or a test's, would have been raised as an exception and
-            # named in the output. Which native module it was is not known from the code alone.
+            # named in the output. Which native module it was is not known from the code alone. It was seen in a 32-bit
+            # process only, and is run again only there.
             if (-not ($output | Where-Object { $_ -match '\[FAIL\]' -or $_ -match 'Unhandled Exception' })) {
                 $retry = "died of an access violation in native code, with no managed exception (exit $code)"
                 $limit = $attempts
