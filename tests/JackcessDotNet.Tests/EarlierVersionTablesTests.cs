@@ -113,6 +113,50 @@ public sealed class EarlierVersionTablesTests : IDisposable
         Assert.Contains("People", db.GetTableNames());
     }
 
+    /// <summary>
+    /// Such a table renamed, with <see cref="Database.VerifyIndexes"/>, to a name that begins with U+FEFF - a name
+    /// Access takes for a table, a column and an index (tools/dao-feff-names.ps1) - is found by that name: the catalog
+    /// reads the table's name by its bytes, so the name is kept as text that begins with U+FEFF is kept in the table's
+    /// rows, compressed in runs, and refused, with nothing changed, where it would read back changed. Its columns' and
+    /// indexes' names are read from its definition as they are written, and take such names.
+    /// </summary>
+    [Fact]
+    public void Such_a_table_renamed_to_a_name_that_begins_with_U_FEFF_is_found_by_it_or_refused()
+    {
+        var path = Copy("engine-8e41563-created-table.mdb");
+        byte[] before = File.ReadAllBytes(path);
+        using (var db = Database.Open(path))
+        {
+            db.VerifyIndexes = true;
+            var refused = Assert.Throws<ArgumentException>(() => db.RenameTable("People", "\uFEFFabc"));
+            Assert.Contains("begins with U+FEFF", refused.Message);
+            Assert.Contains("Nothing was changed", refused.Message);
+            Assert.Throws<ArgumentException>(() => db.RenameTable("People", "\uFEFFa\u0100bcd"));
+            Assert.Contains("People", db.GetTableNames());
+        }
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        using (var db = Database.Open(path))
+        {
+            db.VerifyIndexes = true;
+            db.RenameTable("People", "\uFEFFaaaa");
+            Assert.Contains("\uFEFFaaaa", db.GetTableNames());
+            var table = db.GetTable("\uFEFFaaaa");
+            table.RenameColumn("Notes", "\uFEFFn");
+            table.RenameIndex(table.Indexes[0].Name, "\uFEFFi");
+        }
+        using (var db = Database.Open(path))
+        {
+            Assert.Equal(new[] { "\uFEFFaaaa" }, db.GetTableNames());
+            var table = db.GetTable("\uFEFFaaaa");
+            Assert.Equal("\uFEFFaaaa", table.Name);
+            Assert.Contains(table.Columns, c => c.Name == "\uFEFFn");
+            Assert.Contains(table.Indexes, ix => ix.Name == "\uFEFFi");
+            Assert.Equal(Read(Written[5].Notes, memoOf122: false), table.FindRowByPrimaryKey(6)!["\uFEFFn"]);
+            Assert.Equal("\uFEFFaaaa", Assert.Single(db.GetTable("MSysObjects").Rows, row => row["ParentId"] is 0 && row["Type"] is (short)1)["Name"]);
+        }
+    }
+
     [Fact]
     public void The_engine_adds_to_such_a_table_what_it_reads_back_and_refuses_what_it_would_not()
     {

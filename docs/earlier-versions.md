@@ -184,6 +184,14 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
     - **The row is in none of the catalog's indexes**: those versions left it out. A rename or a drop of the table
       is refused without `VerifyIndexes`, as Access refuses such a change ([above](#indexes-that-do-not-hold-every-row)),
       and made with it. The refusal quotes the table's name as it is listed.
+    - **A new name that begins with U+FEFF** is one Access takes for a table it made, and for a column and an
+      index, and keeps as written: measured with Microsoft 365's DAO 16.0 by `tools/dao-feff-names.ps1`, which
+      creates and renames each so and reads the names back ([#129]). The catalog reads such a table's name by its
+      bytes, so the name is written as the table's Text values are, compressed in runs, and refused as they are -
+      with an `ArgumentException`, before anything is written - where it would read back changed: U+FEFF with
+      three characters 0x01 to 0xFF or fewer, or followed mostly by other characters, or with a character above
+      0xFF whose low byte is 0x00 (U+0100, U+3000) ([Text and Memo](data-types.md#text-and-memo)). Its columns'
+      and indexes' names are read from its definition as written, and take such a name.
     - **Compacting the file in Access drops the table.** `DBEngine.CompactDatabase` of either test file leaves out
       the table and its row, and adds MSysCompactError, with "The search key was not found in any record" for
       MSysObjects. To keep its rows, copy them into a table this version creates before the file is compacted.

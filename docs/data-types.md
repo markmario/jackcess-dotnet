@@ -206,7 +206,8 @@ hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads
   - A table an earlier version of this library created - its catalog row has ParentId 0 and no owner, where Access
     gives a table the Tables container and an owner - has its name and its Text and Memo values read by their bytes:
     as compressed text wherever they begin 0xFF 0xFE, as those versions wrote them
-    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)).
+    ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). A name that
+    begins with U+FEFF given to such a table is written and refused as its Text values are ([#129]).
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and

@@ -30,7 +30,10 @@ changed since 1.2.2.
   - A table those versions created - its catalog row has ParentId 0 and no owner - is read by its bytes, as they
     wrote it: it is listed and found by its name, which Access cannot do, and its values read as written. Its
     row of MSysObjects read as a table gives that name too, as earlier versions gave it, and a refused rename
-    quotes it (#121).
+    quotes it (#121). Renamed to a name that begins with U+FEFF, which Access takes for a table, a column and an
+    index (`tools/dao-feff-names.ps1`), such a table's name is written compressed in runs, as its text is, so that
+    it is found by it, and refused with an `ArgumentException`, with nothing changed, where it would read back
+    changed (#129).
   - Text that begins with U+FEFF is written as ACE writes it: compressed in runs where that is no longer than
     UTF-16LE in a Text column with Unicode compression, and shorter in a Memo; `"\uFEFFabQ1Z"` was UTF-16LE, which
     ACE read back as `"abQ1Z"`. Over 3,816 bytes of UTF-16LE in a Memo of such a column, it is a chain, as ACE makes

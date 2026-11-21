@@ -143,6 +143,13 @@ internal static class SchemaRename
             .FirstOrDefault(r => r.Values["Id"] is int id && id == tdefPage && r.Values["Type"] is short type && type == JetFormat.CatalogTypeTable);
         if (entry.Values is null)
             throw new NotSupportedException($"Table '{oldName}' is not renamed: the catalog has no entry of a table for it. Nothing was changed.");
+        // The name of a table an earlier version of this library created is read by its bytes (#121): one that begins
+        // with U+FEFF is written as such text is in the table's rows, compressed in runs, and refused as it is there
+        // where it would read back changed (#129).
+        if (db.Catalog.IsAnEarlierVersionsTable(tdefPage)
+            && catalog.Columns.FirstOrDefault(c => c.IsCatalogName) is { } nameColumn
+            && RowEncoder.WhyNotKept(nameColumn, newName, _ => true, byContent: true) is { } why)
+            throw new ArgumentException($"Table '{oldName}' was not renamed. {why}. Nothing was changed.", nameof(newName));
         SchemaRemoval.EnsureRowsCanBeChanged(catalog);
 
         // The rows of MSysRelationships that name the table: those whose name a lookup among the catalog's tables finds
