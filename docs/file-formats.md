@@ -89,6 +89,11 @@ What is read of one:
 - **Text indexes**, in Access 97's General order:
   [Searched by, in a file that is only read](indexes.md#searched-by-in-a-file-that-is-only-read).
 - **Passwords**, compared in the file's code page: [Protected files](protected-files.md#passwords-and-what-is-refused).
+- **A Text column's length** in the file's code page, a byte a character: Text(255) has a `Column.MaxLength` of
+  255, the Size 32-bit DAO 3.6 reports, and an export gives its `DataColumn` that `MaxLength`. It was half that,
+  two bytes a character as in later formats, and `ToDataSet` refused the values longer than the half ([#85]). DAO
+  3.6's Size and `MaxLength` agree for all 175 Text columns of the corpus's Access 97 files and of
+  `access97-jet40.mdb` (`tools/access97-text-sizes.ps1`).
 
 The evidence: the nine Access 97 files of the corpus, which Access 97 wrote, read as 32-bit ACE 12 and DAO read
 them; and `tests/JackcessDotNet.Tests/Assets/access97-jet40.mdb`, a Jet 3 database that Jet 4.0 (32-bit DAO 3.6)
@@ -99,3 +104,5 @@ shared prefix (one has two entries, the rest one), and no index of it is more th
 neither makes nor opens an Access 97 file.
 
 [Back to contents](README.md)
+
+[#85]: https://github.com/markmario/jackcess-dotnet/issues/85
