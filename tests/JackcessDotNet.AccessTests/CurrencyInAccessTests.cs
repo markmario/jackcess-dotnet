@@ -478,7 +478,7 @@ namespace JackcessDotNet.AccessTests
             // it reads a VT_DECIMAL as Null, as its Seek reads one as 0 - so the decimal's is held to what ACE's INSERT
             // writes for it.)
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try
             {
                 dynamic db = dbeType.InvokeMember("OpenDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path });

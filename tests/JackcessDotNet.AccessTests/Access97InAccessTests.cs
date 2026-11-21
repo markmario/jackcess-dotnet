@@ -38,7 +38,7 @@ namespace JackcessDotNet.AccessTests
         private string NewAccess97Database()
         {
             var path = _tmp.NewMdbPath();
-            var dbe = Dao.NewEngine();
+            var dbe = Dao.Engine;
             var dbeType = dbe.GetType();
             string why = null;
             try
@@ -80,7 +80,7 @@ namespace JackcessDotNet.AccessTests
                 values.Add(string.Concat(Enumerable.Range(0, random.Next(3, 13)).Select(_ => characters[random.Next(characters.Count)])));
             values = values.Distinct(StringComparer.Ordinal).ToList();
 
-            dynamic dbe = Dao.NewEngine();
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path);

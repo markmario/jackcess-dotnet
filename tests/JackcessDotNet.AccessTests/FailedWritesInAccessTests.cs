@@ -82,7 +82,7 @@ namespace JackcessDotNet.AccessTests
         /// <summary>The database's own tables, as DAO lists them: its table definitions that are not system tables.</summary>
         private static List<string> DaoTableNames(string path)
         {
-            var engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var engine = Dao.Engine;
             try { return TableDefNames(engine, path); }
             finally { Dao.Release(engine); }
         }

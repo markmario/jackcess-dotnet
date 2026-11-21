@@ -117,7 +117,7 @@ namespace JackcessDotNet.AccessTests
         /// <summary>What <paramref name="use"/> makes of the database, opened by a DAO engine that is let go of after.</summary>
         private static T WithDao<T>(string path, Func<dynamic, T> use)
         {
-            var engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var engine = Dao.Engine;
             try { return Opened(engine, path, use); }
             finally { Dao.Release(engine); }
         }

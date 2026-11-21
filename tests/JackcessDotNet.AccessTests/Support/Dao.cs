@@ -1,71 +1,77 @@
 using System;
 using System.IO;
 using System.Reflection;
-using System.Runtime.InteropServices;
 
 namespace JackcessDotNet.AccessTests.Support
 {
     /// <summary>
-    /// Lets go of a DAO engine a test made, and of everything the test got from it.
+    /// DAO's engine, one for the whole test process, and the letting go of what a test got from it.
     ///
-    /// Releasing the engine alone leaves it alive: the databases, recordsets, table definitions and fields it handed
-    /// out each hold it, and .NET lets go of those only when it next collects. In the Access Database Engine 2016
-    /// redistributable - what CI installs - an engine left alive that way, then an OLE DB connection that writes to a
-    /// .accdb file, then a second engine, is an access violation inside Office's shared library: the test saw
-    /// RPC_E_SERVERFAULT from OpenDatabase, and the next DAO call in the process never returned. Access itself was
-    /// the whole of it - the same steps with the engine under test writing nothing failed the same way - and
-    /// Microsoft 365's Access does not do it. So every wrapper is collected before the engine goes, and after.
+    /// A test used to make an engine of its own each time it asked DAO something and end it after - many a test, in
+    /// one process, between ACE's OLE DB connections writing to the same files. In a 32-bit process the 2016
+    /// redistributable's ACE 16 faulted at the start of such an engine, or at its first call, about one run in five:
+    /// an access violation that ended the process (0xC0000005), 0xC000041D, or RPC_E_SERVERFAULT from a DAO call (#145).
+    /// Measured on CI's 32-bit runners with CursorsAndRowsInAccessTests' piece that makes one engine for each index at
+    /// each of its checks, 30 runs each: engines made and ended as before, 6 of 30 died; one engine for the process,
+    /// none of 30; engines left for .NET to end rather than ended at once, 28 of 30 failed. The engine is therefore
+    /// made once, the first time a test asks for it, and kept until the process ends; a test lets go of the databases,
+    /// recordsets and the rest it got (<see cref="Release"/>), and never of the engine.
     ///
-    /// A wrapper still held in a local when this is called is not collected in a Debug build, where a local lives to
-    /// the end of its method; the tests are built and run in Release.
+    /// Before that, in the same redistributable: an engine left alive by the wrappers it had handed out, then an OLE DB
+    /// connection writing to an .accdb file, then a second engine, was an access violation inside Office's shared
+    /// library - the test saw RPC_E_SERVERFAULT from OpenDatabase, and the next DAO call in the process never returned.
+    /// Microsoft 365's Access does not do it.
+    ///
+    /// A wrapper still held in a local when <see cref="Release"/> is called is not collected in a Debug build, where a
+    /// local lives to the end of its method; the tests are built and run in Release.
     /// </summary>
     internal static class Dao
     {
         /// <summary>The user's Access workgroup file, which Access makes for a user the first time it runs.</summary>
         public static readonly string Workgroup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Access", "System.mdw");
 
+        private static readonly object Gate = new object();
+        private static object _engine;
+
         /// <summary>
-        /// DAO's engine - ACE's (DAO.DBEngine.120) where it is installed, else Jet 4.0's (DAO.DBEngine.36) - given
-        /// the user's workgroup file where there is one. Access keeps its system tables from a reader until it is
-        /// given leave to read them, which takes a workgroup file. The engine takes the file only as it starts, and
-        /// stays started while anything of it is held - in a 32-bit process it is shared with ACE's OLE DB
-        /// provider - so an engine started without it keeps the system tables from every later reader in the
-        /// process. Every engine that may start it first names the file.
+        /// The process's DAO engine - ACE's (DAO.DBEngine.120) where it is installed, else Jet 4.0's (DAO.DBEngine.36) -
+        /// made the first time it is asked for and kept until the process ends. Never release it: a COM release of it
+        /// would leave every later test a wrapper with nothing behind it.
+        ///
+        /// It is given the user's workgroup file where there is one. Access keeps its system tables from a reader until
+        /// it is given leave to read them, which takes a workgroup file, and the engine takes the file only as it
+        /// starts - in a 32-bit process it is shared with ACE's OLE DB provider, so an engine started without it keeps
+        /// the system tables from every later reader in the process.
         /// </summary>
-        public static object NewEngine()
+        public static object Engine
         {
-            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
-            if (File.Exists(Workgroup))
+            get
             {
-                dbeType.InvokeMember("SystemDB", BindingFlags.SetProperty, null, dbe, new object[] { Workgroup });
-                dbeType.InvokeMember("DefaultUser", BindingFlags.SetProperty, null, dbe, new object[] { "Admin" });
-                dbeType.InvokeMember("DefaultPassword", BindingFlags.SetProperty, null, dbe, new object[] { "" });
+                lock (Gate)
+                {
+                    if (_engine == null)
+                    {
+                        var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
+                        var dbe = Activator.CreateInstance(dbeType);
+                        if (File.Exists(Workgroup))
+                        {
+                            dbeType.InvokeMember("SystemDB", BindingFlags.SetProperty, null, dbe, new object[] { Workgroup });
+                            dbeType.InvokeMember("DefaultUser", BindingFlags.SetProperty, null, dbe, new object[] { "Admin" });
+                            dbeType.InvokeMember("DefaultPassword", BindingFlags.SetProperty, null, dbe, new object[] { "" });
+                        }
+                        _engine = dbe;
+                    }
+                    return _engine;
+                }
             }
-            return dbe;
         }
 
-        // TRIAL (#145, removed before review): which way of using DAO a run tries.
-        internal static readonly string Trial = Environment.GetEnvironmentVariable("JACKCESS_DAO_TRIAL") ?? "baseline";
-
+        /// <summary>
+        /// Lets go of what a test got from the engine - databases, recordsets, table definitions, fields - that it no
+        /// longer holds: .NET lets go of each only when it collects. The engine itself is kept (<see cref="Engine"/>);
+        /// <paramref name="engine"/> is taken only so that a call reads as what it ends.
+        /// </summary>
         public static void Release(object engine)
-        {
-            if (Trial == "shared" && ReferenceEquals(engine, _shared)) return;
-            Collect();
-            if (Trial != "nofinal" && engine != null && Marshal.IsComObject(engine)) Marshal.FinalReleaseComObject(engine);
-            Collect();
-        }
-
-        private static object _shared;
-
-        /// <summary>TRIAL: the engine DaoRows reads with.</summary>
-        internal static object EngineForReading()
-        {
-            if (Trial == "shared") return _shared ?? (_shared = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true)));
-            return Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
-        }
-
-        private static void Collect()
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();

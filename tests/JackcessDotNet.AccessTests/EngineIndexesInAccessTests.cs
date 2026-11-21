@@ -80,7 +80,7 @@ namespace JackcessDotNet.AccessTests
         {
             var compacted = Path.Combine(dir, Guid.NewGuid().ToString("N") + "-compacted.mdb");
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
             return compacted;

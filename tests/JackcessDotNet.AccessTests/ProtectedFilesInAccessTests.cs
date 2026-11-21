@@ -74,7 +74,7 @@ namespace JackcessDotNet.AccessTests
             var path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + extension);
             string password = withPassword ? Password : null;
             var rows = new Dictionary<int, Values>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.CreateDatabase(path, ";LANGID=0x0409;CP=1252;COUNTRY=0" + (withPassword ? ";pwd=" + Password : ""), version + (encoded ? 2 : 0));
@@ -273,7 +273,7 @@ namespace JackcessDotNet.AccessTests
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JACKCESS_PAST_65536_PAGES")))
                 Assert.Skip("Grows a file past 270 MB: set JACKCESS_PAST_65536_PAGES to run it.");
             var path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + extension);
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try { dbe.CreateDatabase(path, ";LANGID=0x0409;CP=1252;COUNTRY=0;pwd=" + Password, version + (encoded ? 2 : 0)).Close(); }
             finally { Dao.Release(dbe); }
 
@@ -353,7 +353,7 @@ namespace JackcessDotNet.AccessTests
         private static List<Values> DaoQuery(string path, string password, string sql)
         {
             var rows = new List<Values>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = DaoOpen(dbe, path, password, readOnly: true);
@@ -388,7 +388,7 @@ namespace JackcessDotNet.AccessTests
         private static int DaoSeekCount(string path, string password, string table, IEnumerable<int> ids, string key = "Id")
         {
             int found = 0;
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = DaoOpen(dbe, path, password, readOnly: true);
@@ -414,7 +414,7 @@ namespace JackcessDotNet.AccessTests
 
         private static void DaoAdd(string path, string password, string table, Values row)
         {
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = DaoOpen(dbe, path, password, readOnly: false);
@@ -435,7 +435,7 @@ namespace JackcessDotNet.AccessTests
         /// <summary>DAO compacts <paramref name="path"/> into <paramref name="compacted"/>, with the password it has.</summary>
         private static void DaoCompact(string path, string compacted, string password)
         {
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 string locale = ";LANGID=0x0409;CP=1252;COUNTRY=0" + (password == null ? "" : ";pwd=" + password);

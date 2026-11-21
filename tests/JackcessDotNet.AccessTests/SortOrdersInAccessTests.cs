@@ -81,7 +81,7 @@ namespace JackcessDotNet.AccessTests
         {
             var path = _tmp.NewMdbPath();
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try
             {
                 var db = dbeType.InvokeMember("CreateDatabase", BindingFlags.InvokeMethod, null, dbe,
@@ -135,7 +135,7 @@ namespace JackcessDotNet.AccessTests
         private static List<string> NotFoundBySeek(string path, string table, IEnumerable<string> codes)
         {
             var missing = new List<string>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path);
@@ -403,7 +403,7 @@ namespace JackcessDotNet.AccessTests
             // The full sweep refuses some 30 of its 50,000 values, the sample one to five of its 3,500.
             Assert.True(taken.Count > values.Count - (Sweeps.Full ? 600 : values.Count / 100), name + ": the engine took " + taken.Count + " of " + values.Count + " values");
 
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             var notSought = new List<int>();
             try
             {

@@ -95,7 +95,9 @@ namespace JackcessDotNet.AccessTests
         private static void DaoInsertsAtOnce(dynamic dbe, dynamic dao, List<Values> rows, int from, int count, string what)
         {
             dbe.BeginTrans();
-            DaoInserts(dao, rows, from, count, what);
+            // The engine is the process's (Dao.Engine): a transaction left open would be the next test's.
+            try { DaoInserts(dao, rows, from, count, what); }
+            catch { dbe.Rollback(); throw; }
             dbe.CommitTrans();
         }
 
@@ -133,7 +135,7 @@ namespace JackcessDotNet.AccessTests
         /// </summary>
         private static string DaoRefusal(string path, bool exclusive, bool readOnly)
         {
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db;
@@ -237,7 +239,7 @@ namespace JackcessDotNet.AccessTests
                 AceCount(reader);
             }
 
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic daoReader = dbe.OpenDatabase(path, false, true);
@@ -288,7 +290,7 @@ namespace JackcessDotNet.AccessTests
                 }
                 else
                 {
-                    dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+                    dynamic dbe = Dao.Engine;
                     try
                     {
                         dynamic dao = dbe.OpenDatabase(path, false, false);
@@ -388,7 +390,7 @@ namespace JackcessDotNet.AccessTests
             }
             else
             {
-                dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+                dynamic dbe = Dao.Engine;
                 try
                 {
                     dynamic dao = dbe.OpenDatabase(path, true, false);
@@ -417,8 +419,7 @@ namespace JackcessDotNet.AccessTests
             SkipUnlessAceOpensAccess97();
 
             var path = _tmp.NewMdbPath();
-            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: false) ?? Type.GetTypeFromProgID("DAO.DBEngine.36", throwOnError: true);
-            dynamic dbe = Activator.CreateInstance(dbeType);
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic made = dbe.CreateDatabase(path, ";LANGID=0x0409;CP=1252;COUNTRY=0", 32 /* dbVersion30, Access 97 */);
@@ -589,7 +590,7 @@ namespace JackcessDotNet.AccessTests
             }
             else
             {
-                dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+                dynamic dbe = Dao.Engine;
                 try
                 {
                     dynamic dao = dbe.OpenDatabase(path, false, false);

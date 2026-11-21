@@ -310,8 +310,7 @@ namespace JackcessDotNet.AccessTests
                 db.GetTable("Added").AddIndex(new IndexDefinition("ixDouble", "eDouble"));
             }
 
-            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            dynamic dbe = Activator.CreateInstance(dbeType);
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic dao = dbe.OpenDatabase(path);

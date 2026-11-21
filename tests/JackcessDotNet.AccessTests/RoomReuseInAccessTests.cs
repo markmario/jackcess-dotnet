@@ -486,7 +486,7 @@ namespace JackcessDotNet.AccessTests
             }
 
             var tables = new List<string>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path);

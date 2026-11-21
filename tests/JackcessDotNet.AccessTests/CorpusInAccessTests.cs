@@ -78,7 +78,7 @@ namespace JackcessDotNet.AccessTests
         private static List<Values> DaoRows(string path, string table, IList<Column> columns)
         {
             var rows = new List<Values>();
-            dynamic dbe = Dao.NewEngine();
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, false);
@@ -131,7 +131,7 @@ namespace JackcessDotNet.AccessTests
         {
             var tables = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             knowsCalculatedFields = false;
-            dynamic dbe = Dao.NewEngine();
+            dynamic dbe = Dao.Engine;
             try
             {
                 // Calculated fields came with Access 2010, DAO 14: 32-bit ACE 12 is Access 2007's and shows none.

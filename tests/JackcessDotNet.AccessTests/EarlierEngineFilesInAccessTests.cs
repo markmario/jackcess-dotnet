@@ -198,7 +198,7 @@ namespace JackcessDotNet.AccessTests
         private static List<string> DaoIndexes(string path, string table)
         {
             var names = new List<string>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);
@@ -661,7 +661,7 @@ namespace JackcessDotNet.AccessTests
         private static List<decimal[]> DaoDecimals(string path)
         {
             var rows = new SortedDictionary<int, decimal[]>();
-            dynamic dbe = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path, false, true);

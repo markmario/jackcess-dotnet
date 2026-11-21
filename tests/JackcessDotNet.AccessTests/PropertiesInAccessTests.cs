@@ -60,7 +60,7 @@ namespace JackcessDotNet.AccessTests
 
         private static T WithDao<T>(string path, Func<dynamic, T> use)
         {
-            var engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var engine = Dao.Engine;
             try { return Opened(engine, path, use); }
             finally { Dao.Release(engine); }
         }
@@ -696,7 +696,7 @@ namespace JackcessDotNet.AccessTests
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void SwedishDatabase(string path, int version)
         {
-            dynamic engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            dynamic engine = Dao.Engine;
             try { MakeSwedish(engine, path, version); }
             finally { Dao.Release(engine); }
         }

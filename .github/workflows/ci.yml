@@ -370,7 +370,7 @@ jobs:
           ${{ fromJSON(format('[{0}{1}]',
           '{"arch":"x64","shard":1,"shards":4,"parallel":2},{"arch":"x64","shard":2,"shards":4,"parallel":2},{"arch":"x64","shard":3,"shards":4,"parallel":2},{"arch":"x64","shard":4,"shards":4,"parallel":2}',
           (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:access-x86'))
-          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3,"trial":"baseline"},{"arch":"x86","shard":2,"shards":2,"parallel":3,"trial":"shared"},{"arch":"x86","shard":3,"shards":3,"parallel":3,"trial":"nofinal"}' || '')) }}
+          && ',{"arch":"x86","shard":1,"shards":2,"parallel":3},{"arch":"x86","shard":2,"shards":2,"parallel":3},{"arch":"x86","shard":3,"shards":3,"parallel":3,"trial":"one-engine"}' || '')) }}
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:

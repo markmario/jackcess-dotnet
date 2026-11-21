@@ -40,7 +40,7 @@ namespace JackcessDotNet.AccessTests
         /// <summary>DAO makes table D: a Long, and a Binary of 10 bytes of each form.</summary>
         private static void DaoTable(string path)
         {
-            var engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
+            var engine = Dao.Engine;
             try { MakeDaoTable(engine, path); }
             finally { Dao.Release(engine); }
         }

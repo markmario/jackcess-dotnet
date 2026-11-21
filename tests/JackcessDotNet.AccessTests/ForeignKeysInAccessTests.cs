@@ -112,8 +112,7 @@ namespace JackcessDotNet.AccessTests
                 if (result != null && System.Runtime.InteropServices.Marshal.IsComObject(result)) held.Add(result);
                 return result;
             };
-            var engine = Activator.CreateInstance(Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true));
-            held.Add(engine);
+            var engine = Dao.Engine;
             try
             {
                 var database = on(engine, "OpenDatabase", Call, new object[] { path });
@@ -488,7 +487,7 @@ namespace JackcessDotNet.AccessTests
         {
             var compacted = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + "-compacted.mdb");
             var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            var dbe = Activator.CreateInstance(dbeType);
+            var dbe = Dao.Engine;
             try { dbeType.InvokeMember("CompactDatabase", BindingFlags.InvokeMethod, null, dbe, new object[] { path, compacted }); }
             finally { Dao.Release(dbe); }
             return compacted;

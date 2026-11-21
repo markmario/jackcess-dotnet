@@ -346,8 +346,7 @@ namespace JackcessDotNet.AccessTests
         public void ace_and_the_engine_read_each_other_s_replication_ids_in_a_table_dao_made()
         {
             var path = AceMade();
-            var dbeType = Type.GetTypeFromProgID("DAO.DBEngine.120", throwOnError: true);
-            dynamic dbe = Activator.CreateInstance(dbeType);
+            dynamic dbe = Dao.Engine;
             try
             {
                 dynamic db = dbe.OpenDatabase(path);
