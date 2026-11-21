@@ -76,8 +76,9 @@ Text, a `bool` and a date are taken as every number column takes them
 ([A bool, text or a date for a number](#a-bool-text-or-a-date-for-a-number)) and the number they make is taken to
 four places so. A `Guid`, bytes or a `char` is refused with `ArgumentException`, and text that reads as no number
 with `FormatException`. NaN, an infinity and a number past -922,337,203,685,477.5808 to
-922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"), and
-writes NaN as the least Currency, which this library does not. How a caller's number is taken to one when it is
+922,337,203,685,477.5807 are refused with `OverflowException`; Access refuses the last two ("Overflow"). 64-bit ACE
+16 writes NaN as the least Currency, which this library does not; 32-bit ACE 12, and the 32-bit ACE 16 of the 2016
+redistributable, refuse it ("Overflow"). How a caller's number is taken to one when it is
 looked for: [Currency](cursors-and-rows.md#currency).
 
 **A file an earlier version wrote holds that version's rounding.** 1.2.2, and this library until [#65], rounded a

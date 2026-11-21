@@ -315,11 +315,13 @@ namespace JackcessDotNet.AccessTests
         [MemberData(nameof(Formats))]
         public void what_the_engine_refuses_to_write_is_refused_by_ace_too_but_nan(int daoVersion, string extension)
         {
-            // What ACE does with NaN for a Currency was measured with ACE 16 in 64 bits, which writes it, and with ACE 12 and
-            // ACE 16 (the redistributable's, 16.0.5011.1000) in 32 bits, which refuse it (#101).
-            if (AceVersion != 16 && !(AceVersion == 12 && !Environment.Is64BitProcess))
-                Assert.Skip("What " + (Environment.Is64BitProcess ? "64" : "32") + "-bit ACE " + AceVersion + " does with NaN for a Currency has not been measured: 64-bit ACE 16 writes it, 32-bit ACE 12 and 16 refuse it.");
-            var aceWritesNaN = AceVersion == 16 && Environment.Is64BitProcess;
+            // What ACE does with NaN for a Currency was measured with ACE 16 in 64 bits (Microsoft 365's and the
+            // redistributable's), which writes it, and in 32 bits with ACE 12 and with the redistributable's ACE 16, build
+            // 16.0.5011.1000, which refuse it (#101). Any other 32-bit build of ACE 16, and any other version, is not pinned.
+            var measured = Environment.Is64BitProcess ? AceVersion == 16 : AceVersion == 12 || AceBuild == "16.0.5011.1000";
+            if (!measured)
+                Assert.Skip("What " + (Environment.Is64BitProcess ? "64" : "32") + "-bit ACE " + AceBuild + " does with NaN for a Currency has not been measured: 64-bit ACE 16 writes it, 32-bit ACE 12 and 16.0.5011.1000 refuse it.");
+            var aceWritesNaN = Environment.Is64BitProcess;
             var path = NewDatabase(daoVersion, extension);
             using (var db = Database.Open(path))
             {

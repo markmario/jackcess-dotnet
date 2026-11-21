@@ -432,8 +432,9 @@ namespace JackcessDotNet.AccessTests.Support
         /// 64-bit ACE 16 on some machines (#101) - and does not open a database in the Access 2010 format, which is the
         /// format of the engine's .accdb and of the databases that sort in General. ACE 12 was measured to say
         /// "Unrecognized database format" of one. It is asked here of a file Access made, the corpus's Access 2010
-        /// database, so a file the engine wrote wrongly is never the reason. With any other ACE nothing is asked and
-        /// nothing is skipped: the test runs, and fails if ACE does not open the file.
+        /// database, so a file the engine wrote wrongly is never the reason, and only that answer skips: any other error
+        /// of the probe fails the test. With any other ACE nothing is asked and nothing is skipped: the test runs, and
+        /// fails if ACE does not open the file.
         /// </summary>
         public static void SkipUnlessAceOpensAccess2010()
         {
@@ -451,7 +452,9 @@ namespace JackcessDotNet.AccessTests.Support
                         connection.Open();
                     _whyNo2010 = null;
                 }
-                catch (OleDbException e)
+                // Only the answer that refuses the format is a reason to skip; any other error fails the test, and is
+                // not kept, so a one-off failure of the provider is not taken for the format refused.
+                catch (OleDbException e) when (e.Message.IndexOf("Unrecognized database format", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     _whyNo2010 = e.Message;
                 }
@@ -471,8 +474,9 @@ namespace JackcessDotNet.AccessTests.Support
         /// does, and the 32-bit ACE 16 of the Access Database Engine 2016 redistributable (16.0.5011.1000, on a hosted
         /// windows-latest runner) said "Cannot open a database created with a previous version of your application" of
         /// one, where 32-bit ACE 12 opens it (#101). It is asked of a file Access 97 made, the corpus's
-        /// common1V1997.mdb, so a file the engine wrote is never the reason. Under ACE 12 nothing is asked: the test
-        /// runs, and fails if ACE does not open the file.
+        /// common1V1997.mdb, so a file the engine wrote is never the reason, and only that answer skips: any other error
+        /// of the probe fails the test. Under ACE 12 nothing is asked: the test runs, and fails if ACE does not open the
+        /// file.
         /// </summary>
         public static void SkipUnlessAceOpensAccess97()
         {
@@ -492,7 +496,8 @@ namespace JackcessDotNet.AccessTests.Support
                         connection.Open();
                     _whyNo97 = null;
                 }
-                catch (OleDbException e)
+                // As above: only the answer that refuses an earlier version's file is a reason to skip.
+                catch (OleDbException e) when (e.Message.IndexOf("created with a previous version", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     _whyNo97 = e.Message;
                 }
@@ -520,6 +525,21 @@ namespace JackcessDotNet.AccessTests.Support
             }
         }
 
+        private static string _aceBuild;
+
+        /// <summary>
+        /// The file version of the ACE OLE DB provider's DLL this process uses, "16.0.5011.1000" say: for a test that pins
+        /// what one build was measured to do. Throws, failing the test, when it cannot be read.
+        /// </summary>
+        public static string AceBuild
+        {
+            get
+            {
+                if (_aceBuild == null) _aceVersion = ReadAceVersion();
+                return _aceBuild;
+            }
+        }
+
         private static int ReadAceVersion()
         {
             var bits = Environment.Is64BitProcess ? "64" : "32";
@@ -535,8 +555,10 @@ namespace JackcessDotNet.AccessTests.Support
                     if (dll == null) throw new InvalidOperationException(AceVerification.ProviderName + " has no " + bits + "-bit server, so its version is not known.");
                     dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
                     if (!File.Exists(dll)) throw new InvalidOperationException(AceVerification.ProviderName + "'s server, " + dll + ", is not there, so its version is not known.");
-                    var major = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).FileMajorPart;
+                    var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll);
+                    var major = info.FileMajorPart;
                     if (major == 0) throw new InvalidOperationException(dll + " gives no file version.");
+                    _aceBuild = info.FileMajorPart + "." + info.FileMinorPart + "." + info.FileBuildPart + "." + info.FilePrivatePart;
                     return major;
                 }
             }
