@@ -39,7 +39,9 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
   That build goes to `bin/Release-x86`:
   `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net48 -p:TestX86=true`.
   The Access referee tests take the same switch, and then need 32-bit ACE: Access itself, 32-bit, or the
-  redistributable's x86 installer.
+  redistributable's x86 installer. Where that is Access 2007's ACE 12, which some machines have beside a 64-bit
+  ACE 16, a test that needs an Access 2010 file is skipped, saying so, and one that pins what an ACE version does
+  pins ACE 12's or is skipped (#101).
 - Those are the six configurations, and CI runs each on every pull request, each split into shards that run side
   by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).

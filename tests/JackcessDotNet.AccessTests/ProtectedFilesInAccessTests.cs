@@ -224,6 +224,7 @@ namespace JackcessDotNet.AccessTests
         [Fact]
         public void a_file_ace_has_open_is_refused_to_the_engine_and_left_as_it_was()
         {
+            SkipUnlessAceOpensAccess2010();
             var path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + ".accdb");
             using (var db = Database.Create(path, FileFormat.Access2010))
                 db.CreateTable("T", new[] { new ColumnDefinition("Id", DataType.Int32) }, "Id").Insert(EngineRow(V("Id", 1)));

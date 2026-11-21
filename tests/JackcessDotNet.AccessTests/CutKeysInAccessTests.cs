@@ -64,6 +64,7 @@ namespace JackcessDotNet.AccessTests
         /// <summary>A copy of an Access 2010 database in the General order, from the engine's corpus.</summary>
         private string GeneralDatabase()
         {
+            SkipUnlessAceOpensAccess2010();
             var corpus = typeof(CutKeysInAccessTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
                 .Single(a => a.Key == "EngineCorpusDir").Value;
             var path = Path.Combine(_tmp.Dir, "general-" + Guid.NewGuid().ToString("N") + ".accdb");
