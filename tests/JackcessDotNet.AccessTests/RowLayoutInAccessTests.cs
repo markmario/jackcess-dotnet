@@ -155,16 +155,18 @@ namespace JackcessDotNet.AccessTests
             // Two tables of the same columns, one row each of the same values: ACE's, and the engine's. A table with
             // no variable-length column has at least two bytes of fixed-length values, which Access writes for a
             // table of a single Yes/No or Byte column too.
-            // The bytes pinned are ACE 16's. ACE 12 writes a row that has a Yes/No and no variable-length column with
-            // 28 00 where ACE 16 writes 00 00, after the column count (#101): there the case is ACE 16's alone.
-            if (AceVersion < 16 && columns.Contains("YESNO") && !columns.Contains("TEXT"))
-                Assert.Skip("The row's bytes are ACE 16's, and ACE here is " + AceVersion + ", which writes this row otherwise.");
             var path = AceMade("CREATE TABLE ByAce (" + columns + ")", "CREATE TABLE ByEngine (" + columns + ")",
                                "INSERT INTO ByAce (a) VALUES (1)");
             using (var db = Database.Open(path))
                 db.GetTable("ByEngine").Insert(new Row { ["a"] = columns.Contains("a BYTE") ? (object)(byte)1 : true });
 
-            Assert.Equal(BitConverter.ToString(OnlyRow(path, "ByAce")), BitConverter.ToString(OnlyRow(path, "ByEngine")));
+            // The bytes are ACE 16's. ACE 12 writes a row that has a Yes/No and no variable-length column with 28 00
+            // where ACE 16 writes 00 00, after the column count (#101), so under ACE 12 that row's bytes are not
+            // compared; ACE still reads the engine's row as its own.
+            if (AceVersion == 12 && columns.Contains("YESNO") && !columns.Contains("TEXT"))
+                TestContext.Current.TestOutputHelper?.WriteLine("ACE 12 writes this row otherwise than ACE 16, whose bytes are the engine's: the bytes are not compared.");
+            else
+                Assert.Equal(BitConverter.ToString(OnlyRow(path, "ByAce")), BitConverter.ToString(OnlyRow(path, "ByEngine")));
             AssertSame(Written(AceTable(path, "ByAce")), Written(AceTable(path, "ByEngine")), "ACE's reading of the engine's row against its own");
         }
 

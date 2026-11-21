@@ -315,6 +315,9 @@ namespace JackcessDotNet.AccessTests
         [MemberData(nameof(Formats))]
         public void what_the_engine_refuses_to_write_is_refused_by_ace_too_but_nan(int daoVersion, string extension)
         {
+            // What ACE does with NaN for a Currency was measured with ACE 16 and ACE 12, and differs between them.
+            if (AceVersion != 16 && AceVersion != 12)
+                Assert.Skip("What ACE " + AceVersion + " does with NaN for a Currency has not been measured: ACE 16 writes it, ACE 12 refuses it.");
             var path = NewDatabase(daoVersion, extension);
             using (var db = Database.Open(path))
             {
@@ -353,7 +356,7 @@ namespace JackcessDotNet.AccessTests
                 // as the engine refuses it (#101), and the least Currency is then written as itself. ACE reads text as a
                 // number, by the machine's locale (text of a whole number reads alike in every one), and a Yes/No's True
                 // as -1.
-                if (AceVersion >= 16) AceWrites(path, "A", new object[] { double.NaN, "2", true });
+                if (AceVersion == 16) AceWrites(path, "A", new object[] { double.NaN, "2", true });
                 else
                 {
                     var nan = Record.Exception(() => AceWrites(path, "A", new object[] { double.NaN }));
@@ -362,7 +365,7 @@ namespace JackcessDotNet.AccessTests
                     AceWrites(path, "A", new object[] { -922337203685477.5808m, "2", true });
                 }
                 Assert.Equal(new[] { -922337203685477.5808m, 2m, -1m }, AceCurrencies(path, "A").OrderBy(p => p.Key).Select(p => p.Value));
-                if (AceVersion >= 16) Assert.Equal(new[] { 0 }, AceIds(connection, "SELECT Id FROM A WHERE C = ?", double.NaN));
+                if (AceVersion == 16) Assert.Equal(new[] { 0 }, AceIds(connection, "SELECT Id FROM A WHERE C = ?", double.NaN));
             }
             using (var db = Database.Open(path))
             {
