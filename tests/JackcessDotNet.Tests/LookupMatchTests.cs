@@ -8,7 +8,7 @@ namespace JackcessDotNet.Tests;
 /// through the public API. Text is matched as text and never through a number it reads as; a number as the same
 /// number, across number types. What each case expects is what ACE's <c>=</c> gave for it (with a parameter of
 /// the caller's type, through an index and without one), and, for a Currency, what DAO's <c>Seek</c> gave too:
-/// the measurement is in the pull request for #49, and qcatco/exportmdb.interop's suite has ACE referee the cases
+/// the measurement is in the pull request for #49, and LookupsInAccessTests has ACE referee the cases
 /// in a file this library wrote.
 /// </summary>
 public sealed class LookupMatchTests : IDisposable

@@ -9,7 +9,7 @@ namespace JackcessDotNet.Tests;
 /// <see cref="Table.InsertRange"/>. Each tree holds the entries an insert of each row would have given it, in a tree
 /// that keeps Access's rules, read back from the file's pages (<see cref="IndexChecks"/>); a duplicate is refused with
 /// the later row named and the file byte for byte as it was; and a table that has rows is filled row by row as
-/// before. What Access makes of a tree built so is in ExportMdb.Interop's IndexedExportInAccessTests.
+/// before. What Access makes of a tree built so is refereed by BulkIndexesInAccessTests.
 /// </summary>
 public sealed class BulkInsertTests : IDisposable
 {
@@ -141,7 +141,7 @@ public sealed class BulkInsertTests : IDisposable
     }
 
     [Theory]
-    // Measured with ACE on ExportMdb's template: its unique index on Document_ID refused the second of each pair
+    // Measured with ACE on an export template: its unique index on Document_ID refused the second of each pair
     // marked true, and took both of each pair marked false.
     [InlineData("ABC.0001", "abc.0001", true)]
     [InlineData("ABC.0001", "ABC.0001 ", true)]
@@ -366,7 +366,7 @@ public sealed class BulkInsertTests : IDisposable
     [Fact]
     public void Each_tree_counts_its_keys_as_access_does_built_whole_or_row_by_row()
     {
-        // Measured in ExportMdb's twin audit: ACE counts in each index the keys rows were entered under, one for each
+        // Measured with ACE: it counts in each index the keys rows were entered under, one for each
         // key no row had, and takes nothing away when a row goes.
         using (var db = Create(_path))
         {

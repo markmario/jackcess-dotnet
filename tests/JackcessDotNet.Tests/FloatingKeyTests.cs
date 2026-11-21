@@ -7,7 +7,7 @@ namespace JackcessDotNet.Tests;
 /// A row named by a floating-point key is the row with those bits. Float and Double columns can be primary keys,
 /// and Access keys +0.0 and -0.0 apart, and a Double apart from the next one after it; the comparison that confirms
 /// a row took them through decimal, where they are equal, so an update or a delete by the second value changed the
-/// first row found (review of qcatco/jackcess-dotnet#11).
+/// first row found.
 /// </summary>
 public sealed class FloatingKeyTests : IDisposable
 {

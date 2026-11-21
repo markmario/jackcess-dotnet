@@ -5,9 +5,9 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// <see cref="Database.Create"/> makes a file in each format Jackcess creates, where it made an Access 2000 .mdb
-/// whatever was asked for (qcatco/exportmdb.interop#39): the file is of the format named, a table made in it
+/// whatever was asked for: the file is of the format named, a table made in it
 /// sorts as Access's own would there, and its rows and indexes are there when the file is opened again. That
-/// Access itself opens, reads, adds to and compacts such a file is refereed by ACE in ExportMdb.Interop's tests.
+/// Access itself opens, reads, adds to and compacts such a file is refereed by ACE in AccdbFormatsInAccessTests.
 /// </summary>
 public sealed class AccdbCreationTests : IDisposable
 {

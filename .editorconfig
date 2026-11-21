@@ -1,0 +1,22 @@
+# What an editor needs to write a file as this repository keeps it. Line endings are LF, as .gitattributes
+# stores them; a file's byte-order mark, and whether it ends in a line break, are left as they are.
+root = true
+
+[*]
+end_of_line = lf
+indent_style = space
+trim_trailing_whitespace = true
+
+[*.{cs,ps1}]
+indent_size = 4
+
+[*.{csproj,slnx,props,targets,xml,json,yml,yaml}]
+indent_size = 2
+
+# Data: a value can end in a space or a tab.
+[*.{tsv,txt,sha256}]
+trim_trailing_whitespace = false
+
+# cmd.exe misreads a batch file whose lines end in LF alone (.gitattributes).
+[*.{bat,cmd}]
+end_of_line = crlf

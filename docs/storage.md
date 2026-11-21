@@ -30,7 +30,7 @@ earlier page. What a `Row`, a cursor or a savepoint that read a deleted row find
 
 **Where a row goes, and the room a delete or an update leaves, are Access's** ([#58]), as measured with DAO 16 and
 ACE 16 in `.mdb` and `.accdb` files, on tables Access made and tables this library made, in one session or many.
-ExportMdb.Interop's suite has Access place the same rows and compares every page's room and slots, and the map:
+`RoomReuseInAccessTests` has Access place the same rows and compares every page's room and slots, and the map:
 
 - A new row - and the values of a row an update makes too long for its page - goes to the lowest page the
   table's free-space map lists (the second usage map of its definition). A listed page without room for the row
@@ -100,7 +100,7 @@ ExportMdb.Interop's suite has Access place the same rows and compares every page
   bytes is refused with `DatabaseFullException`, and the change it was part of taken back: ACE reads a longer
   file and cannot write to it ("Cannot open database ''... may be corrupt", measured on 2,160,779,264 bytes).
 - **An index takes room of its own.** Its tree holds every row's key, so a table with indexes reaches the limit
-  sooner: an export of ExportMdb's shape is 22% larger with the template's 35 indexes, and 77% larger when every
+  sooner: a measured export is 22% larger with its template's 35 indexes, and 77% larger when every
   row has a text key of 510 bytes ([Indexes built page after page](indexes.md#indexes-built-page-after-page)).
 - **Pages this library adds are taken out of the database's free-page map**, so Access does not hand them out
   again and write over them.

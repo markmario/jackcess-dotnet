@@ -750,6 +750,12 @@ changes with them.
   compressed text - is written and read as Access writes and reads it. Compressed text an earlier version wrote
   into a column without Unicode compression reads as Access reads it, as UTF-16LE. Measured by
   `tools/ace-text-marker.ps1`.
+- **An Access 97 Text column is as long as Access says, and its file exports to a `DataSet`** (#85). Access 97
+  keeps text a byte a character in the database's code page, and the engine took a Text column's length as two
+  bytes a character, as in later formats: `Column.MaxLength` of a Text(255) was 127, and `ToDataSet` and
+  `ToDataTable` gave its `DataColumn` that `MaxLength` and failed on a longer value ("violates the MaxLength limit"),
+  as on `access97-jet40.mdb` and the corpus's `indexCodesV1997.mdb`. It is 255, the Size 32-bit DAO 3.6 reports;
+  the two agree for all 175 Text columns of the corpus's Access 97 files and that one (`tools/access97-text-sizes.ps1`).
 - **A lookup of a date through a Date/Time index ends in a 32-bit .NET Framework process** (#98). The stored numbers
   a date's lookup finds were worked out by halving the distance between a number that reads as the date and one that
   does not, until the middle came out equal to an end. Where something in the process had left the x87 unit computing

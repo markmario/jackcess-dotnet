@@ -140,7 +140,7 @@ public sealed class AccessInteropRegressionTests : IDisposable
     }
 
     // Access keeps a long value in the row only up to 64 bytes. Kept there at up to 1,024, a memo of 255 to 1,022
-    // characters read back here but showed #Error in Access (qcatco/exportmdb.interop#29).
+    // characters read back here but showed #Error in Access.
     [Theory]
     [InlineData(62, true)]     // 62 Latin-1 characters: 64 bytes with the compression marker
     [InlineData(63, false)]

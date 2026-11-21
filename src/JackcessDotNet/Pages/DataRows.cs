@@ -11,9 +11,8 @@ namespace JackcessDotNet;
 /// row. The second (0x4000) alone: an overflow row. Access writes one when an update makes a row too long for the
 /// room its page has: the row's values go to another page, and its slot - which every index entry and every
 /// pointer to the row still names - keeps four bytes saying where, a row number and a page. Such a row is one of
-/// the table's like any other, read by following the pointer; passed over, as it was, it was missing from the
-/// table, could not be found to update or delete, and was not there for a foreign key to be checked against
-/// (qcatco/exportmdb.interop#63).
+/// the table's like any other, read by following the pointer; passed over, it would be missing from the table,
+/// could not be found to update or delete, and would not be there for a foreign key to be checked against.
 /// </para>
 /// </summary>
 internal static class DataRows

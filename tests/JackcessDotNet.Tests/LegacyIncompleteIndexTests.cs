@@ -5,12 +5,12 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// <see cref="Database.EnforceForeignKeys"/> over a file Access made and an earlier version of this library wrote
-/// to (qcatco/exportmdb.interop#64): the real thing <see cref="IncompleteIndexTests"/> reconstructs.
+/// to: the real thing <see cref="IncompleteIndexTests"/> reconstructs.
 /// <para>
 /// Assets/engine-3ad3aed-rows-in-access-tables.mdb was made by tools/legacy-incomplete-indexes.ps1. DAO made
 /// Parent (1 to 4) and three tables whose K refers to Parent.K - Followers and Movers, cascading updates and
 /// deletes, and Holders, cascading nothing - each with the index Access gives a relationship. Then this library as
-/// it was at commit 3ad3aed, the one in ExportMdb.Interop 2.1.2, which kept a primary key and no other index:
+/// it was at commit 3ad3aed, before it kept every index, which kept a primary key and no other index:
 /// inserted Followers 5, of parent 1; changed Movers 30 from parent 4 to parent 3; inserted Holders 5, of parent 2.
 /// </para>
 /// <para>

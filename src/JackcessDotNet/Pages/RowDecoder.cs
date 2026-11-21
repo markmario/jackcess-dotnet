@@ -60,8 +60,8 @@ internal sealed class RowDecoder
         }
 
         // A calculated column's value is not read: Access keeps the result in a wrapper of its own, as a type the
-        // column's properties name and not its definition (qcatco/exportmdb.interop#42). It is null here, where it
-        // used to be whatever the wrapper's bytes made as the definition's type.
+        // column's properties name and not its definition (#25). It is null here, rather than whatever the
+        // wrapper's bytes would make as the definition's type.
         if (col.IsCalculated) return null;
 
         // Boolean: null mask bit IS the value (true/false), never actually null

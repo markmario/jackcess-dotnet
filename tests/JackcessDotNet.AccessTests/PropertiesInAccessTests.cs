@@ -43,7 +43,12 @@ namespace JackcessDotNet.AccessTests
         {
             var path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + (accdb ? ".accdb" : ".mdb"));
             if (accessMade) DaoCreate(path, accdb ? 128 : 64);
-            else Database.Create(path, accdb ? FileFormat.Access2010 : FileFormat.Access2000).Dispose();
+            else
+            {
+                // The engine's .accdb is Access 2010's format, which 32-bit ACE 12 does not open.
+                if (accdb) SkipUnlessAceOpensAccess2010();
+                Database.Create(path, accdb ? FileFormat.Access2010 : FileFormat.Access2000).Dispose();
+            }
             return path;
         }
 

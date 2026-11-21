@@ -14,7 +14,7 @@ A file is protected as its header says, and its password is checked as Access ch
 all ([#46]). Each kind below that Access's engine still makes was made by it (DAO 16, and Jet 4.0 for Access 97, in
 `tools/protected-fixtures.ps1`), opened here with its password, a wrong one and none, and compared table by table
 with what DAO reads; and what this library wrote to each was read, searched through its primary key, added to and
-compacted by Access (ExportMdb.Interop's `ProtectedFilesInAccessTests`).
+compacted by Access (`ProtectedFilesInAccessTests`).
 
 ## Kinds of protection
 

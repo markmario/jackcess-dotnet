@@ -9,7 +9,7 @@ namespace JackcessDotNet.Tests;
 /// 2,140,618,752 bytes did not), so every write that would take the file past the limit is refused with
 /// <see cref="DatabaseFullException"/>, whatever writes it, and the change is taken back; and a file already past it is
 /// read whole, every write to it refused, the file left as it is. The limit is lowered here to the file's own length,
-/// so that the next page any change adds is past it; ExportMdb.Interop's ExportSizeLimitTests write real 2 GB files.
+/// so that the next page any change adds is past it. The limit was measured at its real size by hand (#88).
 /// </summary>
 public sealed class FileSizeLimitTests : IDisposable
 {

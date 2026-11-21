@@ -6,8 +6,7 @@ namespace JackcessDotNet;
 /// <para>
 /// Rows are encoded for the formats this library writes, which all lay a row out as Jet4 does. None is encoded for
 /// Access 97's (<see cref="JetFormat.IsReadOnly"/>): an encoder for it is refused with
-/// <see cref="NotSupportedException"/>. This class once had a Jet3 form of a row, with two bytes for the end of
-/// the data and for the count of variable-length columns where Jet3 has one (qcatco/exportmdb.interop#67).
+/// <see cref="NotSupportedException"/>.
 /// </para>
 /// </summary>
 internal sealed class RowEncoder
@@ -96,8 +95,8 @@ internal sealed class RowEncoder
     /// <summary>
     /// Everything of encoding <paramref name="row"/> that can refuse it - a value its column cannot hold or that is
     /// not of its type, a row too large - with nothing written. An update prepares the new row before it frees or
-    /// deletes the one it replaces, and an insert before any page is touched, so a refused row changes nothing
-    /// (qcatco/exportmdb.interop#56). <paramref name="keptVariableValues"/> and <paramref name="keptFixedValues"/>
+    /// deletes the one it replaces, and an insert before any page is touched, so a refused row changes nothing.
+    /// <paramref name="keptVariableValues"/> and <paramref name="keptFixedValues"/>
     /// are the old row's own bytes for the columns an update does not name, written back as they are: an update
     /// does not change a value it was not given, whatever reading it and writing it again would make of it.
     /// </summary>
@@ -410,9 +409,9 @@ internal sealed class RowEncoder
 
     /// <summary>
     /// The most bytes of a long value kept in the parent row (THIS_PAGE); a longer one goes to a long-value page.
-    /// It is Access's own limit, and Java Jackcess's (MAX_INLINE_LONG_VALUE_SIZE). The engine kept up to 1,024 bytes
-    /// in the row: it read them back, and so did other lenient readers, but Access showed #Error for every such
-    /// value (qcatco/exportmdb.interop#29).
+    /// It is Access's own limit, and Java Jackcess's (MAX_INLINE_LONG_VALUE_SIZE). Earlier versions of this library
+    /// kept up to 1,024 bytes in the row: they read them back, and so did other lenient readers, but Access shows
+    /// #Error for every such value.
     /// </summary>
     internal const int InlineLvalThreshold = 64;
 
