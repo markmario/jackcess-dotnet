@@ -7,7 +7,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// A primary key given to a table that has rows and no key (#37). Access writes one as an index whose block has
 /// the flags 0x89 - unique and required - and whose slot has type 1, built over the rows; so does this. What
-/// Access makes of the result is in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// Access makes of the result is in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class AddPrimaryKeyTests : IDisposable
 {

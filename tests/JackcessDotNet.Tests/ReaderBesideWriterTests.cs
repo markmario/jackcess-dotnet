@@ -6,7 +6,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// A database opened only to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>) reading beside a writer that changes
 /// the file between two of its moves (#62). The writer here is another <see cref="Database"/>, in the same process; in
-/// ExportMdb.Interop's FileSharingInAccessTests it is ACE. What a reading beside a writer can and cannot give is in
+/// FileSharingInAccessTests it is ACE. What a reading beside a writer can and cannot give is in
 /// <see cref="DatabaseOpenOptions.ReadOnly"/>; these are the cases a reader that kept what it had read gave wrong:
 /// a row twice, and a row with a long value of another row's or of none.
 /// </summary>

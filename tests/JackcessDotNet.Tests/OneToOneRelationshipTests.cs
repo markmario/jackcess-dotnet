@@ -7,7 +7,7 @@ namespace JackcessDotNet.Tests;
 /// Whether a relationship is one to one is the caller's to say (#37): <see cref="RelationshipDefinition.IsOneToOne"/>
 /// null marks it when both sides are unique, as Access's Relationships window does; true marks it whatever
 /// indexes there are, as DAO does when told to, and the foreign key's index is then a unique one, built over the
-/// rows; false leaves it unmarked. What DAO makes of each is in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// rows; false leaves it unmarked. What DAO makes of each is in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class OneToOneRelationshipTests : IDisposable
 {

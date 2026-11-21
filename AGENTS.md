@@ -173,9 +173,7 @@ Before a pull request, on its final state: a clean build with no warnings, the w
   nuget.org: its links are absolute, and it changes only for a new page or a new headline feature.
 - Comments that say what the code does and why. XML documentation and comments carry no history ("now", "no
   longer") and no talk of tasks, reviews or agents. An issue of this repository is cited as `#NN`, and no other
-  tracker is cited. A few comments still cite another one, which
-  [#47](https://github.com/markmario/jackcess-dotnet/issues/47) replaces: do not copy them, and do not sweep them
-  out in passing.
+  tracker is cited.
 - Text files are LF (`.gitattributes`). A file's byte-order mark stays as it is.
 - Nothing else: no rename, reformatting or move that the task does not need.
 

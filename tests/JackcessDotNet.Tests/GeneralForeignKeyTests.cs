@@ -5,10 +5,10 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// Foreign keys on text, in a database that sorts in Access 2010's General order and in one that sorts in General -
-/// Legacy (qcatco/exportmdb.interop#26 on #38). A child's value refers to a parent's when Access holds the two
+/// Legacy (#23). A child's value refers to a parent's when Access holds the two
 /// equal - whatever the case, but not without an accent - and that is judged by the keys of the column's own sort
 /// order; cascades write the new key in every index of both tables; a value whose key a search of an index cannot
-/// be trusted with is looked for in the table instead. What ACE does with the same changes is in ExportMdb.Interop's
+/// be trusted with is looked for in the table instead. What ACE does with the same changes is in
 /// ForeignKeysInAccessTests.
 /// </summary>
 public sealed class GeneralForeignKeyTests : IDisposable

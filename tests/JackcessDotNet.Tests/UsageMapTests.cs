@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A usage map past its first window (qcatco/exportmdb.interop#20), as Access and Java Jackcess handle one
+/// A usage map past its first window, as Access and Java Jackcess handle one
 /// (UsageMap.InlineHandler and ReferenceHandler): an inline map moves its window when every page it holds still
 /// fits in one, and otherwise becomes a reference map, whose map pages - each covering (page size - 4) x 8 pages -
 /// are allocated as they are first needed. The rows here are 69 bytes, as Access writes them: 64 bitmap bytes, 512

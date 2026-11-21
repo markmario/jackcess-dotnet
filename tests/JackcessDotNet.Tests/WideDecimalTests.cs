@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A Decimal whose stored number runs past 96 bits (qcatco/exportmdb.interop#74). A Decimal is a sign byte and four
+/// A Decimal whose stored number runs past 96 bits. A Decimal is a sign byte and four
 /// 32-bit words, the most significant first. Access writes none with the first word set - its 28 digits are under
 /// 2^96 - and reads one as if the word were not there: the number the other three make, with its sign. This
 /// library read null. Java Jackcess gives all 128 bits as a BigDecimal, which a <see cref="decimal"/> has no room
@@ -14,7 +14,7 @@ namespace JackcessDotNet.Tests;
 /// Nothing writes such a value, so these tests put the bytes in the file themselves (<see cref="Store"/>): a row is
 /// inserted with a number that stands in, and its seventeen bytes are written over. The numbers expected are the
 /// ones ACE 12 gave for the same bytes, through its OLE DB provider and through DAO - they are held to ACE itself
-/// in ExportMdb.Interop's EarlierEngineFilesInAccessTests.
+/// in EarlierEngineFilesInAccessTests.
 /// </para>
 /// </summary>
 public sealed class WideDecimalTests : IDisposable

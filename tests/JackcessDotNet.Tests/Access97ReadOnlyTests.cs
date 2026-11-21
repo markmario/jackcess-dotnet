@@ -5,8 +5,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// An Access 97 (Jet3) file is read and never written, as in Jackcess, whose Jet3 format is read-only
-/// (qcatco/exportmdb.interop#67). This library used to write to one - a row's end-of-data offset and variable
+/// An Access 97 (Jet3) file is read and never written, as in Jackcess, whose Jet3 format is read-only.
+/// This library used to write to one - a row's end-of-data offset and variable
 /// column count in two bytes each, where Jet3 has one, so the row read back with its text null - and to create
 /// one. Now everything that would change such a file, or make one, is refused with
 /// <see cref="NotSupportedException"/> before anything is done: the file is the same bytes afterwards, and what

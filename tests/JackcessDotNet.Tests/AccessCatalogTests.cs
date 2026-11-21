@@ -6,11 +6,11 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A table the engine creates is one Access can see and use (qcatco/exportmdb.interop#22): registered in
+/// A table the engine creates is one Access can see and use: registered in
 /// MSysObjects as Access registers its own - the row, its entries in MSysObjects' indexes, its permissions in
 /// MSysACEs - and stored as Access stores one. The files of the test corpus are the reference: Access made their
-/// tables, so a table the engine adds beside one must match it. ACE itself checks the same in ExportMdb.Interop's
-/// classic-build tests.
+/// tables, so a table the engine adds beside one must match it. ACE itself checks the same in
+/// EngineTablesInAccessTests.
 /// </summary>
 public sealed class AccessCatalogTests : IDisposable
 {

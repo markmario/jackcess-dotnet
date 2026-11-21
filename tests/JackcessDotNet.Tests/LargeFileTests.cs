@@ -5,8 +5,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Files past the first usage-map window, and inserts that cost the same however large the table is
-/// (qcatco/exportmdb.interop#20). A table's pages are listed in a usage map whose inline form covers one window of
+/// Files past the first usage-map window, and inserts that cost the same however large the table is.
+/// A table's pages are listed in a usage map whose inline form covers one window of
 /// pages - 512 in Access's own files, 1,600 in this engine's - and adding a page outside it threw, so no file could
 /// grow past that. And every insert read every page the table owned to look for space, so each was slower than the
 /// last.

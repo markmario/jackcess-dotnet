@@ -11,7 +11,7 @@ namespace JackcessDotNet.Tests;
 /// dbFixedField): a value of the column's length or less is taken - a fixed-length one filled to its length with
 /// zeros - and one byte more is refused ("The field is too small to accept the amount of data you attempted to add"),
 /// on an insert and on an update, the row left as it was. Access referees what this library writes in
-/// qcatco/exportmdb.interop's suite.
+/// BinaryLengthInAccessTests.
 /// </summary>
 public sealed class BinaryLengthTests : IDisposable
 {

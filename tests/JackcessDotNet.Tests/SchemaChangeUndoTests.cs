@@ -4,8 +4,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A change to the schema that fails while it is being written is taken back whole
-/// (qcatco/exportmdb.interop#37). Everything that can refuse a change is found before a page is written, so only
+/// A change to the schema that fails while it is being written is taken back whole.
+/// Everything that can refuse a change is found before a page is written, so only
 /// the file can fail after that: here it is made to, at every page write a change makes in turn
 /// (<see cref="PageFile.WritesBeforeFailure"/>), and after each failure the file is byte for byte what it was,
 /// its tables are as they were to the library, and the same change then goes through.

@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Tables Access made keep every one of their indexes as the engine changes their rows (qcatco/exportmdb.interop#27):
+/// Tables Access made keep every one of their indexes as the engine changes their rows:
 /// the primary key, the other indexes, an index on several columns or sorted descending, and a tree two logical
 /// indexes share. Each index is read back from the file's pages and must hold exactly the table's rows - Access's
 /// own entries, which the engine did not write, among them, so the keys compared are the ones Access wrote.
@@ -61,7 +61,7 @@ public sealed class AccessMadeIndexTests : IDisposable
         foreach (string type in new[] { "Byte", "Int16", "Int32", "Currency", "Single", "Double", "DateTime", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type, proved);
         // (The corpus has no descending index on an Integer or a Date/Time column; ACE makes those in
-        // qcatco/exportmdb.interop's EngineIndexesInAccessTests.)
+        // EngineIndexesInAccessTests.)
         foreach (string type in new[] { "Byte", "Int32", "Currency", "Single", "Double", "Boolean", "Text", "Memo", "Guid" })
             Assert.Contains(type + " descending", proved);
         Assert.Equal(new[] { "Decimal" }, refused);

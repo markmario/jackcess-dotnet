@@ -8,7 +8,7 @@ namespace JackcessDotNet.Tests;
 /// definition, in the relationships it is part of and in the properties the catalog keeps for it; an index in the
 /// definition, its slot moved to where the new name sorts; a table in the catalog and in its relationships. A
 /// name Access refuses is refused, and a refused change leaves the file as it was. What Access makes of the
-/// result is in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// result is in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class SchemaRenameTests : IDisposable
 {

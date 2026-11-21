@@ -10,8 +10,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// An insert fills a table's AutoNumber columns as Access does: a Long one from the counter the table's definition
 /// keeps - so the next session, and Access, go on from it - and a Guid one with a new GUID. The row handed in holds
-/// the values afterwards. A value the row brings is ignored unless the table or its database allows it. The engine
-/// wrote whatever the caller gave, and nothing read or moved the counter (qcatco/exportmdb.interop#36).
+/// the values afterwards. A value the row brings is ignored unless the table or its database allows it.
 /// </summary>
 public sealed class AutoNumberTests : IDisposable
 {
@@ -477,7 +476,7 @@ public sealed class AutoNumberTests : IDisposable
         Assert.Equal(1, table.LastAutoNumber);
     }
 
-    // ── An import's rows and the numbers they bring (review of qcatco/jackcess-dotnet#7) ──
+    // ── An import's rows and the numbers they bring ──
 
     private static string[] Names(Table table) => table.Rows.Select(r => (string)r["Name"]!).ToArray();
 

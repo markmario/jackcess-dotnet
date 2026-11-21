@@ -13,7 +13,7 @@ namespace JackcessDotNet.Tests;
 /// (<see cref="DatabaseOpenOptions.ReadOnly"/>) shares it as Access's read-only open does.
 /// <para>
 /// Here Access is a <see cref="FileStream"/> opened as ACE and DAO open the file in each mode - what their own handles
-/// were measured to ask for and to share. ExportMdb.Interop's FileSharingInAccessTests has ACE and DAO themselves on
+/// were measured to ask for and to share. FileSharingInAccessTests has ACE and DAO themselves on
 /// the other side.
 /// </para>
 /// </summary>

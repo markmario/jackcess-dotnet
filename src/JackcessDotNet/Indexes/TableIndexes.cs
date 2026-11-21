@@ -227,12 +227,12 @@ internal sealed class TableIndexes
     /// for it: it holds the pages it read, which <see cref="Add"/> then reads no second time - so a unique index
     /// costs an insert no more page reads than one that is not.
     /// <para>
-    /// With <see cref="Database.VerifyIndexes"/> the index is not taken at its word
-    /// (qcatco/exportmdb.interop#73): the rows it was seen not to hold (<see cref="RowsNotHeldBy"/>) are asked as
-    /// well, since a second row with the values of one of them is a duplicate the index knows nothing of. Access
-    /// adds such a row, and when the file is next compacted cannot build the index, and leaves the table without
-    /// it. Seeing costs the first row a session checks one reading of the table, for all its unique indexes
-    /// together, and no row after it anything. Without it nothing is read but the index.
+    /// With <see cref="Database.VerifyIndexes"/> the index is not taken at its word: the rows it was seen not to
+    /// hold (<see cref="RowsNotHeldBy"/>) are asked as well, since a second row with the values of one of them is
+    /// a duplicate the index knows nothing of. Access adds such a row, and when the file is next compacted cannot
+    /// build the index, and leaves the table without it. Seeing costs the first row a session checks one reading
+    /// of the table, for all its unique indexes together, and no row after it anything. Without it nothing is read
+    /// but the index.
     /// </para>
     /// </summary>
     public IndexWriter? EnsureNoDuplicates(IReadOnlyList<Entry> entries, int? replacedRowPointer = null, bool forEntry = false)
@@ -354,16 +354,16 @@ internal sealed class TableIndexes
     /// what makes "the index has no such row" mean that the table has none. Access takes that on trust, and
     /// Jackcess, and so does this library unless <see cref="Database.VerifyIndexes"/> is set. Then it is seen
     /// once for each index, the first time rows are looked for through it, and remembered while the database is
-    /// open (qcatco/exportmdb.interop#64).
+    /// open.
     /// <para>
-    /// Versions of this library before it kept every index (those in ExportMdb.Interop up to 2.1.2) kept a table's
-    /// primary key and no other index. A row one of them inserted has no entry in the others; a row one of them
-    /// updated has, in each, the entry of the row it was, where that was; a row one of them deleted left its
-    /// entries behind. An entry too many does no harm - whoever follows it reads the row - but a row with no
-    /// entry is not found, and a count does not show it: after such an update an index has as many entries as the
-    /// table has rows. Nor does an index Access alone has written always have exactly one entry a row. So each
-    /// row is looked at: the table is read once, for the index's columns, and every row's key must be in the
-    /// index, pointing at that row.
+    /// Versions of this library before it kept every index (the <c>JackcessDotNet</c> package up to 1.2.2, and
+    /// builds of this repository before a427b84) kept a table's primary key and no other index. A row one of them
+    /// inserted has no entry in the others; a row one of them updated has, in each, the entry of the row it was,
+    /// where that was; a row one of them deleted left its entries behind. An entry too many does no harm -
+    /// whoever follows it reads the row - but a row with no entry is not found, and a count does not show it:
+    /// after such an update an index has as many entries as the table has rows. Nor does an index Access alone has
+    /// written always have exactly one entry a row. So each row is looked at: the table is read once, for the
+    /// index's columns, and every row's key must be in the index, pointing at that row.
     /// </para>
     /// <para>
     /// A row needs no entry when a search could not be for it: its columns all null in an index that ignores

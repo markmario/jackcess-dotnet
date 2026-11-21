@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// What the review of qcatco/jackcess-dotnet#3 found, each seen failing first: a table registered in a file whose
+/// What a review of the engine found, each seen failing first: a table registered in a file whose
 /// catalog sorts text in an order the engine did not then key (Access 2010's General, which it has keyed since); an index root that moved under a writer holding the old
 /// one; text columns created with no sort order, which Access then keys in another collation; a primary key an
 /// earlier version wrote; a delete or insert that changed a table before finding its key could not be kept; a name a
@@ -210,7 +210,7 @@ public sealed class EngineReviewTests : IDisposable
     // A value whose key a search cannot trust is one a lookup scans the table for, and that must find the row
     // too. The corpus has one: 255 characters whose key Jackcess wrote whole, 685 bytes, where Access - Jet 4.0,
     // ACE 12 and ACE 16 alike - cuts a key at 510. It has no indexed value with a character Access keys by its
-    // neighbours; ExportMdb.Interop's EngineTablesInAccessTests has ACE write those.
+    // neighbours; EngineTablesInAccessTests has ACE write those.
     [Theory]
     [MemberData(nameof(Jet4CorpusFiles))]
     public void Every_row_is_found_through_every_text_index_Access_made(string version, string filename)

@@ -4,10 +4,10 @@
     rows added and changed by this library as it was at commit 3ad3aed, before it kept every index.
 
 .DESCRIPTION
-    Up to that commit (the one in ExportMdb.Interop 2.1.2) this library kept a table's primary key and no other
+    Up to that commit this library kept a table's primary key and no other
     index: a row it inserted had no entry in the others, and a row it updated kept, in each, the entry of the row
     it had been. A relationship's rows are found through the index on the foreign key, so such a row is not found
-    there (qcatco/exportmdb.interop#64). Since then an index is searched for a relationship only once it has been
+    there. Since then an index is searched for a relationship only once it has been
     seen to hold every row (LegacyIncompleteIndexTests).
 
     The fixture is such a file, made by Access and by the earlier code itself, not by a reconstruction of either.

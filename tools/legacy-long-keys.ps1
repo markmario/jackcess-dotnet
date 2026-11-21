@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Access keeps no index key longer than 510 bytes: it cuts a longer one there and ends it in a two-byte digest
-    of the rest. This library does the same since qcatco/exportmdb.interop#26. Before that it wrote such a key
+    of the rest. This library does the same; as it was at 696ca52 it wrote such a key
     whole, as Jackcess did before it cut keys, so a file made by an earlier release can hold whole keys of more
     than 510 bytes, and this library must find, move and remove those entries too (LegacyLongKeyTests).
 

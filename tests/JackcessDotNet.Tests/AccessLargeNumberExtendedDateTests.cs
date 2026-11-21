@@ -5,8 +5,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// Large Number (Access 2016) and Date/Time Extended (Access 2019) columns as Access wrote them
-/// (qcatco/exportmdb.interop#40): every value is read as the one Access was given, and every index on them holds
+/// Large Number (Access 2016) and Date/Time Extended (Access 2019) columns as Access wrote them:
+/// every value is read as the one Access was given, and every index on them holds
 /// each row under the key this library makes for it - so the keys are Access's, for the ends of both ranges, in
 /// both directions and with another column after them. Assets/ace-large-numbers-extended-dates.accdb was made by
 /// tools/large-number-extended-date-fixture.ps1, which has the same rows as <see cref="Numbers"/> and

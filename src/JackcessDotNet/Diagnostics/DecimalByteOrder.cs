@@ -1,9 +1,9 @@
 namespace JackcessDotNet.Diagnostics;
 
 /// <summary>
-/// Looks for Decimal values that were stored with their bytes in an order Access does not use, as versions of
-/// this library before qcatco/exportmdb.interop#61 stored them. Nothing is changed, in the file or in what a
-/// read returns.
+/// Looks for Decimal values that were stored with their bytes in an order Access does not use, as earlier
+/// versions of this library stored them (the <c>JackcessDotNet</c> package up to 1.2.2 among them). Nothing is
+/// changed, in the file or in what a read returns.
 /// <para>
 /// Those versions wrote a Decimal's sixteen bytes in an order of their own, so every value they wrote reads as a
 /// different number - a 1 as 16,777,216 - in Access and in this library. Nothing in the file says who wrote a
