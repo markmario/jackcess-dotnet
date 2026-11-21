@@ -152,6 +152,7 @@ MemoCompressionTests                          0.0        0.0        0.1        0
 MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
 NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
 NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+OADateChoiceTests                             0.9        0.8        0.7        2.3        0.7        0.9
 OADateTests                                   0.3        0.4        0.5        0.6        0.3        0.6
 ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
 OfficeCryptTests                              3.5        2.5        6.6       10.7        2.3        9.5
