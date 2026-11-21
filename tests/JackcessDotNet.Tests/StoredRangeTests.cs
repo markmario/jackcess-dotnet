@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Xunit;
 
 namespace JackcessDotNet.Tests;
@@ -13,7 +12,7 @@ namespace JackcessDotNet.Tests;
 /// asked here which is the next double past it.
 /// <para>
 /// The halving went on only where the process had left the x87 unit computing with 64 bits of precision, as ACE's OLE DB
-/// provider leaves the thread that ran a statement (measured with Microsoft 365's ACE, 32-bit: 53 bits before an INSERT, 64 after it). So in a 32-bit process each test puts its thread in that state first (<see cref="WithX87At64Bits"/>).
+/// provider leaves the thread that ran a statement (measured with Microsoft 365's ACE, 32-bit: 53 bits before an INSERT, 64 after it). So in a 32-bit process each test puts its thread in that state first (<see cref="X87.At64Bits(Action)"/>).
 /// </para>
 /// </summary>
 public sealed class StoredRangeTests
@@ -101,33 +100,16 @@ public sealed class StoredRangeTests
         }
     }
 
-    // Runs 'action' on a thread of its own, with the x87 unit as ACE leaves it (WithX87At64Bits), and says whether it
+    // Runs 'action' on a thread of its own, with the x87 unit as ACE leaves it (X87.At64Bits), and says whether it
     // ended within 20 seconds; an exception it throws is thrown here.
     private static async Task<bool> EndsInTime(Action action)
     {
         var cancel = TestContext.Current.CancellationToken;
-        var work = Task.Run(() => WithX87At64Bits(action), cancel);
+        var work = Task.Run(() => X87.At64Bits(action), cancel);
         if (await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(20), cancel)) != work) return false;
         await work;
         return true;
     }
-
-    // In a 32-bit process, runs 'action' with this thread's x87 unit computing with 64 bits of precision, as ACE leaves
-    // it, and then puts the unit back. A 64-bit process computes doubles with SSE2, which has no such state.
-    private static void WithX87At64Bits(Action action)
-    {
-        if (Environment.Is64BitProcess || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) { action(); return; }
-        uint was = _controlfp(0, 0);
-        _controlfp(PrecisionControl64Bits, PrecisionControlMask);
-        try { action(); }
-        finally { _controlfp(was, PrecisionControlMask); }
-    }
-
-    private const uint PrecisionControlMask = 0x00030000;   // _MCW_PC
-    private const uint PrecisionControl64Bits = 0x00000000; // _PC_64
-
-    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)]
-    private static extern uint _controlfp(uint newControl, uint mask);
 
     // The next double towards plus and minus infinity: .NET Framework has no Math.BitIncrement.
     private static double Up(double value) =>

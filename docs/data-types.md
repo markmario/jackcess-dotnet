@@ -149,6 +149,15 @@ finer than that, or outside what `DateTime` holds, as it is
 ([Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows)), and a lookup
 finds every row whose number reads as the `DateTime` given ([Date/Time](cursors-and-rows.md#datetime)).
 
+The number a row stores - days since 30 December 1899 - is read and written as `DateTime.FromOADate` and `ToOADate`
+convert it in a 64-bit process, but in integers, so that every runtime and every process converts it alike ([#100]).
+Those two compute in doubles, which a 32-bit .NET Framework process computes with the x87 unit, and ACE's OLE DB
+provider leaves the thread that ran a statement with that unit at 64 bits of precision instead of 53 (measured with
+32-bit ACE 12). There, of 15 million numbers chosen either side of a millisecond's half, 241 read as the millisecond
+beside the one a 64-bit process reads; of 3.4 million dates, 783 were written as the double beside. As a 64-bit
+process reads it, a number's product with 86,400,000 is rounded to a double before the half is added, so a number a
+hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads as 00:00:00.001 on 30 December 1899.
+
 ## Text and Memo
 
 - **Fixed-length text (SQL `CHAR(n)`) is returned filled to its length with spaces**, as Access returns it, and
@@ -222,3 +231,4 @@ are each refused with `NotSupportedException`.
 [#75]: https://github.com/markmario/jackcess-dotnet/issues/75
 [#80]: https://github.com/markmario/jackcess-dotnet/issues/80
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
+[#100]: https://github.com/markmario/jackcess-dotnet/issues/100

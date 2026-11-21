@@ -250,7 +250,7 @@ internal static class RowValues
             case string text:
                 return decimal.Parse(text, NumberStyles.Any, CultureInfo.CurrentCulture);
             case DateTime date:
-                return date.ToOADate();
+                return Util.OADate.FromDateTime(date);
             case Enum:
                 return Convert.ChangeType(value, Enum.GetUnderlyingType(value.GetType()), CultureInfo.InvariantCulture);
             default:

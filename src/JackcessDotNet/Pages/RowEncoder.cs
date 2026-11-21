@@ -323,7 +323,7 @@ internal sealed class RowEncoder
                 return;
             case DataType.DateTime:
                 // A row rewritten with its dates as stored brings the double itself for a date it does not change.
-                Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : ((DateTime)value).ToOADate());
+                Util.ByteUtil.PutDouble(buffer, offset, DatesAsStored && value is double days ? days : Util.OADate.FromDateTime((DateTime)value));
                 return;
             case DataType.Currency:
                 // Ten-thousandths, the caller's number taken to them as Access takes it (Util.CurrencyRounding, #65).
