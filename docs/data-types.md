@@ -47,9 +47,19 @@ alike - Byte, Integer, Long Integer, Large Number, Single, Double, Currency and 
 - **Text is read in the current culture**, as Access reads it by the machine's settings, in the forms Access reads:
   a currency symbol ("$5" is 5), parentheses for a negative number ("(5)" is -5), an exponent ("1e2" is 100), group
   separators and spaces around it ("1,5" is 15 where the comma groups digits). A whole-number column takes "2.5" as
-  2 and "1.5" as 2, half to even, as Access does. Text is read as a `double` for a Single or a Double column and as a
-  `decimal` for any other. Text that is no number ("True", "abc", "") is refused with `FormatException`, as Access
-  refuses it.
+  2 and "1.5" as 2, half to even, as Access does. Text is read as a `decimal` for a column other than a Single or a
+  Double. Text that is no number ("True", "abc", "") is refused with `FormatException`, as Access refuses it.
+- **Text for a Double or a Single is the number Access stores for it, on every target** ([#124]): Access reads the
+  text's first 20 significant digits for a Double and its first 12 for a Single, leading zeros not among them, and
+  stores the double or the single nearest the number they make, a tie to the even significand; the digits after
+  those make no difference. "1.0635554516475241859652" is the double of 1.0635554516475241859, and "-0" is -0.0.
+  Measured with ACE 16 - text literals and text parameters in an `INSERT` - and DAO's `AddNew`, which store the
+  same, for 13,276 texts, most at and next to the half between two doubles, or two singles, of every range
+  (`tools/ace-text-to-float.ps1`). The runtime's own parse did not do that on any target: of those texts .NET
+  stored another double for 1,025 and another single for 1,793, rounding every digit; .NET Framework another double
+  for 1,620 in a 64-bit process and 402 in a 32-bit one, and another single for 1,882, read through its double. A
+  Double or Single property given text takes it the same way, as DAO does, in the invariant culture - though in
+  fewer forms than DAO reads ([#138]).
 - **A `DateTime` is its day number**, days since 30 December 1899, as Access and Java Jackcess take one: 2 January
   2020 12:00 is 43832.5 in a Double, and 43832 in a Long Integer.
 - **A number the column does not hold is refused** with `OverflowException`: `true`, which is -1, and a date in a
@@ -60,7 +70,11 @@ alike - Byte, Integer, Long Integer, Large Number, Single, Double, Currency and 
   anything is written. Access refuses a GUID and bytes.
 
 **Where Access differs:** ACE reads the text "&H10" as 16, a hexadecimal number in Visual Basic's form; this library
-does not read that form, and refuses such text with `FormatException`.
+does not read that form, and refuses such text with `FormatException`. And in two ranges of the least doubles,
+from 1E-308 to 1E-304 and under about 1E-321, ACE stores some text one place from the double nearest the number of
+its first 20 digits: 73 of the 13,276 texts measured, all in those ranges. "2.4703282292062328E-324", past the half
+between 0 and the least double, is 0 to ACE. Its arithmetic there was not found; this library stores the nearest
+([#136]).
 
 A range or the closest row through an index takes these values the same way; an equality takes text and a `bool`
 for no number ([Numbers](cursors-and-rows.md#numbers)). The importer keeps its own rule: only a value a column holds
@@ -214,6 +228,20 @@ hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads
     as compressed text wherever they begin 0xFF 0xFE, as those versions wrote them
     ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). A name that
     begins with U+FEFF given to such a table is written and refused as its Text values are ([#129]).
+- **A `double` or a `float` given for a Text or a Memo column is the text Access writes for it, on every target**
+  ([#124]): 15 significant digits for a double and 7 for a single, a half away from zero, in the current culture's
+  decimal separator and negative sign. The number is written out unless it is 10^15 or more (10^7 for a single)
+  before it is rounded, or has more than 15 places after the point (7) once it is: then with an exponent of two
+  digits or more. 0.1 + 0.2 is "0.3", 1E-05 is "0.00001", 1.23456789012345E-05 stays so, 999999999999999.5 is
+  "1000000000000000" and 1E+15 is "1E+15"; 16777216f is "1.677722E+07"; -0.0 is "-0"; NaN is "-nan(ind)" and the
+  infinities "inf" and "-inf". Measured with ACE 16 - a Double or Single parameter, and a Double or Single column
+  copied by `INSERT ... SELECT` - and DAO's `AddNew` and a Text property, which all write the same
+  (`tools/ace-text-to-float.ps1`). The runtime wrote its own: .NET the round-trip form ("0.30000000000000004"), .NET
+  Framework 15 digits but "1E-05" and "0" for -0.0. A lookup of a Text column by a double or a float
+  looks for that text, so a row an earlier version wrote with the runtime's text - "0.30000000000000004" for
+  0.1 + 0.2 - is not found by the double, but by its text
+  ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). A Text property
+  given one is written the same, in the invariant culture.
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and
@@ -249,4 +277,7 @@ are each refused with `NotSupportedException`.
 [#80]: https://github.com/markmario/jackcess-dotnet/issues/80
 [#93]: https://github.com/markmario/jackcess-dotnet/issues/93
 [#100]: https://github.com/markmario/jackcess-dotnet/issues/100
+[#124]: https://github.com/markmario/jackcess-dotnet/issues/124
 [#129]: https://github.com/markmario/jackcess-dotnet/issues/129
+[#136]: https://github.com/markmario/jackcess-dotnet/issues/136
+[#138]: https://github.com/markmario/jackcess-dotnet/issues/138
