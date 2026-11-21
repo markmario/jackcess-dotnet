@@ -62,7 +62,8 @@ Each of these was found by having Access or ACE open a file the engine wrote.
 - **A Decimal with more places than its column holds is stored as ACE stores it**, cut toward zero, where the
   engine rounded half away from zero ([Decimal](data-types.md#decimal)).
 - **A `bool`, text and a date for a number column are what Access stores for them**, `true` as -1, in every number
-  type ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
+  type, and text for a Double or a Single the same number on every target
+  ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
 - **Tables the engine creates are ones Access lists, reads, seeks in and adds to.**
 - **Two names are one as Access takes them**: by their text index keys, in the order Access compares names by,
   measured with DAO on 18,140 pairs. A name one with another of its kind is refused, and a lookup finds the name
@@ -118,6 +119,15 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   switch to UTF-16LE two bytes at a time. Java Jackcess reads such bytes as compressed text in every column and
   switches at every 0x00 byte. Text that begins with U+FEFF is written in runs where ACE writes it so, where
   Jackcess writes it as UTF-16LE ([Text and Memo](data-types.md#text-and-memo)).
+- **Text given for a Double or a Single** is the number Access stores for it, the nearest to its first 20 or 12
+  significant digits, where Java Jackcess reads it with `Double.valueOf`, every digit, and a Single through that
+  double; and **a number given for a Text column** is written as Access writes it, 15 or 7 significant digits, where
+  Jackcess writes Java's own text of it, `1.0E-5` for what Access writes `0.00001`
+  ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number),
+  [Text and Memo](data-types.md#text-and-memo)). The Access followed is 64-bit ACE 16: 32-bit ACE stores some text
+  for a Double one unit in the last place from it, and writes some numbers as text otherwise, which this
+  library does not follow in a process of either bitness
+  ([A bool, text or a date for a number](data-types.md#a-bool-text-or-a-date-for-a-number)).
 - **A batch insert** goes in whole or not at all, where Jackcess's `addRows` leaves the rows before a refused one
   in the table ([CHANGELOG](../CHANGELOG.md#added)).
 - **Cursors** have no column matchers of a caller's own (Jackcess's `ColumnMatcher`), and do not find a null by

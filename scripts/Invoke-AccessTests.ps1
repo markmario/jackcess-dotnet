@@ -198,7 +198,8 @@ $pieces = @{
 # 44844453781) and for the full sweeps (the mean of runs 44846769290 and 44847393534), from the line "Seconds each
 # process took" of each shard's log. The first lines of each are classes with no sweep, timed in each mode's runs.
 # TextMarkerInAccessTests, the last line of each, is the mean of five pull requests' runs, 44860480279 to 44865291603,
-# and of five runs on main, 44860125207 to 44866192633 (2026-11-21).
+# and of five runs on main, 44860125207 to 44866192633 (2026-11-21). NumberTextInAccessTests, after it, is as it ran on
+# a developer's machine, until CI's runs time it.
 $table = @{
     samples = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 13; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 61
@@ -224,6 +225,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkPortuguese' = 7
         BulkIndexesInAccessTests = 60; MemoStorageInAccessTests = 12; 'SchemaChangesInAccessTests.Names' = 13; ValuesAndEntriesInAccessTests = 14
         TextMarkerInAccessTests = 23
+        NumberTextInAccessTests = 8
     }
     full = @{
         BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 16; ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 66
@@ -249,6 +251,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkPortuguese' = 94
         BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
         TextMarkerInAccessTests = 25
+        NumberTextInAccessTests = 60
     }
     # The samples in a 32-bit process (-X86), three processes at a time, against the redistributable's 32-bit ACE 16:
     # run 44877333525. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests, the Seeks).
@@ -277,6 +280,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGerman' = 8; 'SortOrdersInAccessTests.WalkGreek' = 10
         'SortOrdersInAccessTests.WalkHebrew' = 20; 'SortOrdersInAccessTests.WalkItalian' = 11
         'SortOrdersInAccessTests.WalkPortuguese' = 24; TextMarkerInAccessTests = 36; ValuesAndEntriesInAccessTests = 5
+        NumberTextInAccessTests = 12
     }
 }
 

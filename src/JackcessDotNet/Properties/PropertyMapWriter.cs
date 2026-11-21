@@ -197,13 +197,20 @@ internal static class PropertyMapWriter
                 case DataType.Int32:    return System.Convert.ToInt32(value, invariant);
                 case DataType.Single:
                 {
-                    // A number too large for a Single converts to infinity without a word; it is refused instead.
-                    float single = System.Convert.ToSingle(value, invariant);
+                    // Text is the single DAO stores for it, on every target (Util.NumberText, #124). A number too
+                    // large for a Single converts to infinity without a word; it is refused instead.
+                    float single = value is string singleText
+                        ? Util.NumberText.ToSingle(singleText, NumberStyles.Float | NumberStyles.AllowThousands, invariant)
+                        : System.Convert.ToSingle(value, invariant);
                     if (float.IsInfinity(single) && !(value is float or double && double.IsInfinity(System.Convert.ToDouble(value, invariant))))
                         throw OutOfRange(name, value, dataType, "it is beyond what a Single holds");
                     return single;
                 }
-                case DataType.Double:   return System.Convert.ToDouble(value, invariant);
+                case DataType.Double:
+                    // Text is the double DAO stores for it, on every target (Util.NumberText, #124).
+                    return value is string doubleText
+                        ? Util.NumberText.ToDouble(doubleText, NumberStyles.Float | NumberStyles.AllowThousands, invariant)
+                        : System.Convert.ToDouble(value, invariant);
                 case DataType.Currency:
                 {
                     // A Currency is a 64-bit count of ten-thousandths. A number is taken to them as Access takes one, its
@@ -232,7 +239,13 @@ internal static class PropertyMapWriter
                     };
                 case DataType.Text:
                 case DataType.Memo:
-                    return System.Convert.ToString(value, invariant) ?? string.Empty;
+                    // A double or a float as Access writes one as text, on every target (Util.NumberText, #124).
+                    return value switch
+                    {
+                        double d => Util.NumberText.Text(d, invariant),
+                        float f  => Util.NumberText.Text(f, invariant),
+                        _        => System.Convert.ToString(value, invariant) ?? string.Empty,
+                    };
                 case DataType.Binary:
                 case DataType.OleObject:
                     if (value is byte[] given) return (byte[])given.Clone();
