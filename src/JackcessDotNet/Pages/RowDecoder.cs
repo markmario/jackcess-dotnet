@@ -50,7 +50,14 @@ internal sealed class RowDecoder
     /// </summary>
     public object? Decode(byte[] rowBytes, Column col) => Decode(rowBytes, col, datesAsStored: false);
 
-    private object? Decode(byte[] rowBytes, Column col, bool datesAsStored)
+    /// <summary>
+    /// As <see cref="Decode(byte[], Column)"/>, with a Text or Memo value read by its bytes, as <see cref="Column.ReadsTextByContent"/>
+    /// reads a column: compressed text when they begin 0xFF 0xFE. The catalog's name of a table an earlier version of
+    /// this library created is read so (#93).
+    /// </summary>
+    public object? DecodeByContent(byte[] rowBytes, Column col) => Decode(rowBytes, col, datesAsStored: false, byContent: true);
+
+    private object? Decode(byte[] rowBytes, Column col, bool datesAsStored, bool byContent = false)
     {
         if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull))
         {
@@ -73,9 +80,9 @@ internal sealed class RowDecoder
 
         switch (col.DataType)
         {
-            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format, col.IsCompressedUnicode);
+            case DataType.Text:   return ByteUtil.DecodeText(rowBytes, start, length, _format, col.TextMayBeCompressed || byContent);
             case DataType.Binary: return rowBytes.Slice(start, start + length);
-            case DataType.Memo:   return DecodeMemoLvRef(col, rowBytes, start, length);
+            case DataType.Memo:   return DecodeMemoLvRef(col, rowBytes, start, length, byContent);
             case DataType.OleObject:    return DecodeOleLvRef (rowBytes, start, length);
         }
 
@@ -313,11 +320,13 @@ internal sealed class RowDecoder
     }
 
     // ACE reads a Memo value's bytes as compressed text when they are kept in the row, or in one long-value row of a
-    // column with Unicode compression; in one of a column without it, and in a chain, they are UTF-16LE (#93).
-    private string? DecodeMemoLvRef(Column col, byte[] row, int start, int len)
+    // column with Unicode compression; in one of a column without it, and in a chain, they are UTF-16LE (#93). A column
+    // read by its content (Column.ReadsTextByContent) is read as compressed text wherever the value is kept.
+    private string? DecodeMemoLvRef(Column col, byte[] row, int start, int len, bool byContent)
     {
         var data = ReadLvalBytes(row, start, len, out uint type);
-        bool mayBeCompressed = type == 0x80000000u || type == 0x40000000u && col.IsCompressedUnicode;
+        bool mayBeCompressed = byContent || col.ReadsTextByContent
+                               || type == 0x80000000u || type == 0x40000000u && col.IsCompressedUnicode;
         return data is null ? null : ByteUtil.DecodeText(data, 0, data.Length, _format, mayBeCompressed);
     }
 

@@ -75,7 +75,7 @@ public sealed class Table
 
     /// <summary>Reads the definition again under the name the table has been given (Database.RenameTable).</summary>
     internal void Renamed(string name)
-        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber, _readDefinition.Names), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
+        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber, _readDefinition.Names, _readDefinition.ReadsTextByContent), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
 
     // Reads the definition again when it has been changed since it was read.
     private void Refresh()
@@ -84,7 +84,7 @@ public sealed class Table
             throw new InvalidOperationException($"Table '{_readDefinition.Name}' has been dropped from the database.");
         int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
         if (version != _readAtVersion)
-            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber, _readDefinition.Names), version);
+            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber, _readDefinition.Names, _readDefinition.ReadsTextByContent), version);
     }
 
     /// <summary>The table's definition, for tests that look at its pages.</summary>

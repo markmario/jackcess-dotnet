@@ -451,7 +451,7 @@ internal sealed class RowEncoder
     {
         if (text.Length == 0) return Array.Empty<byte>();
         if (Util.ByteUtil.BeginsWithMarker(text)
-            && (col.IsCompressedUnicode ? text.Length <= MaxCompressedMemoChars : 2 * text.Length <= InlineLvalThreshold))
+            && (col.TextMayBeCompressed ? text.Length <= MaxCompressedMemoChars : 2 * text.Length <= InlineLvalThreshold))
             return Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: false) ?? Util.ByteUtil.EncodeUtf16(text);
         bool compress = col.IsCompressedUnicode && text.Length >= 3 && text.Length <= MaxCompressedMemoChars;
         for (int i = 0; compress && i < text.Length; i++)
@@ -465,9 +465,12 @@ internal sealed class RowEncoder
     }
 
     // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
-    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16).
+    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16). In a table an earlier version created,
+    // whose text is read by its bytes (Column.ReadsTextByContent), text that begins with U+FEFF is compressed in runs.
     private static byte[] EncodeText(Column col, string text)
-        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : Util.ByteUtil.EncodeUtf16(text);
+        => col.IsCompressedUnicode || col.ReadsTextByContent && Util.ByteUtil.BeginsWithMarker(text)
+            ? Util.ByteUtil.EncodeText(text)
+            : Util.ByteUtil.EncodeUtf16(text);
 
     private byte[] WriteVariableValue(Column col, object value)
     {
