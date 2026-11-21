@@ -228,7 +228,7 @@ public sealed class GeneralSortOrderTests : IDisposable
 
     // Two values of 255 characters that differ only where their keys are cut, and whose digests are the same:
     // their entries are the same bytes. ACE refuses the second in a unique index as a duplicate (in both orders;
-    // EngineIndexesInAccessTests), and so does the engine; an index that is not unique takes both.
+    // EngineTablesInAccessTests), and so does the engine; an index that is not unique takes both.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

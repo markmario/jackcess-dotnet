@@ -294,7 +294,7 @@ public sealed class SecondaryIndexTests : IDisposable
 
     // Five text columns of 255 characters make a key of some 1,290 bytes, which no index page could hold three
     // of. Access keeps no key longer than 510 bytes: it cuts the key there and ends it in a digest of the rest
-    // (ACE does so for a key of several columns as for one; EngineIndexesInAccessTests). So
+    // (ACE does so for a key of several columns as for one; EngineTablesInAccessTests). So
     // the row is written, under the cut key, and found by it.
     [Fact]
     public void A_row_whose_key_is_longer_than_an_entry_holds_is_kept_under_the_key_Access_cuts()
