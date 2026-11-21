@@ -18,6 +18,13 @@ dotnet test JackcessDotNet.slnx --configuration Release
 A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a release build has a real version
 (see [Releasing](releasing.md)).
 
+**Line endings.** Text files are LF in the repository and in every working copy, Windows included
+(`.gitattributes`), and `.editorconfig` tells an editor so; a batch file, should one be added, is CRLF. A clone
+made before d9078d0, which made them LF, can still hold CRLF copies, and `git add` of one then stops with "CRLF
+would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no changes of your own in it,
+`git rm -r --cached -q . && git reset --hard` makes every file LF once. `git blame` skips d9078d0 on GitHub
+(`.git-blame-ignore-revs`), and locally after `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
 ## Testing
 
 - The tests are xUnit.net v3 and run on .NET 10, .NET 11 and .NET Framework 4.8: `dotnet test` runs all three,

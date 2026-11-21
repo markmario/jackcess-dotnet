@@ -100,10 +100,9 @@
     <PackageReference Include="PolySharp" Version="1.14.1" PrivateAssets="All" />
   </ItemGroup>
 
-  <!-- Only when unsigned: a strong-named assembly needs a public key in every
-       InternalsVisibleTo. Consumers that sign this project (e.g. embedding it in
-       a strong-named library) don't build the test project, so they don't need it. -->
-  <ItemGroup Condition="'$(SignAssembly)' != 'true'">
+  <!-- The assembly is not strong-named (a release refuses one), so this names no public key: a build that
+       signs it fails here (CS1726). -->
+  <ItemGroup>
     <InternalsVisibleTo Include="JackcessDotNet.Tests" />
   </ItemGroup>
 
