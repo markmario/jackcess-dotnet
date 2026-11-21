@@ -224,12 +224,13 @@ public sealed class KeepWritersOutTests : IDisposable
 
     // A file a writer has open is not opened to keep writers out - they cannot be kept out while one has it - and is left
     // as it was; the caller can open it again only to be read, beside the writer, as the refusal says (but not beside
-    // Access holding it exclusively, which keeps out every reader).
+    // Access holding it exclusively, which keeps out every reader). On Linux only that holder, which shares nothing,
+    // keeps it out (measured with .NET 10, #122); the others do not, and are passed over there.
     [Theory]
     [MemberData(nameof(Writers))]
     public void A_file_a_writer_has_open_is_refused_and_left_as_it_was(string holder)
     {
-        OnlyWhereSharingIsKeptTo();
+        if (holder != "Access has it exclusively") OnlyWhereSharingIsKeptTo();
         string path = ThreeThousandRows(FileFormat.Access2010);
         byte[] before = File.ReadAllBytes(path);
 
@@ -330,7 +331,7 @@ public sealed class KeepWritersOutTests : IDisposable
     // On Linux .NET keeps to a handle's sharing by an advisory lock, shared for every handle that shares the file at
     // all: a file opened to keep writers out lets them in all the same - Access's shared open, and a Database opened to
     // be written, which writes, and the reading sees it - and keeps out only a handle that shares nothing. So there it
-    // is read as one opened with ReadOnly alone is (the test above). Measured in CI's Linux job (#122).
+    // is read as one opened with ReadOnly alone is (the test above). Measured with .NET 10 on Linux (#122).
     [Fact]
     public void On_Linux_a_writer_is_let_in_and_only_a_handle_sharing_nothing_is_kept_out()
     {

@@ -51,7 +51,8 @@ And the other way about, with Access - or another `Database` - there first:
   file's sharing only by advisory locks - and on iOS and tvOS by none - which bind only programs that take them. On
   Linux .NET takes a shared lock for every handle that shares the file at all, and a lock of its own only for one that
   shares nothing, so what the tables above say of writers kept out does not hold there. Measured with .NET 10 on
-  Linux, on ext4 (CI's Linux job, and WSL), by `FileSharingTests` and `KeepWritersOutTests`:
+  Linux by `FileSharingTests` and `KeepWritersOutTests`, in CI's Linux job (`ubuntu-latest`) and in WSL2 Ubuntu on
+  ext4:
   - A `Database` opened to be written lets a second writer in: a second `Database` opened to be written opens the
     file and writes to it, and so does a handle opened as Access opens a database shared. Keep to one writer there.
   - A `Database` opened `ReadOnly` with `KeepWritersOut` lets writers in too, and a row a `Database` opened to be
@@ -59,7 +60,11 @@ And the other way about, with Access - or another `Database` - there first:
     at every move.
   - A handle that shares nothing - Access's exclusive open, `Database.Create` - is kept out while any of these has
     the file open, and keeps every one of them out while it has the file: those refusals hold on Linux, and the
-    library's are `DatabaseInUseException` there too. A program that takes no lock is kept out by nothing.
+    library's are `DatabaseInUseException` there too.
+  - Every one of those refusals is .NET's own advisory lock. With `DOTNET_SYSTEM_IO_DISABLEFILELOCKING=1`, which turns
+    .NET's locking off, none held (measured in WSL): a handle that shares nothing was not refused beside a
+    `Database`, and `Database.Create` was not refused beside a file in use. That a program that takes no such lock -
+    one not on .NET, say - is kept out by nothing either follows from the same, and was not measured.
 
   Other systems than Windows and Linux were not measured.
 - A database opened `ReadOnly` is held by a handle that cannot write, and every change - a row inserted, updated or

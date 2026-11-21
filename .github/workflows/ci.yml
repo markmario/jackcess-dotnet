@@ -11,7 +11,8 @@
 # target, and the test jobs each build one framework alone and run a share of
 # its tests - three shares on .NET Framework, whose tests take 10 to 12 minutes
 # one after another, and all of them in one job on .NET, where they take about
-# five (scripts/Invoke-TestShard.ps1).
+# five (scripts/Invoke-TestShard.ps1). They run on Windows, but for one that
+# runs the .NET 10 tests on Linux (#122).
 #
 # The Access referee tests (tests/JackcessDotNet.AccessTests) need Microsoft
 # Access's own engine, which hosted runners lack: access-build builds them once,

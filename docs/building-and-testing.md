@@ -46,8 +46,8 @@ would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no 
   shards that run side by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
 - CI also runs the tests on .NET 10 on Linux (`ubuntu-latest`), in one job. The `netstandard2.0` assembly on .NET 10
-  passed there too, in that job's first runs; it is left to the Windows job, which keeps the Linux one as short as
-  the others. Off Windows, build and test one framework at a time, and not the solution: the .NET Framework tests run
+  passed there too, in one run of that job (44875892154), and is left to the Windows job: both in one job took 8m40s,
+  longer than any other. Off Windows, build and test one framework at a time, and not the solution: the .NET Framework tests run
   on Windows only. On Linux a test of a writer kept out by how a handle shares the file
   skips, saying why, and one that pins what Linux does instead runs: [Sharing a file with Access](sharing.md#what-each-open-does).
 - Options are the platform's and xUnit's, not VSTest's. One class: `dotnet test --filter-class "*UsageMapTests"`.
