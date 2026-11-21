@@ -27,7 +27,9 @@ namespace JackcessDotNet;
 /// a database open read-only, a <see cref="Database"/> opened with <see cref="DatabaseOpenOptions.ReadOnly"/> -
 /// can have the file open beside it, and read it as it is written: such a reading can miss rows, give a row twice or
 /// with a value of another row's, or fail, and one that agrees with itself needs no writer while it is made
-/// (<see cref="DatabaseOpenOptions.ReadOnly"/> says what it can and cannot give). A database made by
+/// (<see cref="DatabaseOpenOptions.ReadOnly"/> says what it can and cannot give). A database opened only to be read
+/// with <see cref="DatabaseOpenOptions.KeepWritersOut"/> keeps every writer out instead, as one opened to be written
+/// does, and lets readers in. A database made by
 /// <see cref="Create(string)"/> is shared with no one, readers included, until it is disposed, as DAO holds a
 /// database it creates. Access's lock file (.ldb, .laccdb) is neither made nor read, as Access makes none for a
 /// database it opens exclusively.
@@ -364,13 +366,15 @@ public sealed class Database : IDisposable
     /// <summary>
     /// Opens an existing .mdb / .accdb file with what <paramref name="options"/> says about it: the password of
     /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), the format to read a file as when its
-    /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), and whether it is only to be read
-    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>). With none set this is <see cref="Open(string)"/>.
+    /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), whether it is only to be read
+    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), and whether, read, it keeps writers out
+    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>). With none set this is <see cref="Open(string)"/>.
     /// <para>
     /// Opened to be written, the file is refused while another program or <see cref="Database"/> has it open for
     /// writing - Access, while the database is open in it - and kept from every other writer while it is open (see
     /// <see cref="Database"/>). Opened only to be read, it opens beside a writer, and only a program holding it
-    /// exclusively keeps it out.
+    /// exclusively keeps it out - unless it is to keep writers out, when it is refused as one to be written is, and
+    /// keeps every writer out while it is open.
     /// </para>
     /// <para>
     /// A file is protected as its header says, and a password is checked as Access checks it: exactly, letter
@@ -415,13 +419,15 @@ public sealed class Database : IDisposable
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
-    /// open for writing, or not shared for writing, when the file is to be written - whatever the other options say;
-    /// open exclusively - Access holding it so - when it is only to be read. Nothing of the file is changed.
+    /// open for writing, or not shared for writing, when the file is to be written - whatever the other options say -
+    /// or is to keep writers out; open exclusively - Access holding it so - when it is only to be read. Nothing of the
+    /// file is changed.
     /// </exception>
     public static Database Open(string path, DatabaseOpenOptions options)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
-        return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly);
+        return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly,
+                        options.KeepWritersOut);
     }
 
     /// <summary>
@@ -431,12 +437,13 @@ public sealed class Database : IDisposable
     /// and an Access 2000 file opened with a fallback of <see cref="FileFormat.Access97"/> is the Access 2000
     /// file it is, read and written as any other. A protected file is opened with <paramref name="password"/>, as
     /// <see cref="Open(string, DatabaseOpenOptions)"/> describes; a file is opened only to be read when
-    /// <paramref name="readOnly"/> is true.
+    /// <paramref name="readOnly"/> is true, and one opened only to be read is shared for reading only when
+    /// <paramref name="keepWritersOut"/> is true.
     /// </summary>
-    private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly)
+    private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly, bool keepWritersOut = false)
     {
         var (format, hasHeader) = FormatOf(path, fallback);
-        var file = new PageFile(path, format, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite);
+        var file = new PageFile(path, format, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, keepWritersOut);
         try
         {
             // A file read in the fallback format has no header to say how it is protected: what its bytes there
@@ -578,7 +585,8 @@ public sealed class Database : IDisposable
     /// and rows are read, and every change to it - a row inserted, updated or deleted, a table created or
     /// imported - is refused with <see cref="NotSupportedException"/> before anything is written. Such a file is
     /// opened as one opened with <see cref="DatabaseOpenOptions.ReadOnly"/> is, beside a writer - DAO and ACE can write
-    /// to it meanwhile - and so it is read as such a one is, its pages read again at every move.
+    /// to it meanwhile - and so it is read as such a one is, its pages read again at every move; opened with
+    /// <see cref="DatabaseOpenOptions.KeepWritersOut"/>, it keeps writers out instead.
     /// </para>
     /// </summary>
     /// <param name="path">The path of the file to open.</param>

@@ -9,6 +9,7 @@ internal sealed class PageFile : IDisposable
     private readonly string _path;
     private readonly bool _readOnly;
     private readonly bool _openedToRead;
+    private readonly bool _keepsWritersOut;
 
     private bool _disposed;
 
@@ -54,11 +55,13 @@ internal sealed class PageFile : IDisposable
 
     /// <summary>
     /// Whether another program, or another <see cref="Database"/>, may write to the file while this one has it open:
-    /// a file held only to be read shares writing (the constructor). Its pages can change between two readings though
-    /// nothing is written here, so <see cref="ChangeStamp"/> says nothing of them, and a reader keeps a page no longer
-    /// than one move of a cursor (#62).
+    /// a file held only to be read shares writing (the constructor), unless it was opened to keep writers out
+    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>). Its pages can change between two readings though nothing is
+    /// written here, so <see cref="ChangeStamp"/> says nothing of them, and a reader keeps a page no longer than one
+    /// move of a cursor (#62). A file held so that no one else can write to it - opened to be written, or opened to
+    /// keep writers out - changes only through this handle, and a reader keeps a page while the stamp is unchanged.
     /// </summary>
-    internal bool SharedWithWriters => _openedToRead || _readOnly;
+    internal bool SharedWithWriters => (_openedToRead || _readOnly) && !_keepsWritersOut;
 
     /// <summary>
     /// For tests of a change that fails while it is being written: when set, that many more pages are written
@@ -139,21 +142,32 @@ internal sealed class PageFile : IDisposable
     /// writing already keeps it from being opened here. This library takes none of Access's locks, so a second writer
     /// would write over pages this one keeps track of, and this one over its. Opened only to be read, it is shared
     /// for reading and writing, as Access shares a database it opens read-only: a writer, Access or a
-    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out. Made anew
-    /// (<see cref="FileMode.Create"/>, <see cref="FileMode.Truncate"/>), it is shared with no one: it is replaced only
-    /// when no one has it open, and no one opens it until it is closed.
+    /// <see cref="Database"/>, can have it open meanwhile, and only one holding it exclusively keeps it out - unless
+    /// <paramref name="keepWritersOut"/> is set, when it is shared for reading only, as Access shares a database it
+    /// opens exclusively and read-only (DAO's <c>OpenDatabase</c> exclusive and read-only, ACE's
+    /// <c>Mode=Share Deny Write</c>): no one opens it for writing while it is held, and one that has it open for writing
+    /// keeps it from being opened here. Made anew (<see cref="FileMode.Create"/>, <see cref="FileMode.Truncate"/>), it
+    /// is shared with no one: it is replaced only when no one has it open, and no one opens it until it is closed.
     /// </para>
     /// </summary>
+    /// <param name="path">The file.</param>
+    /// <param name="format">The format to read and write it in.</param>
+    /// <param name="mode">How to open it.</param>
+    /// <param name="access">What the handle may do.</param>
+    /// <param name="keepWritersOut">
+    /// For a file held only to be read, whether it is shared for reading only rather than for reading and writing
+    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>). A file held to be written keeps writers out already.
+    /// </param>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
-    /// open for writing, or not shared for writing, when this one would write; not shared for reading - Access
-    /// holding it exclusively - when this one would only read. Nothing is created or changed.
+    /// open for writing, or not shared for writing, when this one would write or would keep writers out; not shared
+    /// for reading - Access holding it exclusively - when this one would only read. Nothing is created or changed.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// <paramref name="format"/> is one this library only reads (<see cref="JetFormat.IsReadOnly"/>: Access 97's)
     /// and <paramref name="mode"/> would create or empty the file. Nothing is created or changed.
     /// </exception>
-    public PageFile(string path, JetFormat format, FileMode mode, FileAccess access)
+    public PageFile(string path, JetFormat format, FileMode mode, FileAccess access, bool keepWritersOut = false)
     {
         _path   = path   ?? throw new ArgumentNullException(nameof(path));
         _format = format ?? throw new ArgumentNullException(nameof(format));
@@ -177,15 +191,16 @@ internal sealed class PageFile : IDisposable
             mode   = FileMode.Open;
             access = FileAccess.Read;
         }
-        _stream = OpenShared(path, mode, access);
+        _keepsWritersOut = keepWritersOut && access == FileAccess.Read;
+        _stream = OpenShared(path, mode, access, _keepsWritersOut);
     }
 
     /// <summary>
-    /// The file's handle, shared as the constructor says: for reading only by a writer, for reading and writing by a
-    /// reader, and with no one by a file made anew. A sharing violation is the file being in use, and is thrown as
-    /// <see cref="DatabaseInUseException"/>.
+    /// The file's handle, shared as the constructor says: for reading only by a writer and by a reader that keeps
+    /// writers out, for reading and writing by any other reader, and with no one by a file made anew. A sharing
+    /// violation is the file being in use, and is thrown as <see cref="DatabaseInUseException"/>.
     /// </summary>
-    private static FileStream OpenShared(string path, FileMode mode, FileAccess access)
+    private static FileStream OpenShared(string path, FileMode mode, FileAccess access, bool keepWritersOut)
     {
         // A mode that empties a file that is there replaces it whole, which a reader sharing it for writing would not
         // keep out: such a handle shares nothing, so it is refused while anyone has the file open, and no one opens the
@@ -194,7 +209,7 @@ internal sealed class PageFile : IDisposable
         // unchanged, and there is no moment between the check and the emptying for anyone to open the file in (a
         // check made with a handle of its own, closed before the file was emptied, left one).
         FileShare share = mode is FileMode.Create or FileMode.Truncate ? FileShare.None
-                        : access == FileAccess.Read ? FileShare.ReadWrite
+                        : access == FileAccess.Read && !keepWritersOut ? FileShare.ReadWrite
                         : FileShare.Read;
         try
         {
@@ -206,17 +221,22 @@ internal sealed class PageFile : IDisposable
         }
         catch (IOException e) when (DatabaseInUseException.IsSharingViolation(e))
         {
-            throw InUse(path, mode, access, e);
+            throw InUse(path, mode, access, e, keepWritersOut);
         }
     }
 
     /// <summary>
     /// What refuses a file that another program, or another <see cref="Database"/>, has open in a way that does not
-    /// let an open with <paramref name="mode"/> and <paramref name="access"/> in: <paramref name="e"/>, the sharing
-    /// violation Windows gave, said in terms of what was not done.
+    /// let an open with <paramref name="mode"/> and <paramref name="access"/> in - one that would keep writers out,
+    /// when <paramref name="keepWritersOut"/> is set: <paramref name="e"/>, the sharing violation Windows gave, said in
+    /// terms of what was not done.
     /// </summary>
-    internal static DatabaseInUseException InUse(string path, FileMode mode, FileAccess access, IOException e)
-        => new(access == FileAccess.Read
+    internal static DatabaseInUseException InUse(string path, FileMode mode, FileAccess access, IOException e, bool keepWritersOut = false)
+        => new(access == FileAccess.Read && keepWritersOut
+                ? $"'{path}' is in use: another program, or another Database, has it open for writing - Access, while the " +
+                  "database is open in it - or without sharing it. It was not opened, as writers cannot be kept out while " +
+                  "one has it; open it with DatabaseOpenOptions.ReadOnly without KeepWritersOut to read it beside the writer."
+                : access == FileAccess.Read
                 ? $"'{path}' is in use: another program has it open without sharing it - Access, with the database " +
                   "open exclusively. It was not opened."
                 : mode is FileMode.Open or FileMode.OpenOrCreate

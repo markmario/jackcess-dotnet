@@ -275,9 +275,10 @@ public sealed class Table
     /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
     /// are those of the pages as they were listed, and of each page as it was when it was reached, without a row
     /// inserted since the enumeration began, whichever page it went to: take the list first. A database opened only
-    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to, reads each
-    /// row from its page as the page is when the row is reached, and is not told of the rows that program inserts: one
-    /// inserted where the enumeration has still to come, on a page it listed, is given.
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to - unless it
+    /// keeps writers out (<see cref="DatabaseOpenOptions.KeepWritersOut"/>) - reads each row from its page as the page
+    /// is when the row is reached, and is not told of the rows that program inserts: one inserted where the
+    /// enumeration has still to come, on a page it listed, is given.
     /// </para>
     /// </summary>
     public IEnumerable<Row> Rows
