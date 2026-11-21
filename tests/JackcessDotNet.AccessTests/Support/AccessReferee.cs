@@ -520,6 +520,21 @@ namespace JackcessDotNet.AccessTests.Support
             }
         }
 
+        private static string _aceBuild;
+
+        /// <summary>
+        /// The file version of the ACE OLE DB provider's DLL this process uses, "16.0.5011.1000" say: for a test that pins
+        /// what one build was measured to do. Throws, failing the test, when it cannot be read.
+        /// </summary>
+        public static string AceBuild
+        {
+            get
+            {
+                if (_aceBuild == null) _aceVersion = ReadAceVersion();
+                return _aceBuild;
+            }
+        }
+
         private static int ReadAceVersion()
         {
             var bits = Environment.Is64BitProcess ? "64" : "32";
@@ -535,8 +550,10 @@ namespace JackcessDotNet.AccessTests.Support
                     if (dll == null) throw new InvalidOperationException(AceVerification.ProviderName + " has no " + bits + "-bit server, so its version is not known.");
                     dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
                     if (!File.Exists(dll)) throw new InvalidOperationException(AceVerification.ProviderName + "'s server, " + dll + ", is not there, so its version is not known.");
-                    var major = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).FileMajorPart;
+                    var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll);
+                    var major = info.FileMajorPart;
                     if (major == 0) throw new InvalidOperationException(dll + " gives no file version.");
+                    _aceBuild = info.FileMajorPart + "." + info.FileMinorPart + "." + info.FileBuildPart + "." + info.FilePrivatePart;
                     return major;
                 }
             }
