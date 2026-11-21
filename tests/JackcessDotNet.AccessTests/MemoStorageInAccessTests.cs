@@ -96,7 +96,17 @@ namespace JackcessDotNet.AccessTests
             return Memos.Select((memo, i) => V("Id", i + 1, "Notes", change == null ? memo : change(memo))).ToList();
         }
 
-        /// <summary>ACE reads each memo as <paramref name="expected"/> holds it, character for character.</summary>
+        /// <summary>What a memo read is, for a message: a null, or its length.</summary>
+        private static string Described(object value)
+        {
+            var text = value as string;
+            return text == null ? (value == null ? "a null" : value.GetType().Name) : "one of " + text.Length + " characters";
+        }
+
+        /// <summary>
+        /// ACE reads each memo as <paramref name="expected"/> holds it, character for character: a zero-length memo as
+        /// a zero-length string, and not as a null.
+        /// </summary>
         private static void AssertAceReads(string path, string table, List<Values> expected, string when)
         {
             var read = AceRows(path, "SELECT Id, Notes, Len(Notes) AS Chars FROM [" + table + "] ORDER BY Id");
@@ -104,21 +114,27 @@ namespace JackcessDotNet.AccessTests
             for (var i = 0; i < expected.Count; i++)
             {
                 var memo = (string)expected[i]["Notes"];
-                var got = read[i]["Notes"] as string ?? "";
-                Assert.True(memo == got && Convert.ToInt32(read[i]["Chars"] ?? 0) == memo.Length,
-                    when + ": ACE reads the memo of " + memo.Length + " characters of row " + expected[i]["Id"] + " as one of " + got.Length
-                    + (memo == got ? "" : ", differing first at " + Enumerable.Range(0, Math.Min(memo.Length, got.Length)).FirstOrDefault(k => memo[k] != got[k])));
+                var got = read[i]["Notes"] as string;
+                var chars = read[i]["Chars"];
+                Assert.True(memo == got && chars != null && Convert.ToInt32(chars) == memo.Length,
+                    when + ": ACE reads the memo of " + memo.Length + " characters of row " + expected[i]["Id"] + " as " + Described(read[i]["Notes"])
+                    + ", Len " + (chars ?? "null")
+                    + (got == null || memo == got ? "" : ", differing first at " + Enumerable.Range(0, Math.Min(memo.Length, got.Length)).FirstOrDefault(k => memo[k] != got[k])));
             }
         }
 
+        /// <summary>The engine reads each memo as <paramref name="expected"/> holds it: a zero-length memo as "", not null.</summary>
         private static void AssertEngineReads(string path, string table, List<Values> expected, string when)
         {
             using (var db = Database.Open(path))
             {
-                var read = db.GetTable(table).Rows.ToDictionary(r => (int)r["Id"], r => r["Notes"] as string ?? "");
+                var read = db.GetTable(table).Rows.ToDictionary(r => (int)r["Id"], r => r["Notes"]);
                 foreach (var row in expected)
-                    Assert.True((string)row["Notes"] == read[(int)row["Id"]],
-                        when + ": the engine reads the memo of " + ((string)row["Notes"]).Length + " characters of row " + row["Id"] + " as one of " + read[(int)row["Id"]].Length);
+                {
+                    var got = read[(int)row["Id"]];
+                    Assert.True(got is string && (string)row["Notes"] == (string)got,
+                        when + ": the engine reads the memo of " + ((string)row["Notes"]).Length + " characters of row " + row["Id"] + " as " + Described(got));
+                }
             }
         }
 
