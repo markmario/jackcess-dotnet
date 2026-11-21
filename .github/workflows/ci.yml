@@ -277,20 +277,21 @@ jobs:
     name: test (Access, ${{ matrix.shard }} of ${{ matrix.shards }})
     needs: access-build
     runs-on: windows-latest
-    # A shard takes some five minutes with the samples and fifteen with the full sweeps; a process that hangs is
+    # A shard takes some five minutes with the samples and nine with the full sweeps; a process that hangs is
     # ended by the script, so this only bounds what the script cannot.
     timeout-minutes: 45
     strategy:
       # Every shard runs to the end, so one run reports every failure.
       fail-fast: false
+      # Four: with the samples, access-build and the longest of four shards take about as long as the longest
+      # framework job, so more shards would not shorten a pull request's run, and each would take a runner from
+      # the account's limit of jobs at once. Each shard also pays about 25 s of checkout, download and install.
       matrix:
         include:
-          - { shard: 1, shards: 6 }
-          - { shard: 2, shards: 6 }
-          - { shard: 3, shards: 6 }
-          - { shard: 4, shards: 6 }
-          - { shard: 5, shards: 6 }
-          - { shard: 6, shards: 6 }
+          - { shard: 1, shards: 4 }
+          - { shard: 2, shards: 4 }
+          - { shard: 3, shards: 4 }
+          - { shard: 4, shards: 4 }
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:
