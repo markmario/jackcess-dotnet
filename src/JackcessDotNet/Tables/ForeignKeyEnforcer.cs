@@ -533,7 +533,7 @@ internal sealed class ForeignKeyEnforcer
                 DataType.Single        => Convert.ToSingle(value),
                 DataType.Double        => Convert.ToDouble(value),
                 DataType.Currency         => Util.CurrencyRounding.ToDecimal(Util.CurrencyRounding.Units(value!)),
-                DataType.DateTime => value is DateTime date ? date.ToOADate() : value,
+                DataType.DateTime => value is DateTime date ? Util.OADate.FromDateTime(date) : value,
                 DataType.DateTimeExtended => value is DateTime extended ? StoredExtendedDate.Of(extended) : value,
                 DataType.Guid          => value is Guid ? value : Guid.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!),
                 _                      => value,

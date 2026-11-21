@@ -218,7 +218,7 @@ internal static class PropertyMapReader
     {
         if (double.IsNaN(oa) || double.IsInfinity(oa)) return null;
         if (oa < -657434.0 || oa > 2958465.99999999) return null;
-        try   { return DateTime.FromOADate(oa); }
+        try   { return OADate.ToDateTime(oa); }
         catch { return null; }
     }
 

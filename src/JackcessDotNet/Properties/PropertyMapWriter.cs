@@ -217,7 +217,7 @@ internal static class PropertyMapWriter
                 }
                 case DataType.DateTime:
                 {
-                    // Access's dates begin with the year 100, and so does what DateTime.ToOADate converts.
+                    // Access's dates begin with the year 100, and so does what a row stores (Util.OADate).
                     DateTime date = System.Convert.ToDateTime(value, invariant);
                     if (date < MinDate)
                         throw OutOfRange(name, value, dataType, "a Date/Time is from 1 January 100 to 31 December 9999");
@@ -274,7 +274,7 @@ internal static class PropertyMapWriter
             case DataType.Double:  return BitConverter.GetBytes((double)value).LittleEndian();
             case DataType.Currency:
                 return BitConverter.GetBytes(decimal.ToInt64((decimal)value * 10000m)).LittleEndian();
-            case DataType.DateTime: return BitConverter.GetBytes(((DateTime)value).ToOADate()).LittleEndian();
+            case DataType.DateTime: return BitConverter.GetBytes(OADate.FromDateTime((DateTime)value)).LittleEndian();
             case DataType.Guid:    return ((Guid)value).ToByteArray();
             case DataType.Text:
             case DataType.Memo:    return Encoding.Unicode.GetBytes((string)value);

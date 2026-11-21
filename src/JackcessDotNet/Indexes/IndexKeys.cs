@@ -301,7 +301,7 @@ internal static class IndexKeys
             case DataType.DateTime:
                 // The double the row stores: days since 30 December 1899. A date read from a row comes as that
                 // double itself, since a DateTime does not hold every double Access can have written.
-                double days = value is DateTime date ? date.ToOADate() : Convert.ToDouble(value);
+                double days = value is DateTime date ? OADate.FromDateTime(date) : Convert.ToDouble(value);
                 bytes = BigEndian(BitConverter.DoubleToInt64Bits(days));
                 return Prepend(ascending ? AscStartFlag : DescStartFlag, FloatingPoint(bytes, ascending));
             case DataType.Guid:

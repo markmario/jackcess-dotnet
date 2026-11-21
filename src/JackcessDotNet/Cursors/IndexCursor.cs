@@ -881,7 +881,7 @@ public sealed class IndexCursor : Cursor
 
             // How long the key of the values is, a date as the number it is written as: what an entry holds.
             Length = Enumerable.Range(0, columns.Count).Sum(i => _parts[i]?.Length
-                ?? IndexKeys.EncodeColumn(DataType.DateTime, _ascending[i], _dates[i].ToOADate()).Length);
+                ?? IndexKeys.EncodeColumn(DataType.DateTime, _ascending[i], Util.OADate.FromDateTime(_dates[i])).Length);
 
             if (firstDate < 0)
             {
@@ -944,7 +944,7 @@ public sealed class IndexCursor : Cursor
                 double stored = StoredNumber(key, at + 1, ascending);
                 int order = ValueMatch.ReadsAs(stored) is { } read
                     ? read.CompareTo(_dates[i])
-                    : stored.CompareTo(_dates[i].ToOADate());
+                    : stored.CompareTo(Util.OADate.FromDateTime(_dates[i]));
                 if (order != 0) return (order < 0) == ascending ? -1 : 1;
                 at += 9;
             }
@@ -969,12 +969,12 @@ public sealed class IndexCursor : Cursor
         // read from negative numbers as well as positive ones, so for an earlier date the numbers from the day
         // before on are taken in.
         private static double LeastReadingAtOrAfter(DateTime date)
-            => date.ToOADate() >= 1.0 ? ValueMatch.StoredRange(date).Least : (date.Date - FirstDay).Days - 1 - OneSecond;
+            => Util.OADate.FromDateTime(date) >= 1.0 ? ValueMatch.StoredRange(date).Least : (date.Date - FirstDay).Days - 1 - OneSecond;
 
         // The greatest number that can read as the date or as an earlier one: for a date before 30 December 1899,
         // the number of its midnight, which is its day's greatest.
         private static double GreatestReadingAtOrBefore(DateTime date)
-            => date.ToOADate() >= 0.0 ? ValueMatch.StoredRange(date).Greatest : (date.Date - FirstDay).Days + OneSecond;
+            => Util.OADate.FromDateTime(date) >= 0.0 ? ValueMatch.StoredRange(date).Greatest : (date.Date - FirstDay).Days + OneSecond;
 
         private static byte[] Concat(IEnumerable<byte[]?> parts)
         {

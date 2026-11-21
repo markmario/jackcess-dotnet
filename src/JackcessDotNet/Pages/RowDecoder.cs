@@ -325,7 +325,8 @@ internal sealed class RowDecoder
     private static DateTime? DecodeShortDateTime(byte[] row, int offset) => ReadDate(ByteUtil.GetDouble(row, offset));
 
     /// <summary>
-    /// The <see cref="DateTime"/> a stored Date/Time number is read as, rounded to the millisecond; null for one no
+    /// The <see cref="DateTime"/> a stored Date/Time number is read as, rounded to the millisecond as a 64-bit process
+    /// rounds it, in every state of the x87 unit (<see cref="OADate.ToDateTime"/>); null for one no
     /// date is. The dates are those Access holds, 1 January 100 to 31 December 9999, each day at any time: a number
     /// above -657435 and below 2958466 (measured with ACE 16: <c>CDate(-657434.99998842593)</c>, 1 January 100 at
     /// 23:59:59, is taken and read as that; <c>CDate(-657435)</c> and <c>CDate(2958466)</c> are refused).
@@ -334,7 +335,7 @@ internal sealed class RowDecoder
     {
         if (double.IsNaN(oa) || double.IsInfinity(oa)) return null;
         if (oa <= -657435.0 || oa >= 2958466.0) return null;
-        try   { return DateTime.FromOADate(oa); }
+        try   { return OADate.ToDateTime(oa); }
         catch (ArgumentException) { return null; }
     }
 }

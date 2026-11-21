@@ -61,7 +61,7 @@ internal static class ValueMatch
             switch (column.DataType)
             {
                 case DataType.DateTime:
-                    double has = stored is DateTime read ? read.ToOADate() : Convert.ToDouble(stored, CultureInfo.InvariantCulture);
+                    double has = stored is DateTime read ? Util.OADate.FromDateTime(read) : Convert.ToDouble(stored, CultureInfo.InvariantCulture);
                     if (asked is DateTime date) return ReadsAs(has) == AsStored(date);
                     return IsNumber(asked!)
                         && BitConverter.DoubleToInt64Bits(has) == BitConverter.DoubleToInt64Bits(Convert.ToDouble(asked, CultureInfo.InvariantCulture));
@@ -114,7 +114,7 @@ internal static class ValueMatch
     /// <see cref="DateTime.Now"/> and any date finer than that are. A date a row cannot store is returned as it is.
     /// </summary>
     /// <exception cref="OverflowException"><paramref name="date"/> is before 1 January 100, which no row stores.</exception>
-    public static DateTime AsStored(DateTime date) => ReadsAs(date.ToOADate()) ?? date;
+    public static DateTime AsStored(DateTime date) => ReadsAs(Util.OADate.FromDateTime(date)) ?? date;
 
     /// <summary>
     /// The least and the greatest double that read as <paramref name="date"/> once a row stores it
@@ -125,7 +125,7 @@ internal static class ValueMatch
     public static (double Least, double Greatest) StoredRange(DateTime date)
     {
         date = AsStored(date);
-        double exact = date.ToOADate();
+        double exact = Util.OADate.FromDateTime(date);
         if (ReadsAs(exact) != date) return (exact, exact);
         const double twoMilliseconds = 2.0 / 86_400_000;
         return (Edge(exact, exact - twoMilliseconds, date), Edge(exact, exact + twoMilliseconds, date));
