@@ -145,6 +145,7 @@ MemoCompressionTests                          0.0        0.0        0.1        0
 MultiPageDefinitionTests                      1.1        1.0        2.6        1.2        1.1        1.5
 NewTypeForeignKeyTests                        0.0        0.0        0.1        0.2        0.0        0.1
 NumberKindsTests                              0.1        0.1        0.1        0.1        0.1        0.5
+NumberTextTests                               1.0        1.0        1.5        1.5        1.0        1.5
 ObjectNameTests                               0.4        0.4        0.7        0.8        0.4        0.9
 OfficeCryptTests                              3.5        2.5        6.6       10.7        2.3        9.5
 OneToOneRelationshipTests                     0.0        0.0        0.2        0.0        0.0        0.1
