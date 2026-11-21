@@ -383,7 +383,7 @@ if ($Shards -gt 1) {
     $ordered = @($mine)
     Write-Host "Shard $Shard of $Shards`: $(($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum) tests in $($ordered.Count) processes, about $($load[$Shard - 1]) s of them: $(($ordered.Name | Sort-Object) -join ', ')"
     foreach ($unit in ($ordered | Where-Object { -not $RequireTimings -and -not $seconds.ContainsKey($_.Name) })) {
-        Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 ($mode), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
+        Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 (`$table.$thisTable), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
     }
 }
 $expected = ($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum
@@ -619,14 +619,15 @@ if ($untimed.Count) {
         $level = if ($required -contains $name) { 'error' } else { 'warning' }
         # What each table it is missing from wants. This run measures its own table's number (its last attempt's, if it
         # was run again); the samples' and the full sweeps' stand in for each other until a run of the other measures it;
-        # a 32-bit number comes from a 32-bit shard's error, and a 64-bit one from a 64-bit shard's.
+        # a 32-bit number comes from a 32-bit shard's message, and a 64-bit one from a 64-bit shard's - an error or a
+        # warning, as that run takes it.
         $wants = foreach ($t in $untimed[$name]) {
             $measured = if ($lastTook.Contains($name)) { "$($lastTook[$name]), the seconds it took in this shard" }
-                        else { 'the seconds the shard of this run that ran it gives in its error' }
+                        else { 'the seconds the shard of this run that ran it gives in its message' }
             if ($t -eq $thisTable) { "`$table.$t`: $measured" }
             elseif ($t -ne 'x86' -and $thisTable -ne 'x86') { "`$table.$t`: the same as `$table.$thisTable, until a run of the $(if ($t -eq 'full') { 'full sweeps' } else { 'samples' }) measures it" }
-            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its error" }
-            else { "`$table.$t`: the seconds a 64-bit shard gives in its error" }
+            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its message, on main or with the ci:access-x86 label" }
+            else { "`$table.$t`: the seconds a 64-bit shard gives in its message" }
         }
         Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
