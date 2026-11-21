@@ -505,12 +505,22 @@ public sealed class Table
     /// the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
-    /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
-    /// is written, and the counter and <paramref name="row"/> are as they were.
+    /// A number column's value is text that does not read as a number in the current culture, or a Guid column's
+    /// value is not a GUID. Nothing of the row is written, and the counter and <paramref name="row"/> are as they
+    /// were.
     /// </exception>
     /// <exception cref="OverflowException">
-    /// A Currency column's value is a number no Currency holds: NaN, an infinity, or one past
+    /// A number column's value is one its type does not hold - a Byte of 256, an Integer of 32,768, a Long given a
+    /// number past its range - or a Currency column's is one no Currency holds: NaN, an infinity, or one past
     /// -922,337,203,685,477.5808 to 922,337,203,685,477.5807 once taken to four places. Nothing of the row is
+    /// written, and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
+    /// <exception cref="InvalidCastException">
+    /// A Date/Time column's value is not a date: text that does not read as one, say. Nothing of the row is written,
+    /// and the counter and <paramref name="row"/> are as they were.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The row is too large for its page, or an OLE Object column's value is not bytes. Nothing of the row is
     /// written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="ColumnValueTooLongException">
@@ -521,8 +531,9 @@ public sealed class Table
     /// The row, with its AutoNumber values filled in, would be a duplicate in the primary key or another unique
     /// index, or has a null in a column of the primary key or of an index that requires its values; or it has no
     /// value in a required column (<see cref="Column.IsRequired"/>), or a zero-length string in a Text or Memo
-    /// column that does not allow one (<see cref="Column.AllowZeroLength"/>). Nothing of the row is written, and
-    /// the counter and <paramref name="row"/> are as they were.
+    /// column that does not allow one (<see cref="Column.AllowZeroLength"/>); or, with
+    /// <see cref="Database.EnforceForeignKeys"/> on, a foreign key of it refers to no row. Nothing of the row is
+    /// written, and the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The table takes no row (<see cref="InsertRefusal"/>: among the reasons, that it is a table of an Access 97
@@ -550,17 +561,11 @@ public sealed class Table
                 // The row as it will be written - its AutoNumber values in place, DBNull no value, a Yes/No the
                 // bool it stands for - read once, for the row's bytes and its index entries alike.
                 var written = RowValues.AsWritten(row, _definition);
-                EnsureColumnRules(written, assignedOnly: false);
-                _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
+                var checkedRow = CheckInsert(written);
+                entries = checkedRow.Entries;
 
-                // Everything an index can refuse the row for, before any of it is written.
-                entries = _indexes.EntriesFor(written, enforce: true);
-                // A bulk insert into a table with no rows builds the trees once its rows are in (BulkInsert): until
-                // then they hold nothing, and a duplicate is found when they are built.
-                var looked = _buildingIndexes ? null : _indexes.EnsureNoDuplicates(entries, forEntry: true);
-
-                rowPtr = _dataWriter.InsertRow(_definition, written);
-                var newKeys = _buildingIndexes ? null : _indexes.Add(entries, rowPtr, looked);
+                rowPtr = _dataWriter.InsertPrepared(_definition, checkedRow.Row);
+                var newKeys = _buildingIndexes ? null : _indexes.Add(entries, rowPtr, checkedRow.Looked);
 
                 // The counter, the row count and the count of each index's keys go to the definition in one write,
                 // once the row and its entries are in: all of it is taken back together if any of it fails.
@@ -664,22 +669,41 @@ public sealed class Table
     }
 
     /// <summary>
-    /// Checks <paramref name="row"/> against the table's columns and indexes without writing it: throws what
-    /// <see cref="Insert"/> would - <see cref="ColumnValueTooLongException"/> for a Text or Binary value longer than
-    /// its column, <see cref="ArgumentException"/> for two of the row's names that go to one column,
-    /// <see cref="ArgumentException"/> or <see cref="FormatException"/> for a number column's value that
-    /// makes no number and <see cref="OverflowException"/> for one no Currency holds, <see cref="ArgumentException"/>
-    /// for a Text or Memo value that begins with U+FEFF where Access would read it back changed, judged where the
-    /// insert would keep it, <see cref="InvalidOperationException"/> for a row too large for its page,
-    /// <see cref="NotSupportedException"/> for a table that takes no row (<see cref="InsertRefusal"/>),
-    /// <see cref="ConstraintViolationException"/> for a null a primary key, a required index or a required column
-    /// does not take, a zero-length string in a column that does not allow one, or a
-    /// duplicate of a row already in a unique index. The row is checked as it would be written, with the
-    /// AutoNumber values the next insert would give it; <paramref name="row"/> itself is not changed. A caller
-    /// writing many rows can check them all first, so a refused row stops the batch before any of it is in the
-    /// file. Rows not yet written are not compared with one another: a duplicate within the batch is refused when
-    /// it is inserted.
+    /// Checks <paramref name="row"/> as <see cref="Insert"/> would insert it, and writes nothing: it throws what the
+    /// insert would throw, checked in the insert's order - the column's rules, the table's relationships, its
+    /// indexes, and then the row's encoding, with each long value placed where the insert would put it (#141). The
+    /// row is checked with the AutoNumber values the next insert would give it, which are not taken; and
+    /// <paramref name="row"/> itself is not changed. A caller writing many rows can check them all first, so a
+    /// refused row stops the batch before any of it is in the file. Rows not yet written are not compared with one
+    /// another: a duplicate within the batch is refused when it is inserted.
     /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Two of the row's names go to one column; or a number column's value is of a kind no number is made of; or a
+    /// Text or Memo value begins with U+FEFF where Access would read it back changed, where the insert would keep it.
+    /// </exception>
+    /// <exception cref="FormatException">
+    /// A number column's value is text that does not read as a number in the current culture, or a Guid column's
+    /// value is not a GUID.
+    /// </exception>
+    /// <exception cref="OverflowException">
+    /// A number column's value is one its type does not hold - a Byte of 256, an Integer of 32,768, a Long given a
+    /// number past its range - or a Currency column's is one no Currency holds.
+    /// </exception>
+    /// <exception cref="InvalidCastException">A Date/Time column's value is not a date: text that does not read as one, say.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The row is too large for its page; or an OLE Object column's value is not bytes.
+    /// </exception>
+    /// <exception cref="ColumnValueTooLongException">A Text or Binary value is longer than its column.</exception>
+    /// <exception cref="ConstraintViolationException">
+    /// The row would be a duplicate in the primary key or another unique index, or has a null an index does not
+    /// take, no value in a required column, a zero-length string where one is not allowed, or a foreign key that
+    /// refers to no row, with <see cref="Database.EnforceForeignKeys"/> on.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The table takes no row (<see cref="InsertRefusal"/>), or the row has a value in an indexed text column that no
+    /// key is made for.
+    /// </exception>
     public void Validate(Row row)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
@@ -691,12 +715,31 @@ public sealed class Table
             asWritten = new Row(row);
             FillAutoNumbers(asWritten);
         }
-        asWritten = RowValues.AsWritten(asWritten, _definition);
-        // As the insert encodes it, long values placed by the table's own pages: where a Memo goes decides whether
-        // Access reads text that begins with U+FEFF back, and whether the row fits its page (#141).
-        _dataWriter.EnsureInsertable(_definition, asWritten);
-        EnsureColumnRules(asWritten, assignedOnly: false);
-        _indexes.EnsureNoDuplicates(_indexes.EntriesFor(asWritten, enforce: true));
+        CheckInsert(RowValues.AsWritten(asWritten, _definition));
+    }
+
+    /// <summary>What <see cref="CheckInsert"/> found and made of a row: its index entries, the writer that looked for duplicates, and its encoding.</summary>
+    private readonly record struct CheckedInsert(IReadOnlyList<TableIndexes.Entry> Entries, IndexWriter? Looked,
+                                                 DataPageWriter.PreparedInsert Row);
+
+    /// <summary>
+    /// Everything an insert refuses <paramref name="written"/> for, in the insert's order, with nothing written: the
+    /// columns' rules, the table's relationships, its indexes - a duplicate is looked for unless the indexes are
+    /// built after a bulk insert - and the row's encoding, with each long value placed by the table's own pages.
+    /// <see cref="Insert"/> writes what this returns; <see cref="Validate"/> does no more than this, so the two
+    /// cannot refuse a row differently.
+    /// </summary>
+    private CheckedInsert CheckInsert(Row written)
+    {
+        EnsureColumnRules(written, assignedOnly: false);
+        _owningDb?.ForeignKeysFor(this)?.CheckInsert(this, written);
+
+        var entries = _indexes.EntriesFor(written, enforce: true);
+        // A bulk insert into a table with no rows builds the trees once its rows are in (BulkInsert): until then
+        // they hold nothing, and a duplicate is found when they are built.
+        var looked = _buildingIndexes ? null : _indexes.EnsureNoDuplicates(entries, forEntry: true);
+
+        return new CheckedInsert(entries, looked, _dataWriter.PrepareInsert(_definition, written));
     }
 
     /// <summary>
