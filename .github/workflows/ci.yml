@@ -254,11 +254,25 @@ jobs:
           dotnet build tests/JackcessDotNet.AccessTests --configuration Release
           -p:GeneratePackageOnBuild=false -p:ContinuousIntegrationBuild=true
 
+      # The same, as a 32-bit program (bin/Release-x86), for the 32-bit shards.
+      - name: Build (32-bit)
+        run: >
+          dotnet build tests/JackcessDotNet.AccessTests --configuration Release -p:TestX86=true
+          -p:GeneratePackageOnBuild=false -p:ContinuousIntegrationBuild=true
+
       - name: Upload the tests
         uses: actions/upload-artifact@v7
         with:
           name: access-tests
           path: tests/JackcessDotNet.AccessTests/bin/Release/net48
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload the tests (32-bit)
+        uses: actions/upload-artifact@v7
+        with:
+          name: access-tests-x86
+          path: tests/JackcessDotNet.AccessTests/bin/Release-x86/net48
           retention-days: 1
           if-no-files-found: error
 
@@ -272,8 +286,11 @@ jobs:
   # failed with no message of their own; and checks that each shard ran every
   # test of its own pieces. JACKCESS_ACCESS_REQUIRED makes a missing referee a
   # failure here, where on a machine without Access the tests are skipped.
+  #
+  # The x86 shards run the same tests as a 32-bit program, against the
+  # redistributable's x86 installer, on runners of their own (#101).
   access-tests:
-    name: test (Access, ${{ matrix.shard }} of ${{ matrix.shards }})
+    name: test (Access${{ matrix.arch == 'x86' && ', 32-bit' || '' }}, ${{ matrix.shard }} of ${{ matrix.shards }})
     needs: access-build
     runs-on: windows-latest
     # A shard takes some five minutes with the samples and nine with the full sweeps; a process that hangs is
@@ -288,10 +305,12 @@ jobs:
       # download and install.
       matrix:
         include:
-          - { shard: 1, shards: 4 }
-          - { shard: 2, shards: 4 }
-          - { shard: 3, shards: 4 }
-          - { shard: 4, shards: 4 }
+          - { arch: x64, shard: 1, shards: 4 }
+          - { arch: x64, shard: 2, shards: 4 }
+          - { arch: x64, shard: 3, shards: 4 }
+          - { arch: x64, shard: 4, shards: 4 }
+          - { arch: x86, shard: 1, shards: 2 }
+          - { arch: x86, shard: 2, shards: 2 }
     env:
       JACKCESS_ACCESS_REQUIRED: '1'
     steps:
@@ -309,7 +328,7 @@ jobs:
       # downloads its own: the download takes seconds and overlaps the checkout,
       # where handing 83 MB on from access-build would lengthen that job and
       # start the install only after an artifact's download.
-      - name: Install Access Database Engine 2016 (x64), in the background
+      - name: Install Access Database Engine 2016 (${{ matrix.arch }}), in the background
         shell: pwsh
         run: |
           $script = Join-Path $env:RUNNER_TEMP 'install-ace.ps1'
@@ -317,8 +336,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:RUNNER_TEMP 'ace-install.log'
           try {
-            $url = 'https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe'
-            $exe = Join-Path $env:RUNNER_TEMP 'AccessDatabaseEngine_X64.exe'
+            $name = '${{ matrix.arch == 'x86' && 'accessdatabaseengine.exe' || 'accessdatabaseengine_X64.exe' }}'
+            $url = "https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/$name"
+            $exe = Join-Path $env:RUNNER_TEMP $name
             $attempts = 4
             for ($attempt = 1; ; $attempt++) {
               try {
@@ -363,8 +383,8 @@ jobs:
       - name: Download the tests
         uses: actions/download-artifact@v8
         with:
-          name: access-tests
-          path: tests/JackcessDotNet.AccessTests/bin/Release/net48
+          name: ${{ matrix.arch == 'x86' && 'access-tests-x86' || 'access-tests' }}
+          path: tests/JackcessDotNet.AccessTests/bin/${{ matrix.arch == 'x86' && 'Release-x86' || 'Release' }}/net48
 
       # The redistributable has killed a test process with exit code
       # -1073740771 and no test named; a dump showed the crash inside it, on a
@@ -384,7 +404,7 @@ jobs:
       # The installer started above, finished and registered. Should its
       # process have gone without finishing, it is run here instead. A download
       # that failed every attempt fails here, saying so, before ACE is asked.
-      - name: Access Database Engine 2016 (x64) installed
+      - name: Access Database Engine 2016 (${{ matrix.arch }}) installed
         shell: pwsh
         run: |
           $done = Join-Path $env:RUNNER_TEMP 'ace-install.done'
@@ -404,23 +424,56 @@ jobs:
             throw "The download of the Access Database Engine installer failed, $((Get-Content -LiteralPath $failed -Raw).Trim()). Nothing was installed; running the job again may get it."
           }
           "Processors: $([Environment]::ProcessorCount)"
-          # ACE's first use on the machine, in this one process before the tests start theirs side by side. Asked
-          # for a file that is not there, the provider loads and answers; one that is not registered fails here.
+          # ACE's first use on the machine, in one process of the tests' bitness before the tests start theirs side
+          # by side: Windows PowerShell's 32-bit one for the x86 engine. Asked for a file that is not there, the
+          # provider loads and answers; one that is not registered fails here. Its version is the file version of
+          # the DLL the provider is registered with.
+          $probe = Join-Path $env:RUNNER_TEMP 'probe-ace.ps1'
+          Set-Content -LiteralPath $probe -Value @'
+          $ErrorActionPreference = 'Stop'
+          "Process: $(if ([Environment]::Is64BitProcess) { '64' } else { '32' })-bit"
+          $clsid = (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\Microsoft.ACE.OLEDB.12.0\CLSID').'(default)'
+          $dll = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid\InprocServer32").'(default)'
+          "Microsoft.ACE.OLEDB.12.0: $dll, $((Get-Item -LiteralPath $dll).VersionInfo.FileVersion)"
           $conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=$env:RUNNER_TEMP\probe.mdb"
           try { $conn.Open() } catch { if ($_.Exception.Message -match 'not registered') { throw 'The ACE provider is not registered after the install.' } "ACE answered: $($_.Exception.Message)" }
           finally { $conn.Dispose() }
+          '@
+          $shell = if ('${{ matrix.arch }}' -eq 'x86') { "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" } else { 'pwsh' }
+          & $shell -NoProfile -NonInteractive -File $probe
+          if ($LASTEXITCODE) { throw "The probe of ACE failed (exit $LASTEXITCODE)." }
+
+      # What the 32-bit engine is and does, before the tests: whether DAO starts, and whether ACE and DAO open an
+      # Access 97 file, which only a 32-bit engine was known to do.
+      - name: The 32-bit engine
+        if: matrix.arch == 'x86'
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP 'probe-x86.ps1'
+          Set-Content -LiteralPath $probe -Value @'
+          $file = Join-Path (Get-Location) 'tests\corpus\V1997\common1V1997.mdb'
+          $copy = Join-Path $env:RUNNER_TEMP 'a97.mdb'
+          Copy-Item -LiteralPath $file $copy; Set-ItemProperty -LiteralPath $copy -Name IsReadOnly -Value $false
+          try { $dbe = New-Object -ComObject DAO.DBEngine.120; "DAO.DBEngine.120: version $($dbe.Version)" } catch { "DAO.DBEngine.120 did not start: $_" }
+          try { $db = $dbe.OpenDatabase($copy, $false, $true); "DAO opened the Access 97 file: version $($db.Version), $(@($db.TableDefs).Count) table definitions"; $db.Close() } catch { "DAO did not open the Access 97 file: $_" }
+          $conn = New-Object System.Data.OleDb.OleDbConnection "Provider=Microsoft.ACE.OLEDB.12.0;Mode=Read;Data Source=$copy"
+          try { $conn.Open(); "ACE opened the Access 97 file: $(@($conn.GetSchema('Tables').Rows).Count) tables" } catch { "ACE did not open the Access 97 file: $($_.Exception.Message)" } finally { $conn.Dispose() }
+          $new = Join-Path $env:RUNNER_TEMP 'new.accdb'
+          try { $created = $dbe.CreateDatabase($new, ';LANGID=0x0409;CP=1252;COUNTRY=0', 128); $created.Close(); "DAO made an .accdb" } catch { "DAO did not make an .accdb: $_" }
+          '@
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File $probe
 
       - name: Test
         shell: pwsh
         run: |
-          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.shard }}.trx"
+          ./scripts/Invoke-AccessTests.ps1 -Shard ${{ matrix.shard }} -Shards ${{ matrix.shards }} -Parallel 2 -ProcessorsEach 1 -TrxName "access-tests-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}.trx" ${{ matrix.arch == 'x86' && '-X86' || '' }}
           exit $LASTEXITCODE
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-access-${{ matrix.shard }}
+          name: test-results-access-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}
           path: |
             TestResults/*.trx
             TestResults/*.xml
@@ -430,7 +483,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: crash-dumps-access-${{ matrix.shard }}
+          name: crash-dumps-access-${{ matrix.arch == 'x86' && 'x86-' || '' }}${{ matrix.shard }}
           path: ${{ runner.temp }}/crash-dumps/*.dmp
           if-no-files-found: ignore
 

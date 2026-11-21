@@ -58,18 +58,22 @@
 #
 # -ProcessorsEach keeps each process to that many logical processors of its own (0, the default, leaves them all): the
 # redistributable's deaths are in its own threads, and CI gives each process one processor.
+#
+# -X86 runs the 32-bit build (dotnet build tests/JackcessDotNet.AccessTests -c Release -p:TestX86=true, in
+# bin\Release-x86), against the 32-bit Access engine, rather than the 64-bit one.
 param(
     [string] $TrxName = 'access-tests.trx',
     [ValidateRange(1, 64)] [int] $Shard = 1,
     [ValidateRange(1, 64)] [int] $Shards = 1,
     [ValidateRange(1, 8)] [int] $Parallel = 1,
-    [ValidateRange(0, 64)] [int] $ProcessorsEach = 0
+    [ValidateRange(0, 64)] [int] $ProcessorsEach = 0,
+    [switch] $X86
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root 'tests\JackcessDotNet.AccessTests\bin\Release\net48\JackcessDotNet.AccessTests.exe'
+$exe = Join-Path $root "tests\JackcessDotNet.AccessTests\bin\$(if ($X86) { 'Release-x86' } else { 'Release' })\net48\JackcessDotNet.AccessTests.exe"
 $results = Join-Path $root 'TestResults'
 $namespace = 'JackcessDotNet.AccessTests.'
 $crashedInAce = -1073740771            # 0xC000041D
@@ -78,7 +82,7 @@ $attempts = 3
 $unknownSeconds = 240                  # what a piece missing from the table is taken to take
 $full = $env:JACKCESS_FULL_SWEEPS -eq '1'
 if (-not (Test-Path -LiteralPath $exe)) {
-    Write-Host "::error::$exe is not there: build tests/JackcessDotNet.AccessTests (Release) first."
+    Write-Host "::error::$exe is not there: build tests/JackcessDotNet.AccessTests (Release$(if ($X86) { ', -p:TestX86=true' })) first."
     exit 1
 }
 New-Item -ItemType Directory -Force $results | Out-Null
@@ -520,7 +524,7 @@ while ($queue.Count -or $running.Count) {
 # What each process took, in the log and in the job's summary beside the table's number.
 Write-Host "Seconds each process took: $(($took.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) = $($_.Value)" }) -join '; ')"
 $summary = [System.Collections.Generic.List[string]]::new()
-$summary.Add("### Access referee tests, shard $Shard of $Shards (the $(if ($full) { 'full sweeps' } else { 'samples' }), $Parallel at a time)")
+$summary.Add("### Access referee tests$(if ($X86) { ', 32-bit' }), shard $Shard of $Shards (the $(if ($full) { 'full sweeps' } else { 'samples' }), $Parallel at a time)")
 $summary.Add('')
 $summary.Add('| Piece | Tests | Seconds | In the table | |')
 $summary.Add('|---|---|---|---|---|')
