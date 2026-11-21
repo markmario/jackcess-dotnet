@@ -58,6 +58,20 @@ public sealed class OADateChoiceTests
             $"{differ.Count} of {numbers.Count} numbers read otherwise, the first {numbers[differ.FirstOrDefault()]:R}");
     }
 
+    /// <summary>A number out of range is refused by the integers as the runtime refuses it: the same type, message and parameter name.</summary>
+    [Theory]
+    [InlineData(2958466.0)]
+    [InlineData(-657435.0)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void the_integers_refuse_a_number_out_of_range_as_the_runtime_does(double days)
+    {
+        var runtime = Assert.Throws<ArgumentException>(() => DateTime.FromOADate(days));
+        var integers = Assert.Throws<ArgumentException>(() => OADate.ToDateTimeInIntegers(days));
+        Assert.Equal(runtime.Message, integers.Message);
+        Assert.Equal(runtime.ParamName, integers.ParamName);
+    }
+
     /// <summary>Dates to the tick and to the millisecond across the range, either side of 30 December 1899, and times of day alone.</summary>
     [Fact]
     public void the_integers_write_every_date_as_the_runtime_writes_it()

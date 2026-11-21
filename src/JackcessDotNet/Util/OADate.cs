@@ -14,10 +14,11 @@ namespace JackcessDotNet.Util;
 /// 00:00:00.001); and of 3.4 million dates, 783 were written as the double one above or below. Integers compute alike
 /// on every runtime and in every state of the unit.
 /// <para>
-/// A 64-bit process has no x87 unit to compute doubles with, and there the runtime's two conversions give exactly
-/// what the integer ones do, five to ten times as fast (#125): so a 64-bit process converts with the runtime's, and
-/// any other with the integers, decided once. OADateChoiceTests holds the two to each other over millions of inputs
-/// in every configuration the tests run in.
+/// The 64-bit runtimes compute doubles with SSE2, not the x87 unit, and there the runtime's two conversions give
+/// exactly what the integer ones do, five to ten times as fast (#125): so a 64-bit process converts with the
+/// runtime's, and any other with the integers, decided once. OADateChoiceTests holds the two to each other over
+/// millions of inputs in every configuration the tests run in. A number out of range is refused by both with an
+/// <see cref="ArgumentException"/> of the same message and no parameter name, as the runtime throws it.
 /// </para>
 /// </summary>
 internal static class OADate
@@ -90,11 +91,13 @@ internal static class OADate
     /// to a time past the last <see cref="DateTime"/>.</exception>
     internal static DateTime ToDateTimeInIntegers(double days)
     {
-        if (!(days < 2958466.0) || !(days > -657435.0)) throw new ArgumentException("Not a legal OleAut date.", nameof(days));
+        // Refused as DateTime.FromOADate refuses it: the same messages, and no parameter name.
+        if (!(days < 2958466.0) || !(days > -657435.0)) throw new ArgumentException("Not a legal OleAut date.");
         long millis = Millis(days);
         if (millis < 0) millis -= millis % MillisPerDay * 2;
         millis += EpochMillis;
-        if (millis < 0 || millis >= EndMillis) throw new ArgumentException("OleAut date did not convert to a DateTime correctly.", nameof(days));
+        if (millis < 0 || millis >= EndMillis)
+            throw new ArgumentException("OleAut date did not convert to a DateTime correctly.");
         return new DateTime(millis * TimeSpan.TicksPerMillisecond);
     }
 

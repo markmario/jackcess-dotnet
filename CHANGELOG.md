@@ -806,10 +806,11 @@ changes with them.
   as the double beside. At 53 bits nothing differed. The engine converts in integers, giving exactly what a 64-bit
   process gives: the same conversions agree in all three states, and a table of 20,000 rows is written byte for byte
   as a 64-bit process writes it. A double or a float to a Decimal, a double to a Currency, and a decimal to a Double
-  or a Single were measured alike and do not depend on the unit. A 64-bit process, which has no x87 unit, converts
-  with the runtime's own, which gives the same results over millions of inputs in every configuration the tests run
-  in; the integers, in a third of the time they first took or less, are any other process's (#125). A scan of
-  200,000 rows of four Date/Time columns on .NET 10 takes what it took with the runtime's conversion.
+  or a Single were measured alike and do not depend on the unit. A 64-bit process, whose runtime computes doubles
+  with SSE2 and not the x87 unit, converts with the runtime's own, which gives the same results over millions of
+  inputs in every configuration the tests run in; any other process converts with the integers, which in a 32-bit
+  .NET Framework process take 0.31 to 0.36 of the time they first took (#125). A scan of 200,000 rows of four
+  Date/Time columns on .NET 10 takes what it took with the runtime's conversion.
 - **On Linux, a file in use is refused with `DatabaseInUseException`** (#122). There .NET refuses an open by the
   advisory lock it takes for a handle's sharing, with an `IOException` whose HResult is the errno, 11, and not
   Windows' sharing violation: `Database.Create` beside any open handle, and any open beside Access holding the file
