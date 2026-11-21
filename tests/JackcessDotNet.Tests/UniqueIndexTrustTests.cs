@@ -5,7 +5,7 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// With <see cref="Database.VerifyIndexes"/>, which every database here is opened with, a unique index answers
-/// for a duplicate only with the rows it was seen not to hold (qcatco/exportmdb.interop#73). Versions of this
+/// for a duplicate only with the rows it was seen not to hold. Versions of this
 /// library before it kept every index left rows out of a table's unique indexes, and a row whose primary key
 /// they changed under the wrong value in the key: such an index alone says "no other row has this" of a value a
 /// row has. So the first row a session checks against a table's unique indexes reads the table once, for all of

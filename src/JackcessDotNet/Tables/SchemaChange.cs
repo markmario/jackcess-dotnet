@@ -3,8 +3,8 @@ using JackcessDotNet.Util;
 namespace JackcessDotNet;
 
 /// <summary>
-/// Changes to a database's schema after its tables are made (qcatco/exportmdb.interop#37): a column added to a
-/// table, an index added to a table and built over its rows, and a relationship created between two tables - what
+/// Changes to a database's schema after its tables are made: a column added to a table, an index added to a
+/// table and built over its rows, and a relationship created between two tables - what
 /// Jackcess's <c>TableUpdater</c> and <c>RelationshipCreator</c> do, written to the file as Access was seen to
 /// write the same changes.
 /// <para>

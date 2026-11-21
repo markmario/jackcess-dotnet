@@ -46,8 +46,8 @@ as every row is in before any duplicate is looked for. A failure while the trees
 file or the sort's temporary folder could not be written - is thrown as itself, an `IOException`, with nothing left; and until the batch is in, the table's indexes hold none of its rows, so a sequence of rows
 that looks in the table through an index as it is gone through does not find them.
 
-**What it costs.** An export of 13 rows a document into a template of four tables and 35 indexes (ExportMdb's,
-measured with its `ExportCostTests`): kept row by row, 11.5 ms a document at 2,000 documents and growing with the
+**What it costs.** An export of 13 rows a document into a template of four tables and 35 indexes, measured by
+the application that makes it ([#88]): kept row by row, 11.5 ms a document at 2,000 documents and growing with the
 export; built once its rows are in, 0.65 ms at 10,000 documents, 0.67 at 50,000 and 0.68 at 200,000, against
 0.51 to 0.56 ms for the same rows with no index. **Memory**: one tree's keys are sorted at a time, up to 64 MB of
 them in memory and the rest in sorted runs in temporary files (deleted when the build ends); as the tree is
@@ -62,11 +62,11 @@ Access keeps in a table's definition, for each tree, a count of keys (Java Jackc
 statistic it plans a query by - an index whose count is 0 is one it takes to be empty - which no reader checks
 against the tree. This library writes, for a tree built whole, the number of its keys, and adds one for each row
 inserted under a key no other row had, in the write of the table's definition the insert makes anyway; an update
-or a delete changes nothing. Beside ACE's twin of an export the counts are equal in every index (ExportMdb.Interop's
-`IndexedExportTwinAuditTests`). Access's own updates and deletes move it in ways not fully measured: after ACE
-deleted rows of a table, one count went from 5,000 to 2,833 with 4,333 rows left. In another, of 3,000 rows whose
-trees this library built whole, each count was the one Access gives the tree it builds again when DAO compacts the
-file - the exact one (`BulkIndexesInAccessTests`). Then, measured with Microsoft 365's ACE 16 and with the Access
+or a delete changes nothing. Beside ACE's twin of an export the counts are equal in every index ([#88]). Access's
+own updates and deletes move it in ways not fully measured: after ACE deleted rows of a table, one count went from
+5,000 to 2,833 with 4,333 rows left. In another, of 3,000 rows whose trees this library built whole, each count was
+the one Access gives the tree it builds again when DAO compacts the file - the exact one
+(`BulkIndexesInAccessTests`). Then, measured with Microsoft 365's ACE 16 and with the Access
 Database Engine 2016 redistributable, each change by ACE against the exact count: an insert added each new key,
 exactly; an update of a row's own key to a new one left the count, as the exact count is left; an update to a new
 value from one other rows also have added no key, where the exact count goes up by one; a delete of a row whose
@@ -209,3 +209,4 @@ made by `tools/ace-cut-keys.ps1`.
 [Back to contents](README.md)
 
 [#56]: https://github.com/markmario/jackcess-dotnet/issues/56
+[#88]: https://github.com/markmario/jackcess-dotnet/pull/88

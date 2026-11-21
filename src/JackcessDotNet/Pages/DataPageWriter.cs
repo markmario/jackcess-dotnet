@@ -284,8 +284,8 @@ internal sealed class DataPageWriter
         // A long value the update does not change stays where it is: the new row carries the old row's reference
         // to it, as Access and Java Jackcess leave it, so it is neither freed nor written again. Only the long
         // values being replaced are freed, before the row is rewritten. One kept in the row though longer than a
-        // row may keep (releases before ExportMdb.Interop 2.1.2 wrote those, and Access shows #Error for them,
-        // qcatco/exportmdb.interop#29) is not kept as it is: written again, it goes to pages of its own.
+        // row may keep (earlier versions of this library wrote those, and Access shows #Error for them) is not
+        // kept as it is: written again, it goes to pages of its own.
         //
         // Every other column the update does not name keeps the row's own bytes too: an update does not change a
         // value it was not given. Read and written again, a Date/Time outside what DateTime holds came back null.
@@ -328,7 +328,7 @@ internal sealed class DataPageWriter
 
         // The new row whole, but for the long values still to go to their pages: a value its column cannot hold,
         // or one not of its type, or a row too large for the format is refused here, with nothing changed. Refused
-        // only as the new row was written, the row it replaced was already gone (qcatco/exportmdb.interop#56).
+        // only as the new row was written, the row it replaced would already be gone.
         var prepared = encoder.Prepare(merged, kept, keptFixed);
         int pointer  = RowPointer.Pack(pageNumber, rowIndex);
         beforeChange?.Invoke(old, merged, pointer);
@@ -539,7 +539,7 @@ internal sealed class DataPageWriter
                 && decoder.DecodeForKey(rowBytes, col) is { } stored)
                 values.Put(col.Name, stored);
 
-        // A table with a calculated column is not written to, and a delete is a write (qcatco/exportmdb.interop#42).
+        // A table with a calculated column is not written to, and a delete is a write (#25).
         if (table.Columns.FirstOrDefault(c => c.IsCalculated) is { } calculated)
             throw new NotSupportedException(
                 $"No row of this table is deleted: its column {calculated.Name} is calculated, and this library " +

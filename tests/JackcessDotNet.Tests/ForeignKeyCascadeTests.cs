@@ -5,11 +5,11 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// <see cref="Database.EnforceForeignKeys"/> on update and delete, and what a relationship asks for: cascade
-/// update, cascade delete, cascade-to-null (qcatco/exportmdb.interop#38).
+/// update, cascade delete, cascade-to-null.
 /// <para>
-/// The library cannot make a relationship (qcatco/exportmdb.interop#37), so most of these declare one by adding its
+/// Most of these declare a relationship by adding its
 /// rows to MSysRelationships, which is all the enforcer reads; the corpus tests at the end use relationships Access
-/// made. What Access itself does with each case is checked in ExportMdb.Interop's ForeignKeysInAccessTests.
+/// made. What Access itself does with each case is checked in ForeignKeysInAccessTests.
 /// </para>
 /// </summary>
 public sealed class ForeignKeyCascadeTestsThroughIndexes : ForeignKeyCascadeTests
@@ -248,7 +248,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     }
 
     // A Required column refuses the cascade too, but Required is a property only Access writes: that case is in
-    // ExportMdb.Interop's ForeignKeysInAccessTests.
+    // ForeignKeysInAccessTests.
     [Fact]
     public void DeleteParent_WithCascadeNull_IsRefusedWhenTheColumnIsInThePrimaryKey()
     {
@@ -531,7 +531,7 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// <summary>
     /// Parent(Id, K) and Child(Id, K), Child.K referring to Parent.K, K of <paramref name="type"/>: parent i + 1 and
     /// child (i + 1) * 10 hold the i-th of <paramref name="values"/>. (What Access does with each of these keys is in
-    /// ExportMdb.Interop's ForeignKeysInAccessTests.)
+    /// ForeignKeysInAccessTests.)
     /// </summary>
     private void Keyed(DataType type, int flags, params object?[] values)
     {
@@ -1455,8 +1455,8 @@ public abstract class ForeignKeyCascadeTests : IDisposable
     /// <summary>
     /// Table1 has had a column deleted: its fixed-length values start at offset 4 and its columns are numbered
     /// from 1. The row encoder packed and numbered the columns that were left, so a rewritten row read back with
-    /// its values in one another's places, and a cascade into the table was refused
-    /// (qcatco/exportmdb.interop#55). Rows are written by the table's definition now, and the cascade is made.
+    /// its values in one another's places, and a cascade into the table was refused.
+    /// Rows are written by the table's definition now, and the cascade is made.
     /// </summary>
     [Fact]
     public void Corpus_ACascadeRewritesRowsOfATableWithADeletedColumn()

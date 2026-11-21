@@ -8,7 +8,7 @@
     as not fitting from eight bytes before the end of its last page: a definition of 4,089 to 4,096 bytes fills
     no more than its first page, and Access still gives it a second, empty one (#37). These files hold what
     Access wrote on either side of that, for the tests to read, and to change and hand back to Access
-    (MultiPageDefinitionTests; ExportMdb.Interop's SchemaChangesInAccessTests).
+    (MultiPageDefinitionTests; SchemaChangesInAccessTests).
 
     Each file has five tables at the end of the first, the second and the third page of a definition - 4,096,
     8,184 and 12,272 bytes; a page after the first holds 4,088: the last length that fits (eight bytes short of

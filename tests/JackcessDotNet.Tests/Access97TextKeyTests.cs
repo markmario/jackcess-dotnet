@@ -21,7 +21,7 @@ namespace JackcessDotNet.Tests;
 /// <para>
 /// IndexKeys/access97-more-ace12.tsv - every character of code page 1252 alone, every pair of those that are
 /// letters or have an accent, and 5,000 values of 3 to 12 characters drawn from the whole code page.
-/// ExportMdb.Interop's Access97InAccessTests has ACE key every pair of the code page's characters, in a 32-bit
+/// Access97InAccessTests has ACE key every pair of the code page's characters, in a 32-bit
 /// process, and compares them all.
 /// </para>
 /// </summary>

@@ -121,6 +121,7 @@ namespace JackcessDotNet.AccessTests
         [InlineData(FileFormat.Access2019, DateTimeExtended)]
         public void ace_lists_reads_seeks_and_adds_to_a_database_the_engine_created_and_dao_compacts_it(FileFormat version, string needs)
         {
+            if (version == FileFormat.Access2010) SkipUnlessAceOpensAccess2010();
             var path = NewPath("created-" + version);
             using (var db = Database.Create(path, version))
             {

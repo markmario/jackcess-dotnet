@@ -428,33 +428,78 @@ namespace JackcessDotNet.AccessTests.Support
         private static string _whyNo2010;
 
         /// <summary>
-        /// Skips the test, saying why, when ACE in this process does not open a database in the Access 2010 format,
-        /// which is the format of the databases that sort in General: 32-bit ACE 12 is
-        /// Access 2007's, and says "Unrecognized database format" of one. Whether it does is asked of ACE itself, by
-        /// having it make a table in an empty database of that format - the engine's, which is a copy of one DAO
-        /// made. (Asked to make one itself, 32-bit DAO 12 makes a database it can open, of its own format.)
+        /// Skips the test, saying why, where ACE in this process is Access 2007's ACE 12 - the 32-bit ACE beside a
+        /// 64-bit ACE 16 on some machines (#101) - and does not open a database in the Access 2010 format, which is the
+        /// format of the engine's .accdb and of the databases that sort in General. ACE 12 was measured to say
+        /// "Unrecognized database format" of one. It is asked here of a file Access made, the corpus's Access 2010
+        /// database, so a file the engine wrote wrongly is never the reason. With any other ACE nothing is asked and
+        /// nothing is skipped: the test runs, and fails if ACE does not open the file.
         /// </summary>
         public static void SkipUnlessAceOpensAccess2010()
         {
+            if (AceVersion != 12) return;
             if (!_askedAbout2010)
             {
+                var corpus = typeof(AccessReferee).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                    .Single(a => a.Key == "EngineCorpusDir").Value;
                 var probe = Path.Combine(Path.GetTempPath(), "ace-opens-2010-" + Guid.NewGuid().ToString("N") + ".accdb");
+                File.Copy(Path.Combine(corpus, "V2010", "common1V2010.accdb"), probe);
+                File.SetAttributes(probe, FileAttributes.Normal);
                 try
                 {
-                    Database.Create(probe, FileFormat.Access2010).Dispose();
-                    Execute(probe, "CREATE TABLE Probe (V LONG)");
+                    using (var connection = new OleDbConnection(AceVerification.ConnectionString(probe)))
+                        connection.Open();
                     _whyNo2010 = null;
                 }
-                catch (Exception e) when (e is OleDbException || e is TargetInvocationException || e is System.Runtime.InteropServices.COMException)
+                catch (OleDbException e)
                 {
-                    _whyNo2010 = (e.InnerException ?? e).Message;
+                    _whyNo2010 = e.Message;
                 }
                 finally { File.Delete(probe); }
                 _askedAbout2010 = true;
             }
             if (_whyNo2010 != null)
-                Assert.Skip("ACE in this process does not open an Access 2010 .accdb, the format of the database that sorts in General, "
+                Assert.Skip("ACE in this process is version 12, which does not open a database in the Access 2010 format, "
                     + "so there is no referee here for this case: " + _whyNo2010);
+        }
+
+        private static int? _aceVersion;
+
+        /// <summary>
+        /// The major version of the ACE OLE DB provider this process uses, from its DLL's file version: 16 for
+        /// Microsoft 365's Access and the Access Database Engine 2016 redistributable, 12 for Access 2007's, which is
+        /// the 32-bit ACE beside a 64-bit ACE 16 on some machines. A test that pins what one version does pins the
+        /// version here (#101). Throws, failing the test, when the version cannot be read.
+        /// </summary>
+        public static int AceVersion
+        {
+            get
+            {
+                if (_aceVersion == null) _aceVersion = ReadAceVersion();
+                return _aceVersion.Value;
+            }
+        }
+
+        private static int ReadAceVersion()
+        {
+            var bits = Environment.Is64BitProcess ? "64" : "32";
+            using (var clsidKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(AceVerification.ProviderName + @"\CLSID"))
+            {
+                var clsid = clsidKey?.GetValue(null) as string;
+                if (clsid == null) throw new InvalidOperationException(AceVerification.ProviderName + " is not registered, so its version is not known.");
+                var view = Environment.Is64BitProcess ? Microsoft.Win32.RegistryView.Registry64 : Microsoft.Win32.RegistryView.Registry32;
+                using (var server = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.ClassesRoot, view)
+                    .OpenSubKey(@"CLSID\" + clsid + @"\InprocServer32"))
+                {
+                    var dll = server?.GetValue(null) as string;
+                    if (dll == null) throw new InvalidOperationException(AceVerification.ProviderName + " has no " + bits + "-bit server, so its version is not known.");
+                    dll = Environment.ExpandEnvironmentVariables(dll).Trim('"');
+                    if (!File.Exists(dll)) throw new InvalidOperationException(AceVerification.ProviderName + "'s server, " + dll + ", is not there, so its version is not known.");
+                    var major = System.Diagnostics.FileVersionInfo.GetVersionInfo(dll).FileMajorPart;
+                    if (major == 0) throw new InvalidOperationException(dll + " gives no file version.");
+                    return major;
+                }
+            }
         }
 
         /// <summary>

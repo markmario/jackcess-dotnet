@@ -5,11 +5,11 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A relationship is created between two tables (qcatco/exportmdb.interop#37): its rows in MSysRelationships, its
+/// A relationship is created between two tables: its rows in MSysRelationships, its
 /// entry in the catalog and - with referential integrity - the index Access keeps on each side, written as Access
 /// was seen to write them. The library then enforces it (<see cref="Database.EnforceForeignKeys"/>). One the rows
 /// do not allow, or that cannot be written, is refused with the file byte for byte as it was. What Access makes of
-/// the relationship is in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// the relationship is in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class CreateRelationshipTests : IDisposable
 {

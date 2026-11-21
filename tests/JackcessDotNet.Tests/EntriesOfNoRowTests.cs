@@ -13,7 +13,7 @@ namespace JackcessDotNet.Tests;
 /// points at no row is taken out. One that points at a row is believed, as Access believes it, whatever this
 /// library makes of that row's key (<see cref="AccessEntriesTests"/>): the row is a duplicate. Only with
 /// <see cref="Database.VerifyIndexes"/>, the row's key being one this library makes as Access does, is the entry
-/// the row's wrong one, taken out, and the row entered under its own. ExportMdb.Interop's
+/// the row's wrong one, taken out, and the row entered under its own.
 /// EarlierEngineFilesInAccessTests asks ACE through the index afterwards.
 /// <para>
 /// The file is Assets/engine-3ad3aed-rows-in-unique-indexes.mdb (<see cref="LegacyUniqueIndexTests"/> says how it
@@ -117,7 +117,7 @@ public sealed class EntriesOfNoRowTests : IDisposable
     /// Verified, the row that is 7, found under 2, is given another key, 77: its entry under 2 is its wrong one, taken
     /// out by the update - which reads the row as it is being written, and enters it under 77 - and the update's own
     /// entry under 77 is the one already there. The row is in the index once. Entered by both, it was there twice, and
-    /// DAO compacted the file without the key (ExportMdb.Interop's EarlierEngineFilesInAccessTests).
+    /// DAO compacted the file without the key (EarlierEngineFilesInAccessTests).
     /// </summary>
     [Fact]
     public void with_indexes_verified_a_row_found_under_a_key_it_does_not_have_and_given_another_is_entered_under_it_once()

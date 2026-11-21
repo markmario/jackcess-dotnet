@@ -5,7 +5,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// The review of qcatco/jackcess-dotnet#2, finding by finding. Files may now grow past 128 MB, which made an old limit
+/// A review of the engine, finding by finding. Files may now grow past 128 MB, which made an old limit
 /// reachable: a row's address was kept as (page &lt;&lt; 16 | row), so a page past 32,767 was written into a
 /// primary-key index wrongly. The refusal of text longer than its column came after an update had deleted the row it
 /// was replacing. And the space deletes freed was kept for the whole file, so every long-value write, in any table, read

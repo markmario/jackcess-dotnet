@@ -4,10 +4,10 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// A column is added to a table that already has rows (qcatco/exportmdb.interop#37): one this library made, and one
+/// A column is added to a table that already has rows: one this library made, and one
 /// Access made. The rows already there read the new column as null, as Access shows them; rows written afterwards
 /// hold it; every index goes on holding every row; and a refused column leaves the file byte for byte as it was.
-/// What Access makes of the changed table is in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// What Access makes of the changed table is in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class AddColumnTests : IDisposable
 {

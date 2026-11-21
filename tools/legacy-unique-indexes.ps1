@@ -5,11 +5,11 @@
     hold - a primary key among them.
 
 .DESCRIPTION
-    Up to that commit (the one in ExportMdb.Interop 2.1.2) this library kept a table's primary key and no other
+    Up to that commit this library kept a table's primary key and no other
     index: a row it inserted had no entry in the others, and a row it updated kept, in each, the entry of the row
     it had been. And it kept the primary key under the value a row was found by: a row whose primary key it
     changed is in the key under the value it had before. A unique index that does not hold a row cannot say that
-    a second row with that row's values is a duplicate (qcatco/exportmdb.interop#73). Since then a unique index
+    a second row with that row's values is a duplicate. Since then a unique index
     answers for duplicates only with the rows it has been seen not to hold (LegacyUniqueIndexTests).
 
     The fixture is such a file, made by Access and by the earlier code itself, not by a reconstruction of either.

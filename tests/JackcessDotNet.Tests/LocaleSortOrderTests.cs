@@ -7,7 +7,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// A database DAO or Access made in another locale has that locale's LCID for the sort order of its text, in
 /// place of 1033 (#23). ACE keys the text of nine such locales exactly as it keys General - Legacy - measured
-/// with tools/ace-text-keys.ps1 -Locale over 1,013,302 values each, and held to in ExportMdb.Interop's
+/// with tools/ace-text-keys.ps1 -Locale over 1,013,302 values each, and held to in
 /// SortOrdersInAccessTests, where ACE seeks what this library wrote in a database of each - and the text of the
 /// rest otherwise, or unmeasured. So the nine are written with General - Legacy's keys and every other is
 /// refused, as it was.

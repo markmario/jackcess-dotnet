@@ -4,8 +4,8 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// An index is taken at its word unless a caller asks otherwise, as Access and Java Jackcess take one
-/// (qcatco/exportmdb.interop#78): <see cref="Database.VerifyIndexes"/> is off by default, and nothing here turns
+/// An index is taken at its word unless a caller asks otherwise, as Access and Java Jackcess take one:
+/// <see cref="Database.VerifyIndexes"/> is off by default, and nothing here turns
 /// it on. Two things follow, and both are held here.
 /// <para>
 /// Nothing is read to check an index: the first insert of a session, and the first change that keeps a
@@ -13,7 +13,7 @@ namespace JackcessDotNet.Tests;
 /// </para>
 /// <para>
 /// With a file an earlier version of this library left rows out of an index of, this library does what Access
-/// does with the same file - what ACE 12 and ACE 16 were seen to do with these two, which ExportMdb.Interop's
+/// does with the same file - what ACE 12 and ACE 16 were seen to do with these two, which
 /// EarlierEngineFilesInAccessTests holds ACE to: a duplicate of a row a unique index does not hold is added, and
 /// a parent is deleted or re-keyed from under a child the index on its foreign key does not hold.
 /// <see cref="LegacyUniqueIndexTests"/> and <see cref="LegacyIncompleteIndexTests"/> have the same files with the

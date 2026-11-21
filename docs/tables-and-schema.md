@@ -59,7 +59,7 @@ db.DropTable("Notes");
 
 Each change is all or nothing, and so is the creation of a table (`CreateTable`): what can refuse it is found before
 anything is written, and what is written is taken back if writing it fails, so a refused change leaves the file byte
-for byte as it was. Access is the referee of what is written (ExportMdb.Interop's `SchemaChangesInAccessTests`):
+for byte as it was. Access is the referee of what is written (`SchemaChangesInAccessTests`):
 beside the same index made by ACE, or the same relationship made by DAO, in a twin file, DAO lists the same thing
 and the two definitions hold the same index slots.
 

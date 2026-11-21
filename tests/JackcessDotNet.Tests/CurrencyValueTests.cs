@@ -10,7 +10,7 @@ namespace JackcessDotNet.Tests;
 /// the keys the row is written with, a relationship's check, a property, an import, and every lookup - by a cursor
 /// over the table, through an index, a range and the closest row. So a row written with a number is found by that
 /// number, on every runtime. What each case expects is what ACE 16 and DAO stored and found for the number
-/// (<see cref="CurrencyRoundingTests"/>); ExportMdb.Interop's suite has ACE referee the same cases in a file this
+/// (<see cref="CurrencyRoundingTests"/>); CurrencyInAccessTests has ACE referee the same cases in a file this
 /// library wrote.
 /// </summary>
 public sealed class CurrencyValueTests : IDisposable

@@ -56,6 +56,7 @@ namespace JackcessDotNet.AccessTests
             string path;
             if (_inGeneral)
             {
+                AccessReferee.SkipUnlessAceOpensAccess2010();
                 var corpus = typeof(ForeignKeysInAccessTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
                     .Single(a => a.Key == "EngineCorpusDir").Value;
                 path = Path.Combine(_tmp.Dir, Guid.NewGuid().ToString("N") + ".accdb");

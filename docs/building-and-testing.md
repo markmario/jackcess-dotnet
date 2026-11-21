@@ -18,6 +18,13 @@ dotnet test JackcessDotNet.slnx --configuration Release
 A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a release build has a real version
 (see [Releasing](releasing.md)).
 
+**Line endings.** Text files are LF in the repository and in every working copy, Windows included
+(`.gitattributes`), and `.editorconfig` tells an editor so; a batch file, should one be added, is CRLF. A clone
+made before d9078d0, which made them LF, can still hold CRLF copies, and `git add` of one then stops with "CRLF
+would be replaced by LF" where `core.safecrlf` is set. In such a clone, with no changes of your own in it,
+`git rm -r --cached -q . && git reset --hard` makes every file LF once. `git blame` skips d9078d0 on GitHub
+(`.git-blame-ignore-revs`), and locally after `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
+
 ## Testing
 
 - The tests are xUnit.net v3 and run on .NET 10, .NET 11 and .NET Framework 4.8: `dotnet test` runs all three,
@@ -32,7 +39,9 @@ A build here writes `Jackcess.Net.0.0.0-local.nupkg` to `artifacts/`: only a rel
   That build goes to `bin/Release-x86`:
   `dotnet test --project tests/JackcessDotNet.Tests --configuration Release --framework net48 -p:TestX86=true`.
   The Access referee tests take the same switch, and then need 32-bit ACE: Access itself, 32-bit, or the
-  redistributable's x86 installer.
+  redistributable's x86 installer. Where that is Access 2007's ACE 12, which some machines have beside a 64-bit
+  ACE 16, a test that needs an Access 2010 file is skipped, saying so, and one that pins what an ACE version does
+  pins ACE 12's or is skipped (#101).
 - Those are the six configurations, and CI runs each on every pull request, each split into shards that run side
   by side (`scripts/Invoke-TestShard.ps1`); which assembly each framework gets is in
   [Supported frameworks](getting-started.md#supported-frameworks).
@@ -97,17 +106,15 @@ files Access and earlier versions of this library made are described beside what
 ## Comparing two versions of the engine
 
 `tools/CorpusDump` writes what the engine reads of every table of a folder of files as text, for comparing two
-versions of the engine. Nothing builds it, and it does not compile against the public API: it calls
-`ListTables` and `ReadAllRows`, whose places `GetTableNames` and `GetSystemTableNames`, and `Table.Rows`, have
-taken ([#47]).
+versions of the engine. Neither the solution nor CI builds it; it uses only the public API, and is run on its
+own:
+
+```
+dotnet run --project tools/CorpusDump --configuration Release -- tests/corpus <output folder>
+```
 
 ## Reporting problems
 
 Report problems and track work in this repository's [issues](https://github.com/markmario/jackcess-dotnet/issues).
-Some comments in the source still cite issues of ExportMdb.Interop's tracker (`qcatco/exportmdb.interop`), which
-is private: the work was tracked there until this repository had its own, and [#47] replaces those citations with
-this repository's issues.
 
 [Back to contents](README.md)
-
-[#47]: https://github.com/markmario/jackcess-dotnet/issues/47

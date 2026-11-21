@@ -8,7 +8,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// <see cref="DecimalByteOrder.Find(Table)"/> and <see cref="DecimalByteOrder.Find(Database)"/>: the
 /// Decimal values that read with more digits than their column holds, which is how a value written by a version of
-/// this library before qcatco/exportmdb.interop#61 can show (qcatco/exportmdb.interop#66).
+/// this library before it wrote a Decimal as Access does can show.
 /// <para>
 /// Those versions wrote a Decimal as a sign byte and sixteen bytes, the most significant first; Access, and this
 /// library now, keep four 32-bit words, the most significant first, each word's bytes least significant first.
@@ -165,7 +165,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
     /// <summary>
     /// Sixteen bytes can make a number of more than the 96 bits a <see cref="decimal"/> has, and Access reads of
     /// one: 2^100 in the earlier order has only its first word set. A read gives the number its low 96 bits make,
-    /// here 0, as Access does (qcatco/exportmdb.interop#74; <see cref="WideDecimalTests"/>). It is listed, though
+    /// here 0, as Access does (<see cref="WideDecimalTests"/>). It is listed, though
     /// 0 is a number the column holds: no number Access wrote runs past 96 bits.
     /// </summary>
     [Fact]

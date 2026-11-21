@@ -485,10 +485,9 @@ internal sealed class LvalWriter
     /// <see cref="OffsetLvalPageStamp"/> of the page the chain starts on, and will not read the value when they
     /// differ ("the provider could not determine the value"; in Access itself, "you and another user are attempting
     /// to change the same data"). Access writes a number of its own there for each such value; a page this library
-    /// makes has zeros, and so had every reference it wrote - which was wrong as soon as a chain started on a page
-    /// Access had stamped and a delete or update had since emptied (qcatco/exportmdb.interop#60). The reference
-    /// carries whatever the page has. A value in one chunk (OTHER_PAGE) has zeros, as Access writes it, and Access
-    /// does not compare them.
+    /// makes has zeros. A reference with zeros is wrong as soon as a chain starts on a page Access had stamped and
+    /// a delete or update had since emptied, so the reference carries whatever the page has. A value in one chunk
+    /// (OTHER_PAGE) has zeros, as Access writes it, and Access does not compare them.
     /// </summary>
     private static byte[] BuildLvRef(int totalLen, int typeFlags, int page, int row, int stamp)
     {

@@ -8,7 +8,7 @@ namespace JackcessDotNet.Tests;
 /// Rows read and written by the table's own definition (<see cref="RowLayout"/>): each column where the definition
 /// keeps it, a Decimal in Access's byte order, a row found where an overflow pointer leads, and a long value's
 /// reference carrying what its first page has. What Access makes of the result is refereed where Access is, in
-/// qcatco/exportmdb.interop's suite; these hold the same ground without it, on the files Access wrote in the corpus.
+/// RowLayoutInAccessTests; these hold the same ground without it, on the files Access wrote in the corpus.
 /// </summary>
 public sealed class RowLayoutTests : IDisposable
 {
@@ -473,7 +473,7 @@ public sealed class RowLayoutTests : IDisposable
     public void An_update_that_makes_a_row_too_large_is_refused_with_nothing_changed()
     {
         // The size was checked only as the new row was written, after the old one was marked deleted and its long
-        // values freed: the update threw and the row was gone (qcatco/exportmdb.interop#56).
+        // values freed: the update threw and the row was gone.
         using (var db = Database.Create(_path, FileFormat.Access2000))
         {
             var columns = new List<ColumnDefinition> { new ColumnDefinition("Id", DataType.Int32), new ColumnDefinition("Notes", DataType.Memo) };
@@ -499,8 +499,8 @@ public sealed class RowLayoutTests : IDisposable
     [Fact]
     public void An_update_moves_a_long_value_kept_in_the_row_past_what_Access_keeps_there_to_pages_of_its_own()
     {
-        // Releases before ExportMdb.Interop 2.1.2 kept up to 1,024 bytes of a long value in the row, where Access
-        // keeps 64 and shows #Error for more (qcatco/exportmdb.interop#29). An update of another column wrote the
+        // Earlier versions of this library kept up to 1,024 bytes of a long value in the row, where Access keeps 64
+        // and shows #Error for more. An update of another column wrote the
         // value again, which put it right; keeping an unchanged value's reference must not keep that.
         using var db = Database.Create(_path, FileFormat.Access2000);
         var (table, blob) = BlobTable(db);

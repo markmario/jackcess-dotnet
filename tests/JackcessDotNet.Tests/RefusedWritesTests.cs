@@ -8,7 +8,7 @@ namespace JackcessDotNet.Tests;
 /// A row that cannot be written changes nothing. An update writes its new row in place of the old - the old one
 /// marked deleted, its long values freed, the new one added - so whatever can refuse the new row has to do so
 /// before the first of those: a value its column cannot hold, refused only as the new row was encoded, cost the
-/// row it was to replace (qcatco/exportmdb.interop#56). Each case here leaves the file the same bytes, and the row
+/// row it was to replace. Each case here leaves the file the same bytes, and the row
 /// where every index has it.
 /// </summary>
 public sealed class RefusedWritesTests : IDisposable
@@ -185,7 +185,7 @@ public sealed class RefusedWritesTests : IDisposable
         Assert.Contains(outsideTheFile ? "no such page" : "no such row", damaged.Message);
     }
 
-    // ── Calculated columns (qcatco/exportmdb.interop#42) ─────────────────────
+    // ── Calculated columns (#25) ─────────────────────────────────────────────
 
     [Fact]
     public void A_calculated_column_reads_as_null_and_its_table_is_not_written_to()
@@ -196,7 +196,7 @@ public sealed class RefusedWritesTests : IDisposable
         {
             var table = db.GetTable("Table1");
 
-            // The fields Access shows an expression for (DAO, in qcatco/exportmdb.interop's CorpusInAccessTests).
+            // The fields Access shows an expression for (DAO, in CorpusInAccessTests).
             Assert.Equal(
                 new[] { "AllNames", "BigNumTest", "BoolTest", "DecimalTest", "FloatTest", "IsRich", "LastFirst", "LastFirstLen", "MonthlySalary", "SalaryTest", "WeeklySalary" },
                 table.Columns.Where(c => c.IsCalculated).Select(c => c.Name).OrderBy(n => n, StringComparer.Ordinal));

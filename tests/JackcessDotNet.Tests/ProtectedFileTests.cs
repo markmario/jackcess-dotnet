@@ -258,7 +258,7 @@ public sealed class ProtectedFileTests : IDisposable
 
     // An encrypted file grown past 65,536 pages, where a page's number no longer fits in two bytes - an .mdb with a
     // password, encoded, and an Agile .accdb - is read back through its key as it was written, its own table with it.
-    // That Access reads it, finds its rows through the key and compacts it is ExportMdb.Interop's
+    // That Access reads it, finds its rows through the key and compacts it is
     // ProtectedFilesInAccessTests, under the same variable. Each file grows past 270 MB, so the test runs only when
     // JACKCESS_PAST_65536_PAGES is set.
     [Theory]

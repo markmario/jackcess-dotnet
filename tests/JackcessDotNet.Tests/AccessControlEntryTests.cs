@@ -9,7 +9,7 @@ namespace JackcessDotNet.Tests;
 /// container's entry names the creator of whatever is made in it, the new object's entry is its owner's. Measured
 /// in files DAO created and in this library's own, .mdb and .accdb. Without the owner's entry DAO, in an .mdb,
 /// does not read a table this library made in a database DAO created, nor drop a relationship it made: that is
-/// refereed in ExportMdb.Interop's SchemaChangesInAccessTests.
+/// refereed in SchemaChangesInAccessTests.
 /// </summary>
 public sealed class AccessControlEntryTests : IDisposable
 {

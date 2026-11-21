@@ -10,8 +10,8 @@ namespace JackcessDotNet.Tests;
 /// key was not found in any record") and changes nothing, and makes an update of its other columns (measured with
 /// ACE 16 and DAO). Made, the update left the row in the index twice, under 30 and 33, and DAO's compaction copied
 /// the row twice and dropped the primary key. With <see cref="Database.VerifyIndexes"/> the change is made, and
-/// mends the index (#66). ExportMdb.Interop's DamagedIndexInAccessTests has Access read, seek, add to and compact
-/// what is left.
+/// mends the index (#66). What Access makes of what is left - read, sought, added to and compacted - is refereed
+/// by ValuesAndEntriesInAccessTests.
 /// <para>
 /// The file is Assets/damaged-primary-key.mdb, which <see cref="Make"/> made (and
 /// <see cref="The_file_is_the_one_Make_makes"/> holds it to).

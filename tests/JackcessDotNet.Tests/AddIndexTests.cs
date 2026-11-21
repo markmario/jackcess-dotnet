@@ -4,11 +4,11 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// An index is added to a table that already has rows (qcatco/exportmdb.interop#37): it is built over them, kept on
+/// An index is added to a table that already has rows: it is built over them, kept on
 /// every write after, and unique when asked - in a table this library made and in one Access made. An index the
 /// rows do not allow, or whose keys this library does not write, is refused with the file byte for byte as it was.
 /// The indexes are read back from the file's pages (<see cref="IndexChecks"/>); what Access makes of them is in
-/// ExportMdb.Interop's SchemaChangesInAccessTests.
+/// SchemaChangesInAccessTests.
 /// </summary>
 public sealed class AddIndexTests : IDisposable
 {

@@ -4,8 +4,8 @@ namespace JackcessDotNet;
 /// The rows of a table that one of its indexes was seen not to hold (<see cref="TableIndexes.HoldsEveryRow"/>,
 /// under <see cref="Database.VerifyIndexes"/>),
 /// each with the key the index should have it under: none, for an index Access alone has written. They are what
-/// the index cannot answer for - a unique index says nothing of a duplicate of one of them
-/// (qcatco/exportmdb.interop#73) - and they are kept while the database is open. A row leaves when this library
+/// the index cannot answer for - a unique index says nothing of a duplicate of one of them - and they are kept
+/// while the database is open. A row leaves when this library
 /// deletes or rewrites it, since a row it rewrites gains its entries; none is ever added, since a row it inserts
 /// has them.
 /// </summary>
