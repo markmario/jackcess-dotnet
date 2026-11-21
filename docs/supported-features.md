@@ -60,7 +60,9 @@ it does not do. Work not yet done is tracked in this repository's
   from every other writer - Access says it is "already in use" - and it does not open a file another program or
   `Database` has open for writing (`DatabaseInUseException`). Readers - Access read-only, a `Database` opened
   `ReadOnly` - share it with a writer, and a reading made while the writer writes can miss rows, give a row twice or
-  with a value of another row's, or fail; one that agrees with itself needs no writer while it is made. See
+  with a value of another row's, or fail; one that agrees with itself needs no writer while it is made. A
+  `Database` opened `ReadOnly` with `KeepWritersOut` keeps every writer out while it is open, as Access's exclusive
+  read-only open does, and reads the file as one opened to be written does. See
   [Sharing a file with Access](sharing.md).
 - **A Large Number or Date/Time Extended column is for an `.accdb`**, and makes an older `.accdb` one of a later
   format, which older versions of Access do not open:
