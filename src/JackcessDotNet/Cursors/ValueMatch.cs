@@ -71,7 +71,9 @@ internal static class ValueMatch
                     return asked is DateTime when && says == when;
                 case DataType.Text:
                 case DataType.Memo:
-                    return SameText(column, Convert.ToString(stored, CultureInfo.InvariantCulture)!, Convert.ToString(asked, CultureInfo.InvariantCulture)!);
+                    // A double or a float asked for is the text a row written with it holds (RowValues.AsText).
+                    return SameText(column, Convert.ToString(stored, CultureInfo.InvariantCulture)!,
+                        asked is double or float ? RowValues.AsText(asked) : Convert.ToString(asked, CultureInfo.InvariantCulture)!);
                 case DataType.Guid:
                     return stored is Guid guid
                         && guid == (asked is Guid wanted ? wanted : Guid.Parse(Convert.ToString(asked, CultureInfo.InvariantCulture)!));

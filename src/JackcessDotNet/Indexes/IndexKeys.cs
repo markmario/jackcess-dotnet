@@ -40,7 +40,7 @@ internal static class IndexKeys
     public static bool CanEncode(Column column, object? value)
         => CanEncode(column)
         && (column.DataType is not (DataType.Text or DataType.Memo) || value is null
-            || TextIndexCodes.For(column.SortOrder)!.CanEncode(Convert.ToString(value) ?? string.Empty));
+            || TextIndexCodes.For(column.SortOrder)!.CanEncode(RowValues.TextOf(value)));
 
     /// <summary>Why <paramref name="column"/>'s keys cannot be written (<see cref="CanEncode(Column)"/> is false).</summary>
     public static string WhyNot(Column column)
@@ -225,7 +225,7 @@ internal static class IndexKeys
 
         var codes = TextIndexCodes.For(column.SortOrder)
             ?? throw new NotSupportedException($"No key is made for this column: {WhyNot(column)}.");
-        return EncodeText(codes, ascending, Convert.ToString(value) ?? string.Empty);
+        return EncodeText(codes, ascending, RowValues.TextOf(value));
     }
 
     /// <summary>

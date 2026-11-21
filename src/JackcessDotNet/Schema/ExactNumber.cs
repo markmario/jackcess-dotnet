@@ -362,13 +362,179 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
         }
         if (at != end) return false;
 
+        number = FromDigits(digits, places, exponent, negative);
+        return true;
+    }
+
+    /// <summary>
+    /// The number <paramref name="text"/> denotes, exactly, read as .NET reads a number with
+    /// <paramref name="styles"/> in the format of <paramref name="info"/>: white space, a sign or parentheses and a
+    /// currency symbol before or after it, digits with group separators and a decimal separator among them, and an
+    /// exponent, each where the style allows it. Only the digits, the separators and the sign are read here: whether
+    /// the text is a number at all is the runtime's to say, and is asked first
+    /// (<see cref="double.Parse(string, NumberStyles, IFormatProvider)"/>). False for text without digits, which
+    /// the runtime reads as NaN or an infinity by their symbols, and for text not read to its end. A number more than ten to the power 100,000 from 1
+    /// is read as one that far, as <see cref="TryParse(string, out ExactNumber)"/> reads it.
+    /// </summary>
+    internal static bool TryRead(string text, NumberStyles styles, NumberFormatInfo info, out ExactNumber number)
+    {
+        number = default;
+        int at = 0;
+        bool negative = false, signed = false, parenthesis = false;
+
+        // As the runtime reads it (Number.ParseNumber): when a currency symbol is allowed, the currency's separators
+        // are looked for first, and the number's too until a currency symbol has been read.
+        bool parsingCurrency = (styles & NumberStyles.AllowCurrencySymbol) != 0;
+        string? currencySymbol = parsingCurrency ? info.CurrencySymbol : null;
+        string decimalSeparator = parsingCurrency ? info.CurrencyDecimalSeparator : info.NumberDecimalSeparator;
+        string groupSeparator = parsingCurrency ? info.CurrencyGroupSeparator : info.NumberGroupSeparator;
+
+        // Before the digits: white space, a sign or an opening parenthesis, and a currency symbol, in any order.
+        while (at < text.Length)
+        {
+            int matched;
+            if ((styles & NumberStyles.AllowLeadingWhite) != 0 && IsWhite(text[at])) at++;
+            else if (!signed && (styles & NumberStyles.AllowLeadingSign) != 0 && (matched = Match(text, at, info.PositiveSign)) > 0)
+            {
+                signed = true;
+                at += matched;
+            }
+            else if (!signed && (styles & NumberStyles.AllowLeadingSign) != 0 && (matched = MatchNegative(text, at, info)) > 0)
+            {
+                signed = negative = true;
+                at += matched;
+            }
+            else if (!signed && (styles & NumberStyles.AllowParentheses) != 0 && text[at] == '(')
+            {
+                signed = negative = parenthesis = true;
+                at++;
+            }
+            else if (currencySymbol is not null && (matched = Match(text, at, currencySymbol)) > 0)
+            {
+                currencySymbol = null;
+                at += matched;
+            }
+            else break;
+        }
+
+        // The digits, with a decimal separator among them and group separators before it.
+        var digits = new System.Text.StringBuilder();
+        int places = 0;
+        bool point = false, anyDigit = false;
+        while (at < text.Length)
+        {
+            char c = text[at];
+            int matched;
+            if (c >= '0' && c <= '9')
+            {
+                anyDigit = true;
+                if (digits.Length > 0 || c != '0') digits.Append(c);
+                if (point) places++;
+                at++;
+            }
+            else if (!point && (styles & NumberStyles.AllowDecimalPoint) != 0
+                     && ((matched = Match(text, at, decimalSeparator)) > 0
+                         || (parsingCurrency && currencySymbol is not null && (matched = Match(text, at, info.NumberDecimalSeparator)) > 0)))
+            {
+                point = true;
+                at += matched;
+            }
+            else if (!point && anyDigit && (styles & NumberStyles.AllowThousands) != 0
+                     && ((matched = Match(text, at, groupSeparator)) > 0
+                         || (parsingCurrency && currencySymbol is not null && (matched = Match(text, at, info.NumberGroupSeparator)) > 0)))
+                at += matched;
+            else break;
+        }
+        if (!anyDigit) return false;
+
+        // An exponent: e or E, a sign, digits. An e that no digits follow is not one.
+        long exponent = 0;
+        if ((styles & NumberStyles.AllowExponent) != 0 && at < text.Length && (text[at] == 'e' || text[at] == 'E'))
+        {
+            int after = at + 1, matched;
+            bool negativeExponent = false;
+            if ((matched = Match(text, after, info.PositiveSign)) > 0) after += matched;
+            else if ((matched = MatchNegative(text, after, info)) > 0)
+            {
+                negativeExponent = true;
+                after += matched;
+            }
+            if (after < text.Length && text[after] >= '0' && text[after] <= '9')
+            {
+                at = after;
+                for (; at < text.Length && text[at] >= '0' && text[at] <= '9'; at++)
+                    if (exponent < 100_000_000_000) exponent = exponent * 10 + (text[at] - '0');
+                if (negativeExponent) exponent = -exponent;
+            }
+        }
+
+        // After the digits: white space, a sign or the closing parenthesis, and a currency symbol, and then nothing
+        // but the NULs the runtime allows at the end. Text not read to its end is text this reading does not
+        // follow: false, rather than a number read from part of it.
+        while (at < text.Length)
+        {
+            int matched;
+            if ((styles & NumberStyles.AllowTrailingWhite) != 0 && IsWhite(text[at])) at++;
+            else if (!signed && (styles & NumberStyles.AllowTrailingSign) != 0 && (matched = Match(text, at, info.PositiveSign)) > 0)
+            {
+                signed = true;
+                at += matched;
+            }
+            else if (!signed && (styles & NumberStyles.AllowTrailingSign) != 0 && (matched = MatchNegative(text, at, info)) > 0)
+            {
+                signed = negative = true;
+                at += matched;
+            }
+            else if (parenthesis && text[at] == ')')
+            {
+                parenthesis = false;
+                at++;
+            }
+            else if (currencySymbol is not null && (matched = Match(text, at, currencySymbol)) > 0)
+            {
+                currencySymbol = null;
+                at += matched;
+            }
+            else break;
+        }
+        while (at < text.Length && text[at] == '\0') at++;
+        if (at < text.Length) return false;
+
+        number = FromDigits(digits, places, exponent, negative);
+        return true;
+    }
+
+    // How many characters of text at 'at' are 'value', as the runtime matches a culture's sign or separator: a
+    // no-break space or a narrow one in it is matched by a space too (.NET Framework takes the first only, and
+    // refuses the text before it is read here). 0 when they are not there, or 'value' is empty.
+    private static int Match(string text, int at, string value)
+    {
+        if (value.Length == 0 || at + value.Length > text.Length) return 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = text[at + i], v = value[i];
+            if (c != v && !((v == ' ' || v == ' ') && c == ' ')) return 0;
+        }
+        return value.Length;
+    }
+
+    // The culture's negative sign at 'at'; a hyphen-minus too where the sign is another dash, which .NET (not .NET
+    // Framework) reads as it.
+    private static int MatchNegative(string text, int at, NumberFormatInfo info)
+    {
+        int matched = Match(text, at, info.NegativeSign);
+        if (matched > 0) return matched;
+        bool hyphenToo = info.NegativeSign is "‒" or "⁻" or "₋" or "−" or "➖" or "﹣" or "－";
+        return hyphenToo && at < text.Length && text[at] == '-' ? 1 : 0;
+    }
+
+    // The number of the digits read - leading zeros left out - with 'places' of them after the point, times ten to
+    // the power 'exponent'.
+    private static ExactNumber FromDigits(System.Text.StringBuilder digits, int places, long exponent, bool negative)
+    {
         int trailing = 0;
         while (trailing < digits.Length && digits[digits.Length - 1 - trailing] == '0') trailing++;
-        if (trailing == digits.Length)
-        {
-            number = new ExactNumber(BigInteger.Zero, 0, negativeZero: negative);
-            return true;
-        }
+        if (trailing == digits.Length) return new ExactNumber(BigInteger.Zero, 0, negativeZero: negative);
         int count = digits.Length - trailing;
         long scale = checked(places - trailing - exponent);
         long magnitude = checked(count - 1 - scale);   // the power of ten of the first digit
@@ -385,8 +551,33 @@ internal readonly struct ExactNumber : IEquatable<ExactNumber>
         }
         else
             unscaled = BigInteger.Parse(digits.ToString(0, count), NumberStyles.None, Invariant);
-        number = new ExactNumber(negative ? -unscaled : unscaled, checked((int)scale));
-        return true;
+        return new ExactNumber(negative ? -unscaled : unscaled, checked((int)scale));
+    }
+
+    /// <summary>
+    /// The number cut to its first <paramref name="digits"/> significant digits, toward zero; the number itself
+    /// when it has no more than that.
+    /// </summary>
+    internal ExactNumber Cut(int digits)
+    {
+        int length = Digits;
+        if (IsZero || length <= digits) return this;
+        BigInteger cut = BigInteger.Abs(Unscaled) / BigInteger.Pow(10, length - digits);
+        return new ExactNumber(Unscaled.Sign < 0 ? -cut : cut, Scale - (length - digits));
+    }
+
+    /// <summary>
+    /// The number rounded to <paramref name="digits"/> significant digits, a half away from zero; the number itself
+    /// when it has no more than that.
+    /// </summary>
+    internal ExactNumber RoundedAway(int digits)
+    {
+        int length = Digits;
+        if (IsZero || length <= digits) return this;
+        BigInteger divisor = BigInteger.Pow(10, length - digits);
+        BigInteger rounded = BigInteger.DivRem(BigInteger.Abs(Unscaled), divisor, out BigInteger remainder);
+        if ((remainder << 1) >= divisor) rounded += 1;
+        return new ExactNumber(Unscaled.Sign < 0 ? -rounded : rounded, Scale - (length - digits));
     }
 
     // The white space NumberStyles.AllowLeadingWhite and AllowTrailingWhite take.

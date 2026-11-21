@@ -35,8 +35,9 @@ internal static class RowValues
     /// <paramref name="row"/> as it will be written to <paramref name="table"/>: an entry for each column it gives a
     /// value, by the column's own name; no <see cref="DBNull"/> (a column without a value has none), a Yes/No
     /// column's value as the <see cref="bool"/> it stands for, a number column's value as the number it stands for
-    /// (<see cref="AsNumber"/>), and a Currency column's and a Decimal column's number as the <see cref="decimal"/> the
-    /// row stores (<see cref="AsCurrency"/>, <see cref="AsDecimal"/>). Each of the row's names goes to one column
+    /// (<see cref="AsNumber"/>), a Currency column's and a Decimal column's number as the <see cref="decimal"/> the
+    /// row stores (<see cref="AsCurrency"/>, <see cref="AsDecimal"/>), and a Text or a Memo column's double or float
+    /// as the text Access writes for it (<see cref="AsText"/>). Each of the row's names goes to one column
     /// (<see cref="NameFor"/>): the column of exactly that name, and otherwise the one a lookup of it finds by the
     /// table's rule (<see cref="ObjectNames"/>) - so a table with two columns whose names are one to Access, which a file
     /// can have, takes a value in each by its exact name. A name no column is for is left out. The row itself when it
@@ -88,6 +89,7 @@ internal static class RowValues
 
             object? normal = value is DBNull ? null
                 : column.DataType == DataType.Boolean && value is not (null or bool) ? ToBoolean(value)
+                : column.DataType is DataType.Text or DataType.Memo && value is double or float ? AsText(value)
                 : value is null || !IsNumberType(column.DataType) ? value
                 : column.DataType == DataType.Currency ? AsCurrency(column, value)
                 : column.DataType == DataType.Decimal ? AsDecimal(column, AsNumber(column, value))
@@ -102,6 +104,22 @@ internal static class RowValues
         }
         return written ?? row;
     }
+
+    /// <summary>
+    /// <paramref name="value"/>, a <see cref="double"/> or a <see cref="float"/> given for a Text or a Memo column, as
+    /// the text Access writes for it there, in the current culture (<see cref="Util.NumberText"/>, #124): 0.3 for
+    /// 0.1 + 0.2 and 0.00001 for 1E-05, on every target.
+    /// </summary>
+    public static string AsText(object value) => value is float single
+        ? Util.NumberText.Text(single, CultureInfo.CurrentCulture)
+        : Util.NumberText.Text((double)value, CultureInfo.CurrentCulture);
+
+    /// <summary>
+    /// The text a Text or a Memo column holds for <paramref name="value"/>: a double or a float as Access writes it
+    /// (<see cref="AsText"/>), anything else as <see cref="Convert.ToString(object)"/> gives it.
+    /// </summary>
+    public static string TextOf(object? value)
+        => value is double or float ? AsText(value) : Convert.ToString(value) ?? string.Empty;
 
     /// <summary>
     /// The row's name that gives <paramref name="column"/> of <paramref name="table"/> its value, as
@@ -218,8 +236,10 @@ internal static class RowValues
     /// <item>text is read in the current culture, as Access reads it by the machine's settings, in the forms Access
     /// reads: a currency symbol, parentheses for a negative number, group separators and an exponent among them
     /// ("$5" is 5, "(5)" is -5, "1e2" is 100, and with this machine's settings "1,5" is 15). It is read as a
-    /// <see cref="double"/> for a Single or a Double column and as a <see cref="decimal"/> for any other, so that a
-    /// whole-number column takes "2.5" as it takes 2.5m - to 2, half to even, as Access takes it;</item>
+    /// <see cref="float"/> for a Single column and a <see cref="double"/> for a Double column - the number Access
+    /// stores for it, from its first 12 or 20 significant digits, the same on every target
+    /// (<see cref="Util.NumberText"/>, #124) - and as a <see cref="decimal"/> for any other, so that a whole-number
+    /// column takes "2.5" as it takes 2.5m - to 2, half to even, as Access takes it;</item>
     /// <item>a <see cref="DateTime"/> is its day number, days since 30 December 1899, as a <see cref="double"/>, the
     /// number a Date/Time column stores for it: Access stores 2 January 2020 12:00 as 43832.5 in a Double and 43832
     /// in a Long Integer;</item>
@@ -233,7 +253,7 @@ internal static class RowValues
     /// <exception cref="FormatException"><paramref name="value"/> is text that does not read as a number.</exception>
     /// <exception cref="OverflowException">
     /// <paramref name="value"/> is text of a number past what a <see cref="decimal"/> holds, or for a Single or a
-    /// Double column past what a <see cref="double"/> holds, or not a number at all (NaN, an infinity).
+    /// Double column past what the column holds, or not a number at all (NaN, an infinity).
     /// </exception>
     public static object NumberOf(DataType type, object value)
     {
@@ -241,9 +261,13 @@ internal static class RowValues
         {
             case bool b:
                 return b ? -1 : 0;
-            case string text when type is DataType.Single or DataType.Double:
-                double number = double.Parse(text, NumberStyles.Any, CultureInfo.CurrentCulture);
-                // .NET reads a number past a double's range as an infinity, and .NET Framework refuses it: the same here.
+            case string text when type is DataType.Single:
+                float single = Util.NumberText.ToSingle(text, NumberStyles.Any, CultureInfo.CurrentCulture);
+                if (float.IsNaN(single) || float.IsInfinity(single))
+                    throw new OverflowException($"'{text}' is not a number a {Util.CurrencyRounding.Describe(type)} holds.");
+                return single;
+            case string text when type is DataType.Double:
+                double number = Util.NumberText.ToDouble(text, NumberStyles.Any, CultureInfo.CurrentCulture);
                 if (double.IsNaN(number) || double.IsInfinity(number))
                     throw new OverflowException($"'{text}' is not a number a {Util.CurrencyRounding.Describe(type)} holds.");
                 return number;
