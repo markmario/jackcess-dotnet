@@ -97,3 +97,5 @@ link to, so a heading is renamed only together with every link to it. An issue i
 absolute.
 
 [Back to the README](../README.md)
+
+<!-- A probe of #148's rule: this pull request changes no Access test and is closed unmerged. -->
