@@ -135,6 +135,7 @@ opened to be written reads ([#84]). A table of 500,000 rows (Id, the primary key
 | `Table.Rows`, best time, .NET Framework 4.8 | 0.46 s | 1.92 s | 0.46 s |
 | An index cursor, the primary key: pages read | 61,941 | 2,050,834 | 61,941 |
 | An index cursor, best time, .NET 10 | 0.95 s | 17.8 s | 0.31 s |
+| An index cursor, best time, .NET Framework 4.8 | 1.14 s | 61.1 s | 1.15 s |
 
 The pages read are the same on every machine; the times are one machine's.
 
