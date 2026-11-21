@@ -48,11 +48,20 @@ And the other way about, with Access - or another `Database` - there first:
   gives for a file in use - so code that waits for a file someone holds for a moment goes on waiting. Nothing of the
   file is changed.
 - The sharing is Windows', where Access runs, on a local disk and on a network share alike. Elsewhere .NET keeps to a
-  file's sharing only by advisory locks, which do not keep every second writer out - and on iOS and tvOS by none - so
-  there a second `Database` opened to be written is not sure to be refused: keep to one writer there. Nor is a writer
-  sure to be kept out by a `Database` opened with `KeepWritersOut` (measured in Linux on ext4: beside a handle
-  sharing the file for reading only, the library's own open to write opened the file and wrote), so there such a
-  database reads as one opened `ReadOnly` alone does, its pages again at every move.
+  file's sharing only by advisory locks - and on iOS and tvOS by none - which bind only programs that take them. On
+  Linux .NET takes a shared lock for every handle that shares the file at all, and a lock of its own only for one that
+  shares nothing, so what the tables above say of writers kept out does not hold there. Measured with .NET 10 on
+  Linux, on ext4 (CI's Linux job, and WSL), by `FileSharingTests` and `KeepWritersOutTests`:
+  - A `Database` opened to be written lets a second writer in: a second `Database` opened to be written opens the
+    file and writes to it, and so does a handle opened as Access opens a database shared. Keep to one writer there.
+  - A `Database` opened `ReadOnly` with `KeepWritersOut` lets writers in too, and a row a `Database` opened to be
+    written inserts beside it is read by it; so there it reads as one opened `ReadOnly` alone does, its pages again
+    at every move.
+  - A handle that shares nothing - Access's exclusive open, `Database.Create` - is kept out while any of these has
+    the file open, and keeps every one of them out while it has the file: those refusals hold on Linux, and the
+    library's are `DatabaseInUseException` there too. A program that takes no lock is kept out by nothing.
+
+  Other systems than Windows and Linux were not measured.
 - A database opened `ReadOnly` is held by a handle that cannot write, and every change - a row inserted, updated or
   deleted, a table or column made, dropped or renamed, a property saved, an import - is refused with
   `NotSupportedException` before anything happens (`Database.IsReadOnly`). A file marked read-only opens this way.

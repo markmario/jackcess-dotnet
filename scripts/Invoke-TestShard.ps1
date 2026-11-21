@@ -18,8 +18,9 @@ param(
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
 $ErrorActionPreference = 'Stop'
-$project = Join-Path $PSScriptRoot '..\tests\JackcessDotNet.Tests'
-$results = Join-Path $PSScriptRoot '..\TestResults'
+# Forward slashes, which Windows takes too: the Linux job runs this script as well.
+$project = Join-Path $PSScriptRoot '../tests/JackcessDotNet.Tests'
+$results = Join-Path $PSScriptRoot '../TestResults'
 $namespace = 'JackcessDotNet.Tests.'
 $Properties = @($Properties | Where-Object { $_ })
 

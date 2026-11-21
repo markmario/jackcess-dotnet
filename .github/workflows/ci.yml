@@ -224,6 +224,54 @@ jobs:
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
 
+  # The tests on Linux, where the library runs as well (#122): .NET 10, and the
+  # netstandard2.0 assembly on .NET 10, one after the other in one job, as an
+  # application on .NET 8 or 9 on Linux loads it. What differs there is how a
+  # file is shared: .NET keeps to a handle's sharing by advisory locks, so a
+  # test of a writer kept out skips, saying why, and FileSharingTests and
+  # KeepWritersOutTests pin what Linux does instead (docs/sharing.md).
+  linux:
+    name: test (net10.0 and netstandard2.0 on net10.0, Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Why these SDKs: the build job's.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-linux-${{ hashFiles('**/*.csproj', 'global.json') }}
+
+      - name: Build (net10.0)
+        run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework net10.0
+
+      - name: Test (net10.0)
+        shell: pwsh
+        run: ./scripts/Invoke-TestShard.ps1 -Framework net10.0 -TrxName test-results-linux-net10.0.trx
+
+      - name: Build (netstandard2.0 on net10.0)
+        if: always()
+        run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework net10.0 -p:NetStandardAsset=true
+
+      - name: Test (netstandard2.0 on net10.0)
+        if: always()
+        shell: pwsh
+        run: ./scripts/Invoke-TestShard.ps1 -Framework net10.0 -Properties '-p:NetStandardAsset=true' -TrxName test-results-linux-netstandard2.0-net10.0.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-linux
+          path: '**/TestResults/*.trx'
+          if-no-files-found: warn
+
   # The Access referee tests, built once - net48, x64 - and handed to the
   # access-tests jobs, which run them without building or a .NET SDK. The
   # project's corpus and assets are read where this checkout had them, the same
@@ -435,15 +483,15 @@ jobs:
           if-no-files-found: ignore
 
   # One check with the name this workflow's only job had, for anything that
-  # waits on "test": it passes when the build, every framework and the Access
-  # referee tests did.
+  # waits on "test": it passes when the build, every framework, Linux and the
+  # Access referee tests did.
   test:
     name: test
     if: always()
-    needs: [build, frameworks, access-build, access-tests]
+    needs: [build, frameworks, linux, access-build, access-tests]
     runs-on: ubuntu-latest
     steps:
-      - name: The build, every framework and the Access referee tests passed
+      - name: The build, every framework, Linux and the Access referee tests passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
