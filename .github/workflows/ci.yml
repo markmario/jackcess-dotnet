@@ -503,8 +503,10 @@ jobs:
           & $shell -NoProfile -NonInteractive -File $probe
           if ($LASTEXITCODE) { throw "The probe of ACE failed (exit $LASTEXITCODE)." }
 
-      # On a pull request a piece with no time in the script's tables fails the
-      # job, after its tests have run, with an error that says what to add.
+      # On a pull request a piece with no time in the samples' or the full
+      # sweeps' table - or, in a 32-bit shard, in the 32-bit one - fails the
+      # job, after its tests have run, with an error that says what to add;
+      # anywhere else it is a warning that says the same.
       - name: Test
         shell: pwsh
         env:

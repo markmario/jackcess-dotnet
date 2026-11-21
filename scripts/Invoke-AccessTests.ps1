@@ -26,6 +26,13 @@
 # code is any unhandled exception's, so it is run again only when the output names that exception, raised under
 # System.Data.OleDb, and no test failed.
 #
+# And a third, in the 32-bit process: exit code -1073741819 (0xC0000005), an access violation that ended the process
+# with no managed exception written and no test failed - CursorsAndRowsInAccessTests.UEngine, 8 s into its one test,
+# in run 44888628752 (#145). No dump was kept and no stack written, so where it died is not known; neither the library
+# nor these tests have native code, so it is native code's - the runtime's, ACE's or DAO's - and is run again on the
+# same terms as the others: only with no test failed and no unhandled exception in the output, which is what a fault
+# in managed code would have left. What a test's COM calls may have provoked in the engine cannot be told apart.
+#
 # And one way of failing a test: an OleDbException whose message ACE did not write - it begins with a space,
 # " in query expression '?'." - raised by ACE's own work, on a file ACE made, and passing when run again. A piece whose
 # only failures are such is run once more, with a warning naming each test. Any other OleDbException fails at once: a
@@ -84,6 +91,7 @@ $results = Join-Path $root 'TestResults'
 $namespace = 'JackcessDotNet.AccessTests.'
 $crashedInAce = -1073740771            # 0xC000041D
 $crashedInOleDb = -532462766           # an unhandled .NET exception; which one is read from the output
+$accessViolation = -1073741819         # 0xC0000005, with no managed exception made of it
 $attempts = 3
 $unknownSeconds = 240                  # what a piece missing from the table is taken to take
 $full = $env:JACKCESS_FULL_SWEEPS -eq '1'
@@ -375,7 +383,7 @@ if ($Shards -gt 1) {
     $ordered = @($mine)
     Write-Host "Shard $Shard of $Shards`: $(($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum) tests in $($ordered.Count) processes, about $($load[$Shard - 1]) s of them: $(($ordered.Name | Sort-Object) -join ', ')"
     foreach ($unit in ($ordered | Where-Object { -not $RequireTimings -and -not $seconds.ContainsKey($_.Name) })) {
-        Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 ($mode), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
+        Write-Host "::warning::$($unit.Name) has no time in scripts/Invoke-AccessTests.ps1 (`$table.$thisTable), so it is taken to take $unknownSeconds s. Add the time this run measured (the job's summary)."
     }
 }
 $expected = ($ordered | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum
@@ -551,6 +559,18 @@ while ($queue.Count -or $running.Count) {
                 $retry = "died of an access violation in OleDbConnection.Open (exit $code)"
                 $limit = $attempts
             }
+        } elseif ($X86 -and $code -eq $accessViolation) {
+            # An access violation that ended the process without .NET Framework making an exception of it: a fault in
+            # native code on a thread with no managed code to raise one on, or one the runtime could not report. Neither
+            # the library nor these tests have native code (no unsafe code, no P/Invoke; COM objects are only released),
+            # so it is in the runtime, ACE, DAO or what they load. Run again only with no test failed and no unhandled
+            # exception written: a managed fault, the library's or a test's, would have been raised as an exception and
+            # named in the output. Which native module it was is not known from the code alone. It was seen in a 32-bit
+            # process only, and is run again only there.
+            if (-not ($output | Where-Object { $_ -match '\[FAIL\]' -or $_ -match 'Unhandled Exception' })) {
+                $retry = "died of an access violation in native code, with no managed exception (exit $code)"
+                $limit = $attempts
+            }
         } elseif ($code -eq 1 -and $report -and -not $report.Errors -and $report.Failures.Count -and -not $entry.Flaked -and
                   -not ($report.Failures | Where-Object { $_.Type -ne 'System.Data.OleDb.OleDbException' -or $_.Message -notmatch $aceWroteNoMessage })) {
             $retry = "failed only where ACE raised an OleDbException with no message of its own: $(($report.Failures | ForEach-Object { "$($_.Name) - $($_.Message)" }) -join '; ')"
@@ -600,14 +620,15 @@ if ($untimed.Count) {
         $level = if ($required -contains $name) { 'error' } else { 'warning' }
         # What each table it is missing from wants. This run measures its own table's number (its last attempt's, if it
         # was run again); the samples' and the full sweeps' stand in for each other until a run of the other measures it;
-        # a 32-bit number comes from a 32-bit shard's error, and a 64-bit one from a 64-bit shard's.
+        # a 32-bit number comes from a 32-bit shard's message, and a 64-bit one from a 64-bit shard's - an error or a
+        # warning, as that run takes it.
         $wants = foreach ($t in $untimed[$name]) {
             $measured = if ($lastTook.Contains($name)) { "$($lastTook[$name]), the seconds it took in this shard" }
-                        else { 'the seconds the shard of this run that ran it gives in its error' }
+                        else { 'the seconds the shard of this run that ran it gives in its message' }
             if ($t -eq $thisTable) { "`$table.$t`: $measured" }
             elseif ($t -ne 'x86' -and $thisTable -ne 'x86') { "`$table.$t`: the same as `$table.$thisTable, until a run of the $(if ($t -eq 'full') { 'full sweeps' } else { 'samples' }) measures it" }
-            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its error" }
-            else { "`$table.$t`: the seconds a 64-bit shard gives in its error" }
+            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its message, on main or with the ci:access-x86 label" }
+            else { "`$table.$t`: the seconds a 64-bit shard gives in its message" }
         }
         Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
