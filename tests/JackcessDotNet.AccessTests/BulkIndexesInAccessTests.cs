@@ -274,6 +274,27 @@ namespace JackcessDotNet.AccessTests
 
         private static int Keys(string index) { return int.Parse(index.Split(' ')[2], CultureInfo.InvariantCulture); }
 
+        private static SortedDictionary<string, int> KeyCounts(SortedDictionary<string, string> indexes)
+        {
+            return new SortedDictionary<string, int>(indexes.ToDictionary(i => i.Key, i => Keys(i.Value)), StringComparer.Ordinal);
+        }
+
+        /// <summary>Each index's count of keys in a copy DAO has compacted, which builds every index again: the exact count.</summary>
+        private static SortedDictionary<string, int> ExactKeyCounts(string path)
+        {
+            var compacted = Compact(path);
+            try { return KeyCounts(Indexes(compacted)); }
+            finally { File.Delete(compacted); }
+        }
+
+        private static string Show(SortedDictionary<string, int> counts) { return string.Join(", ", counts.Select(c => c.Key + " " + c.Value)); }
+
+        // +1 for an index named, -1 for one named with a minus before it, 0 for one not named.
+        private static int Delta(string[] changed, string index)
+        {
+            return changed.Contains(index) ? 1 : changed.Contains("-" + index) ? -1 : 0;
+        }
+
         /// <summary>The codes DAO's Seek does not find through the unique index.</summary>
         private static List<string> NotFoundBySeek(string path, IEnumerable<string> codes)
         {
@@ -339,13 +360,47 @@ namespace JackcessDotNet.AccessTests
                 db.GetTable("T").InsertRange(EngineRows(Enumerable.Range(1, Rows)));
 
             // ACE adds a row, changes two and deletes one, and refuses a code that is one already but for its case.
-            AceInsert(path, "T", Row(Rows + 1));
-            AceUpdate(path, "T", "Id", 5, V("Name", "changed by ACE", "Amount", 999.5));
-            AceUpdate(path, "T", "Id", 8, V("Code", "ACE00008", "Part", null));
-            Execute(path, "DELETE FROM T WHERE Id = 6");
-            Assert.Throws<OleDbException>(() => AceInsert(path, "T", V("Id", Rows + 9, "Code", "c00007")));
+            // After each, each index's count of keys as ACE left it, against the count DAO gives the index it builds
+            // again in a compacted copy - the exact one: what each of ACE's changes does to a count.
+            var stored = KeyCounts(Indexes(path));
+            var exact = ExactKeyCounts(path);
+            Assert.Equal(exact, stored);
+            Action<string, Action, string[], string[]> step = (what, change, storedUp, exactChanged) =>
+            {
+                change();
+                var storedNow = KeyCounts(Indexes(path));
+                var exactNow = ExactKeyCounts(path);
+                TestContext.Current.TestOutputHelper?.WriteLine(what + ": stored " + Show(storedNow) + " | exact " + Show(exactNow));
+                foreach (var index in stored.Keys)
+                {
+                    Assert.True(storedNow[index] - stored[index] == (storedUp.Contains(index) ? 1 : 0),
+                        what + ": ACE took " + index + "'s count of keys from " + stored[index] + " to " + storedNow[index]);
+                    Assert.True(exactNow[index] - exact[index] == Delta(exactChanged, index),
+                        what + ": the exact count of " + index + "'s keys went from " + exact[index] + " to " + exactNow[index]);
+                }
+                stored = storedNow;
+                exact = exactNow;
+            };
+            // An insert of a row with a new code, time, id, and name with amount adds those keys, exactly.
+            var newRow = new[] { "Code", "Made", "NameAmount", "PrimaryKey" };
+            step("ACE inserted a row", () => AceInsert(path, "T", Row(Rows + 1)), newRow, newRow);
+            // An update of row 5 to a new name and amount, whose old ones other rows have: the exact counts of Name and
+            // Amount go up by one; ACE's do not move. (Its name with amount was its own, and is replaced by another.)
+            step("ACE updated a row's name and amount", () => AceUpdate(path, "T", "Id", 5, V("Name", "changed by ACE", "Amount", 999.5)),
+                new string[0], new[] { "Name", "Amount" });
+            // An update of row 8's code, a key of its own, to another: the exact count does not move, nor does ACE's.
+            step("ACE updated a row's code", () => AceUpdate(path, "T", "Id", 8, V("Code", "ACE00008", "Part", null)), new string[0], new string[0]);
+            // A delete of a row whose code, time, id, and name with amount were its own: the exact counts go down by
+            // one; ACE takes no key off.
+            step("ACE deleted a row", () => Execute(path, "DELETE FROM T WHERE Id = 6"), new string[0], newRow.Select(i => "-" + i).ToArray());
+            // An insert ACE refuses as a duplicate code: it adds one to the primary key's count, and the exact counts
+            // do not move.
+            step("ACE refused a duplicate", () =>
+            {
+                var refused = Assert.Throws<OleDbException>(() => AceInsert(path, "T", V("Id", Rows + 9, "Code", "c00007")));
+                Assert.Contains("duplicate values", refused.Message);
+            }, new[] { "PrimaryKey" }, new string[0]);
             var afterAce = Indexes(path);
-            TestContext.Current.TestOutputHelper?.WriteLine("after ACE's changes: " + string.Join("; ", afterAce.Select(i => i.Key + " " + i.Value)));
 
             // The engine after ACE: two rows, entry by entry, and a code it refuses as ACE did.
             using (var db = Database.Open(path))
@@ -384,12 +439,9 @@ namespace JackcessDotNet.AccessTests
             finally { File.Delete(compacted); }
 
             // The engine's two rows add a key each where their values are new - their codes, times, ids, and names
-            // with amounts - to the counts ACE left. (ACE's own changes do not keep the counts exact: its delete takes
-            // no key off, its update adds none, and the insert it refused added one to the primary key's. So the
-            // counts here are not the ones DAO gives the indexes it builds again.)
-            var newKeys = new[] { "Code", "Made", "NameAmount", "PrimaryKey" };
+            // with amounts - to the counts ACE left, which ACE's changes above left other than the exact ones.
             foreach (var index in afterAce)
-                Assert.Equal(Keys(index.Value) + (newKeys.Contains(index.Key) ? 2 : 0), Keys(afterEngine[index.Key]));
+                Assert.Equal(Keys(index.Value) + (newRow.Contains(index.Key) ? 2 : 0), Keys(afterEngine[index.Key]));
         }
 
         [Theory]
