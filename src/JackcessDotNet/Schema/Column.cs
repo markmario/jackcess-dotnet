@@ -37,6 +37,20 @@ public sealed class Column
     internal bool IsCodePageText { get; set; }
 
     /// <summary>
+    /// Whether the column's values are read by their bytes - compressed text when they begin 0xFF 0xFE, wherever they
+    /// are kept - whatever its Unicode compression: a column of a table an earlier version of this library created,
+    /// which compressed every value of characters 0x01 to 0xFF and gave no column Unicode compression (#93). Access
+    /// neither lists nor reads such a table.
+    /// </summary>
+    internal bool ReadsTextByContent { get; set; }
+
+    /// <summary>
+    /// Whether a value beginning 0xFF 0xFE is read as compressed text in this column, wherever the row keeps it: a Text
+    /// column with Unicode compression, or one <see cref="ReadsTextByContent"/>.
+    /// </summary>
+    internal bool TextMayBeCompressed => IsCompressedUnicode || ReadsTextByContent;
+
+    /// <summary>
     /// The column's number in its table's definition, counted from 0: its position among the table's columns,
     /// except that Access does not renumber the columns left when one is deleted, so the numbers of a table that
     /// has had a column deleted have gaps.
@@ -163,6 +177,8 @@ public sealed class Column
         copy._noProperties    = null;
         // A table is created in a format that keeps text two bytes a character.
         copy.IsCodePageText   = false;
+        // The table being created is one Access lists, whose text is read as Access reads it.
+        copy.ReadsTextByContent = false;
         if (DataType is DataType.Text or DataType.Memo) copy.SortOrder = textOrder;
         return copy;
     }

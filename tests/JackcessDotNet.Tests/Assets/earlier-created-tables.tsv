@@ -1,0 +1,21 @@
+# tools/earlier-created-tables.ps1: what DAO.DBEngine.120 reads, from the table, of what each version wrote
+# version	table	id	column	read (code units in hex, null, or the error)
+1.2.2	People			cannot open: The Microsoft Access database engine could not find the object 'People'. Make sure the object exists and that you spell its name and the path name correctly. If 'People' is not a local object, check your network connection or contact the server administrator.
+1.2.2	Filled			the version failed: Unhandled exception. System.IO.EndOfStreamException: Page 1311232 is beyond end of file.
+8e41563	People			cannot open: The Microsoft Access database engine could not find the object 'People'. Make sure the object exists and that you spell its name and the path name correctly. If 'People' is not a local object, check your network connection or contact the server administrator.
+8e41563	Filled	1	Name	FEFF 6C41 6369
+8e41563	Filled	1	Notes	null
+8e41563	Filled	2	Name	FEFF 6F42
+8e41563	Filled	2	Notes	0053 0068 006F 0072 0074 0020 006E 006F 0074 0065
+8e41563	Filled	3	Name	FEFF 6F5A
+8e41563	Filled	3	Notes	005A 006F 00EB 0027 0073 0020 006E 006F 0074 0065
+8e41563	Filled	4	Name	01FF 0061 0062
+8e41563	Filled	4	Notes	01FF 0061 0062
+8e41563	Filled	5	Name	65E5 672C 8A9E
+8e41563	Filled	5	Notes	65E5 672C 8A9E 306E 30E1 30E2
+8e41563	Filled	6	Name	FEFF 0061 0062
+8e41563	Filled	6	Notes	0061 0062
+8e41563	Filled	7	Name	FEFF 6F4C 676E
+8e41563	Filled	7	Notes	length 5000: 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 0061 0062 0063 0064 0065 0066 0067 0068 0069 006A 
+8e41563	Filled	8	Name	FEFF 694D 6578
+8e41563	Filled	8	Notes	0061 0062 0063 65E5 672C

@@ -81,7 +81,7 @@ internal sealed class RowEncoder
     /// </summary>
     internal sealed class PreparedRow
     {
-        internal PreparedRow(byte[] bytes, List<(int At, LvalWriter Writer, byte[] Data)> longValues)
+        internal PreparedRow(byte[] bytes, List<(int At, LvalWriter Writer, byte[] Data, bool Chain)> longValues)
         {
             Bytes = bytes;
             LongValues = longValues;
@@ -89,7 +89,7 @@ internal sealed class RowEncoder
 
         /// <summary>The row, with twelve empty bytes where each of <see cref="LongValues"/>' references goes.</summary>
         internal byte[] Bytes { get; }
-        internal List<(int At, LvalWriter Writer, byte[] Data)> LongValues { get; }
+        internal List<(int At, LvalWriter Writer, byte[] Data, bool Chain)> LongValues { get; }
     }
 
     /// <summary>
@@ -153,7 +153,7 @@ internal sealed class RowEncoder
             fixedDataSize = MinFixedDataWithoutVariableColumns;
         pos = fixedDataStart + fixedDataSize;
 
-        var longValues = new List<(int At, LvalWriter Writer, byte[] Data)>();
+        var longValues = new List<(int At, LvalWriter Writer, byte[] Data, bool Chain)>();
         int varColumnCount = _layout.MaxVarColumnCount;
         if (varColumnCount > 0)
         {
@@ -172,7 +172,7 @@ internal sealed class RowEncoder
                 // The value's bytes in the row: the old row's own, for a column an update leaves alone; or the
                 // value encoded; or, for a long value bound for pages of its own, room for its reference.
                 byte[]? varData = null;
-                (LvalWriter Writer, byte[] Data)? toPages = null;
+                (LvalWriter Writer, byte[] Data, bool Chain)? toPages = null;
                 if (keptVariableValues is not null && keptVariableValues.TryGetValue(col, out var kept))
                     varData = kept;
                 else if (row.TryGetValue(col.Name, out var v) && !RowValues.IsNull(v))
@@ -191,7 +191,7 @@ internal sealed class RowEncoder
                         throw new InvalidOperationException("Row is too large for format.");
 
                     if (varData is not null) Array.Copy(varData, 0, buffer, pos, length);
-                    else longValues.Add((pos, toPages!.Value.Writer, toPages.Value.Data));
+                    else longValues.Add((pos, toPages!.Value.Writer, toPages.Value.Data, toPages.Value.Chain));
                     pos += length;
                 }
 
@@ -236,9 +236,9 @@ internal sealed class RowEncoder
     /// </summary>
     internal byte[] Complete(PreparedRow prepared)
     {
-        foreach (var (at, writer, data) in prepared.LongValues)
+        foreach (var (at, writer, data, chain) in prepared.LongValues)
         {
-            byte[] reference = writer.Write(data);
+            byte[] reference = writer.Write(data, chain);
             Array.Copy(reference, 0, prepared.Bytes, at, LongValueReferenceSize);
         }
         return prepared.Bytes;
@@ -258,7 +258,7 @@ internal sealed class RowEncoder
     /// there. A Memo value's bytes are those Access writes (<see cref="EncodeMemo"/>): compressed only when it is short
     /// enough for one long-value row, as ACE fails to decode compressed text spread across chunks.
     /// </summary>
-    private (byte[]? InRow, (LvalWriter Writer, byte[] Data)? ToPages) PrepareLongValue(Column col, object value)
+    private (byte[]? InRow, (LvalWriter Writer, byte[] Data, bool Chain)? ToPages) PrepareLongValue(Column col, object value)
     {
         LvalWriter? writer = null;
         _lvalWriters?.TryGetValue(col.Name, out writer);
@@ -266,15 +266,19 @@ internal sealed class RowEncoder
         if (col.DataType == DataType.Memo)
         {
             byte[] textBytes = EncodeMemo(col, Convert.ToString(value) ?? string.Empty);
+            // UTF-16LE of more than 3,816 bytes that begins 0xFF 0xFE, in a column with Unicode compression, is a chain
+            // as ACE keeps it, which Access reads as UTF-16LE: in one long-value row it would read compressed text (#93).
+            bool chain = col.IsCompressedUnicode && textBytes.Length > AccessLongestValueRow
+                         && textBytes[0] == 0xFF && textBytes[1] == 0xFE;
             return textBytes.Length > InlineLvalThreshold && writer is not null
-                ? (null, (writer, textBytes))
+                ? (null, (writer, textBytes, chain))
                 : (BuildInlineLvRef(textBytes), null);
         }
 
         if (value is not byte[] bytes)
             throw new InvalidOperationException("OLE column value must be a byte array.");
         return bytes.Length > InlineLvalThreshold && writer is not null
-            ? (null, (writer, bytes))
+            ? (null, (writer, bytes, false))
             : (BuildInlineLvRef(bytes), null);
     }
 
@@ -396,6 +400,10 @@ internal sealed class RowEncoder
             // (VARBINARY, DAO's dbBinary) or the fixed-length ones (BINARY, dbFixedField) (#45).
             if (col.DataType == DataType.Binary && col.LengthInBytes > 0 && value is byte[] binary && binary.Length > col.LengthInBytes)
                 throw new ColumnValueTooLongException(col.Name, DataType.Binary, col.LengthInBytes, binary.Length, stored);
+            // Text that begins with U+FEFF that Access would read back changed (#93).
+            if (!stored && col.DataType is DataType.Text or DataType.Memo
+                && WhyNotKept(col, Convert.ToString(value) ?? string.Empty, InRow(col)) is { } why)
+                throw new ArgumentException(why + ". Nothing was written.", col.Name);
             if (col.DataType != DataType.Text || col.LengthInBytes <= 0) continue;
 
             int maxChars = col.LengthInBytes / 2;
@@ -443,11 +451,16 @@ internal sealed class RowEncoder
     ///         character outside 0x01 to 0xFF - is UTF-16LE.</item>
     /// </list>
     /// ACE also compresses text mixing such characters with others, in runs; this library writes that text as UTF-16LE,
-    /// which ACE reads the same.
+    /// which ACE reads the same. Text that begins with U+FEFF, whose UTF-16LE begins 0xFF 0xFE like compressed text, is
+    /// compressed in runs where ACE compresses it (#93): where that is shorter, in a column with Unicode compression up
+    /// to 1,908 characters, and in a column without it when its UTF-16LE is short enough to stay in the row.
     /// </summary>
     internal static byte[] EncodeMemo(Column col, string text)
     {
         if (text.Length == 0) return Array.Empty<byte>();
+        if (Util.ByteUtil.BeginsWithMarker(text)
+            && (col.TextMayBeCompressed ? text.Length <= MaxCompressedMemoChars : 2 * text.Length <= InlineLvalThreshold))
+            return Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: false) ?? Util.ByteUtil.EncodeUtf16(text);
         bool compress = col.IsCompressedUnicode && text.Length >= 3 && text.Length <= MaxCompressedMemoChars;
         for (int i = 0; compress && i < text.Length; i++)
             compress = text[i] >= 0x01 && text[i] <= 0xFF;
@@ -460,9 +473,50 @@ internal sealed class RowEncoder
     }
 
     // Compressed only where the column allows it (see Column.IsCompressedUnicode). As the code units the text holds, as
-    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16).
+    // Access writes it and the decoder reads it back (ByteUtil.DecodeUtf16). In a table an earlier version created,
+    // whose text is read by its bytes (Column.ReadsTextByContent), text that begins with U+FEFF is compressed in runs.
     private static byte[] EncodeText(Column col, string text)
-        => col.IsCompressedUnicode ? Util.ByteUtil.EncodeText(text) : Util.ByteUtil.EncodeUtf16(text);
+        => col.IsCompressedUnicode || col.ReadsTextByContent && Util.ByteUtil.BeginsWithMarker(text)
+            ? Util.ByteUtil.EncodeText(text)
+            : Util.ByteUtil.EncodeUtf16(text);
+
+    /// <summary>Whether a long value of so many bytes is kept in the row (<see cref="PrepareLongValue"/>).</summary>
+    private Func<int, bool> InRow(Column col)
+    {
+        bool hasPages = _lvalWriters?.ContainsKey(col.Name) == true;
+        return length => length <= InlineLvalThreshold || !hasPages;
+    }
+
+    /// <summary>The most bytes ACE keeps in one long-value row: a longer value is a chain of them.</summary>
+    internal const int AccessLongestValueRow = 3816;
+
+    /// <summary>
+    /// Why <paramref name="text"/> cannot be stored in <paramref name="col"/> so that Access reads it back, or null when
+    /// it can (#93). Text that begins with U+FEFF has UTF-16LE that begins 0xFF 0xFE, the mark of compressed text. It is
+    /// kept, as ACE keeps it, compressed in runs where that is no longer than UTF-16LE in a Text column and shorter in a
+    /// Memo of up to 1,908 characters; otherwise it is UTF-16LE, which Access reads back changed - as compressed text -
+    /// where it reads 0xFF 0xFE as that mark (<see cref="Column.TextMayBeCompressed"/>): a Text column with Unicode
+    /// compression, a Memo kept in the row (<paramref name="inRow"/> says where a Memo of that many bytes goes), and a
+    /// Memo in one long-value row of a column with it. A Memo of more than 3,816 bytes in such a column is a chain,
+    /// which Access reads as UTF-16LE, and is kept. In a table an earlier version created, read by its bytes
+    /// (<see cref="Column.ReadsTextByContent"/>), a value is read as compressed text wherever it is kept.
+    /// </summary>
+    internal static string? WhyNotKept(Column col, string text, Func<int, bool> inRow)
+    {
+        if (!Util.ByteUtil.BeginsWithMarker(text)) return null;
+        bool readBack = col.DataType switch
+        {
+            DataType.Text => !col.TextMayBeCompressed || Util.ByteUtil.CompressInRuns(text, evenIfNoShorter: true) is not null,
+            DataType.Memo => EncodeMemo(col, text) is var bytes
+                             && (bytes.Length != 2 * text.Length                                // compressed in runs
+                                 || !inRow(bytes.Length)
+                                    && (!col.TextMayBeCompressed || !col.ReadsTextByContent && bytes.Length > AccessLongestValueRow)),
+            _ => true,
+        };
+        return readBack ? null : $"The text for {col.Name} begins with U+FEFF, the byte order mark, and cannot be stored in this column so "
+                               + "that it reads back: Access keeps it as UTF-16LE, and reads the bytes 0xFF 0xFE it begins with as the mark "
+                               + "of compressed text, here";
+    }
 
     private byte[] WriteVariableValue(Column col, object value)
     {

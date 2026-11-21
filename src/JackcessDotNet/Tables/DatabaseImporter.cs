@@ -129,7 +129,8 @@ public static class DatabaseImporter
     /// </exception>
     /// <exception cref="ArgumentException">
     /// A value of the source is one its column does not hold exactly - out of its range, with more digits or places
-    /// than it keeps, a null in a Yes/No column, a date before 1 January 100 - or a <see cref="decimal"/> column's
+    /// than it keeps, a null in a Yes/No column, a date before 1 January 100, text that begins with U+FEFF where Access
+    /// would read it back changed (#93) - or a <see cref="decimal"/> column's
     /// values need more than the 28 digits a Decimal holds; or <see cref="ImportOptions.PrimaryKey"/> names a column
     /// the new table does not have, or holds an empty name. Nothing is imported.
     /// </exception>

@@ -75,7 +75,7 @@ public sealed class Table
 
     /// <summary>Reads the definition again under the name the table has been given (Database.RenameTable).</summary>
     internal void Renamed(string name)
-        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber, _readDefinition.Names), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
+        => Use(Database.ReadDefinition(_file, name, _readDefinition.TdefPageNumber, _readDefinition.Names, _readDefinition.ReadsTextByContent), _file.DefinitionVersion(_readDefinition.TdefPageNumber));
 
     // Reads the definition again when it has been changed since it was read.
     private void Refresh()
@@ -84,7 +84,7 @@ public sealed class Table
             throw new InvalidOperationException($"Table '{_readDefinition.Name}' has been dropped from the database.");
         int version = _file.DefinitionVersion(_readDefinition.TdefPageNumber);
         if (version != _readAtVersion)
-            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber, _readDefinition.Names), version);
+            Use(Database.ReadDefinition(_file, _readDefinition.Name, _readDefinition.TdefPageNumber, _readDefinition.Names, _readDefinition.ReadsTextByContent), version);
     }
 
     /// <summary>The table's definition, for tests that look at its pages.</summary>
@@ -275,9 +275,10 @@ public sealed class Table
     /// first row. Insert, update or delete rows of the table while enumerating it and the rows still to come
     /// are those of the pages as they were listed, and of each page as it was when it was reached, without a row
     /// inserted since the enumeration began, whichever page it went to: take the list first. A database opened only
-    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to, reads each
-    /// row from its page as the page is when the row is reached, and is not told of the rows that program inserts: one
-    /// inserted where the enumeration has still to come, on a page it listed, is given.
+    /// to be read (<see cref="DatabaseOpenOptions.ReadOnly"/>), which another program may be writing to - unless it
+    /// keeps writers out (<see cref="DatabaseOpenOptions.KeepWritersOut"/>) - reads each row from its page as the page
+    /// is when the row is reached, and is not told of the rows that program inserts: one inserted where the
+    /// enumeration has still to come, on a page it listed, is given.
     /// </para>
     /// </summary>
     public IEnumerable<Row> Rows
@@ -499,8 +500,9 @@ public sealed class Table
     /// </summary>
     /// <exception cref="ArgumentException">
     /// Two of the row's names go to one column ("x" and "X" for a column "x"); or a number column's value is of a kind
-    /// no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>. Nothing of the row is written, and the
-    /// counter and <paramref name="row"/> are as they were.
+    /// no number is made of: a <see cref="Guid"/>, bytes, a <see cref="char"/>; or a Text or Memo value begins with
+    /// U+FEFF, the byte order mark, where Access would read it back changed (#93). Nothing of the row is written, and
+    /// the counter and <paramref name="row"/> are as they were.
     /// </exception>
     /// <exception cref="FormatException">
     /// A number column's value is text that does not read as a number in the current culture. Nothing of the row
@@ -994,7 +996,8 @@ public sealed class Table
     /// <exception cref="ArgumentException">
     /// <paramref name="row"/> was not read from this table: it has no <see cref="Row.Id"/>, or is another
     /// table's. Or two of the names it assigns go to one column, or a value it assigns to a number column is of a
-    /// kind no number is made of (<see cref="Insert"/>). Nothing is written.
+    /// kind no number is made of, or a Text or Memo value it assigns begins with U+FEFF where Access would read it
+    /// back changed (<see cref="Insert"/>). Nothing is written.
     /// </exception>
     /// <exception cref="FormatException">
     /// A value <paramref name="row"/> assigns to a number column is text that does not read as a number

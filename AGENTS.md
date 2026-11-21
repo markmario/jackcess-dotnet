@@ -18,12 +18,11 @@ release 1.2.2 of `mehran-ghanizadeh/jackcess-dotnet` and maintained on its own.
   to and compacts. Being right by Access comes before speed and before new features.
 - The repository is public. Work is based on `main` and merged to `main`, and a merged pull request's branch is
   deleted.
-- One branch besides `main` stays on the remote: `upstream-pr`, the head of the pull request that offers this
-  repository's first Access fixes to `mehran-ghanizadeh/jackcess-dotnet`. Leave it as it is: deleting it closes
-  that pull request. The tag `archive/release-3.0.0` keeps a line of work from before this one, which `main` did
-  not take. It is there to be read, for complex columns
-  ([#24](https://github.com/markmario/jackcess-dotnet/issues/24)) among other things, and nothing is merged from
-  it. Only a tag that begins with `v` releases anything.
+- `main` is the only branch that stays on the remote. Two tags keep lines of work from before this one, which
+  `main` did not take: `archive/release-3.0.0`, with an attempt at complex columns
+  ([#24](https://github.com/markmario/jackcess-dotnet/issues/24)) among other things, and `archive/upstream-pr`,
+  the first Access fixes and a `net472` target as they were offered to `mehran-ghanizadeh/jackcess-dotnet`. They
+  are there to be read, and nothing is merged from them. Only a tag that begins with `v` releases anything.
 
 ## How work is done here
 

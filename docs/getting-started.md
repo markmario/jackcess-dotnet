@@ -55,7 +55,8 @@ What a build from source writes, and the version it has: [Building](building-and
 - `Database.Open(path)` opens an `.mdb` or an `.accdb`, of whichever format its header says
   ([What a file is](file-formats.md#what-a-file-is)). `Database.Open(path, new DatabaseOpenOptions { ... })`
   gives the password of a protected file ([Protected files](protected-files.md)), the format to read a file as
-  when its header does not say, and `ReadOnly`, which opens the file only to read it.
+  when its header does not say, `ReadOnly`, which opens the file only to read it, and `KeepWritersOut`, which, with
+  `ReadOnly`, keeps every writer out while the file is open.
 - `Database.Create(path)` makes an Access 2000-2003 `.mdb`, and `Database.Create(path, format)` an `.accdb` of
   Access 2007's, 2010's, 2016's or 2019's format ([Creating a file](file-formats.md#creating-a-file)).
 - `Database.IsReadOnly` says whether a database can be written to: one opened `ReadOnly` cannot, and an Access 97

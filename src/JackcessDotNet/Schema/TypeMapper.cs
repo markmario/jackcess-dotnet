@@ -278,13 +278,20 @@ internal static class TypeMapper
             DataType.DateTime         => DateTimeOf(value, extended: false),
             DataType.DateTimeExtended => DateTimeOf(value, extended: true),
             DataType.Guid             => GuidOf(value),
-            DataType.Text             => TextOf(value, column),
-            DataType.Memo             => TextOf(value, column: null),
+            DataType.Text             => Kept(TextOf(value, column), column),
+            DataType.Memo             => Kept(TextOf(value, column: null), column),
             DataType.Binary           => BinaryOf(value, column),
             DataType.OleObject        => value as byte[] ?? throw NotOfType(value, "an OLE Object column holds bytes"),
             _                         => throw new NotHeldException($"a {column.DataType} column is not written by this library"),
         };
     }
+
+    // Text that begins with U+FEFF that Access would read back changed (#93); a long value of more than 64 bytes goes
+    // to pages of its own.
+    private static string Kept(string text, Column column)
+        => RowEncoder.WhyNotKept(column, text, length => length <= RowEncoder.InlineLvalThreshold) is { } why
+            ? throw new NotHeldException(why)
+            : text;
 
     private static NotHeldException NotOfType(object value, string what)
         => new($"{Describe(value)} is a {value.GetType().Name}, and {what}");
