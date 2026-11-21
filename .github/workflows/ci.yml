@@ -11,7 +11,8 @@
 # target, and the test jobs each build one framework alone and run a share of
 # its tests - three shares on .NET Framework, whose tests take 10 to 12 minutes
 # one after another, and all of them in one job on .NET, where they take about
-# five (scripts/Invoke-TestShard.ps1).
+# five (scripts/Invoke-TestShard.ps1). They run on Windows, but for one that
+# runs the .NET 10 tests on Linux (#122).
 #
 # The Access referee tests (tests/JackcessDotNet.AccessTests) need Microsoft
 # Access's own engine, which hosted runners lack: access-build builds them once,
@@ -223,6 +224,48 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.id }}-${{ matrix.shard }}
+          path: '**/TestResults/*.trx'
+          if-no-files-found: warn
+
+  # The tests on Linux, where the library runs as well (#122): .NET 10. What
+  # differs there is how a file is shared: .NET keeps to a handle's sharing by
+  # advisory locks, so a test of a writer kept out skips, saying why, and
+  # FileSharingTests and KeepWritersOutTests pin what Linux does instead
+  # (docs/sharing.md). The netstandard2.0 assembly on .NET 10 as well, one after
+  # the other, took 8m40s, longer than any other job; alone the tests take
+  # under four minutes. That assembly runs on .NET 10 on Windows, above. It
+  # does not ask for -RequireTimings: the Windows jobs check every class's row,
+  # and Linux's times are not the net10.0 column's.
+  linux:
+    name: test (net10.0, Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Why these SDKs: the build job's.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-linux-${{ hashFiles('**/*.csproj', 'global.json') }}
+
+      - name: Build
+        run: dotnet build tests/JackcessDotNet.Tests --configuration Release --framework net10.0
+
+      - name: Test
+        shell: pwsh
+        run: ./scripts/Invoke-TestShard.ps1 -Framework net10.0 -TrxName test-results-linux-net10.0.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-linux
           path: '**/TestResults/*.trx'
           if-no-files-found: warn
 
@@ -489,15 +532,15 @@ jobs:
           if-no-files-found: ignore
 
   # One check with the name this workflow's only job had, for anything that
-  # waits on "test": it passes when the build, every framework and the Access
-  # referee tests did.
+  # waits on "test": it passes when the build, every framework, Linux and the
+  # Access referee tests did.
   test:
     name: test
     if: always()
-    needs: [build, frameworks, access-build, access-tests]
+    needs: [build, frameworks, linux, access-build, access-tests]
     runs-on: ubuntu-latest
     steps:
-      - name: The build, every framework and the Access referee tests passed
+      - name: The build, every framework, Linux and the Access referee tests passed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
