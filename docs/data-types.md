@@ -221,7 +221,10 @@ hair under a half can read as the next millisecond: 5.7870370370370361E-09 reads
   copied by `INSERT ... SELECT` - and DAO's `AddNew` and a Text property, which all write the same
   (`tools/ace-text-to-float.ps1`). The runtime wrote its own: .NET the round-trip form ("0.30000000000000004"), .NET
   Framework 15 digits but "1E-05" and "0" for -0.0. A lookup of a Text column by a double or a float
-  looks for that text; a Text property given one is written the same, in the invariant culture.
+  looks for that text, so a row an earlier version wrote with the runtime's text - "0.30000000000000004" for
+  0.1 + 0.2 - is not found by the double, but by its text
+  ([Files written by earlier versions](earlier-versions.md#other-things-an-earlier-version-wrote)). A Text property
+  given one is written the same, in the invariant culture.
 - Text longer than its column is refused:
   [When a change is refused](cursors-and-rows.md#when-a-change-is-refused). How text is compared and keyed, by its
   column's sort order: [Text](cursors-and-rows.md#text) and

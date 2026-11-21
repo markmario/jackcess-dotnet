@@ -31,6 +31,10 @@
     Run it in Windows PowerShell 5.1, which has System.Data.OleDb, with a 64-bit ACE:
       powershell.exe -File tools\ace-text-to-float.ps1 -Out <full path>\ace-text-to-float.tsv
 
+    tests/JackcessDotNet.Tests/Assets/ace-text-to-float.tsv is this script run with -Picks 3 on an en-AU machine:
+    4,375 lines, which runs on two machines wrote alike. NumberTextTests pins it by its SHA-256; to change it, run
+    the script again and change the hash there with it.
+
 .PARAMETER Out
     The .tsv to write. Its header lines begin with #. A line for text is "text", then: the family, the form, the text,
     the nearest double, ACE's literal, ACE's parameter, DAO, .NET's double.Parse; then the nearest single, the single

@@ -272,6 +272,7 @@ $table = @{
         'SortOrdersInAccessTests.WalkGerman' = 8; 'SortOrdersInAccessTests.WalkGreek' = 10
         'SortOrdersInAccessTests.WalkHebrew' = 20; 'SortOrdersInAccessTests.WalkItalian' = 11
         'SortOrdersInAccessTests.WalkPortuguese' = 24; TextMarkerInAccessTests = 36; ValuesAndEntriesInAccessTests = 5
+        NumberTextInAccessTests = 12
     }
 }
 

@@ -13,6 +13,18 @@ changed since 1.2.2.
 
 ### Changed
 
+- **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
+  a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
+  away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and
+  otherwise with an exponent of two digits or more. It was the runtime's own text: .NET's round-trip form,
+  "0.30000000000000004" for 0.1 + 0.2 where Access writes "0.3", and on .NET Framework "1E-05" where Access writes
+  "0.00001", and "0" for -0.0, which Access writes "-0". Measured with ACE 16 (a Double or Single parameter, and
+  `INSERT ... SELECT` from a Double or Single column) and DAO (`AddNew`, and a Text property), which write the same.
+  The row, its index keys and a lookup of the column by a double take that text. **So a row an earlier version wrote
+  with a double is not found by it**: `Cursor.FindRow`, an index cursor's `FindRow` and `FindRowByEntry` given
+  0.1 + 0.2 do not find `0.30000000000000004`, nor 1E-05 `1E-05`; such a value is found by its text
+  ([Files written by earlier versions](docs/earlier-versions.md#other-things-an-earlier-version-wrote)). A Text
+  property given a double or a float is written the same, in the invariant culture.
 - **Breaking: text whose bytes begin 0xFF is read and written as Access reads and writes it** (#93). 0xFF 0xFE is
   the mark of compressed text, and the UTF-16LE of U+FEFF is 0xFF 0xFE too. Measured with Microsoft 365's ACE 16
   and DAO (`tools/ace-text-marker.ps1`):
@@ -817,15 +829,6 @@ changes with them.
   (#136). Text of `-0` is -0.0, as in ACE, where .NET Framework's parse gave 0. A Double or Single property given
   text takes it the same way, in the invariant culture as before. A number given as a `double`, a `float`, a
   `decimal` or an integer does not go this way, and is stored as before.
-- **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target**
-  (#124): 15 significant digits for a double and 7 for a single, a half away from zero, written out below 10^15
-  (10^7) unless that takes more than 15 (7) places after the point, and otherwise with an exponent of two digits or
-  more. It was the runtime's own text: .NET's round-trip form, "0.30000000000000004" for 0.1 + 0.2 where Access
-  writes "0.3", and on .NET Framework "1E-05" where Access writes "0.00001", and "0" for -0.0, which Access writes
-  "-0". Measured with ACE 16 (a Double or Single parameter, and `INSERT ... SELECT` from a Double or Single column)
-  and DAO (`AddNew`, and a Text property), which write the same. The row, its index keys and a lookup of the column
-  by a double take that text. A Text property given a double or a float is written the same, in the invariant
-  culture.
 - **On Linux, a file in use is refused with `DatabaseInUseException`** (#122). There .NET refuses an open by the
   advisory lock it takes for a handle's sharing, with an `IOException` whose HResult is the errno, 11, and not
   Windows' sharing violation: `Database.Create` beside any open handle, and any open beside Access holding the file
