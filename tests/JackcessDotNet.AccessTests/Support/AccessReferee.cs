@@ -463,6 +463,46 @@ namespace JackcessDotNet.AccessTests.Support
                     + "so there is no referee here for this case: " + _whyNo2010);
         }
 
+        private static bool _askedAbout97;
+        private static string _whyNo97;
+
+        /// <summary>
+        /// Skips the test, saying why, where ACE in this process does not open an Access 97 file: 64-bit ACE never
+        /// does, and the 32-bit ACE 16 of the Access Database Engine 2016 redistributable (16.0.5011.1000, on a hosted
+        /// windows-latest runner) said "Cannot open a database created with a previous version of your application" of
+        /// one, where 32-bit ACE 12 opens it (#101). It is asked of a file Access 97 made, the corpus's
+        /// common1V1997.mdb, so a file the engine wrote is never the reason. Under ACE 12 nothing is asked: the test
+        /// runs, and fails if ACE does not open the file.
+        /// </summary>
+        public static void SkipUnlessAceOpensAccess97()
+        {
+            if (Environment.Is64BitProcess)
+                Assert.Skip("64-bit ACE does not open an Access 97 file, so there is no referee here for one: run these tests in a 32-bit process.");
+            if (AceVersion == 12) return;
+            if (!_askedAbout97)
+            {
+                var corpus = typeof(AccessReferee).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                    .Single(a => a.Key == "EngineCorpusDir").Value;
+                var probe = Path.Combine(Path.GetTempPath(), "ace-opens-97-" + Guid.NewGuid().ToString("N") + ".mdb");
+                File.Copy(Path.Combine(corpus, "V1997", "common1V1997.mdb"), probe);
+                File.SetAttributes(probe, FileAttributes.Normal);
+                try
+                {
+                    using (var connection = new OleDbConnection(AceVerification.ConnectionString(probe)))
+                        connection.Open();
+                    _whyNo97 = null;
+                }
+                catch (OleDbException e)
+                {
+                    _whyNo97 = e.Message;
+                }
+                finally { File.Delete(probe); }
+                _askedAbout97 = true;
+            }
+            if (_whyNo97 != null)
+                Assert.Skip("ACE " + AceVersion + " in this 32-bit process does not open an Access 97 file, so there is no referee here for one: " + _whyNo97);
+        }
+
         private static int? _aceVersion;
 
         /// <summary>

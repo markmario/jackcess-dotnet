@@ -51,9 +51,11 @@
 # there is taken to be slow, and named in a warning; one that takes far longer than its number is too, in the job's
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
 # makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
-# missing from either table - the samples' or the full sweeps' - a failure rather than a warning, so that the tables
-# cannot fall behind the tests unnoticed. The pieces still run first, and the error gives the seconds the piece took,
-# which is the number it wants in the samples' table, and in the full sweeps' until a run of them measures it.
+# missing from the samples' or the full sweeps' table - or, in a 32-bit run, from the 32-bit run's - a failure rather
+# than a warning, so that the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error
+# says what each table it is missing from wants: the seconds it took, in this run's own table. CI's 32-bit shards run
+# on a push to main, every night and in a run by hand, and on a pull request only when it asks (the ci:access-x86
+# label), so a piece missing from the 32-bit table is a warning in any other run, there and on main alike.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
@@ -61,19 +63,23 @@
 #
 # -ProcessorsEach keeps each process to that many logical processors of its own (0, the default, leaves them all): the
 # redistributable's deaths are in its own threads, and CI gives each process one processor.
+#
+# -X86 runs the 32-bit build (dotnet build tests/JackcessDotNet.AccessTests -c Release -p:TestX86=true, in
+# bin\Release-x86), against the 32-bit Access engine, rather than the 64-bit one.
 param(
     [string] $TrxName = 'access-tests.trx',
     [ValidateRange(1, 64)] [int] $Shard = 1,
     [ValidateRange(1, 64)] [int] $Shards = 1,
     [ValidateRange(1, 8)] [int] $Parallel = 1,
     [ValidateRange(0, 64)] [int] $ProcessorsEach = 0,
-    [switch] $RequireTimings
+    [switch] $RequireTimings,
+    [switch] $X86
 )
 if ($Shard -gt $Shards) { throw "Shard $Shard of $Shards does not exist." }
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root 'tests\JackcessDotNet.AccessTests\bin\Release\net48\JackcessDotNet.AccessTests.exe'
+$exe = Join-Path $root "tests\JackcessDotNet.AccessTests\bin\$(if ($X86) { 'Release-x86' } else { 'Release' })\net48\JackcessDotNet.AccessTests.exe"
 $results = Join-Path $root 'TestResults'
 $namespace = 'JackcessDotNet.AccessTests.'
 $crashedInAce = -1073740771            # 0xC000041D
@@ -82,7 +88,7 @@ $attempts = 3
 $unknownSeconds = 240                  # what a piece missing from the table is taken to take
 $full = $env:JACKCESS_FULL_SWEEPS -eq '1'
 if (-not (Test-Path -LiteralPath $exe)) {
-    Write-Host "::error::$exe is not there: build tests/JackcessDotNet.AccessTests (Release) first."
+    Write-Host "::error::$exe is not there: build tests/JackcessDotNet.AccessTests (Release$(if ($X86) { ', -p:TestX86=true' })) first."
     exit 1
 }
 New-Item -ItemType Directory -Force $results | Out-Null
@@ -239,6 +245,34 @@ $table = @{
         TextMarkerInAccessTests = 25
         NumberTextInAccessTests = 60
     }
+    # The samples in a 32-bit process (-X86), three processes at a time, against the redistributable's 32-bit ACE 16:
+    # run 44877333525. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests, the Seeks).
+    x86 = @{
+        AccdbFormatsInAccessTests = 60; Access97InAccessTests = 2; BinaryLengthInAccessTests = 9
+        BulkIndexesInAccessTests = 196; CorpusInAccessTests = 13; 'CorpusInAccessTests.ReadsAccdb' = 31
+        'CorpusInAccessTests.ReadsMdb' = 16; 'CorpusInAccessTests.the_engine_reads-others' = 5; CurrencyInAccessTests = 12
+        CursorsAndRowsInAccessTests = 36; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 71
+        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 35; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 72
+        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 48; 'CursorsAndRowsInAccessTests.UAccess' = 34
+        'CursorsAndRowsInAccessTests.UEngine' = 32; CutKeysInAccessTests = 22; DivergentKeysInAccessTests = 2
+        EarlierEngineFilesInAccessTests = 11; EngineIndexesInAccessTests = 70; 'EngineIndexesInAccessTests.EveryType' = 57
+        EngineTablesInAccessTests = 45; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 30
+        FileSharingInAccessTests = 25; ForeignKeysInAccessTests = 100; 'ForeignKeysInAccessTests.Cascades' = 86
+        'ForeignKeysInAccessTests.Keys' = 105; ImporterInAccessTests = 12; LongValuesInAccessTests = 8
+        'LongValuesInAccessTests.Accdb' = 14; 'LongValuesInAccessTests.Mdb' = 12; LookupsInAccessTests = 4
+        MemoStorageInAccessTests = 9; OverflowRowsInAccessTests = 16; PropertiesInAccessTests = 40
+        ProtectedFilesInAccessTests = 54; RoomReuseInAccessTests = 64; RowLayoutInAccessTests = 22
+        'RowLayoutInAccessTests.ReplicationIdIndex' = 6; SchemaChangesInAccessTests = 95
+        'SchemaChangesInAccessTests.Boundaries' = 41; 'SchemaChangesInAccessTests.ColumnDrops' = 56
+        'SchemaChangesInAccessTests.Drops' = 100; 'SchemaChangesInAccessTests.Names' = 18
+        'SchemaChangesInAccessTests.RelationshipDrops' = 33; 'SchemaChangesInAccessTests.Relationships' = 79
+        'SchemaChangesInAccessTests.Renames' = 110; SortOrdersInAccessTests = 5; 'SortOrdersInAccessTests.Seeks' = 108
+        'SortOrdersInAccessTests.WalkArabic' = 9; 'SortOrdersInAccessTests.WalkCyrillic' = 9
+        'SortOrdersInAccessTests.WalkDutch' = 12; 'SortOrdersInAccessTests.WalkEnglishUK' = 23
+        'SortOrdersInAccessTests.WalkGerman' = 8; 'SortOrdersInAccessTests.WalkGreek' = 10
+        'SortOrdersInAccessTests.WalkHebrew' = 20; 'SortOrdersInAccessTests.WalkItalian' = 11
+        'SortOrdersInAccessTests.WalkPortuguese' = 24; TextMarkerInAccessTests = 36; ValuesAndEntriesInAccessTests = 5
+    }
 }
 
 $listing = @(& $exe -list tests/json -noLogo -noColor -preEnumerateTheories 2>&1)
@@ -317,12 +351,16 @@ foreach ($class in $classes) {
 $covered = ($units | ForEach-Object { $_.Tests.Count } | Measure-Object -Sum).Sum
 if ($covered -ne $listed.Count) { throw "The pieces take $covered of the $($listed.Count) tests listed." }
 
-$seconds = $table[$mode]
+# A 32-bit run is balanced by its own numbers, of the samples, which CI runs there whatever the event.
+$seconds = if ($X86) { $table.x86 } else { $table[$mode] }
 function Get-Seconds([string] $unit) { if ($seconds.ContainsKey($unit)) { $seconds[$unit] } else { $unknownSeconds } }
-# Every piece of every shard missing from either table, and from which.
+# Every piece of every shard missing from any table - the samples', the full sweeps', the 32-bit run's - and from which.
+# A piece is one of this run's, so one that only the other mode has (a theory's "-others" piece whose cases a mode's
+# pieces all take, say) is checked only by a run in that mode; none does so today, both modes having the same pieces.
+$thisTable = if ($X86) { 'x86' } else { $mode }
 $untimed = [ordered]@{}
 foreach ($unit in $units) {
-    $from = @('samples', 'full' | Where-Object { -not $table[$_].ContainsKey($unit.Name) })
+    $from = @('samples', 'full', 'x86' | Where-Object { -not $table[$_].ContainsKey($unit.Name) })
     if ($from.Count) { $untimed[$unit.Name] = $from }
 }
 
@@ -415,7 +453,8 @@ $running = [System.Collections.Generic.List[object]]::new()
 $ran = 0
 $failed = [System.Collections.Generic.List[string]]::new()
 $failCode = 0
-$took = [ordered]@{}
+$took = [ordered]@{}       # every attempt's seconds, summed: what the run spent
+$lastTook = @{}            # the last attempt's: what a piece takes, for its number in a table
 $notes = @{}
 $aceWroteNoMessage = '^System\.Data\.OleDb\.OleDbException : (\s|$)'
 
@@ -483,6 +522,7 @@ while ($queue.Count -or $running.Count) {
         $free = [math]::Round((New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($run.Temp))).AvailableFreeSpace / 1GB, 1)
         $elapsed = [math]::Round($run.Clock.Elapsed.TotalSeconds)
         $took[$unit.Name] = $elapsed + $(if ($took.Contains($unit.Name)) { $took[$unit.Name] } else { 0 })
+        $lastTook[$unit.Name] = $elapsed
         $report = Read-Report $run.Report
 
         if ($code -eq 0 -and $report -and -not $report.Errors) {
@@ -537,7 +577,7 @@ while ($queue.Count -or $running.Count) {
 # What each process took, in the log and in the job's summary beside the table's number.
 Write-Host "Seconds each process took: $(($took.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) = $($_.Value)" }) -join '; ')"
 $summary = [System.Collections.Generic.List[string]]::new()
-$summary.Add("### Access referee tests, shard $Shard of $Shards (the $(if ($full) { 'full sweeps' } else { 'samples' }), $Parallel at a time)")
+$summary.Add("### Access referee tests$(if ($X86) { ', 32-bit' }), shard $Shard of $Shards (the $(if ($full) { 'full sweeps' } else { 'samples' }), $Parallel at a time)")
 $summary.Add('')
 $summary.Add('| Piece | Tests | Seconds | In the table | |')
 $summary.Add('|---|---|---|---|---|')
@@ -553,15 +593,29 @@ foreach ($unit in ($ordered | Sort-Object { if ($took.Contains($_.Name)) { $took
 }
 if ($env:GITHUB_STEP_SUMMARY) { ($summary + '') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }
 
-if ($RequireTimings -and $untimed.Count) {
+# A piece missing from a table fails a run with -RequireTimings when the table is one that run's kind of run checks:
+# the samples' and the full sweeps' always, the 32-bit run's only in a 32-bit run, since a pull request's run - the one
+# given -RequireTimings - has no 32-bit shards unless it asks for them (.github/workflows/ci.yml). Otherwise it is a
+# warning, saying the same.
+$required = @($untimed.Keys | Where-Object { $RequireTimings -and @($untimed[$_] | Where-Object { $_ -ne 'x86' -or $X86 }).Count })
+if ($untimed.Count) {
     foreach ($name in $untimed.Keys) {
-        $here = if ($took.Contains($name)) { "$($took[$name]), the seconds it took in this shard ($(if ($full) { 'the full sweeps' } else { 'the samples' }))" }
-                else { 'the seconds it took in the shard that ran it, whose error gives them' }
-        $where = ($untimed[$name] | ForEach-Object { "`$table.$_" }) -join ' and '
-        Write-Host "::error::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $where, with $here; in the other mode's table the same number serves until a run in that mode measures it."
+        $level = if ($required -contains $name) { 'error' } else { 'warning' }
+        # What each table it is missing from wants. This run measures its own table's number (its last attempt's, if it
+        # was run again); the samples' and the full sweeps' stand in for each other until a run of the other measures it;
+        # a 32-bit number comes from a 32-bit shard's error, and a 64-bit one from a 64-bit shard's.
+        $wants = foreach ($t in $untimed[$name]) {
+            $measured = if ($lastTook.Contains($name)) { "$($lastTook[$name]), the seconds it took in this shard" }
+                        else { 'the seconds the shard of this run that ran it gives in its error' }
+            if ($t -eq $thisTable) { "`$table.$t`: $measured" }
+            elseif ($t -ne 'x86' -and $thisTable -ne 'x86') { "`$table.$t`: the same as `$table.$thisTable, until a run of the $(if ($t -eq 'full') { 'full sweeps' } else { 'samples' }) measures it" }
+            elseif ($t -eq 'x86') { "`$table.x86: the seconds a 32-bit shard (-X86) gives in its error" }
+            else { "`$table.$t`: the seconds a 64-bit shard gives in its error" }
+        }
+        Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
-    if (-not $failed.Count) {
-        Write-Host "::error::$($untimed.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($untimed.Keys -join ', ')"
+    if ($required.Count -and -not $failed.Count) {
+        Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')"
         exit 1
     }
 }
