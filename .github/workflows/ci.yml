@@ -462,13 +462,16 @@ jobs:
           $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
           New-Item -ItemType Directory -Force $dumps | Out-Null
           # Both registry views: a 32-bit process's crash left no dump with the
-          # 64-bit one alone (run 44888628752, #145).
+          # 64-bit one alone (run 44888628752, #145). With both, a 32-bit crash
+          # leaves two dumps of about 15 MB, the second named with "(1)" (runs
+          # 44904695547 and 44905503645); only one of them is uploaded, below. The
+          # folder keeps six, which is three such crashes.
           foreach ($key in 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps',
                            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\Windows Error Reporting\LocalDumps') {
             New-Item -Path $key -Force | Out-Null
             Set-ItemProperty -Path $key -Name DumpFolder -Value $dumps -Type ExpandString
             Set-ItemProperty -Path $key -Name DumpType -Value 1 -Type DWord
-            Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
+            Set-ItemProperty -Path $key -Name DumpCount -Value 6 -Type DWord
           }
 
       # The installer started above, finished and registered. Should its
@@ -534,6 +537,22 @@ jobs:
             TestResults/*.trx
             TestResults/*.xml
           if-no-files-found: warn
+
+      # Windows names a second dump of one process "name(1).pid.dmp" beside
+      # "name.pid.dmp". The second is removed where the first is there.
+      - name: One dump for each process that crashed
+        if: always()
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+          foreach ($dump in @(Get-ChildItem -LiteralPath $dumps -Filter '*.dmp' -ErrorAction SilentlyContinue)) {
+            if ($dump.Name -notmatch '^(?<name>.+)\(\d+\)(?<rest>\.\d+\.dmp)$') { continue }
+            $first = Join-Path $dumps ($Matches.name + $Matches.rest)
+            if (Test-Path -LiteralPath $first) {
+              Remove-Item -LiteralPath $dump.FullName
+              "Removed $($dump.Name): $(Split-Path -Leaf $first) is of the same process."
+            }
+          }
 
       - name: Upload crash dumps
         if: always()
