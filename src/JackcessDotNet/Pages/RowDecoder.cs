@@ -71,6 +71,11 @@ internal sealed class RowDecoder
         // wrapper's bytes would make as the definition's type.
         if (col.IsCalculated) return null;
 
+        // A complex column's values (attachments, a multi-value field, version history) are in a table of their own,
+        // which is not read (#24). The row holds only the number that is their key there (ComplexValueId), which is
+        // not the column's value, so the column reads as null.
+        if (col.DataType == DataType.Complex) return null;
+
         // Boolean: null mask bit IS the value (true/false), never actually null
         if (col.DataType == DataType.Boolean)
             return notNull;
@@ -116,6 +121,15 @@ internal sealed class RowDecoder
         if (!TryReadMask(rowBytes, col, out int maskOffset, out bool notNull) || !notNull) return null;
         return TryLocate(rowBytes, col, maskOffset, out int start, out int length) ? rowBytes.Slice(start, start + length) : null;
     }
+
+    /// <summary>
+    /// The number the row holds for <paramref name="col"/>, a complex column: the key of the row's values in the
+    /// table that holds the column's values, or null when the row holds none or the column is not complex. Access
+    /// gives every row one, whether or not the row has values, and the same one in each complex column of the row
+    /// (measured with ACE 16: <c>tools/dao-complex-rows.ps1</c>).
+    /// </summary>
+    public int? ComplexValueId(byte[] rowBytes, Column col)
+        => col.DataType == DataType.Complex && RawFixedValue(rowBytes, col) is { Length: 4 } bytes ? ByteUtil.GetInt(bytes, 0) : null;
 
     /// <summary>
     /// Finds the row's null mask and <paramref name="col"/>'s bit in it. False for a row too short to hold them, or

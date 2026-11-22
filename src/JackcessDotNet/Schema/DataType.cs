@@ -56,9 +56,11 @@ public enum DataType : byte
     Decimal = 0x10,
 
     /// <summary>
-    /// An attachment or multi-value field (Access 2007 and later), Jackcess's <c>COMPLEX_TYPE</c>: its values are
-    /// in a table of their own. A table with one is read, though not the values of that column, and it is
-    /// not written.
+    /// An attachment, multi-value field or version history (Access 2007 and later), Jackcess's
+    /// <c>COMPLEX_TYPE</c>: its values are in a table of their own, which this library does not read (#24). The
+    /// column reads as null in every row, and in a <see cref="System.Data.DataTable"/> the
+    /// <see cref="DatabaseExporter"/> makes it is a column of type <see cref="object"/> holding
+    /// <see cref="DBNull.Value"/>. A table with one is read, and no row of it is inserted, updated or deleted.
     /// </summary>
     Complex = 0x12,
 
@@ -98,11 +100,9 @@ internal static class DataTypeExtensions
         [DataType.Text]          = new(FixedSize: 0,  IsVariable: true,  IsLong: false, MaxSize: 510),  // 255 chars * 2 bytes UTF-16
         [DataType.OleObject]           = new(FixedSize: 0,  IsVariable: true,  IsLong: true),
         [DataType.Memo]          = new(FixedSize: 0,  IsVariable: true,  IsLong: true),
-        // Complex columns (multi-value fields, attachments, version history): the
-        // value lives in a separate complex-column-data table; what's stored in
-        // the row is a 4-byte ID. Decoding the linked table isn't implemented yet,
-        // but registering the type as "fixed 4-byte" lets the column be parsed and
-        // tables that contain it can still be opened + iterated.
+        // Complex columns (multi-value fields, attachments, version history): the values are in a table of their
+        // own, and the row holds a 4-byte number, their key there (RowDecoder.ComplexValueId). The column reads as
+        // null (#24); its place in the row is fixed and 4 bytes, so the row's other values are found.
         [DataType.Complex]       = new(FixedSize: 4,  IsVariable: false, IsLong: false),
         [DataType.Int64]        = new(FixedSize: 8,  IsVariable: false, IsLong: false),
         [DataType.DateTimeExtended] = new(FixedSize: ExtendedDateTimeCodec.Size, IsVariable: false, IsLong: false),

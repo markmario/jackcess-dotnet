@@ -85,6 +85,61 @@ public sealed class DatabaseExporterTests : IDisposable
         Assert.Equal("Hi",         rows[1]["Note"]);
     }
 
+    // A complex column - here version history, a multi-value field and an attachment - reads as null however its
+    // table is read, and exports as a column of object holding DBNull (#152). The number each row holds for it is
+    // still read where the library needs it: Access gives each row one, the same in each of its complex columns.
+    [Theory]
+    [InlineData("V2007", "complexDataV2007.accdb")]
+    [InlineData("V2010", "complexDataV2010.accdb")]
+    public void A_complex_column_reads_as_null_and_exports_as_a_column_of_object(string version, string file)
+    {
+        string source = TestCorpus.File(version, file) ?? throw new FileNotFoundException($"{file} is not in the corpus.");
+        using var db = Database.Open(source, new DatabaseOpenOptions { ReadOnly = true });
+        var table = db.GetTable("Table1");
+        var complex = table.Columns.Where(c => c.DataType == DataType.Complex).ToList();
+        Assert.Equal(3, complex.Count);
+
+        void AllNull(IEnumerable<Row> rows, string how)
+        {
+            var read = rows.ToList();
+            Assert.True(read.Count == 4, how);
+            foreach (var row in read)
+                foreach (var column in complex)
+                {
+                    Assert.True(row.TryGetValue(column.Name, out var value), how);
+                    Assert.True(value is null, $"{how}: {column.Name} read as {value}");
+                }
+        }
+        AllNull(table.Rows, "Rows");
+        AllNull(table.CreateCursor(), "a cursor");
+        AllNull(table.CreateIndexCursor(), "a cursor over the primary key");
+        foreach (var column in complex)
+            AllNull(table.CreateIndexCursor(table.Indexes.Single(ix => ix.Columns.Single().Column.Name == column.Name).Name), $"a cursor over {column.Name}'s index");
+        var found = table.FindRowByPrimaryKey("row3");
+        Assert.NotNull(found);
+        Assert.All(complex, c => Assert.Null(found![c.Name]));
+
+        var exported = table.ToDataTable();
+        foreach (var column in complex)
+        {
+            Assert.Equal(typeof(object), exported.Columns[column.Name]!.DataType);
+            Assert.All(exported.Rows.Cast<DataRow>(), r => Assert.Equal(DBNull.Value, r[column.Name]));
+        }
+
+        // The number stored: the rows were given 1 to 4, each the same in all three columns.
+        var decoder = new RowDecoder(db.File.Format, table.Columns);
+        var stored = new List<int?>();
+        byte[] map = db.File.ReadPage(table.Definition.UmapPageNumber);
+        foreach (int page in UsageMap.GetOwnedPages(map, table.Definition.OwnedPagesRow, db.File.Format, db.File))
+        {
+            byte[] bytes = db.File.ReadPage(page);
+            for (int r = 0; r < Util.ByteUtil.GetShort(bytes, db.File.Format.OffsetDataNumRows); r++)
+                if (DataRows.Read(db.File, bytes, r) is { } rowBytes)
+                    stored.Add(Assert.Single(complex.Select(c => decoder.ComplexValueId(rowBytes, c)).Distinct()));
+        }
+        Assert.Equal(new int?[] { 1, 2, 3, 4 }, stored.OrderBy(n => n));
+    }
+
     // ── DataSet ──────────────────────────────────────────────────────────────
 
     [Fact]

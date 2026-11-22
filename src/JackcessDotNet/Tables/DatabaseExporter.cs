@@ -17,7 +17,9 @@ namespace JackcessDotNet;
 /// <see cref="DataType.DateTimeExtended"/> are <see cref="DateTime"/>; <see cref="DataType.Text"/> and
 /// <see cref="DataType.Memo"/> are <see cref="string"/>; <see cref="DataType.Binary"/> and
 /// <see cref="DataType.OleObject"/> are <c>byte[]</c>; <see cref="DataType.Guid"/> is
-/// <see cref="Guid"/>.
+/// <see cref="Guid"/>. A <see cref="DataType.Complex"/> column - an attachment, multi-value field or version
+/// history - is null in every row, its values not being read (#24): in a <see cref="DataTable"/> it is a column of
+/// type <see cref="object"/>, each row's value <see cref="DBNull.Value"/>.
 /// </para>
 /// </summary>
 public static class DatabaseExporter
@@ -191,7 +193,8 @@ public static class DatabaseExporter
     /// <summary>
     /// Reverse of <see cref="TypeMapper.MapClrType"/>. Picks the CLR type that
     /// the row decoder actually produces for each Jet <see cref="DataType"/>.
-    /// Unknown / complex types fall back to <c>object</c>.
+    /// Unknown types fall back to <c>object</c>, and so does a complex column: it reads as null, its values not being
+    /// read (#24), and a column of <c>object</c> holds whatever they would be read as without a change of its type.
     /// </summary>
     internal static Type MapToClrType(DataType dt) => dt switch
     {
@@ -209,7 +212,7 @@ public static class DatabaseExporter
         DataType.OleObject           => typeof(byte[]),
         DataType.Guid          => typeof(Guid),
         DataType.Decimal       => typeof(decimal),
-        DataType.Complex       => typeof(int),
+        DataType.Complex       => typeof(object),
         DataType.Int64        => typeof(long),
         DataType.DateTimeExtended => typeof(DateTime),
         _                      => typeof(object),
