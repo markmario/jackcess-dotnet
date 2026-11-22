@@ -19,6 +19,8 @@ changed since 1.2.2.
   and `DatabaseInUseException` have no public constructor** (#34), as `BatchInsertException` and
   `DatabaseFullException` have none: the library is what throws them. Catching one and reading it are as they were.
   1.2.2 had none of the three.
+- **Breaking: `PropertyMap.Property` is `Property`** (#34), a type of its own rather than one inside
+  `PropertyMap`: what a table's, a column's or the database's `Properties` lists. Its members are as they were.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and
@@ -648,7 +650,7 @@ changes with them.
 - **`Column.Length` is `LengthInBytes`** (with `MaxLength` in characters for Text beside it) and
   **`ColumnNumber` is `Ordinal`**. `Table.Properties` is the table's own `PropertyMap` and a column's are
   `Column.Properties`; `PropertyMaps` is internal, `PropertyMap` is the collection of its properties, and
-  `PropertyMap.Property` is a class, not a record.
+  `PropertyMap.Property` is `Property`, a class of its own, not a record.
 - **`Index.IgnoresNulls` is `IgnoreNulls`;** `IndexDefinition.DescendingColumns` is a collection to add to.
 - **`Relationship.FromTable`, `ToTable` and `ColumnPairs` are `FromTableName`, `ToTableName`,
   `FromColumnNames` and `ToColumnNames`;** `CascadeNull` is `CascadeNullOnDelete`; `LeftOuterJoin` and

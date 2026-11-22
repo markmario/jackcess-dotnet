@@ -39,6 +39,9 @@ string? title = (string?)db.SummaryProperties["Title"];
   (`DefaultValue` a Memo, `Required` a Yes/No, `Format` Text, and so on) or else the type of the value; an
   overload names the type. Access keeps no property as a Large Number or a Decimal - DAO refuses to make one,
   and reads a Large Number property as 0 - so neither is written.
+- **A map is the collection of its properties**, in the order the file lists them. Each is a `Property`, with its
+  `Name`, `DataType`, `Value` and `IsDdl`; `map["Caption"]` is a value alone, and `TryGetProperty` finds the
+  `Property` of a name.
 - **The database's three sets**: `Database.Properties` (what DAO's own `Database.Properties` lists beyond its
   built-in ones), `SummaryProperties` and `UserDefinedProperties` (the Summary and Custom sheets). The last
   two are kept with documents that Access's own interface adds to a database. A database made by DAO alone,

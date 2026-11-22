@@ -337,10 +337,10 @@ public sealed class PropertyReviewTests : IDisposable
         // A file can hold one all the same (DAO reads it as ''): it is read as empty, not as no value.
         var maps = new PropertyMaps();
         var column = maps.GetOrAdd("Name", PropertyMap.ColumnType);
-        column.Add(new PropertyMap.Property("Caption", DataType.Text, null, flags: 0, stored: Array.Empty<byte>()));
-        column.Add(new PropertyMap.Property("AMemo", DataType.Memo, null, flags: 0, stored: Array.Empty<byte>()));
-        column.Add(new PropertyMap.Property("Bytes", DataType.OleObject, null, flags: 0, stored: Array.Empty<byte>()));
-        column.Add(new PropertyMap.Property("ALong", DataType.Int32, null, flags: 0, stored: Array.Empty<byte>()));
+        column.Add(new Property("Caption", DataType.Text, null, flags: 0, stored: Array.Empty<byte>()));
+        column.Add(new Property("AMemo", DataType.Memo, null, flags: 0, stored: Array.Empty<byte>()));
+        column.Add(new Property("Bytes", DataType.OleObject, null, flags: 0, stored: Array.Empty<byte>()));
+        column.Add(new Property("ALong", DataType.Int32, null, flags: 0, stored: Array.Empty<byte>()));
         byte[] value = PropertyMapWriter.Write(maps)!;
 
         var read = PropertyMapReader.Read(value, JetFormat.Jet4).Get("Name")!;

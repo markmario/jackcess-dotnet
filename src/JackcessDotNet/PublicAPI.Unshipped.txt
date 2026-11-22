@@ -235,21 +235,21 @@ JackcessDotNet.Joiner.ToIndex.get -> JackcessDotNet.Index!
 JackcessDotNet.Joiner.ToTable.get -> JackcessDotNet.Table!
 JackcessDotNet.PropertyMap
 JackcessDotNet.PropertyMap.Count.get -> int
-JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.PropertyMap.Property!>!
+JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.Property!>!
 JackcessDotNet.PropertyMap.Name.get -> string!
-JackcessDotNet.PropertyMap.Property
-JackcessDotNet.PropertyMap.Property.DataType.get -> JackcessDotNet.DataType
-JackcessDotNet.PropertyMap.Property.IsDdl.get -> bool
-JackcessDotNet.PropertyMap.Property.Name.get -> string!
-override JackcessDotNet.PropertyMap.Property.ToString() -> string!
-JackcessDotNet.PropertyMap.Property.Value.get -> object?
+JackcessDotNet.Property
+JackcessDotNet.Property.DataType.get -> JackcessDotNet.DataType
+JackcessDotNet.Property.IsDdl.get -> bool
+JackcessDotNet.Property.Name.get -> string!
+override JackcessDotNet.Property.ToString() -> string!
+JackcessDotNet.Property.Value.get -> object?
 JackcessDotNet.PropertyMap.Remove(string! name) -> bool
 JackcessDotNet.PropertyMap.Save() -> void
 JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value) -> void
 JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value, bool isDdl) -> void
 JackcessDotNet.PropertyMap.Set(string! name, object! value) -> void
 override JackcessDotNet.PropertyMap.ToString() -> string!
-JackcessDotNet.PropertyMap.TryGetProperty(string! name, out JackcessDotNet.PropertyMap.Property? property) -> bool
+JackcessDotNet.PropertyMap.TryGetProperty(string! name, out JackcessDotNet.Property? property) -> bool
 JackcessDotNet.PropertyMap.TryGetValue(string! name, out object? value) -> bool
 JackcessDotNet.PropertyMap.this[string! propertyName].get -> object?
 JackcessDotNet.Relationship
