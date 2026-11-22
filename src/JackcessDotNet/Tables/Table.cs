@@ -96,7 +96,10 @@ public sealed class Table
     public string                Name    => _definition.Name;
     /// <summary>The table's columns, in the order of their positions in the table.</summary>
     public IReadOnlyList<Column> Columns => _definition.Columns;
-    /// <summary>Indexes defined on this table (read from the on-disk TDEF).</summary>
+    /// <summary>
+    /// The table's indexes, its primary key among them, as the table's definition in the file lists them: what
+    /// <see cref="CreateIndexCursor(string)"/> is given the name of.
+    /// </summary>
     public IReadOnlyList<Index>  Indexes => _definition.Indexes;
 
     /// <summary>The number of rows in the table, as its definition counts them.</summary>
@@ -170,7 +173,7 @@ public sealed class Table
 
     /// <summary>
     /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
-    /// (MSysObjects.LvProp) when the table is opened. Empty for a table Access keeps none for. A column's
+    /// (MSysObjects) when the table is opened. Empty for a table Access keeps none for. A column's
     /// properties are the column's: <see cref="Column.Properties"/>. <see cref="PropertyMap.Set(string, object)"/>
     /// and <see cref="PropertyMap.Save"/> change them.
     /// </summary>
@@ -462,10 +465,7 @@ public sealed class Table
     // ── Row operations ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Encodes and inserts <paramref name="row"/> into the table.
-    /// A new data page is allocated automatically if the current one is full.
-    /// The total row count in the table's TDEF is updated on every insert.
-    /// The row gains its entry in each of the table's indexes - its primary key and every other - so Access
+    /// Inserts <paramref name="row"/> into the table, and adds one to <see cref="RowCount"/>. The row gains its entry in each of the table's indexes - its primary key and every other - so Access
     /// finds it through them and an <see cref="IndexCursor"/> can use them.
     /// <para>
     /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values

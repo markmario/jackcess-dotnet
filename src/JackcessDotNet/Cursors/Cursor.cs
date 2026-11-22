@@ -325,9 +325,9 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// The names of the columns rows are read with, in the table's column order, or null (as at first) for all
-    /// of them. A cursor that reads a few columns of every row is spared decoding the rest, long values among
-    /// them: Jackcess's column names of an iterable. A row read with some of the columns can be given to
-    /// <see cref="Table.Update"/> and <see cref="UpdateCurrentRow"/> like any other; the columns it was not read
+    /// of them. A cursor that reads a few columns of every row is spared reading the others, Memo and OLE Object
+    /// values among them; in Jackcess the column names are set on the cursor's iterable. A row read with some of
+    /// the columns can be given to <see cref="Table.Update"/> and <see cref="UpdateCurrentRow"/> like any other; the columns it was not read
     /// with keep their values. Setting it does not read the current row again.
     /// </summary>
     /// <exception cref="ArgumentException">The value names no column, or a column the table does not have.</exception>

@@ -158,7 +158,7 @@ public sealed class Column
     /// <summary>
     /// Whether a Text or Memo value may be written in Jet's compressed form (0xFF 0xFE,
     /// then one byte per character): the column's "Unicode Compression" setting, read
-    /// from its TDEF. Access reads a value in that form as UTF-16 in a column without
+    /// from the table's definition. Access reads a value in that form as UTF-16 in a column without
     /// it, so MSysObjects' names, for one, are written uncompressed. Columns this
     /// library creates allow it, as Access's own new Text and Memo fields do.
     /// </summary>
