@@ -9,7 +9,8 @@ namespace JackcessDotNet.Tests;
 /// 2,140,618,752 bytes did not), so every write that would take the file past the limit is refused with
 /// <see cref="DatabaseFullException"/>, whatever writes it, and the change is taken back; and a file already past it is
 /// read whole, every write to it refused, the file left as it is. The limit is lowered here to the file's own length,
-/// so that the next page any change adds is past it. The limit was measured at its real size by hand (#88).
+/// so that the next page any change adds is past it - directly, and as a caller lowers it, through
+/// <see cref="DatabaseOpenOptions.MaxFileLength"/>. The limit was measured at its real size by hand (#88).
 /// </summary>
 public sealed class FileSizeLimitTests : IDisposable
 {
@@ -122,5 +123,64 @@ public sealed class FileSizeLimitTests : IDisposable
         AssertRefusedAndUnchanged(db => db.GetTable("T").Delete(db.GetTable("T").FindRowByPrimaryKey(4)!), limit);
         AssertRefusedAndUnchanged(db => db.GetTable("T").AddColumn(new ColumnDefinition("Extra", DataType.Int32)), limit);
         AssertRefusedAndUnchanged(db => db.GetTable("T").DropIndex("ByCode"), limit);
+    }
+
+    [Fact]
+    public void A_limit_given_at_open_refuses_the_change_that_would_pass_it_and_is_the_exceptions_MaxLength()
+    {
+        Create();
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path, new DatabaseOpenOptions { MaxFileLength = before.Length }))
+        {
+            Assert.Equal(before.Length, db.File.MaxLength);
+            var refused = Record.Exception(() => db.GetTable("T").Insert(RowOf(30, note: 20_000)));
+            var full = refused as DatabaseFullException ?? refused?.InnerException as DatabaseFullException;
+            Assert.True(full is not null, $"refused with {refused?.GetType().Name ?? "nothing"}: {refused?.Message}");
+            Assert.Equal(before.Length, full.MaxLength);
+            Assert.Contains(nameof(DatabaseOpenOptions.MaxFileLength), full.Message);
+        }
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change changed the file");
+
+        // Without a limit the file grows to the format's own, and the same change is made.
+        using (var db = Database.Open(_path, new DatabaseOpenOptions()))
+        {
+            Assert.Equal(PageFile.FormatMaxLength, db.File.MaxLength);
+            db.GetTable("T").Insert(RowOf(30, note: 20_000));
+        }
+        // The format's own limit may be given.
+        using (var db = Database.Open(_path, new DatabaseOpenOptions { MaxFileLength = PageFile.FormatMaxLength }))
+            Assert.Equal(PageFile.FormatMaxLength, db.File.MaxLength);
+    }
+
+    [Fact]
+    public void A_limit_under_the_files_length_reads_the_file_and_refuses_every_change_to_it()
+    {
+        Create();
+        byte[] before = File.ReadAllBytes(_path);
+        long limit = before.Length - 4096;
+        using (var db = Database.Open(_path, new DatabaseOpenOptions { MaxFileLength = limit }))
+        {
+            Assert.Equal(20, db.GetTable("T").Rows.Count());
+            var row = db.GetTable("T").FindRowByPrimaryKey(2)!;
+            row["Code"] = "changed";
+            var refused = Assert.Throws<DatabaseFullException>(() => db.GetTable("T").Update(row));
+            Assert.Equal(limit, refused.MaxLength);
+        }
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(_path)), "a refused change changed the file");
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    [InlineData(PageFile.FormatMaxLength + 1)]
+    [InlineData(long.MaxValue)]
+    public void A_limit_that_is_not_positive_or_is_past_2_GB_is_refused_before_the_file_is_opened(long maxFileLength)
+    {
+        // No file is there: the refusal comes before the file is looked for.
+        var refused = Assert.Throws<ArgumentOutOfRangeException>(
+            () => Database.Open(_path, new DatabaseOpenOptions { MaxFileLength = maxFileLength }));
+        Assert.Equal("options", refused.ParamName);
+        Assert.Contains(nameof(DatabaseOpenOptions.MaxFileLength), refused.Message);
+        Assert.False(File.Exists(_path));
     }
 }
