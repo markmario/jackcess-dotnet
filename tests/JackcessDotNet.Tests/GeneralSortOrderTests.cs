@@ -283,13 +283,13 @@ public sealed class GeneralSortOrderTests : IDisposable
         table.Insert(new Row { ["Id"] = 3, ["Code"] = "aー", ["Family"] = "佐々木", ["Given"] = "ｺｰﾋｰ", ["Notes"] = "コンピューター" });
         Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 4, ["Code"] = "aa" }));
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
-        Assert.Equal(3, table.CreateIndexCursor("ByCode").FindRowByEntry("aー")?["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByCode").FindRowByKey("aー")?["Id"]);
         Assert.Equal(3, table.CreateIndexCursor("ByName").FindRow("Family", "佐々木")?["Id"]);
-        Assert.Equal(3, table.CreateIndexCursor("ByNotes").FindRowByEntry("コンピューター")?["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByNotes").FindRowByKey("コンピューター")?["Id"]);
 
         // A range of the one key, and the rows an insert would be refused for: aa beside the table's aー, and カー
         // beside カｰ, whose keys are one.
-        var range = table.CreateIndexCursor("ByCode", new IndexRange { StartEntry = new object[] { "aa" }, EndEntry = new object[] { "aa" } });
+        var range = table.CreateIndexCursor("ByCode", new IndexRange { StartKey = new object[] { "aa" }, EndKey = new object[] { "aa" } });
         Assert.Equal(new[] { 3 }, range.Select(r => (int)r["Id"]!));
         var duplicates = table.FindDuplicates(new[]
         {

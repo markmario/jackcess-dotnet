@@ -115,7 +115,7 @@ looked for: [Currency](cursors-and-rows.md#currency).
 Currency half away from zero, after `Convert.ToDecimal`, which on .NET Framework and .NET up to 10 keeps 15
 significant digits of a `double` and 7 of a `float`. The values are consistent with one another and with Access,
 and nothing needs mending, but some rows are no longer found by the number they were written from: a lookup, a
-range, `FindClosestRowByEntry`, a relationship's check and a unique index all take the number as Access does now,
+range, `FindClosestRowByKey`, a relationship's check and a unique index all take the number as Access does now,
 and come to the neighbouring row or to none. The numbers that differ: a `decimal` at a half of the fifth place
 (1.23465m was written as 1.2347 and is now 1.2346); a `double` or `float` that is an exact binary half of the
 fifth place, such as 0.03125 (written as 0.0313, now 0.0312); and on .NET Framework and .NET up to 10, a `double`
@@ -144,9 +144,9 @@ The [CHANGELOG's breaking changes](../CHANGELOG.md#breaking-changes-to-the-publi
   almost certainly one. Access-written Decimals, which earlier versions misread, read correctly.
 
   `DecimalByteOrder.Find(database)`, and the same for a `Table`, in the `JackcessDotNet.Diagnostics` namespace,
-  lists the values that read with more digits than their column holds: the table, the column, the row (its
-  primary key, and its place among the table's rows), the value as it reads and the value its bytes make in the
-  earlier order. It changes nothing - a read returns what it did - and repairs nothing:
+  lists the values that read with more digits than their column holds: the table's name (`TableName`), the
+  column, the row (its primary key, and its place among the table's rows), the value as it reads and the value its
+  bytes make in the earlier order. It changes nothing - a read returns what it did - and repairs nothing:
 
   ```csharp
   foreach (var suspect in DecimalByteOrder.Find(db))

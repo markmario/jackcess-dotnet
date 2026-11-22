@@ -213,7 +213,7 @@ namespace JackcessDotNet.AccessTests
                     var own = AceIds(connection, "SELECT Id FROM A WHERE C = ?", number);
                     var both = own.Concat(own.Select(id => id + 1000)).ToList();
                     Assert.Equal(both, AceIds(connection, "SELECT Id FROM E WHERE C = ?", number));
-                    Assert.Equal(both, table.CreateIndexCursor("ByC").FindRowsByEntry(number).Select(r => (int)r["Id"]).OrderBy(id => id).ToList());
+                    Assert.Equal(both, table.CreateIndexCursor("ByC").FindRowsByKey(number).Select(r => (int)r["Id"]).OrderBy(id => id).ToList());
                 }
             }
             var again = Compact(path);
@@ -239,7 +239,7 @@ namespace JackcessDotNet.AccessTests
                 {
                     var what = Show(number);
                     var ace = AceIds(connection, "SELECT Id FROM A WHERE C = ?", number);
-                    var byIndex = table.CreateIndexCursor("ByCA").FindRowsByEntry(number).Select(r => (int)r["Id"]).OrderBy(id => id).ToList();
+                    var byIndex = table.CreateIndexCursor("ByCA").FindRowsByKey(number).Select(r => (int)r["Id"]).OrderBy(id => id).ToList();
                     Assert.True(ace.SequenceEqual(byIndex), "C = " + what + ": ACE " + Join(ace) + ", the engine through ACE's index " + Join(byIndex));
                     var scan = new List<int>();
                     var cursor = table.CreateCursor();
@@ -248,12 +248,12 @@ namespace JackcessDotNet.AccessTests
                     Assert.True(ace.SequenceEqual(scan), "C = " + what + ": ACE " + Join(ace) + ", the engine by a scan " + Join(scan));
 
                     var between = AceIds(connection, "SELECT Id FROM A WHERE C BETWEEN ? AND ?", number, number);
-                    var range = table.CreateIndexCursor("ByCA", new IndexRange { StartEntry = new[] { number }, EndEntry = new[] { number } })
+                    var range = table.CreateIndexCursor("ByCA", new IndexRange { StartKey = new[] { number }, EndKey = new[] { number } })
                         .Select(r => (int)r["Id"]).OrderBy(id => id).ToList();
                     Assert.True(between.SequenceEqual(range), "C BETWEEN " + what + ": ACE " + Join(between) + ", the engine's range " + Join(range));
 
                     var first = AceFirst(connection, "SELECT TOP 1 C FROM A WHERE C >= ? ORDER BY C", number);
-                    var closest = table.CreateIndexCursor("ByCA").FindClosestRowByEntry(number);
+                    var closest = table.CreateIndexCursor("ByCA").FindClosestRowByKey(number);
                     Assert.True(first == (closest == null ? (decimal?)null : (decimal)closest["C"]),
                         "C >= " + what + ": ACE's first row " + first + ", the engine's closest " + (closest == null ? "none" : closest["C"]));
                 }
@@ -300,13 +300,13 @@ namespace JackcessDotNet.AccessTests
                 {
                     var what = Show(bound);
                     var b = new[] { bound };
-                    same("C >= " + what, AceIds(connection, "SELECT Id FROM E WHERE C >= ?", bound), engine(new IndexRange { StartEntry = b }));
-                    same("C > " + what, AceIds(connection, "SELECT Id FROM E WHERE C > ?", bound), engine(new IndexRange { StartEntry = b, IsStartInclusive = false }));
-                    same("C <= " + what, AceIds(connection, "SELECT Id FROM E WHERE C <= ?", bound), engine(new IndexRange { EndEntry = b }));
-                    same("C < " + what, AceIds(connection, "SELECT Id FROM E WHERE C < ?", bound), engine(new IndexRange { EndEntry = b, IsEndInclusive = false }));
+                    same("C >= " + what, AceIds(connection, "SELECT Id FROM E WHERE C >= ?", bound), engine(new IndexRange { StartKey = b }));
+                    same("C > " + what, AceIds(connection, "SELECT Id FROM E WHERE C > ?", bound), engine(new IndexRange { StartKey = b, IsStartInclusive = false }));
+                    same("C <= " + what, AceIds(connection, "SELECT Id FROM E WHERE C <= ?", bound), engine(new IndexRange { EndKey = b }));
+                    same("C < " + what, AceIds(connection, "SELECT Id FROM E WHERE C < ?", bound), engine(new IndexRange { EndKey = b, IsEndInclusive = false }));
                     // (Not BETWEEN, which takes its bounds in either order: an index range runs from its start to its end.)
                     same("C >= 0.03125 AND C <= " + what, AceIds(connection, "SELECT Id FROM E WHERE C >= ? AND C <= ?", 0.03125, bound),
-                        engine(new IndexRange { StartEntry = new object[] { 0.03125 }, EndEntry = b }));
+                        engine(new IndexRange { StartKey = new object[] { 0.03125 }, EndKey = b }));
                 }
             }
         }
@@ -374,7 +374,7 @@ namespace JackcessDotNet.AccessTests
             using (var db = Database.Open(path))
             {
                 Assert.Equal(-922337203685477.5808m, db.GetTable("A").FindRowByPrimaryKey(0)["C"]);
-                Assert.Empty(db.GetTable("A").CreateIndexCursor("ByCA").FindRowsByEntry(double.NaN));
+                Assert.Empty(db.GetTable("A").CreateIndexCursor("ByCA").FindRowsByKey(double.NaN));
 
                 // The engine takes text and a Yes/No for a Currency as it takes them for every number column, and as
                 // ACE takes them: the text as a number, True as -1 (#75). Access reads its rows as written.

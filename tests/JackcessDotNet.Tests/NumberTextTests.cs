@@ -131,7 +131,7 @@ public sealed class NumberTextTests : IDisposable
         var row = table.Rows.Single();
         Assert.Equal("C33E6C80B793E2F2", Bits((double)row["D"]!));
         Assert.Equal("3F882296", Bits((float)row["S"]!));
-        Assert.Equal(1, (int)table.CreateIndexCursor("ixD").FindRowByEntry(-8563549392855794d)!["Id"]!);
+        Assert.Equal(1, (int)table.CreateIndexCursor("ixD").FindRowByKey(-8563549392855794d)!["Id"]!);
     }
 
     /// <summary>
@@ -265,9 +265,9 @@ public sealed class NumberTextTests : IDisposable
             {
                 Assert.Null(table.CreateCursor().FindRow("T", number));
                 Assert.Null(table.CreateIndexCursor("ixT").FindRow("T", number));
-                Assert.Null(table.CreateIndexCursor("ixT").FindRowByEntry(number));
+                Assert.Null(table.CreateIndexCursor("ixT").FindRowByKey(number));
                 Assert.Equal(id, (int)table.CreateCursor().FindRow("T", text)!["Id"]!);
-                Assert.Equal(id, (int)table.CreateIndexCursor("ixT").FindRowByEntry(text)!["Id"]!);
+                Assert.Equal(id, (int)table.CreateIndexCursor("ixT").FindRowByKey(text)!["Id"]!);
             }
             return 0;
         });

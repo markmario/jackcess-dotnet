@@ -150,11 +150,11 @@ public sealed class IndexReaderTests
     /// <summary>
     /// Composite-key probe: for each multi-column index in the file (PK or secondary),
     /// pulls the ground-truth row → entry-tuple map via scan and asserts that
-    /// IndexCursor.FindRowByEntry returns the same row when given the tuple.
+    /// IndexCursor.FindRowByKey returns the same row when given the tuple.
     /// </summary>
     [Theory]
     [MemberData(nameof(CorpusFiles))]
-    public void FindRowByEntry_OnCorpusFile_AgreesWithTableScan(string version, string filename, string path)
+    public void FindRowByKey_OnCorpusFile_AgreesWithTableScan(string version, string filename, string path)
     {
         using var db = Database.Open(path);
         int totalProbes = 0;
@@ -202,7 +202,7 @@ public sealed class IndexReaderTests
                 int hits = 0;
                 foreach (var (entry, expected) in probes)
                 {
-                    var found = cursor.FindRowByEntry(entry!);
+                    var found = cursor.FindRowByKey(entry!);
                     if (found is null) continue;
                     hits++;
                     // Verify the matched row's first column agrees with the expected row.

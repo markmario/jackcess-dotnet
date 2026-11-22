@@ -7,7 +7,7 @@ namespace JackcessDotNet.Tests;
 /// <summary>
 /// What a second review of the engine found, each seen failing first: a delete or update in a key
 /// whose pages Access compressed, which changed the row and lost the key's change; a table an earlier version
-/// registered outside the Tables container, whose name another table could then take; FindRowByEntry's scan
+/// registered outside the Tables container, whose name another table could then take; FindRowByKey's scan
 /// matching the table's first columns, not the index's; a root left holding one child; sort orders the engine
 /// read but no test held it to; a definition refused after its pages were added; and the low-level key methods
 /// searching a key in an order they do not write.
@@ -182,14 +182,14 @@ public sealed class SecondReviewTests : IDisposable
         Assert.Single(db.GetTableNames(), n => string.Equals(n, "Earlier", StringComparison.OrdinalIgnoreCase));
     }
 
-    // ── FindRowByEntry ──────────────────────────────────────────────────────
+    // ── FindRowByKey ──────────────────────────────────────────────────────
 
     // Through the index where its keys can be made (General - Legacy), by a scan of the index's own column where they
     // cannot (Access 2010's General order): either way every row is found by an index on a column other than the first.
     [Theory]
     [InlineData("V2003", "indexCodesV2003.mdb")]
     [InlineData("V2010", "indexCodesV2010.accdb")]
-    public void FindRowByEntry_finds_every_row_by_an_index_on_a_later_column(string version, string filename)
+    public void FindRowByKey_finds_every_row_by_an_index_on_a_later_column(string version, string filename)
     {
         using var db = Database.Open(CopyOf(version, filename));
         var table = db.GetTable("Table1_desc");
@@ -199,7 +199,7 @@ public sealed class SecondReviewTests : IDisposable
         int found = 0;
         foreach (var row in table.Rows.Where(r => Value(r, column) is string s && s.Length > 0))
         {
-            var hit = table.CreateIndexCursor("DataIndex").FindRowByEntry(row[column]!);
+            var hit = table.CreateIndexCursor("DataIndex").FindRowByKey(row[column]!);
             Assert.NotNull(hit);
             // The first row whose text is equal as the index's sort order has it, which Access's = is.
             Assert.True(ValueMatch.Matches(table.Columns.First(c => c.Name == column), hit![column], row[column]), $"'{hit[column]}' for '{row[column]}'");

@@ -158,7 +158,7 @@ internal static class PropertyMapReader
                 object? value = DecodeValue(buf, dataStart, dataSize, dataType, format);
                 if (map.TryGetProperty(propName, out _))
                     maps.UnreadReason ??= $"'{mapName}' has the property '{propName}' twice";
-                map.Add(new PropertyMap.Property(propName, dataType, value, flags, buf.Slice(dataStart, dataStart + dataSize)));
+                map.Add(new Property(propName, dataType, value, flags, buf.Slice(dataStart, dataStart + dataSize)));
             }
             else
                 maps.UnreadReason ??= $"a property of '{mapName}' has a name the value does not list";

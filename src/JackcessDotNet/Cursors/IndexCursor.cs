@@ -4,14 +4,14 @@ namespace JackcessDotNet;
 /// A cursor over the rows of one table in the order of one of its indexes, which also finds rows by the values
 /// they have in the index's columns: made by <see cref="Table.CreateIndexCursor()"/> for the table's primary key,
 /// or by <see cref="Table.CreateIndexCursor(string)"/> for the index of a name; with an
-/// <see cref="IndexRange"/>, over the rows between two entries of the index only. Jackcess's
+/// <see cref="IndexRange"/>, over the rows between two keys of the index only. Jackcess's
 /// <c>IndexCursor</c>. To find one row by its primary key, <see cref="Table.FindRowByPrimaryKey"/> does it in
 /// one call.
 /// <para>
 /// The rows are those the index has entries for, in the entries' order: by the index's columns, each ascending
 /// or descending as the index has it, nulls first in an ascending column, and rows with the same values in the
 /// order they are stored. An index is taken at its word, as Access takes one. Every lookup -
-/// <see cref="FindRowByEntry"/>, <see cref="FindRowsByEntry"/>, <see cref="FindClosestRowByEntry"/>, and
+/// <see cref="FindRowByKey"/>, <see cref="FindRowsByKey"/>, <see cref="FindClosestRowByKey"/>, and
 /// <see cref="Cursor.FindRow(string, object?)"/> for the index's first column - goes through this index and no
 /// other, and leaves the cursor on the row it found.
 /// </para>
@@ -19,12 +19,12 @@ namespace JackcessDotNet;
 /// A row is looked for by the key Access keeps for its values, where this library makes that key: for every
 /// type it writes index entries for, and for text in the sort orders whose keys it makes. A value it
 /// makes no key for - text in another sort order, a character Access keys by the characters around it, a key
-/// longer than an entry holds - is still found by <see cref="FindRowByEntry"/> and
+/// longer than an entry holds - is still found by <see cref="FindRowByKey"/> and
 /// <see cref="Cursor.FindRow(string, object?)"/>, which then go through the index's rows comparing each; a range
-/// and <see cref="FindClosestRowByEntry"/> need the key, and refuse such a value. Whichever way a row is found,
+/// and <see cref="FindClosestRowByKey"/> need the key, and refuse such a value. Whichever way a row is found,
 /// it is compared with the values asked for before it is returned (<see cref="Cursor.FindRow(string, object?)"/>
-/// says how), and a null is never a match. A <see cref="DateTime"/> in a range's entry or given to
-/// <see cref="FindClosestRowByEntry"/> is put against a row by the date the row's number reads as, in whichever
+/// says how), and a null is never a match. A <see cref="DateTime"/> in a range's start or end key or given to
+/// <see cref="FindClosestRowByKey"/> is put against a row by the date the row's number reads as, in whichever
 /// column of the index it is; a <see cref="double"/> by the number itself, as Access's <c>BETWEEN</c> and an
 /// index's <c>Seek</c> put a date literal against a row.
 /// </para>
@@ -34,8 +34,8 @@ namespace JackcessDotNet;
 /// DAO's <c>AddNew</c> and <c>Edit</c> on a table-type recordset in a third, whose last four bytes are whatever DAO's
 /// buffer held. A <see cref="DateTime"/> looked for in such a column is looked for under the key of each of the first
 /// two and among the keys that begin with the third's other bytes, so a lookup finds the rows in any of them - where
-/// Access's own <c>=</c> through an index finds the first alone. In a range's entry or given to
-/// <see cref="FindClosestRowByEntry"/>, a <see cref="DateTime"/> for such a column is the key of the first form, and
+/// Access's own <c>=</c> through an index finds the first alone. In a range's start or end key or given to
+/// <see cref="FindClosestRowByKey"/>, a <see cref="DateTime"/> for such a column is the key of the first form, and
 /// rows are put against it by their keys, as Access's <c>BETWEEN</c> through an index puts them: a row in another
 /// layout is where its bytes are, which is not always where its date is. A row in the third, whose day has fewer
 /// digits, comes after every row of the other two from the year 2 on in an ascending index, and before them in a
@@ -50,7 +50,7 @@ namespace JackcessDotNet;
 /// the cursor comes to its entry, wherever updates have moved that entry in the meantime. A search comes to the
 /// rows it looks at, as a move comes to the row it gives. An entry the cursor goes past without looking at it is
 /// not come to: one before its range's start or after its end, one a range's date leaves out, one
-/// <see cref="FindClosestRowByEntry"/> looks past on its way to the row it gives, and those a search jumps over
+/// <see cref="FindClosestRowByKey"/> looks past on its way to the row it gives, and those a search jumps over
 /// to the part of the index its values are in - so a row that is one of them is given when an update moves it
 /// ahead of the cursor, into its range. A cursor that turns back begins again from where it is: going the other
 /// way it gives again the rows it has passed, as any cursor does, but not the row it is on. Put before the first
@@ -102,7 +102,7 @@ public sealed class IndexCursor : Cursor
     // The positions savepoints were taken at, each for as long as its savepoint is held: told of entries that move.
     private List<WeakReference<Saved>>? _saved;
 
-    // While FindClosestRowByEntry looks: the values it was given, and whether it looks for an entry that is one of
+    // While FindClosestRowByKey looks: the values it was given, and whether it looks for an entry that is one of
     // them (passing the others, and stopping where none can be) or for one at or after them.
     private (EntryBound Values, bool Equal)? _seeking;
 
@@ -131,7 +131,7 @@ public sealed class IndexCursor : Cursor
                 $"Index '{index.Name}' of table '{definition.Name}' cannot be read: its definition gives it no column or no page.");
         _entries = new IndexEntryWalker(file, index.RootPageNumber);
 
-        if (range?.StartEntry is { } start)
+        if (range?.StartKey is { } start)
         {
             _start          = BoundFor(start, nameof(range), "start");
             _startInclusive = range.IsStartInclusive;
@@ -139,7 +139,7 @@ public sealed class IndexCursor : Cursor
             _low  = _startInclusive || _start.HasDates ? _start.StartFence : _start.EndFence;
             _none = _low is null;
         }
-        if (range?.EndEntry is { } end)
+        if (range?.EndKey is { } end)
         {
             _end          = BoundFor(end, nameof(range), "end");
             _endInclusive = range.IsEndInclusive;
@@ -675,32 +675,32 @@ public sealed class IndexCursor : Cursor
 
     /// <summary>
     /// Moves to the first row, in the index's order, whose values in the index's first columns are
-    /// <paramref name="entryValues"/>, and returns it; when there is none, returns null and leaves the cursor
-    /// where it was. Jackcess's <c>findRowByEntry</c>. A value is given for each of the index's columns, in the
+    /// <paramref name="keyValues"/>, and returns it; when there is none, returns null and leaves the cursor
+    /// where it was: Jackcess's <c>findRowByEntry</c>. A value is given for each of the index's columns, in the
     /// index's order, or for the first of them only: fewer values than the index has columns find the first row
     /// that has those in its leading columns.
     /// </summary>
-    /// <param name="entryValues">The values to look for, in the order of the index's columns. A null among them finds no row.</param>
+    /// <param name="keyValues">The values to look for, in the order of the index's columns. A null among them finds no row.</param>
     /// <returns>The row, which is then <see cref="Cursor.Current"/>, or null when no row has those values.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="entryValues"/> is null, has no values, or has more values than the index has columns.
+    /// <paramref name="keyValues"/> is null, has no values, or has more values than the index has columns.
     /// </exception>
-    public Row? FindRowByEntry(params object?[] entryValues)
-        => Find(EntryPattern(entryValues, nameof(entryValues)), fromStart: true);
+    public Row? FindRowByKey(params object?[] keyValues)
+        => Find(EntryPattern(keyValues, nameof(keyValues)), fromStart: true);
 
     /// <summary>
-    /// The rows whose values in the index's first columns are <paramref name="entryValues"/>, in the index's
+    /// The rows whose values in the index's first columns are <paramref name="keyValues"/>, in the index's
     /// order: Jackcess's <c>newEntryIterable</c>. The rows are read as they are enumerated, and enumerating moves
     /// the cursor: it is left on the last of them, or where it was when there is none.
     /// </summary>
-    /// <param name="entryValues">The values to look for, in the order of the index's columns. A null among them finds no row.</param>
+    /// <param name="keyValues">The values to look for, in the order of the index's columns. A null among them finds no row.</param>
     /// <returns>The rows, each of which is <see cref="Cursor.Current"/> as it is given.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="entryValues"/> is null, has no values, or has more values than the index has columns.
+    /// <paramref name="keyValues"/> is null, has no values, or has more values than the index has columns.
     /// </exception>
-    public IEnumerable<Row> FindRowsByEntry(params object?[] entryValues)
+    public IEnumerable<Row> FindRowsByKey(params object?[] keyValues)
     {
-        var pattern = EntryPattern(entryValues, nameof(entryValues));
+        var pattern = EntryPattern(keyValues, nameof(keyValues));
         return Rows();
 
         IEnumerable<Row> Rows()
@@ -711,9 +711,9 @@ public sealed class IndexCursor : Cursor
     }
 
     /// <summary>
-    /// Moves to the row with <paramref name="entryValues"/> in the index's first columns - the first of them in the
+    /// Moves to the row with <paramref name="keyValues"/> in the index's first columns - the first of them in the
     /// index's order when there are several - or, when there is none, to the first row in the index's order whose
-    /// entry is after the values, and returns it. Jackcess's <c>findClosestRowByEntry</c>. When no row of the
+    /// key is after the values, and returns it: Jackcess's <c>findClosestRowByEntry</c>. When no row of the
     /// cursor is at or after the values, the cursor is left after its last row and null is returned. A value is
     /// given for each of the index's columns, in the index's order, or for the first of them only; a null is the
     /// value an index holds for a column with none.
@@ -737,10 +737,10 @@ public sealed class IndexCursor : Cursor
     /// number every number column takes them for.
     /// </para>
     /// </summary>
-    /// <param name="entryValues">The values to look for, in the order of the index's columns.</param>
+    /// <param name="keyValues">The values to look for, in the order of the index's columns.</param>
     /// <returns>The row, which is then <see cref="Cursor.Current"/>, or null when there is none at or after the values.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="entryValues"/> is null, has no values, has more values than the index has columns, or has
+    /// <paramref name="keyValues"/> is null, has no values, has more values than the index has columns, or has
     /// a value that is not one its column holds: for a Currency column, text that does not read as a number, a value
     /// of a kind no number is made of, NaN, an infinity, or a number past the column's range once taken to four places.
     /// </exception>
@@ -750,10 +750,10 @@ public sealed class IndexCursor : Cursor
     /// a value has a character Access keys by the characters around it, or the key is longer than an entry
     /// holds. The cursor is left where it was.
     /// </exception>
-    public Row? FindClosestRowByEntry(params object?[] entryValues)
+    public Row? FindClosestRowByKey(params object?[] keyValues)
     {
-        if (entryValues is null) throw new ArgumentException("Entry values are required.", nameof(entryValues));
-        var sought = BoundFor(entryValues, nameof(entryValues), "sought");
+        if (keyValues is null) throw new ArgumentException("Key values are required.", nameof(keyValues));
+        var sought = BoundFor(keyValues, nameof(keyValues), "sought");
         if (_none) { MoveAfterLast(); return null; }
 
         // From the first key an entry with the values can have, within the range: first a row that has them, as
@@ -791,17 +791,17 @@ public sealed class IndexCursor : Cursor
         }
     }
 
-    private (Column Column, object? Value)[] EntryPattern(object?[] entryValues, string parameterName)
+    private (Column Column, object? Value)[] EntryPattern(object?[] keyValues, string parameterName)
     {
-        if (entryValues is null || entryValues.Length == 0)
-            throw new ArgumentException("Entry values are required.", parameterName);
-        if (entryValues.Length > _index.Columns.Count)
+        if (keyValues is null || keyValues.Length == 0)
+            throw new ArgumentException("Key values are required.", parameterName);
+        if (keyValues.Length > _index.Columns.Count)
             throw new ArgumentException(
                 $"Index '{_index.Name}' has {_index.Columns.Count} column(s) ({ColumnNamesOf(_index)}); " +
-                $"{entryValues.Length} values were given.", parameterName);
-        var pattern = new (Column, object?)[entryValues.Length];
+                $"{keyValues.Length} values were given.", parameterName);
+        var pattern = new (Column, object?)[keyValues.Length];
         for (int i = 0; i < pattern.Length; i++)
-            pattern[i] = (ColumnNamed(_index.Columns[i].Column.Name, parameterName), entryValues[i]);
+            pattern[i] = (ColumnNamed(_index.Columns[i].Column.Name, parameterName), keyValues[i]);
         return pattern;
     }
 
@@ -1154,25 +1154,25 @@ public sealed class IndexCursor : Cursor
 }
 
 /// <summary>
-/// The part of an index an <see cref="IndexCursor"/> goes through: the rows from one entry of the index to
+/// The part of an index an <see cref="IndexCursor"/> goes through: the rows from one key of the index to
 /// another, in the index's order. What Jackcess's <c>CursorBuilder</c> takes as a start and an end entry. Given
 /// to <see cref="Table.CreateIndexCursor(IndexRange)"/> or <see cref="Table.CreateIndexCursor(string, IndexRange)"/>.
 /// <code>
 ///   // The orders of customer 7 placed in 2024, through an index on (Customer, Placed).
 ///   var cursor = orders.CreateIndexCursor("ByCustomerAndDate", new IndexRange
 ///   {
-///       StartEntry = new object?[] { 7, new DateTime(2024, 1, 1) },
-///       EndEntry   = new object?[] { 7, new DateTime(2025, 1, 1) },
+///       StartKey = new object?[] { 7, new DateTime(2024, 1, 1) },
+///       EndKey   = new object?[] { 7, new DateTime(2025, 1, 1) },
 ///       IsEndInclusive = false,
 ///   });
 /// </code>
-/// An entry is a value for each of the index's columns, in the index's order, or for the first of them only:
+/// A key is a value for each of the index's columns, in the index's order, or for the first of them only:
 /// with fewer values than the index has columns it stands for every row that has those values in its leading
 /// columns - an inclusive start begins at the first such row and an inclusive end stops after the last. A null
 /// is the value an index holds for a column with none. The order is the index's own, so in a descending column
 /// the start is the greater value.
 /// <para>
-/// A <see cref="DateTime"/> for a Date/Time column, in whichever place of the entry, stands for every row whose
+/// A <see cref="DateTime"/> for a Date/Time column, in whichever place of the key, stands for every row whose
 /// number reads as that date, to the millisecond (a date finer than that is taken to what it reads as once
 /// stored), and is put against a row by the date its number reads as: a range from one date to another has the
 /// rows whose dates are between them. A <see cref="double"/> is the number a row stores, put against a row's
@@ -1202,14 +1202,14 @@ public sealed class IndexCursor : Cursor
 public sealed class IndexRange
 {
     /// <summary>Where the range begins, or null (the default) for the index's first row.</summary>
-    public IReadOnlyList<object?>? StartEntry { get; set; }
+    public IReadOnlyList<object?>? StartKey { get; set; }
 
-    /// <summary>Whether rows with the values of <see cref="StartEntry"/> are in the range. True by default.</summary>
+    /// <summary>Whether rows with the values of <see cref="StartKey"/> are in the range. True by default.</summary>
     public bool IsStartInclusive { get; set; } = true;
 
     /// <summary>Where the range ends, or null (the default) for the index's last row.</summary>
-    public IReadOnlyList<object?>? EndEntry { get; set; }
+    public IReadOnlyList<object?>? EndKey { get; set; }
 
-    /// <summary>Whether rows with the values of <see cref="EndEntry"/> are in the range. True by default.</summary>
+    /// <summary>Whether rows with the values of <see cref="EndKey"/> are in the range. True by default.</summary>
     public bool IsEndInclusive { get; set; } = true;
 }

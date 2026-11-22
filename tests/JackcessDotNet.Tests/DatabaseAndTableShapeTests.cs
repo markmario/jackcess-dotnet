@@ -242,8 +242,8 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         Assert.Equal("Code", Assert.Single(named.Index.Columns).Column.Name);
 
         // What the cursor says it is for is what it looks rows up by.
-        Assert.Equal(3, named.FindRowByEntry("code 3")!["Id"]);
-        Assert.Null(named.FindRowByEntry(3));
+        Assert.Equal(3, named.FindRowByKey("code 3")!["Id"]);
+        Assert.Null(named.FindRowByKey(3));
         Assert.Equal(4, named.FindRow("Code", "code 4")!["Id"]);
         Assert.Equal("code 2", named.FindRow("Id", 2)!["Code"]);
 
@@ -251,7 +251,7 @@ public sealed class DatabaseAndTableShapeTests : IDisposable
         var key = table.CreateIndexCursor();
         Assert.True(key.Index!.IsPrimaryKey);
         Assert.Equal("PrimaryKey", key.Index.Name);
-        Assert.Equal("code 3", key.FindRowByEntry(3)!["Code"]);
+        Assert.Equal("code 3", key.FindRowByKey(3)!["Code"]);
         Assert.Equal("code 5", table.FindRowByPrimaryKey(5)!["Code"]);
     }
 

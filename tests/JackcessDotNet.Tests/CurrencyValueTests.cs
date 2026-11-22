@@ -81,14 +81,14 @@ public sealed class CurrencyValueTests : IDisposable
                 string what = Shown(given);
 
                 // Through the index, by a cursor over the table, in a range of the number alone, and as the closest row.
-                Assert.True(rows.SequenceEqual(Ids(table.CreateIndexCursor("ByC").FindRowsByEntry(given))), what + " through the index");
+                Assert.True(rows.SequenceEqual(Ids(table.CreateIndexCursor("ByC").FindRowsByKey(given))), what + " through the index");
                 var scan = new List<int>();
                 var cursor = table.CreateCursor();
                 for (var row = cursor.FindRow("C", given); row is not null; row = cursor.FindNextRow("C", given)) scan.Add((int)row["Id"]!);
                 Assert.True(rows.SequenceEqual(scan.OrderBy(id => id)), what + " by a cursor over the table");
-                var range = table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new[] { given }, EndEntry = new[] { given } });
+                var range = table.CreateIndexCursor("ByC", new IndexRange { StartKey = new[] { given }, EndKey = new[] { given } });
                 Assert.True(rows.SequenceEqual(Ids(range)), what + " in a range of it alone");
-                Assert.Equal(held, (decimal)table.CreateIndexCursor("ByC").FindClosestRowByEntry(given)!["C"]!);
+                Assert.Equal(held, (decimal)table.CreateIndexCursor("ByC").FindClosestRowByKey(given)!["C"]!);
             }
             Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "K", expectedRows: Written.Length));
         }
@@ -108,15 +108,15 @@ public sealed class CurrencyValueTests : IDisposable
 
         decimal[] In(IndexRange range) => table.CreateIndexCursor("ByC", range).Select(r => (decimal)r["C"]!).ToArray();
 
-        Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartEntry = new object[] { 0.03125 }, EndEntry = new object[] { 0.03125 } }));
-        Assert.Equal(new[] { 0.0001m, 0.0002m, 0.0003m }, In(new IndexRange { StartEntry = new object[] { 0.00015 }, EndEntry = new object[] { 0.00025 } }));
+        Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartKey = new object[] { 0.03125 }, EndKey = new object[] { 0.03125 } }));
+        Assert.Equal(new[] { 0.0001m, 0.0002m, 0.0003m }, In(new IndexRange { StartKey = new object[] { 0.00015 }, EndKey = new object[] { 0.00025 } }));
         Assert.Equal(new[] { 0.0939m, 1.2345m, 1.2346m, 1.2347m },
-            In(new IndexRange { StartEntry = new object[] { 0.09375 }, IsStartInclusive = false, EndEntry = new object[] { 1.23465 } }));
+            In(new IndexRange { StartKey = new object[] { 0.09375 }, IsStartInclusive = false, EndKey = new object[] { 1.23465 } }));
         Assert.Equal(new[] { 0.0001m, 0.0002m, 0.0003m, 0.0311m },
-            In(new IndexRange { StartEntry = new object[] { 0.0001m }, EndEntry = new object[] { 0.03125 }, IsEndInclusive = false }));
-        Assert.Equal(new[] { 1.2346m }, In(new IndexRange { StartEntry = new object[] { 1.23465m }, EndEntry = new object[] { 1.23465m } }));
+            In(new IndexRange { StartKey = new object[] { 0.0001m }, EndKey = new object[] { 0.03125 }, IsEndInclusive = false }));
+        Assert.Equal(new[] { 1.2346m }, In(new IndexRange { StartKey = new object[] { 1.23465m }, EndKey = new object[] { 1.23465m } }));
         Assert.Equal(held.Length - 2,
-            In(new IndexRange { StartEntry = new object[] { -922337203685477.5 }, EndEntry = new object[] { 922337203685477.5 } }).Length);
+            In(new IndexRange { StartKey = new object[] { -922337203685477.5 }, EndKey = new object[] { 922337203685477.5 } }).Length);
 
         foreach (var (asked, closest) in new (object, decimal)[]
                  {
@@ -124,7 +124,7 @@ public sealed class CurrencyValueTests : IDisposable
                      (-922337203685477.5, -922337203685477.5m), (922337203685477.5, 922337203685477.5m),
                      (922337203685477.5807m, 922337203685477.5807m), (-922337203685477.58075m, -922337203685477.5808m), (0, 0.0001m),
                  })
-            Assert.True(closest == (decimal)table.CreateIndexCursor("ByC").FindClosestRowByEntry(asked)!["C"]!, $"the closest row to {Shown(asked)}");
+            Assert.True(closest == (decimal)table.CreateIndexCursor("ByC").FindClosestRowByKey(asked)!["C"]!, $"the closest row to {Shown(asked)}");
 
         // Text and a bool are taken as a write takes them, for the number every number column takes them for; an
         // equality takes neither for a number, as in every number column.
@@ -132,25 +132,25 @@ public sealed class CurrencyValueTests : IDisposable
         CultureInfo.CurrentCulture = new CultureInfo("en-US");
         try
         {
-            Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartEntry = new object[] { "0.03125" }, EndEntry = new object[] { "0.03125" } }));
-            Assert.Equal(1.2346m, table.CreateIndexCursor("ByC").FindClosestRowByEntry("1.23465")!["C"]);
-            Assert.Equal(0.0001m, table.CreateIndexCursor("ByC").FindClosestRowByEntry(true)!["C"]);   // true is -1 (#75)
-            Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByEntry("0.0312"));
+            Assert.Equal(new[] { 0.0312m }, In(new IndexRange { StartKey = new object[] { "0.03125" }, EndKey = new object[] { "0.03125" } }));
+            Assert.Equal(1.2346m, table.CreateIndexCursor("ByC").FindClosestRowByKey("1.23465")!["C"]);
+            Assert.Equal(0.0001m, table.CreateIndexCursor("ByC").FindClosestRowByKey(true)!["C"]);   // true is -1 (#75)
+            Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByKey("0.0312"));
             Assert.Null(table.CreateCursor().FindRow("C", "0.0312"));
-            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new object[] { "abc" } }));
+            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartKey = new object[] { "abc" } }));
         }
         finally { CultureInfo.CurrentCulture = was; }
 
         // A value no Currency holds, or one of a kind no number is made of, is not one the column holds.
         var cursor = table.CreateIndexCursor("ByC");
-        Assert.NotNull(cursor.FindRowByEntry(0.0312m));
+        Assert.NotNull(cursor.FindRowByKey(0.0312m));
         foreach (object bad in new object[] { double.NaN, double.PositiveInfinity, 922337203685477.625, 1e20, 922337203685477.5808m, 'x', Guid.Empty })
         {
-            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartEntry = new[] { bad } }));
-            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { EndEntry = new[] { bad } }));
-            Assert.Throws<ArgumentException>(() => cursor.FindClosestRowByEntry(bad));
+            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { StartKey = new[] { bad } }));
+            Assert.Throws<ArgumentException>(() => table.CreateIndexCursor("ByC", new IndexRange { EndKey = new[] { bad } }));
+            Assert.Throws<ArgumentException>(() => cursor.FindClosestRowByKey(bad));
             Assert.Equal(0.0312m, cursor.Current!["C"]);
-            Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByEntry(bad));
+            Assert.Empty(table.CreateIndexCursor("ByC").FindRowsByKey(bad));
             Assert.Null(table.CreateCursor().FindRow("C", bad));
         }
     }
@@ -270,7 +270,7 @@ public sealed class CurrencyValueTests : IDisposable
         a["K"] = 0.09375;
         parent.Update(a);
         Assert.Equal(0.0938m, parent.FindRowByPrimaryKey(0.0938m)!["K"]);
-        Assert.Equal(new[] { 1, 2 }, Ids(child.CreateIndexCursor("ByK").FindRowsByEntry(0.09375)));
+        Assert.Equal(new[] { 1, 2 }, Ids(child.CreateIndexCursor("ByK").FindRowsByKey(0.09375)));
         Assert.Throws<ConstraintViolationException>(() => parent.Delete(parent.FindRowByPrimaryKey(1.23465m)!));
     }
 

@@ -225,7 +225,7 @@ public sealed class LargeNumberExtendedDateTests : IDisposable
             Assert.Equal(5, table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value)!["Id"]);
             Assert.Equal(6, table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(1))!["Id"]);
             Assert.Null(table.CreateIndexCursor("DAsc").FindRow("D", Dates[4]!.Value.AddTicks(2)));
-            Assert.Equal(7, table.CreateIndexCursor("NThenD").FindRowByEntry(-4294967296L, Dates[6]!.Value)!["Id"]);
+            Assert.Equal(7, table.CreateIndexCursor("NThenD").FindRowByKey(-4294967296L, Dates[6]!.Value)!["Id"]);
 
             // Changed and deleted, each index following.
             table.UpdateByPrimaryKey(3, new Row { ["N"] = long.MinValue + 1, ["D"] = DateTime.MaxValue.AddTicks(-1) });

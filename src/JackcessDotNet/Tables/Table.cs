@@ -96,7 +96,10 @@ public sealed class Table
     public string                Name    => _definition.Name;
     /// <summary>The table's columns, in the order of their positions in the table.</summary>
     public IReadOnlyList<Column> Columns => _definition.Columns;
-    /// <summary>Indexes defined on this table (read from the on-disk TDEF).</summary>
+    /// <summary>
+    /// The table's indexes, its primary key among them, as the table's definition in the file lists them: what
+    /// <see cref="CreateIndexCursor(string)"/> is given the name of.
+    /// </summary>
     public IReadOnlyList<Index>  Indexes => _definition.Indexes;
 
     /// <summary>The number of rows in the table, as its definition counts them.</summary>
@@ -170,7 +173,7 @@ public sealed class Table
 
     /// <summary>
     /// The properties Access keeps for the table itself - its Description and the like - read from the catalog
-    /// (MSysObjects.LvProp) when the table is opened. Empty for a table Access keeps none for. A column's
+    /// (MSysObjects) when the table is opened. Empty for a table Access keeps none for. A column's
     /// properties are the column's: <see cref="Column.Properties"/>. <see cref="PropertyMap.Set(string, object)"/>
     /// and <see cref="PropertyMap.Save"/> change them.
     /// </summary>
@@ -354,7 +357,7 @@ public sealed class Table
 
     /// <summary>
     /// Creates a cursor over the table's rows in the order of its primary key, which finds rows through that
-    /// key (<see cref="IndexCursor.FindRowByEntry"/>, <see cref="IndexCursor.FindClosestRowByEntry"/>).
+    /// key (<see cref="IndexCursor.FindRowByKey"/>, <see cref="IndexCursor.FindClosestRowByKey"/>).
     /// </summary>
     /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
     /// <exception cref="NotSupportedException">The primary key's index was not read from the table's definition.</exception>
@@ -364,16 +367,17 @@ public sealed class Table
     /// Creates a cursor over the rows of the table's primary key that are in <paramref name="range"/>, in the
     /// key's order.
     /// </summary>
-    /// <param name="range">The entries the cursor's rows are between.</param>
+    /// <param name="range">The keys the cursor's rows are between.</param>
     /// <exception cref="ArgumentNullException"><paramref name="range"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// An entry of <paramref name="range"/> has no values, more values than the key has columns, or a value that
-    /// is not one its column holds.
+    /// The start or end key of <paramref name="range"/> has no values, more values than the primary key has
+    /// columns, or a value that is not one its column holds.
     /// </exception>
     /// <exception cref="InvalidOperationException">The table has no primary key.</exception>
     /// <exception cref="NotSupportedException">
-    /// No key is made for an entry of <paramref name="range"/> (<see cref="IndexCursor.FindClosestRowByEntry"/>
-    /// says when), or the primary key's index was not read from the table's definition.
+    /// The start or end key of <paramref name="range"/> is one the library cannot look up through the index
+    /// (<see cref="IndexCursor.FindClosestRowByKey"/> says when), or the primary key's index was not read from the
+    /// table's definition.
     /// </exception>
     public IndexCursor CreateIndexCursor(IndexRange range)
         => new IndexCursor(this, _file, _definition, PrimaryKeyIndex(), range ?? throw new ArgumentNullException(nameof(range)));
@@ -394,15 +398,16 @@ public sealed class Table
     /// <paramref name="range"/>, in the index's order.
     /// </summary>
     /// <param name="indexName">The index's name, whatever the case of its letters.</param>
-    /// <param name="range">The entries the cursor's rows are between.</param>
+    /// <param name="range">The keys the cursor's rows are between.</param>
     /// <exception cref="ArgumentNullException"><paramref name="indexName"/> or <paramref name="range"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// The table has no index of that name; or an entry of <paramref name="range"/> has no values, more values
-    /// than the index has columns, or a value that is not one its column holds.
+    /// The table has no index of that name; or the start or end key of <paramref name="range"/> has no values,
+    /// more values than the index has columns, or a value that is not one its column holds.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// No key is made for an entry of <paramref name="range"/> (<see cref="IndexCursor.FindClosestRowByEntry"/>
-    /// says when), or the index was not read whole from the table's definition.
+    /// The start or end key of <paramref name="range"/> is one the library cannot look up through the index
+    /// (<see cref="IndexCursor.FindClosestRowByKey"/> says when), or the index was not read whole from the table's
+    /// definition.
     /// </exception>
     public IndexCursor CreateIndexCursor(string indexName, IndexRange range)
         => new IndexCursor(this, _file, _definition, IndexNamed(indexName), range ?? throw new ArgumentNullException(nameof(range)));
@@ -439,7 +444,7 @@ public sealed class Table
         var keyColumns = definition.EffectivePrimaryKeyColumns;
         if (keyColumns.Count == 0)
             throw new InvalidOperationException(
-                $"Table '{definition.Name}' has no primary key. Use an index cursor's FindRowByEntry for another " +
+                $"Table '{definition.Name}' has no primary key. Use an index cursor's FindRowByKey for another " +
                 "index, or its FindRow(column, value) to look in one column.");
         if (primaryKey.Length != keyColumns.Count)
             throw new ArgumentException(
@@ -449,7 +454,7 @@ public sealed class Table
         // Through the key's index; a key whose index was not read is looked for among the rows as they are stored.
         if (definition.Indexes.FirstOrDefault(ix => ix.IsPrimaryKey) is { RootPageNumber: > 0 } keyIndex
             && keyIndex.Columns.Count == keyColumns.Count)
-            return new IndexCursor(this, _file, definition, keyIndex, range: null, watched: false).FindRowByEntry(primaryKey);
+            return new IndexCursor(this, _file, definition, keyIndex, range: null, watched: false).FindRowByKey(primaryKey);
 
         var pattern = new Row(keyColumns.Count, definition.Names);
         for (int i = 0; i < keyColumns.Count; i++)
@@ -460,10 +465,7 @@ public sealed class Table
     // ── Row operations ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Encodes and inserts <paramref name="row"/> into the table.
-    /// A new data page is allocated automatically if the current one is full.
-    /// The total row count in the table's TDEF is updated on every insert.
-    /// The row gains its entry in each of the table's indexes - its primary key and every other - so Access
+    /// Inserts <paramref name="row"/> into the table, and adds one to <see cref="RowCount"/>. The row gains its entry in each of the table's indexes - its primary key and every other - so Access
     /// finds it through them and an <see cref="IndexCursor"/> can use them.
     /// <para>
     /// AutoNumber columns are filled in, as Access fills them, and <paramref name="row"/> holds the values

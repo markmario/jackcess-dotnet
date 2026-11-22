@@ -244,7 +244,7 @@ public sealed class CursorOperationTests : IDisposable
         db.EnforceForeignKeys = true;
 
         var cursor = table.CreateIndexCursor();
-        Assert.NotNull(cursor.FindRowByEntry(2));
+        Assert.NotNull(cursor.FindRowByKey(2));
         var before = IndexChecks.AllPages(db);
 
         // A duplicate in a unique index, a null in the key, text too long, a row that rows refer to: each refused whole.

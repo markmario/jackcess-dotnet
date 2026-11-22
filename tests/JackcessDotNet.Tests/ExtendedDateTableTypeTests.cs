@@ -151,22 +151,22 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
     {
         using var db = Database.Open(Copy(TableType));
         var t = db.GetTable("T");
-        Assert.Equal(new[] { 2, 3, 1, 6, 5, 4 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0)));
-        Assert.Equal(new[] { 4, 5, 6, 1, 2, 3 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByEntry(D0)));
-        Assert.Equal(new[] { 8, 7 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D1)));
-        Assert.Equal(new[] { 10, 9 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(new DateTime(2020, 1, 2))));
-        Assert.Equal(new[] { 11 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddSeconds(1))));
-        Assert.Equal(new[] { 12 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByEntry(new DateTime(2020, 1, 1, 23, 59, 59))));
-        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(DateTime.MinValue)));
-        Assert.Equal(new[] { 14 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(DateTime.MaxValue)));
-        Assert.Empty(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddTicks(1)));
+        Assert.Equal(new[] { 2, 3, 1, 6, 5, 4 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0)));
+        Assert.Equal(new[] { 4, 5, 6, 1, 2, 3 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByKey(D0)));
+        Assert.Equal(new[] { 8, 7 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D1)));
+        Assert.Equal(new[] { 10, 9 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(new DateTime(2020, 1, 2))));
+        Assert.Equal(new[] { 11 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddSeconds(1))));
+        Assert.Equal(new[] { 12 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByKey(new DateTime(2020, 1, 1, 23, 59, 59))));
+        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(DateTime.MinValue)));
+        Assert.Equal(new[] { 14 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(DateTime.MaxValue)));
+        Assert.Empty(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddTicks(1)));
 
         Assert.Equal(2, t.CreateIndexCursor("KAsc").FindRow("K", D0)!["Id"]);
-        Assert.Equal(4, t.CreateIndexCursor("KDesc").FindRowByEntry(D0)!["Id"]);
+        Assert.Equal(4, t.CreateIndexCursor("KDesc").FindRowByKey(D0)!["Id"]);
         // With a Text column after the date: the third layout's part is of the date's key alone.
-        Assert.Equal(4, t.CreateIndexCursor("KHow").FindRowByEntry(D0, "AddNew, table-type, text")!["Id"]);
-        Assert.Equal(7, t.CreateIndexCursor("KHow").FindRowByEntry(D1, "AddNew, table-type")!["Id"]);
-        Assert.Null(t.CreateIndexCursor("KHow").FindRowByEntry(D1, "INSERT, table-type"));
+        Assert.Equal(4, t.CreateIndexCursor("KHow").FindRowByKey(D0, "AddNew, table-type, text")!["Id"]);
+        Assert.Equal(7, t.CreateIndexCursor("KHow").FindRowByKey(D1, "AddNew, table-type")!["Id"]);
+        Assert.Null(t.CreateIndexCursor("KHow").FindRowByKey(D1, "INSERT, table-type"));
 
         foreach (var date in new[] { D0, D1, new DateTime(2020, 1, 2), DateTime.MinValue, DateTime.MaxValue })
         {
@@ -188,12 +188,12 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         t.AddIndex(new IndexDefinition("HowK", "How", "K"));
         Assert.Equal(5, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: 14));
         var howK = t.CreateIndexCursor("HowK");
-        Assert.Equal(4, howK.FindRowByEntry("AddNew, table-type, text", D0)!["Id"]);
-        Assert.Equal(new[] { 7 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type", D1)));
-        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type", DateTime.MinValue)));
-        Assert.Equal(new[] { 1 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByEntry("INSERT", D0)));
-        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByEntry("INSERT", D0.AddSeconds(1)));
-        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByEntry("AddNew, table-type, a Date", D1));
+        Assert.Equal(4, howK.FindRowByKey("AddNew, table-type, text", D0)!["Id"]);
+        Assert.Equal(new[] { 7 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByKey("AddNew, table-type", D1)));
+        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByKey("AddNew, table-type", DateTime.MinValue)));
+        Assert.Equal(new[] { 1 }, IdsOf(t.CreateIndexCursor("HowK").FindRowsByKey("INSERT", D0)));
+        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByKey("INSERT", D0.AddSeconds(1)));
+        Assert.Empty(t.CreateIndexCursor("HowK").FindRowsByKey("AddNew, table-type, a Date", D1));
     }
 
     // P is keyed by D, the date in each layout: p3 by UPDATE, p2 by INSERT, p1 by a table-type AddNew, which is the
@@ -207,7 +207,7 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         db.VerifyIndexes = verify;
         var p = db.GetTable("P");
         Assert.Equal("p3", p.FindRowByPrimaryKey(D0)!["Nm"]);
-        Assert.Equal(new[] { "p3", "p2", "p1" }, p.CreateIndexCursor("PPK").FindRowsByEntry(D0).Select(r => (string)r["Nm"]!));
+        Assert.Equal(new[] { "p3", "p2", "p1" }, p.CreateIndexCursor("PPK").FindRowsByKey(D0).Select(r => (string)r["Nm"]!));
     }
 
     // A Joiner from P to C joins a parent read from the table to the children with its very bytes, as ACE's relationship
@@ -335,8 +335,8 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         Assert.Equal(Latin(ExtendedDateTimeCodec.Encode(D0.AddDays(1))), stored[4]);
         Assert.Equal(Latin(ExtendedDateTimeCodec.Encode(DateTime.MaxValue.AddTicks(-1))), stored[14]);
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", expectedRows: 10));
-        Assert.Equal(new[] { 2, 3, 1 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0)));
-        Assert.Equal(new[] { 4 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddDays(1))));
+        Assert.Equal(new[] { 2, 3, 1 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0)));
+        Assert.Equal(new[] { 4 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddDays(1))));
     }
 
     // ── Entries an earlier version made ─────────────────────────────────────
@@ -399,8 +399,8 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
         using (var db = Database.Open(Copy(EarlierTableType)))
         {
             var w = db.GetTable("W");
-            Assert.Equal(new[] { 1, 4 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByEntry(D0)));
-            Assert.Empty(w.CreateIndexCursor("ByK").FindRowsByEntry(D1));
+            Assert.Equal(new[] { 1, 4 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByKey(D0)));
+            Assert.Empty(w.CreateIndexCursor("ByK").FindRowsByKey(D1));
             Assert.Equal(new[] { 1, 2, 4 }, IdsOf(FindAll(w.CreateCursor(), D0)));
         }
         using (var db = Database.Open(Copy(EarlierTableType)))
@@ -410,8 +410,8 @@ public sealed class ExtendedDateTableTypeTests : IDisposable
             var rows = Pointers(w);
             foreach (int id in new[] { 2, 3, 4 }) w.RewriteRowAt(rows[id], new Row { ["How"] = "rewritten" });
             Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "W", expectedRows: 4));
-            Assert.Equal(new[] { 4, 1, 2 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByEntry(D0)));
-            Assert.Equal(new[] { 3 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByEntry(D1)));
+            Assert.Equal(new[] { 4, 1, 2 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByKey(D0)));
+            Assert.Equal(new[] { 3 }, IdsOf(w.CreateIndexCursor("ByK").FindRowsByKey(D1)));
         }
     }
 

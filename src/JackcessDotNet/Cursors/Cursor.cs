@@ -325,9 +325,9 @@ public class Cursor : IEnumerable<Row>
 
     /// <summary>
     /// The names of the columns rows are read with, in the table's column order, or null (as at first) for all
-    /// of them. A cursor that reads a few columns of every row is spared decoding the rest, long values among
-    /// them: Jackcess's column names of an iterable. A row read with some of the columns can be given to
-    /// <see cref="Table.Update"/> and <see cref="UpdateCurrentRow"/> like any other; the columns it was not read
+    /// of them. A cursor that reads a few columns of every row is spared reading the others, Memo and OLE Object
+    /// values among them; in Jackcess the column names are set on the cursor's iterable. A row read with some of
+    /// the columns can be given to <see cref="Table.Update"/> and <see cref="UpdateCurrentRow"/> like any other; the columns it was not read
     /// with keep their values. Setting it does not read the current row again.
     /// </summary>
     /// <exception cref="ArgumentException">The value names no column, or a column the table does not have.</exception>
@@ -383,7 +383,7 @@ public class Cursor : IEnumerable<Row>
     /// The number the row the cursor is on stores in a Date/Time column: days since 30 December 1899, the time
     /// of day its fraction. It is the value Access holds and keys the row by, to the last digit, where the
     /// <see cref="DateTime"/> a row is read with is rounded to the millisecond; given to a lookup -
-    /// <see cref="FindRow(string, object?)"/>, <see cref="IndexCursor.FindRowByEntry"/>, a range - it finds the
+    /// <see cref="FindRow(string, object?)"/>, <see cref="IndexCursor.FindRowByKey"/>, a range - it finds the
     /// row that stores exactly that number.
     /// </summary>
     /// <param name="columnName">The column's name, whatever the case of its letters.</param>

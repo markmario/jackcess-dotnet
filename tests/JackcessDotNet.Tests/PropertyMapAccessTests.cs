@@ -62,7 +62,7 @@ public sealed class PropertyMapAccessTests
     [Fact]
     public void Property_ToString_HasNameTypeValue()
     {
-        var p = new PropertyMap.Property("Description", DataType.Text, "Hello", false);
+        var p = new Property("Description", DataType.Text, "Hello", false);
         string s = p.ToString();
         Assert.Contains("Description", s);
         Assert.Contains("Text",        s);

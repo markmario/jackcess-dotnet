@@ -20,7 +20,7 @@ it does not do. Work not yet done is tracked in this repository's
 | Update or delete a row by where it was read (`Table.Update`, `Table.Delete`), whatever key the table has | ✅ In its place, as Access updates one: a row's id does not change | [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows) |
 | Batch insert, all rows or none (`Table.InsertRange`) | ✅ | [Reading, updating and deleting rows](cursors-and-rows.md#reading-updating-and-deleting-rows) |
 | Cursors: both ways, find first and next, update or delete the current row, one column, some columns, savepoints | ✅ No column matchers | [Cursors](cursors-and-rows.md#cursors) |
-| Index cursors: the index's order, ranges between two entries, closest row, rows of an entry; `Joiner` | ✅ For every type an index is kept for | [Index cursors and joins](cursors-and-rows.md#index-cursors-and-joins) |
+| Index cursors: the index's order, ranges between two keys, closest row, rows of a key; `Joiner` | ✅ For every type an index is kept for | [Index cursors and joins](cursors-and-rows.md#index-cursors-and-joins) |
 | Secondary indexes: created with a table, kept on every write, unique enforced | ✅ Byte, Integer, Long, Large Number, Currency, Single, Double, Date/Time, Date/Time Extended, Yes/No, Text and Memo (General - Legacy and General), GUID | [Indexes and keys](indexes.md) |
 | Memo / OLE long values | ✅ | [Long values](storage.md#long-values) |
 | PropertyMap & MSysRelationships | ✅ | [Properties](properties.md), [Relationships](relationships.md) |

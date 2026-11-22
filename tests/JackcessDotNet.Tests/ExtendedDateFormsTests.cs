@@ -282,24 +282,24 @@ public sealed class ExtendedDateFormsTests : IDisposable
     {
         using var db = Database.Open(Copy(Forms));
         var t = db.GetTable("T");
-        Assert.Equal(new[] { 2, 1 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0)));
-        Assert.Equal(new[] { 1, 2 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByEntry(D0)));
-        Assert.Equal(2, t.CreateIndexCursor("KAsc").FindRowByEntry(D0)!["Id"]);
+        Assert.Equal(new[] { 2, 1 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0)));
+        Assert.Equal(new[] { 1, 2 }, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByKey(D0)));
+        Assert.Equal(2, t.CreateIndexCursor("KAsc").FindRowByKey(D0)!["Id"]);
         Assert.Equal(1, t.CreateIndexCursor("KDesc").FindRow("K", D0)!["Id"]);
 
         // Midnight and a second after it in both forms; a tick after midnight, a second form alone, a fraction.
         var midnight = new DateTime(2020, 1, 2);
-        Assert.Equal(new[] { 11, 12 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight)));
-        Assert.Equal(new[] { 14, 15 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight.AddSeconds(1))));
-        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(midnight.AddTicks(1))));
-        Assert.Equal(new[] { 9 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddSeconds(1))));
-        Assert.Equal(new[] { 8 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddTicks(1234567))));
-        Assert.Empty(t.CreateIndexCursor("KAsc").FindRowsByEntry(D0.AddTicks(1)));
+        Assert.Equal(new[] { 11, 12 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(midnight)));
+        Assert.Equal(new[] { 14, 15 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(midnight.AddSeconds(1))));
+        Assert.Equal(new[] { 13 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(midnight.AddTicks(1))));
+        Assert.Equal(new[] { 9 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddSeconds(1))));
+        Assert.Equal(new[] { 8 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddTicks(1234567))));
+        Assert.Empty(t.CreateIndexCursor("KAsc").FindRowsByKey(D0.AddTicks(1)));
 
         // With a Text column before the date and after it.
-        Assert.Equal(2, t.CreateIndexCursor("FormK").FindRowByEntry("second", D0)!["Id"]);
-        Assert.Equal(2, t.CreateIndexCursor("KForm").FindRowByEntry(D0, "second")!["Id"]);
-        Assert.Null(t.CreateIndexCursor("FormK").FindRowByEntry("space-day", D0));
+        Assert.Equal(2, t.CreateIndexCursor("FormK").FindRowByKey("second", D0)!["Id"]);
+        Assert.Equal(2, t.CreateIndexCursor("KForm").FindRowByKey(D0, "second")!["Id"]);
+        Assert.Null(t.CreateIndexCursor("FormK").FindRowByKey("space-day", D0));
 
         var cursor = t.CreateCursor();
         var found = new List<int>();
@@ -322,7 +322,7 @@ public sealed class ExtendedDateFormsTests : IDisposable
             var (p, c) = (db.GetTable("P"), db.GetTable("C"));
             Assert.Equal("p2", p.FindRowByPrimaryKey(D0)!["Nm"]);
             Assert.Equal("p2", p.CreateIndexCursor("PK").FindRow("D", D0)!["Nm"]);
-            Assert.Equal("p2", p.CreateIndexCursor("PK").FindRowByEntry(D0)!["Nm"]);
+            Assert.Equal("p2", p.CreateIndexCursor("PK").FindRowByKey(D0)!["Nm"]);
             Assert.Equal(2, c.CreateIndexCursor("FKPD").FindRow("PD", D0)!["Id"]);
         }
         using (var db = Database.Open(Copy(Forms)))

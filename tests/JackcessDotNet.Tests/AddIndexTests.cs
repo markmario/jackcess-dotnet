@@ -229,7 +229,7 @@ public sealed class AddIndexTests : IDisposable
 
         using var reopened = Database.Open(_path);
         Assert.Equal(9, reopened.GetTable("Rows").CreateIndexCursor("ByCode").FindRow("Code", "コーヒー")?["Id"]);
-        Assert.Equal(10, reopened.GetTable("Rows").CreateIndexCursor("ByCode").FindRowByEntry("佐々木")?["Id"]);
+        Assert.Equal(10, reopened.GetTable("Rows").CreateIndexCursor("ByCode").FindRowByKey("佐々木")?["Id"]);
     }
 
     [Fact]

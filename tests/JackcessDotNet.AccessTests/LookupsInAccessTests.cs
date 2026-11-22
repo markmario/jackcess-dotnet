@@ -50,7 +50,7 @@ namespace JackcessDotNet.AccessTests
         }
 
         private static int[] ByIndex(Table table, string index, object value)
-            => table.CreateIndexCursor(index).FindRowsByEntry(value).Select(row => (int)row["Id"]).OrderBy(id => id).ToArray();
+            => table.CreateIndexCursor(index).FindRowsByKey(value).Select(row => (int)row["Id"]).OrderBy(id => id).ToArray();
 
         // The ids ACE's = finds, the value given as a parameter of its own type.
         private static int[] AceIds(OleDbConnection connection, string table, string column, object value)
@@ -137,7 +137,7 @@ namespace JackcessDotNet.AccessTests
                 table.Update(row);
                 table.Delete(table.FindRowByPrimaryKey("01"));
                 var cursor = table.CreateIndexCursor();
-                cursor.FindRowByEntry("+1");
+                cursor.FindRowByKey("+1");
                 cursor.UpdateCurrentRow(new Row { ["Value"] = 300 });
             }
 
@@ -274,7 +274,7 @@ namespace JackcessDotNet.AccessTests
                 table.Update(row);
                 table.Delete(table.FindRowByPrimaryKey(1.234549999999999));
                 var cursor = table.CreateIndexCursor();
-                cursor.FindRowByEntry(0.03125);
+                cursor.FindRowByKey(0.03125);
                 cursor.UpdateCurrentRow(new Row { ["Value"] = 300 });
             }
             // ... and ACE the rows its = finds by the same doubles, in a copy of the file as it was.

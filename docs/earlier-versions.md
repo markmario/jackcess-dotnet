@@ -224,7 +224,7 @@ rewritten. How Access keys a Date/Time Extended value: [How keys are matched](re
   wrote the runtime's own text for it - on .NET its round-trip form, `0.30000000000000004` for 0.1 + 0.2, and on .NET
   Framework 15 digits but `1E-05` and `0` for -0.0 - where Access writes `0.3`, `0.00001` and `-0`. The text is a
   valid value and reads as written. But a lookup of the column by a double or a float looks for the text Access
-  writes for it, so `FindRow`, an index cursor's `FindRow` and `FindRowByEntry` given 0.1 + 0.2 do not find a row an
+  writes for it, so `FindRow`, an index cursor's `FindRow` and `FindRowByKey` given 0.1 + 0.2 do not find a row an
   earlier version wrote as `0.30000000000000004`: such a row is found by its text
   ([Text and Memo](data-types.md#text-and-memo)).
 

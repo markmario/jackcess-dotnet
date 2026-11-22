@@ -484,7 +484,7 @@ public sealed class RoomReuseTests : IDisposable
         var cursor = table.CreateCursor();
         Assert.NotNull(cursor.FindRow("Id", 19));
         var byKey = table.CreateIndexCursor();
-        Assert.NotNull(byKey.FindRowByEntry(19));
+        Assert.NotNull(byKey.FindRowByKey(19));
 
         DeleteRow19AndUseItsPageAgain(table, away);
 

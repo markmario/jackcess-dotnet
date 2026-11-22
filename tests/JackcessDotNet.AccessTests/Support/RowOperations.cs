@@ -22,7 +22,7 @@ namespace JackcessDotNet.AccessTests
         {
             var cursor = table.CreateIndexCursor();
             cursor.ColumnNames = cursor.Index.Columns.Select(c => c.Column.Name).ToArray();
-            if (cursor.FindRowByEntry(primaryKeyValue) == null)
+            if (cursor.FindRowByKey(primaryKeyValue) == null)
                 throw new InvalidOperationException("No row with primary key '" + primaryKeyValue + "' found in table '" + table.Name + "'.");
             cursor.UpdateCurrentRow(newValues);
         }

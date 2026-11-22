@@ -35,12 +35,9 @@ JackcessDotNet.ColumnDefinition.Scale.get -> byte
 JackcessDotNet.ColumnDefinition.Scale.set -> void
 JackcessDotNet.ColumnValueTooLongException
 JackcessDotNet.ColumnValueTooLongException.ColumnName.get -> string!
-JackcessDotNet.ColumnValueTooLongException.ColumnValueTooLongException(string! columnName, int maxLength, int length) -> void
 JackcessDotNet.ColumnValueTooLongException.Length.get -> int
 JackcessDotNet.ColumnValueTooLongException.MaxLength.get -> int
 JackcessDotNet.ConstraintViolationException
-JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message) -> void
-JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.Cursor
 JackcessDotNet.Cursor.ColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>?
 JackcessDotNet.Cursor.ColumnNames.set -> void
@@ -126,8 +123,6 @@ static JackcessDotNet.DatabaseImporter.ImportTable<T>(this JackcessDotNet.Databa
 static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet, JackcessDotNet.ImportOptions! options) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 JackcessDotNet.DatabaseInUseException
-JackcessDotNet.DatabaseInUseException.DatabaseInUseException(string! message) -> void
-JackcessDotNet.DatabaseInUseException.DatabaseInUseException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.DatabaseOpenOptions
 JackcessDotNet.DatabaseOpenOptions.DatabaseOpenOptions() -> void
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileFormat?
@@ -145,7 +140,7 @@ JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Column.get -> JackcessDotNet.C
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.IsCut.get -> bool
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.PrimaryKey.get -> JackcessDotNet.Row!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.RowIndex.get -> int
-JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Table.get -> string!
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.TableName.get -> string!
 override JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ToString() -> string!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Value.get -> decimal?
 JackcessDotNet.DatabaseFullException
@@ -194,9 +189,9 @@ JackcessDotNet.IndexColumn.Column.get -> JackcessDotNet.Column!
 JackcessDotNet.IndexColumn.IsAscending.get -> bool
 override JackcessDotNet.IndexColumn.ToString() -> string!
 JackcessDotNet.IndexCursor
-JackcessDotNet.IndexCursor.FindClosestRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
-JackcessDotNet.IndexCursor.FindRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
-JackcessDotNet.IndexCursor.FindRowsByEntry(params object?[]! entryValues) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
+JackcessDotNet.IndexCursor.FindClosestRowByKey(params object?[]! keyValues) -> JackcessDotNet.Row?
+JackcessDotNet.IndexCursor.FindRowByKey(params object?[]! keyValues) -> JackcessDotNet.Row?
+JackcessDotNet.IndexCursor.FindRowsByKey(params object?[]! keyValues) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.IndexCursor.Index.get -> JackcessDotNet.Index!
 JackcessDotNet.IndexDefinition
 JackcessDotNet.IndexDefinition.Columns.get -> System.Collections.Generic.IReadOnlyList<string!>!
@@ -214,15 +209,15 @@ const JackcessDotNet.IndexDefinition.MaxColumns = 10 -> int
 const JackcessDotNet.IndexDefinition.MaxIndexesPerTable = 32 -> int
 JackcessDotNet.IndexDefinition.Name.get -> string!
 JackcessDotNet.IndexRange
-JackcessDotNet.IndexRange.EndEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
-JackcessDotNet.IndexRange.EndEntry.set -> void
+JackcessDotNet.IndexRange.EndKey.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.EndKey.set -> void
 JackcessDotNet.IndexRange.IndexRange() -> void
 JackcessDotNet.IndexRange.IsEndInclusive.get -> bool
 JackcessDotNet.IndexRange.IsEndInclusive.set -> void
 JackcessDotNet.IndexRange.IsStartInclusive.get -> bool
 JackcessDotNet.IndexRange.IsStartInclusive.set -> void
-JackcessDotNet.IndexRange.StartEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
-JackcessDotNet.IndexRange.StartEntry.set -> void
+JackcessDotNet.IndexRange.StartKey.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.StartKey.set -> void
 JackcessDotNet.JoinType
 JackcessDotNet.JoinType.Inner = 0 -> JackcessDotNet.JoinType
 JackcessDotNet.JoinType.LeftOuter = 1 -> JackcessDotNet.JoinType
@@ -240,21 +235,21 @@ JackcessDotNet.Joiner.ToIndex.get -> JackcessDotNet.Index!
 JackcessDotNet.Joiner.ToTable.get -> JackcessDotNet.Table!
 JackcessDotNet.PropertyMap
 JackcessDotNet.PropertyMap.Count.get -> int
-JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.PropertyMap.Property!>!
+JackcessDotNet.PropertyMap.GetEnumerator() -> System.Collections.Generic.IEnumerator<JackcessDotNet.Property!>!
 JackcessDotNet.PropertyMap.Name.get -> string!
-JackcessDotNet.PropertyMap.Property
-JackcessDotNet.PropertyMap.Property.DataType.get -> JackcessDotNet.DataType
-JackcessDotNet.PropertyMap.Property.IsDdl.get -> bool
-JackcessDotNet.PropertyMap.Property.Name.get -> string!
-override JackcessDotNet.PropertyMap.Property.ToString() -> string!
-JackcessDotNet.PropertyMap.Property.Value.get -> object?
+JackcessDotNet.Property
+JackcessDotNet.Property.DataType.get -> JackcessDotNet.DataType
+JackcessDotNet.Property.IsDdl.get -> bool
+JackcessDotNet.Property.Name.get -> string!
+override JackcessDotNet.Property.ToString() -> string!
+JackcessDotNet.Property.Value.get -> object?
 JackcessDotNet.PropertyMap.Remove(string! name) -> bool
 JackcessDotNet.PropertyMap.Save() -> void
 JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value) -> void
 JackcessDotNet.PropertyMap.Set(string! name, JackcessDotNet.DataType dataType, object! value, bool isDdl) -> void
 JackcessDotNet.PropertyMap.Set(string! name, object! value) -> void
 override JackcessDotNet.PropertyMap.ToString() -> string!
-JackcessDotNet.PropertyMap.TryGetProperty(string! name, out JackcessDotNet.PropertyMap.Property? property) -> bool
+JackcessDotNet.PropertyMap.TryGetProperty(string! name, out JackcessDotNet.Property? property) -> bool
 JackcessDotNet.PropertyMap.TryGetValue(string! name, out object? value) -> bool
 JackcessDotNet.PropertyMap.this[string! propertyName].get -> object?
 JackcessDotNet.Relationship

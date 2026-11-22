@@ -113,11 +113,11 @@ public sealed class SecondaryIndexTests : IDisposable
             table.Insert(RowOf(i));
 
         var cursor = db.GetTable("Indexed").CreateIndexCursor("ByGroupAndSeq");
-        var found = cursor.FindRowByEntry(321 % 17, (short)(321 % 300));
+        var found = cursor.FindRowByKey(321 % 17, (short)(321 % 300));
         Assert.NotNull(found);
         Assert.Equal(321 % 17, found!["Grp"]);
         Assert.Equal((short)21, found["Seq"]);
-        Assert.Null(cursor.FindRowByEntry(5, (short)299));   // no row has group 5 with sequence 299
+        Assert.Null(cursor.FindRowByKey(5, (short)299));   // no row has group 5 with sequence 299
 
         // Descending on its second column: within a group, the entries run from the highest sequence down.
         var index = db.GetTable("Indexed").Indexes.Single(ix => ix.Name == "ByGroupAndSeq");
@@ -320,7 +320,7 @@ public sealed class SecondaryIndexTests : IDisposable
         var byAll = db.GetTable("Wide").Indexes.Single(ix => ix.Name == "ByAll");
         var longest = JetPages.LeafEntries(db.File, byAll.RootPageNumber).Max(e => e.Key.Length);
         Assert.Equal(IndexKeys.MaxKeyLength, longest);
-        Assert.Equal(41, table.CreateIndexCursor("ByAll").FindRowByEntry(Text(1, 255), Text(2, 255), Text(3, 255), Text(4, 255), Text(5, 255))?["Id"]);
+        Assert.Equal(41, table.CreateIndexCursor("ByAll").FindRowByKey(Text(1, 255), Text(2, 255), Text(3, 255), Text(4, 255), Text(5, 255))?["Id"]);
     }
 
     // A Yes/No given as a number or as text is read once, for the row and for its key: 1 is Yes in both. (The row

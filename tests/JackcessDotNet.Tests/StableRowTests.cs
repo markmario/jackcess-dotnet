@@ -96,7 +96,7 @@ public sealed class StableRowTests : IDisposable
             Assert.Equal(39, table.Rows.Count());
             Assert.Equal(Wide(2, 60), table.FindRowByPrimaryKey(2)!["A"]);
             Assert.Equal(Wide(5, 255), table.FindRowByPrimaryKey(3)!["C"]);
-            Assert.Equal(3, table.CreateIndexCursor("ByA").FindRowByEntry(Wide(3, 255))!["Id"]);
+            Assert.Equal(3, table.CreateIndexCursor("ByA").FindRowByKey(Wide(3, 255))!["Id"]);
             Assert.Null(table.FindRowByPrimaryKey(4));
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 39);
         }
@@ -244,15 +244,15 @@ public sealed class StableRowTests : IDisposable
         // And through one cursor's rows of an entry, the entry's own key changed under it: each row once, none left.
         updates = 0;
         var cursor = orders.CreateIndexCursor("ByK");
-        foreach (var order in cursor.FindRowsByEntry(7))
+        foreach (var order in cursor.FindRowsByKey(7))
         {
             Assert.True(++updates <= 100);
             order["K"] = 8;
             orders.Update(order);
         }
         Assert.Equal(15, updates);
-        Assert.Empty(orders.CreateIndexCursor("ByK").FindRowsByEntry(7));
-        Assert.Equal(30, orders.CreateIndexCursor("ByK").FindRowsByEntry(8).Count());
+        Assert.Empty(orders.CreateIndexCursor("ByK").FindRowsByKey(7));
+        Assert.Equal(30, orders.CreateIndexCursor("ByK").FindRowsByKey(8).Count());
     }
 
     // ── Dates ────────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ public sealed class StableRowTests : IDisposable
         {
             var read = ValueMatch.ReadsAs(stored[i])!.Value;
             table.Insert(new Row { ["D"] = read.AddDays(100_000), ["Id"] = i });
-            table.RewriteRowAt(table.CreateIndexCursor("ById").FindRowByEntry(i)!.Pointer, new Row { ["D"] = stored[i] });
+            table.RewriteRowAt(table.CreateIndexCursor("ById").FindRowByKey(i)!.Pointer, new Row { ["D"] = stored[i] });
             other.Insert(new Row { ["Id"] = i, ["D"] = read });
             other.RewriteRowAt(other.FindRowByPrimaryKey(i)!.Pointer, new Row { ["D"] = stored[i] });
         }
@@ -300,15 +300,15 @@ public sealed class StableRowTests : IDisposable
             int id = (int)row["Id"]!;
             Assert.Equal(id, table.FindRowByPrimaryKey(date)?["Id"]);
             Assert.Equal(id, table.CreateCursor().FindRow("D", date)?["Id"]);
-            Assert.Equal(id, cursor.FindRowByEntry(date)?["Id"]);
-            Assert.Equal(id, cursor.FindClosestRowByEntry(date)?["Id"]);
-            Assert.Equal(new[] { id }, table.CreateIndexCursor(new IndexRange { StartEntry = new object?[] { date }, EndEntry = new object?[] { date } }).Select(r => (int)r["Id"]!));
-            Assert.Empty(table.CreateIndexCursor(new IndexRange { StartEntry = new object?[] { date }, IsStartInclusive = false, EndEntry = new object?[] { date.AddMilliseconds(1) }, IsEndInclusive = false }));
+            Assert.Equal(id, cursor.FindRowByKey(date)?["Id"]);
+            Assert.Equal(id, cursor.FindClosestRowByKey(date)?["Id"]);
+            Assert.Equal(new[] { id }, table.CreateIndexCursor(new IndexRange { StartKey = new object?[] { date }, EndKey = new object?[] { date } }).Select(r => (int)r["Id"]!));
+            Assert.Empty(table.CreateIndexCursor(new IndexRange { StartKey = new object?[] { date }, IsStartInclusive = false, EndKey = new object?[] { date.AddMilliseconds(1) }, IsEndInclusive = false }));
             Assert.Equal(id, join.FindFirstRow(row)?["Id"]);
             Assert.True(join.HasRows(row));
 
             // The number itself, which the cursor gives, finds the row and no other.
-            Assert.NotNull(cursor.FindRowByEntry(date));
+            Assert.NotNull(cursor.FindRowByKey(date));
             double number = cursor.GetCurrentRowDateNumber("D")!.Value;
             Assert.Equal(stored[id], number);
             Assert.Equal(id, table.FindRowByPrimaryKey(number)?["Id"]);
@@ -320,7 +320,7 @@ public sealed class StableRowTests : IDisposable
         var one = table.FindRowByPrimaryKey(stored[7])!;
         other.RewriteRowAt(other.FindRowByPrimaryKey(7)!.Pointer, new Row { ["D"] = BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(stored[7]) + 1) });
         Assert.False(join.HasRows(one));
-        Assert.Equal(7, other.CreateIndexCursor("ByD").FindRowByEntry(one["D"])?["Id"]);   // though its date finds it
+        Assert.Equal(7, other.CreateIndexCursor("ByD").FindRowByKey(one["D"])?["Id"]);   // though its date finds it
     }
 
     [Fact]
@@ -338,9 +338,9 @@ public sealed class StableRowTests : IDisposable
         table.RewriteRowAt(table.FindRowByPrimaryKey(3)!.Pointer, new Row { ["D"] = -0.25 });   // six o'clock too
 
         Assert.Equal(new object[] { six, six.AddHours(1), six }, table.Rows.Select(r => r["D"]!));
-        Assert.Equal(new[] { 3, 1 }, table.CreateIndexCursor("ByD").FindRowsByEntry(six).Select(r => (int)r["Id"]!));
+        Assert.Equal(new[] { 3, 1 }, table.CreateIndexCursor("ByD").FindRowsByKey(six).Select(r => (int)r["Id"]!));
         Assert.Equal(new[] { 1, 3 }, new[] { table.CreateCursor().FindRow("D", six)!, table.CreateCursor().FindRow(new Row { ["D"] = six, ["Id"] = 3 })! }.Select(r => (int)r["Id"]!));
-        Assert.Equal(3, table.CreateIndexCursor("ByD").FindRowByEntry(-0.25)!["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByD").FindRowByKey(-0.25)!["Id"]);
     }
 
     // ── Text ─────────────────────────────────────────────────────────────────
@@ -369,7 +369,7 @@ public sealed class StableRowTests : IDisposable
         {
             var byScan  = table.CreateCursor().FindRow("Code", value);
             var byIndex = table.CreateIndexCursor("ByCode").FindRow("Code", value);
-            var byEntry = table.CreateIndexCursor("ByCode").FindRowByEntry(value);
+            var byEntry = table.CreateIndexCursor("ByCode").FindRowByKey(value);
             var byOther = table.CreateIndexCursor().FindRow("Code", value);     // an index cursor going through its rows
             Assert.Equal(finds, (string?)byScan?["Code"]);
             Assert.Equal(finds, (string?)byIndex?["Code"]);
@@ -379,11 +379,11 @@ public sealed class StableRowTests : IDisposable
 
         // A number looked for in a text column is the text that writes it; text looked for in a number column is no number.
         Assert.Equal("7", table.CreateCursor().FindRow("Code", 7)!["Code"]);
-        Assert.Equal("7", table.CreateIndexCursor("ByCode").FindRowByEntry(7)!["Code"]);
+        Assert.Equal("7", table.CreateIndexCursor("ByCode").FindRowByKey(7)!["Code"]);
         Assert.Null(table.CreateCursor().FindRow("Id", "3"));
-        Assert.Null(table.CreateIndexCursor().FindRowByEntry("3"));
+        Assert.Null(table.CreateIndexCursor().FindRowByKey("3"));
         Assert.Equal(3, table.CreateCursor().FindRow("Id", 3L)!["Id"]);
-        Assert.Equal(3, table.CreateIndexCursor().FindRowByEntry((short)3)!["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor().FindRowByKey((short)3)!["Id"]);
     }
 
     // ── The columns' own rules ───────────────────────────────────────────────
@@ -445,7 +445,7 @@ public sealed class StableRowTests : IDisposable
         {
             var cursor = table.CreateIndexCursor();
             if (!readNotes) cursor.ColumnNames = new[] { "Id", "Name" };
-            var row = cursor.FindRowByEntry(id)!;
+            var row = cursor.FindRowByKey(id)!;
             row["Name"] = "renamed " + id + readNotes;
             long before = db.File.ReadCount;
             table.Update(row);
@@ -457,7 +457,7 @@ public sealed class StableRowTests : IDisposable
 
         var cursorOn = table.CreateIndexCursor();
         cursorOn.ColumnNames = new[] { "Id" };
-        Assert.NotNull(cursorOn.FindRowByEntry(1));
+        Assert.NotNull(cursorOn.FindRowByKey(1));
         long reads = db.File.ReadCount;
         cursorOn.UpdateCurrentRow(new Row { ["Name"] = "by the cursor" });
         Assert.True(db.File.ReadCount - reads <= small + 3, $"{db.File.ReadCount - reads} pages read by a cursor's update of another column");
@@ -478,7 +478,7 @@ public sealed class StableRowTests : IDisposable
             table.InsertRange(Enumerable.Range(1, rows).Select(i => new Row { ["Id"] = i, ["Pad"] = Wide(i, 150) }));
             long before = db.File.ReadCount;
             Assert.Equal(rows / 2, table.FindRowByPrimaryKey(rows / 2)!["Id"]);
-            Assert.Equal(rows / 2, table.CreateIndexCursor().FindRowByEntry(rows / 2)!["Id"]);
+            Assert.Equal(rows / 2, table.CreateIndexCursor().FindRowByKey(rows / 2)!["Id"]);
             return db.File.ReadCount - before;
         }
         long small = Cost("Small", 200), large = Cost("Large", 40_000);

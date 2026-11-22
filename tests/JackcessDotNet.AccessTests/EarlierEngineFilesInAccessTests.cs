@@ -583,7 +583,7 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal(new object[] { 1.23m, 16777216.00m }, rows.OrderBy(r => (int)r["Id"]).Select(r => r["Price"]));
 
                 var listed = Assert.Single(DecimalByteOrder.Find(db));
-                Assert.Equal("Prices", listed.Table);
+                Assert.Equal("Prices", listed.TableName);
                 Assert.Equal("Price", listed.Column.Name);
                 Assert.Equal(2, listed.PrimaryKey["Id"]);
                 Assert.Equal(16777216.00m, listed.Value);

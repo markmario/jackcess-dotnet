@@ -40,7 +40,7 @@ public sealed class LookupMatchTests : IDisposable
     }
 
     private static int[] ByIndex(Table table, string index, object value)
-        => table.CreateIndexCursor(index).FindRowsByEntry(value).Select(row => (int)row["Id"]!).OrderBy(id => id).ToArray();
+        => table.CreateIndexCursor(index).FindRowsByKey(value).Select(row => (int)row["Id"]!).OrderBy(id => id).ToArray();
 
     [Theory]
     [MemberData(nameof(Formats))]
@@ -101,7 +101,7 @@ public sealed class LookupMatchTests : IDisposable
             table.Delete(table.FindRowByPrimaryKey("01")!);
 
             var byIndex = table.CreateIndexCursor();
-            Assert.Equal("+1", byIndex.FindRowByEntry("+1")!["Code"]);
+            Assert.Equal("+1", byIndex.FindRowByKey("+1")!["Code"]);
             byIndex.UpdateCurrentRow(new Row { ["Value"] = 300 });
             var byScan = table.CreateCursor();
             Assert.Equal(" 1", byScan.FindRow("Code", " 1")!["Code"]);
@@ -149,7 +149,7 @@ public sealed class LookupMatchTests : IDisposable
             Assert.True(finds == (decimal?)table.FindRowByPrimaryKey(value)?["C"], $"{what} by the primary key: {table.FindRowByPrimaryKey(value)?["C"]}");
             Assert.True(finds == (decimal?)table.CreateCursor().FindRow("C", value)?["C"], $"{what} by a scan: {table.CreateCursor().FindRow("C", value)?["C"]}");
             Assert.Equal(finds is null ? Array.Empty<decimal>() : new[] { finds.Value },
-                table.CreateIndexCursor().FindRowsByEntry(value).Select(r => (decimal)r["C"]!));
+                table.CreateIndexCursor().FindRowsByKey(value).Select(r => (decimal)r["C"]!));
         }
 
         // An update and a delete by those lookups change the rows Access's would.

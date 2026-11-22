@@ -143,12 +143,12 @@ public sealed class CursorEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void IndexCursor_FindRowByEntry_NoArgs_Throws()
+    public void IndexCursor_FindRowByKey_NoArgs_Throws()
     {
         var (db, t) = NewEmptyTable();
         using var _ = db;
         var keyed = db.CreateTable("Keyed", new[] { new ColumnDefinition("Id", DataType.Int32) }, primaryKey: "Id");
-        Assert.Throws<ArgumentException>(() => keyed.CreateIndexCursor().FindRowByEntry());
+        Assert.Throws<ArgumentException>(() => keyed.CreateIndexCursor().FindRowByKey());
 
         // The table with no primary key has no index to make the cursor for.
         Assert.Throws<InvalidOperationException>(() => t.CreateIndexCursor());
