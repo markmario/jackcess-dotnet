@@ -801,7 +801,7 @@ internal sealed class SystemCatalog
 
     /// <summary>
     /// Returns the names of all user tables (or, with <paramref name="includeSystem"/>,
-    /// all tables including MSys*). Linked tables are not yet distinguished.
+    /// all tables including MSys*). A linked table is not among them.
     /// </summary>
     public IReadOnlyList<string> GetTableNames(bool includeSystem)
     {

@@ -66,7 +66,8 @@ What a build from source writes, and the version it has: [Building](building-and
 - `db.GetTable(name)` gives a table. `Database.TryGetTable` asks for a table without an exception when there is
   none. `db.GetTableNames()` names the database's own tables.
 - A linked table - one Access links to a table in another database or an ODBC source - is not followed ([#28]): it
-  is not among `GetTableNames`, and `GetTable` does not find it.
+  is not among `GetTableNames`, and `GetTable` does not find it. Its name is still taken: a table is not made or
+  renamed to it.
 - While a `Database` has a file open to be written, no other program or `Database` writes to it, and a file another
   program has open for writing is refused with `DatabaseInUseException`; a file opened `ReadOnly` opens beside
   Access: [Sharing a file with Access](sharing.md).
