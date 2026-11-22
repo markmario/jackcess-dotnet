@@ -130,7 +130,8 @@ Before a pull request, on its final state: a clean build with no warnings, the w
 - **The redistributable sometimes dies.** It has killed a test process (exit code -1073740771; an
   `AccessViolationException` under `System.Data.OleDb` with no test failed; or, in a 32-bit process, exit code
   -1073741819 with no managed exception and no test failed) and failed a statement with a message whose text is
-  missing (" in query expression '?'", or "Unknown" alone). The script runs such a process again. Run it again; do not change code to
+  missing (" in query expression '?'", or "Unknown" alone). The script runs such a process again. Run it again; do
+  not change code to
   get round it. A piece that dies again and again is a finding about that test, and gets an issue (#145).
 - **The long sweeps.** A referee test that sweeps many values runs a sample unless `JACKCESS_FULL_SWEEPS=1`. A
   pull request runs the samples. A push to `main` and the nightly run run them whole, and so does a run by hand

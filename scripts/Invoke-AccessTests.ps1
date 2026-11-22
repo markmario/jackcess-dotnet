@@ -61,11 +61,12 @@
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
 # makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
 # missing from the samples' or the full sweeps' table - or, in a 32-bit run, from the 32-bit run's - a failure rather
-# than a warning, so that the tables cannot fall behind the tests unnoticed; so does a row in any table for a piece the
-# tests do not have. The pieces still run first, and the error says what each table it is missing from wants: the
-# seconds it took, in this run's own table. CI's 32-bit shards run
+# than a warning, so that the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error
+# says what each table it is missing from wants: the seconds it took, in this run's own table. CI's 32-bit shards run
 # every night and in a run by hand, and on a pull request only when it has the ci:access-x86 label, so a piece missing
-# from the 32-bit table is a warning in any other run.
+# from the 32-bit table is a warning in any other run. A row in any table for a piece this run does not have - a class
+# renamed or gone - is a warning in every run, and never a failure: a run knows only its own pieces, and a piece that
+# only a 32-bit run or only one mode has would be a failure no table could satisfy.
 #
 # The redistributable can also hang: a DAO or OLE DB call that never returns. A process that runs far longer than its
 # number (five times it, and at least ten minutes) is ended and counted as one that died inside the engine, so it is run
@@ -650,14 +651,12 @@ if ($untimed.Count) {
         Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
 }
-# A row for a piece this run does not have - its class or piece renamed or gone - balances nothing. It fails a run with
-# -RequireTimings, as a missing row does, and is a warning otherwise.
+# A row for a piece this run does not have - its class or piece renamed or gone - balances nothing: a warning.
 foreach ($name in $stale.Keys) {
-    Write-Host "::$(if ($RequireTimings) { 'error' } else { 'warning' })::'$name' in scripts/Invoke-AccessTests.ps1 is no piece of these tests. Remove it from $(($stale[$name] | ForEach-Object { "`$table.$_" }) -join ', ')."
+    Write-Host "::warning::'$name' in scripts/Invoke-AccessTests.ps1 is no piece of this run's tests. If no run has it, remove it from $(($stale[$name] | ForEach-Object { "`$table.$_" }) -join ', ')."
 }
-if (($required.Count -or ($RequireTimings -and $stale.Count)) -and -not $failed.Count) {
-    if ($required.Count) { Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')" }
-    if ($RequireTimings -and $stale.Count) { Write-Host "::error::$($stale.Count) rows of scripts/Invoke-AccessTests.ps1 are no piece of these tests: $($stale.Keys -join ', ')" }
+if ($required.Count -and -not $failed.Count) {
+    Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')"
     exit 1
 }
 
