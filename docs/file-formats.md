@@ -124,13 +124,26 @@ using var db = Database.Open("Orders97.mdb", new DatabaseOpenOptions { Access97C
 - Values, the names of tables, columns and indexes, properties and the database password are read in that code
   page, and a password given is converted to it before it is compared, as Jet converts it to the machine's.
 - A text index in Access 97's General order is searched by the bytes of a value in that code page: Jet keys those
-  bytes with the codes they have in code page 1252, whatever the code page. In 1251 a Cyrillic letter and its other
-  case are one in an index, as the Latin-1 letters with the same bytes are, but Ї and ї are not; in 932 the two
-  cases of a Cyrillic letter, and of a full-width Latin one, are not. A table is found by its name the same way. A
-  value with a character the code page lacks is not looked for through an index, as in 1252.
-- The option is not used for a file of a later format, whose text is in Unicode. A number that is no code page .NET
-  has, or one of Unicode's encodings, is refused with `ArgumentException` before the file is opened: with UTF-8 as
-  the process's code page, DAO 3.6 makes no Access 97 file at all ("Not a valid password").
+  bytes with the codes they have in code page 1252, whatever the code page. So two characters have one key when the
+  characters of code page 1252 with their bytes do. In 1251 that makes most Cyrillic letters one with their other
+  case - А to Я and а to я are the bytes of À to ß and à to ÿ - but not Ч and ч, nor Я and я, whose bytes are × and
+  ÷, ß and ÿ in 1252, nor Ё ё, Є є, Ї ї, І і, Ў ў, Ґ ґ, Ѓ ѓ, Ј ј, Ѕ ѕ and Џ џ, whose bytes are not a pair there. DAO's
+  Seek found Москва by МОСКВА and москва, and did not find Ёлки by ёлки or Київ by КИЇВ. In 932, whose letters past
+  ASCII are two bytes, the two cases of a Cyrillic or a full-width Latin letter are not one: DAO did not find Москва
+  by МОСКВА. A table is found by its name by the same keys.
+- A value is not looked for through an index - the table is read for it instead - when it has a character the code
+  page lacks, as in 1252, or one the code page has in more than one form of bytes: 932 reads ≒ from both 87 90 and
+  81 E0, and Jet keys the bytes a value was stored with, which its character does not tell. Such characters are
+  found from the code page itself, as .NET reads it: on .NET 10, 396 in 932, with ・, which 932 reads any two bytes
+  it has no character for as; ? in 936 and 949 for the same reason, and ten more in 950; none in the code pages of
+  one byte a character.
+- A caller's lookup - `FindRow`, an index cursor's `FindRowsByKey` - finds a row whose text is the same as the value
+  asked for, letter case and all, as it does in code page 1252: the index takes МОСКВА as Москва, but this library's
+  equality in Access 97's order is the same text, and that was not measured against Access.
+- The option is not used for a file of a later format, whose text is in Unicode. It takes one of Windows' ANSI code
+  pages - 874, 932, 936, 949, 950 and 1250 to 1258 - the ones a Windows machine keeps such text in; any other
+  number is refused with `ArgumentException` before the file is opened. With UTF-8 as the process's code page, DAO
+  3.6 makes no Access 97 file at all ("Not a valid password"), and EBCDIC 37 did not even read a file's catalog.
 
 The header has a sort order and a code page (offsets 0x3A and 0x3C, under the mask), and neither is the code page of
 the text: they are what the file's creator was told when it was made. The two test files written with code pages
@@ -150,7 +163,10 @@ text indexes is the key it makes of the row's value. Code page 1253 was measured
 Not measured: a file Access 97 itself wrote on a machine of another code page - none is in the corpus, and no
 Access here makes one - and code pages other than 1251, 1253 and 932, which are read by the same rule. A password
 with a character the code page lacks is converted with .NET's best fit for that code page, which was compared with
-Windows' only for 1252 ([Protected files](protected-files.md#passwords-and-what-is-refused)).
+Windows' only for 1252 ([Protected files](protected-files.md#passwords-and-what-is-refused)). A password in a code
+page of two bytes a character whose bytes are more than the 20 the header holds was not measured either. The
+characters a code page has in more than one form are those .NET reads it with, which on .NET Framework are
+Windows' tables and elsewhere .NET's own; the tests check three of 932's on both.
 
 [Back to contents](README.md)
 

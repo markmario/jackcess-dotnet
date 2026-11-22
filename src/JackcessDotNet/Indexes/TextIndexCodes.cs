@@ -242,6 +242,44 @@ internal sealed class TextIndexCodes
         _mappedBytes    = access97._mappedBytes;
         _codePage       = codePage;
         _asCodePage1252 = new System.Collections.Concurrent.ConcurrentDictionary<char, string?>();
+        _manyForms      = CharactersOfManyForms(codePage);
+    }
+
+    // The characters this order's code page reads from more than one byte sequence (in 932, ≒ from both 87 90 and
+    // 81 E0). Jet keys the bytes a value was stored with, and the character does not say which of them those were,
+    // so a value with one is not searched through an index.
+    private readonly HashSet<char>? _manyForms;
+
+    /// <summary>
+    /// The characters <paramref name="codePage"/> reads from more than one byte sequence, read as the file's text is
+    /// read: every two bytes that read as one character - after a lead byte of a code page of two bytes a character -
+    /// and every byte that leads no such two. That takes in the character a code page reads a sequence it has no
+    /// character for as (・ in 932), which a stored value can hold from any such sequence.
+    /// </summary>
+    internal static HashSet<char> CharactersOfManyForms(Encoding codePage)
+    {
+        var forms = new Dictionary<char, int>();
+        void Count(string read)
+        {
+            if (read.Length == 1 && !char.IsSurrogate(read[0]))
+                forms[read[0]] = forms.TryGetValue(read[0], out int n) ? n + 1 : 1;
+        }
+        var two = new byte[2];
+        for (int first = 0; first < 256; first++)
+        {
+            two[0] = (byte)first;
+            bool leads = false;
+            for (int second = 0; second < 256; second++)
+            {
+                two[1] = (byte)second;
+                string read = codePage.GetString(two);
+                if (read.Length != 1) continue;
+                leads = true;
+                Count(read);
+            }
+            if (!leads) Count(codePage.GetString(two, 0, 1));
+        }
+        return new HashSet<char>(forms.Where(f => f.Value > 1).Select(f => f.Key));
     }
 
     /// <summary>For Access 97's General order, the code page of the text whose bytes it keys.</summary>
@@ -265,11 +303,13 @@ internal sealed class TextIndexCodes
         return text.ToString();
     }
 
-    // The characters of code page 1252 with the bytes c has in this order's code page, or null for a character the code
-    // page has not: one whose bytes do not read back as it, a character Windows' best fit or a question mark stands for.
+    // The characters of code page 1252 with the bytes c has in this order's code page, or null for a character whose key
+    // is not made: one the code page has not - whose bytes do not read back as it, a character Windows' best fit or a
+    // question mark stands for - or one it has in more than one form (_manyForms).
     private string? InCodePage1252(char c)
         => _asCodePage1252!.GetOrAdd(c, ch =>
         {
+            if (_manyForms!.Contains(ch)) return null;
             byte[] bytes = _codePage!.GetBytes(new[] { ch });
             string back = _codePage.GetString(bytes);
             return back.Length == 1 && back[0] == ch ? CodePage1252.GetString(bytes) : null;
@@ -298,7 +338,9 @@ internal sealed class TextIndexCodes
         if (_codePage is not null)
             foreach (char c in ToIndexCharSequence(value))
                 if (InCodePage1252(c) is null)
-                    return $"a value with U+{(int)c:X4}: this Access 97 file's text is in code page {_codePage.CodePage}, which has no such character";
+                    return _manyForms!.Contains(c)
+                        ? $"a value with U+{(int)c:X4}: this Access 97 file's text is in code page {_codePage.CodePage}, which has that character in more than one form of bytes, and Access keys the bytes a value was stored with"
+                        : $"a value with U+{(int)c:X4}: this Access 97 file's text is in code page {_codePage.CodePage}, which has no such character";
         foreach (char c in ToIndexCharSequence(value))
         {
             var codes = CodesOf(c);

@@ -550,10 +550,10 @@ public sealed class Access97ReadTests
                 Assert.False(codes.CanEncode(line[1]), $"'{line[1]}' is not looked for, and its code page has every character of it.");
                 continue;
             }
+            // No two rows of a fixture have one key, so DAO's Seek, which gives the first row of a key, names them all.
             var ids = reader.FindRowPointersForEntry(asked).Select(p => Convert.ToInt32(RowAt(table, p)["Id"])).ToList();
-            if (line[2] == "-") Assert.True(ids.Count == 0, $"'{line[1]}': DAO found no row, this library {string.Join(", ", ids)}.");
-            else Assert.True(ids.Contains(int.Parse(line[2], System.Globalization.CultureInfo.InvariantCulture)),
-                             $"'{line[1]}': DAO found row {line[2]}, this library {string.Join(", ", ids)}.");
+            var expected = line[2] == "-" ? new List<int>() : new List<int> { int.Parse(line[2], System.Globalization.CultureInfo.InvariantCulture) };
+            Assert.True(expected.SequenceEqual(ids), $"'{line[1]}': DAO found {line[2]}, this library {string.Join(", ", ids)}.");
             lookups++;
         }
         Assert.Equal(looked, lookups);
@@ -594,11 +594,20 @@ public sealed class Access97ReadTests
     }
 
     /// <summary>
-    /// A code page Access keeps no Access 97 text in is refused before the file is opened, whatever its format: one of
-    /// Unicode's encodings (with UTF-8 for its code page DAO 3.6 makes no Access 97 file), or a number that is no code
-    /// page. A file of a later format, whose text is Unicode, is read as it is whatever code page is named.
+    /// A code page that is not one of Windows' ANSI code pages, which are the ones Jet keeps Access 97 text in, is
+    /// refused before the file is opened, whatever its format: Unicode's encodings (with UTF-8 for its code page DAO 3.6
+    /// makes no Access 97 file), EBCDIC (37 did not read the catalog), ASCII, ISO-2022 and GB 18030 (20127 and 50220
+    /// gave wrong answers through an index), a DOS code page, and numbers that are no code page. A file of a later
+    /// format, whose text is Unicode, is read as it is whatever code page is named.
     /// </summary>
     [Theory]
+    [InlineData(37)]
+    [InlineData(437)]
+    [InlineData(850)]
+    [InlineData(20127)]
+    [InlineData(28591)]
+    [InlineData(50220)]
+    [InlineData(54936)]
     [InlineData(65001)]
     [InlineData(65000)]
     [InlineData(1200)]
@@ -625,5 +634,83 @@ public sealed class Access97ReadTests
         using var named = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true, Access97CodePage = 1251 });
         Assert.Same(unset.File.Format, named.File.Format);
         Assert.Equal(unset.GetTableNames(), named.GetTableNames());
+    }
+
+    /// <summary>Every one of Windows' ANSI code pages is taken, and the file opens and its names read.</summary>
+    [Theory]
+    [InlineData(874)]
+    [InlineData(932)]
+    [InlineData(936)]
+    [InlineData(949)]
+    [InlineData(950)]
+    [InlineData(1250)]
+    [InlineData(1251)]
+    [InlineData(1252)]
+    [InlineData(1253)]
+    [InlineData(1254)]
+    [InlineData(1255)]
+    [InlineData(1256)]
+    [InlineData(1257)]
+    [InlineData(1258)]
+    public void Every_Windows_ANSI_code_page_is_taken(int codePage)
+    {
+        using var db = Database.Open(Asset("access97-cp1251.mdb"), new DatabaseOpenOptions { Access97CodePage = codePage });
+        Assert.Single(db.GetTableNames());
+        Assert.Equal(9, db.GetTable(db.GetTableNames().Single()).Rows.Count());
+    }
+
+    /// <summary>
+    /// Code page 932 reads some characters from more than one form of bytes - ≒ from 87 90 and from 81 E0, ⅰ from EE EF
+    /// and FA 40, Ⅰ from FA 4A and 87 54 - and Jet keys the bytes a value was stored with, which differ between the
+    /// forms. Which form a stored value has, its character does not say, so a value with such a character is not
+    /// searched through an index: it is looked for by reading the table, as one with a character the code page lacks.
+    /// </summary>
+    [Fact]
+    public void A_character_of_more_than_one_form_of_bytes_is_not_searched_through_an_Access_97_index()
+    {
+        var cp932 = System.Text.Encoding.GetEncoding(932);
+        var w1252 = JetFormat.Jet3.TextEncoding;
+        foreach (var (c, first, second) in new[] { ('≒', new byte[] { 0x87, 0x90 }, new byte[] { 0x81, 0xE0 }),
+                                                  ('ⅰ', new byte[] { 0xEE, 0xEF }, new byte[] { 0xFA, 0x40 }),
+                                                  ('Ⅰ', new byte[] { 0xFA, 0x4A }, new byte[] { 0x87, 0x54 }) })
+        {
+            Assert.Equal(c.ToString(), cp932.GetString(first));
+            Assert.Equal(c.ToString(), cp932.GetString(second));
+            // The two forms have keys of their own: neither is the key of the character.
+            Assert.NotEqual(Convert.ToHexString(TextIndexCodes.Access97.Encode(w1252.GetString(first), ascending: true)),
+                            Convert.ToHexString(TextIndexCodes.Access97.Encode(w1252.GetString(second), ascending: true)));
+            Assert.Contains(c, TextIndexCodes.CharactersOfManyForms(cp932));
+        }
+
+        var codes = TextIndexCodes.Access97In(932);
+        foreach (string value in new[] { "≒", "x≒", "ⅰ", "Ⅰ" })
+        {
+            Assert.False(codes.CanEncode(value));
+            Assert.Contains("more than one form", Assert.Throws<NotSupportedException>(() => codes.Encode(value, ascending: true)).Message);
+        }
+        Assert.True(codes.CanEncode("東京"));
+
+        using var db = OpenInCodePage("cp932", 932);
+        var table = db.GetTable(db.GetTableNames().Single());
+        var index = table.Indexes.Single(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text);
+        Assert.False(IndexKeys.CanSearch(index.Columns, new object?[] { "≒" }));
+        Assert.True(IndexKeys.CanSearch(index.Columns, new object?[] { "東京" }));
+    }
+
+    /// <summary>
+    /// A caller's lookup finds a row of an Access 97 file by text that is the same as its value, letter case and all,
+    /// in whatever code page: the index's keys take МОСКВА as Москва with code page 1251, and DAO's Seek finds the one
+    /// by the other, but this library's equality in Access 97's order is the same text.
+    /// </summary>
+    [Fact]
+    public void A_lookup_in_an_Access_97_file_finds_the_same_text_only()
+    {
+        using var db = OpenInCodePage("cp1251", 1251);
+        var table = db.GetTable(db.GetTableNames().Single());
+        var index = table.Indexes.Single(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text);
+        string column = index.Columns[0].Column.Name;
+        Assert.NotNull(table.CreateIndexCursor(index.Name).FindRow(column, "Москва"));
+        Assert.Null(table.CreateIndexCursor(index.Name).FindRow(column, "МОСКВА"));
+        Assert.Null(table.CreateCursor().FindRow(column, "москва"));
     }
 }

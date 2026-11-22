@@ -743,9 +743,11 @@ changes with them.
   them. Measured with Jet 4.0's DAO 3.6 and ACE 12's DAO, which read alike, in processes given code pages 1251 and
   932 by their manifests (`tools/access97-code-page-fixture.ps1`): the text each wrote, what each read with that
   code page and with 1252, the keys of every value of a General text index, its Seeks, the tables it found by name
-  and its password; and 1253 the same way by hand. The code
-  page of a Unicode encoding, or a number that is no code page, is refused with `ArgumentException` before the file
-  is opened ([Text in a code page](docs/file-formats.md#text-in-a-code-page)).
+  and its password; and 1253 the same way by hand. A value with a character the code page has in more than one form
+  of bytes (≒ in 932) is looked for by reading the table rather than through an index, and a caller's lookup finds
+  the same text, letter case and all, as in 1252. The option takes Windows' ANSI code pages - 874, 932, 936, 949, 950
+  and 1250 to 1258 - and any other number is refused with `ArgumentException` before the file is opened
+  ([Text in a code page](docs/file-formats.md#text-in-a-code-page)).
 - **A value with ー, 々, ゝ or the shadda is a key in General - Legacy** (#156). The twelve marks Access keys by the
   character before them - ー and ｰ, 々, ゝ ゞ, ヽ ヾ, 〱 〲 and the shadda with its two presentation forms - are keyed
   as Access keys them: as that character, or after a kana as its vowel, with the mark's own accent; FF FF with

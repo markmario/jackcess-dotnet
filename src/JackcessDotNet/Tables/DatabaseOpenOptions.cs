@@ -148,13 +148,16 @@ public sealed class DatabaseOpenOptions
     /// page the file's header holds are what its creator was told when the file was made, and are not the code page
     /// its text is in. Set this to the code page of the machine that wrote the file - 1251 for Cyrillic, 1250 for
     /// Central European, 1253 for Greek, 932 for Japanese - and the file reads as Access reads it on such a machine.
-    /// Its text indexes are searched by the bytes of a value in this code page, as Access keys them, and a value with
-    /// a character the code page has not is not looked for through them.
+    /// Its text indexes are searched by the bytes of a value in this code page, as Access keys them; a value with a
+    /// character the code page has not, or has in more than one form of bytes (in 932, ≒ is both 87 90 and 81 E0), is
+    /// not looked for through them, and is found by reading the table instead. A row is found by text that is the same
+    /// as its value, letter case and all, as in code page 1252.
     /// </para>
     /// <para>
-    /// A number that names no code page .NET has, or one of Unicode's encodings (UTF-7, UTF-8, UTF-16, UTF-32), in
-    /// which Access keeps no Access 97 text, is refused by <see cref="Database.Open(string, DatabaseOpenOptions)"/>
-    /// with <see cref="ArgumentException"/> before the file is opened, whatever its format.
+    /// The code page is one of Windows' ANSI code pages, the ones a Windows machine keeps such text in: 874 (Thai),
+    /// 932 (Japanese), 936 (Simplified Chinese), 949 (Korean), 950 (Traditional Chinese), and 1250 to 1258. Any other
+    /// number is refused by <see cref="Database.Open(string, DatabaseOpenOptions)"/> with
+    /// <see cref="ArgumentException"/> before the file is opened, whatever its format.
     /// </para>
     /// <code>
     ///   using var db = Database.Open("Orders97.mdb", new DatabaseOpenOptions { Access97CodePage = 1251 });

@@ -421,8 +421,7 @@ public sealed class Database : IDisposable
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">
     /// <see cref="DatabaseOpenOptions.KeepWritersOut"/> is set without <see cref="DatabaseOpenOptions.ReadOnly"/>, or
-    /// <see cref="DatabaseOpenOptions.Access97CodePage"/> names no code page .NET has, or one of Unicode's encodings, in
-    /// any format. The file is not opened.
+    /// <see cref="DatabaseOpenOptions.Access97CodePage"/> is not one of Windows' ANSI code pages, in any format. The file is not opened.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <see cref="DatabaseOpenOptions.MaxFileLength"/> is not positive, or is more than the 2 GB an Access file can be.
@@ -452,30 +451,23 @@ public sealed class Database : IDisposable
                         options.KeepWritersOut, options.MaxFileLength, access97Text);
     }
 
-    // The code pages of Unicode's encodings - UTF-16 and UTF-32 of both byte orders, UTF-7, UTF-8 - in none of which
-    // Jet keeps an Access 97 file's text: with UTF-8 for the process's code page, DAO 3.6 makes no Access 97 file at all.
-    private static readonly int[] UnicodeCodePages = { 1200, 1201, 12000, 12001, 65000, 65001 };
+    // The Windows ANSI code pages: the code pages a Windows machine converts text with, and so the ones Jet keeps an
+    // Access 97 file's text in. Another - EBCDIC, ASCII, ISO-2022, GB 18030, Unicode's encodings - is no machine's ANSI
+    // code page (with UTF-8 for the process's code page, DAO 3.6 makes no Access 97 file at all), and one, EBCDIC 37,
+    // did not even read the file's catalog.
+    private static readonly int[] AnsiCodePages = { 874, 932, 936, 949, 950, 1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258 };
 
     /// <summary>The encoding of <see cref="DatabaseOpenOptions.Access97CodePage"/>, <paramref name="codePage"/>.</summary>
-    /// <exception cref="ArgumentException">.NET has no such code page, or it is one of Unicode's encodings.</exception>
+    /// <exception cref="ArgumentException"><paramref name="codePage"/> is not one of Windows' ANSI code pages.</exception>
     private static Encoding Access97Text(int codePage, string path, string paramName)
     {
-        string refused = $"{nameof(DatabaseOpenOptions.Access97CodePage)} is {codePage}";
-        if (Array.IndexOf(UnicodeCodePages, codePage) >= 0)
+        if (Array.IndexOf(AnsiCodePages, codePage) < 0)
             throw new ArgumentException(
-                $"{refused}, one of Unicode's encodings: an Access 97 file keeps its text in a Windows code page of one or two bytes " +
-                $"a character, such as 1252 or 1251. '{path}' was not opened.", paramName);
+                $"{nameof(DatabaseOpenOptions.Access97CodePage)} is {codePage}, which is not a Windows ANSI code page: an Access 97 " +
+                $"file keeps its text in one of {string.Join(", ", AnsiCodePages)}. '{path}' was not opened.", paramName);
         // The Access 97 format registers the code pages .NET has only from a provider.
         _ = JetFormat.Jet3;
-        try
-        {
-            if (codePage > 0) return Encoding.GetEncoding(codePage);
-        }
-        catch (Exception e) when (e is ArgumentException or NotSupportedException)
-        {
-            throw new ArgumentException($"{refused}, which is no code page .NET has. '{path}' was not opened.", paramName, e);
-        }
-        throw new ArgumentException($"{refused}, which is no code page .NET has. '{path}' was not opened.", paramName);
+        return Encoding.GetEncoding(codePage);
     }
 
     /// <summary>
