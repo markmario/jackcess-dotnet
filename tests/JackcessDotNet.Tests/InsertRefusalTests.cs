@@ -97,6 +97,43 @@ public sealed class InsertRefusalTests : IDisposable
         AssertRefuses(table, because);
     }
 
+    // A complex column with no index. Access gives every row a number for each complex column, from the table's own
+    // counter, whether or not the row has values, and deletes a row's values with the row; it keeps a unique index
+    // on each complex column and does not let it be dropped ("The unique index on the 'Files' column cannot be
+    // deleted"), so the tables it makes are refused for that index (above). Measured with ACE 16:
+    // tools/dao-complex-rows.ps1. A table without the index is refused for the column itself, and none of its rows
+    // is changed or deleted either (#152).
+    [Fact]
+    public void A_table_with_a_complex_column_and_no_index_takes_no_row_and_changes_none()
+    {
+        using (var db = Database.Create(_path, FileFormat.Access2007))
+        {
+            db.CreateTable("T", new[] { new ColumnDefinition("A", DataType.Int32), new ColumnDefinition("Files", DataType.Int32) })
+              .Insert(new Row { ["A"] = 1, ["Files"] = 7 });
+
+            var (tdef, page, columnDefs) = DefinitionOf(db, "T");
+            page[columnDefs + 1 * 25] = (byte)DataType.Complex;   // Files is a complex column
+            db.File.WritePage(tdef, page);
+        }
+
+        AssertRefuses("T", "its column Files is a complex one");
+
+        byte[] before = File.ReadAllBytes(_path);
+        using (var db = Database.Open(_path))
+        {
+            var table = db.GetTable("T");
+            var row = Assert.Single(table.Rows);
+            Assert.Null(row["Files"]);
+            row["A"] = 2;
+            Assert.Contains("'Files' is a complex one", Assert.Throws<NotSupportedException>(() => table.Update(row)).Message);
+            Assert.Contains("'Files' is a complex one", Assert.Throws<NotSupportedException>(() => table.Delete(row)).Message);
+            var cursor = table.CreateCursor();
+            Assert.True(cursor.MoveNext());
+            Assert.Throws<NotSupportedException>(() => cursor.DeleteCurrentRow());
+        }
+        Assert.Equal(before, File.ReadAllBytes(_path));
+    }
+
     // A text index in an order the engine writes no keys for (here 1055, Access's Turkish order).
     [Fact]
     public void A_table_with_a_text_index_in_another_language_s_order_says_what_insert_throws()

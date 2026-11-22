@@ -144,6 +144,10 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   and says a file must not be written by two programs at once; both open a file read-only when asked, and Java
   Jackcess also opens one it cannot write to read-only without being asked, which this library leaves to the
   caller ([Compared with Java Jackcess](sharing.md#compared-with-java-jackcess)).
+- **A complex column** - an attachment, a multi-value field, version history - reads as null and a table with one
+  is not written to, because this library does not read or write the column's values ([#24]). Java Jackcess reads
+  the number the row holds as a `ComplexValueForeignKey`, through which the values are read and changed, and gives
+  a new row the next number of the table's counter, as Access does ([Complex columns](data-types.md#complex-columns)).
 
 And where the two agree: an Access 97 file is only read, as in Jackcess
 ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)); `EnforceForeignKeys` is on by
@@ -155,4 +159,5 @@ an import makes a Large Number only in a format that has one, as Java Jackcess d
 
 [Back to contents](README.md)
 
+[#24]: https://github.com/markmario/jackcess-dotnet/issues/24
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58

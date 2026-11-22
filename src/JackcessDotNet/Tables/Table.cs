@@ -128,8 +128,9 @@ public sealed class Table
     /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate(Row)"/> throw for it,
     /// which they throw by asking this. The table has an index whose keys this library does not write as Access
     /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
-    /// rows cannot be written by - a calculated column, columns whose names run past the definition's end, or two
-    /// columns in one place. Such a table is still read.
+    /// rows cannot be written by - a calculated column, a complex column (an attachment, multi-value field or version
+    /// history), columns whose names run past the definition's end, or two columns in one place. Such a table is
+    /// still read.
     /// <para>
     /// A caller about to write to several tables can ask each first, and so write to none when one of them
     /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
@@ -1122,8 +1123,8 @@ public sealed class Table
     /// it was.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The table has an index whose keys this library does not write as Access does, or is a table of an Access
-    /// 97 file, which is only read. Nothing is written.
+    /// The table has an index whose keys this library does not write as Access does, or a complex column, or is a
+    /// table of an Access 97 file, which is only read. Nothing is written.
     /// </exception>
     public void Update(Row row)
     {
@@ -1158,8 +1159,8 @@ public sealed class Table
     /// Nothing is deleted.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The table has an index whose keys this library does not write as Access does, has a calculated column, or
-    /// is a table of an Access 97 file, which is only read. Nothing is deleted.
+    /// The table has an index whose keys this library does not write as Access does, has a calculated or complex
+    /// column, or is a table of an Access 97 file, which is only read. Nothing is deleted.
     /// </exception>
     public void Delete(Row row)
     {
@@ -1310,10 +1311,10 @@ public sealed class Table
 
     /// <summary>
     /// Refuses, before anything is read or written, to change a row of a table whose rows this library does not
-    /// change: a file it only reads; indexes it cannot keep, or did not read whole; or a definition whose columns
+    /// change: a file it only reads; indexes it cannot keep, or did not read whole; a definition whose columns
     /// it did not read whole - one that is damaged, or goes on to a page that is not its own - where a row would be
-    /// rewritten by some of its columns and the long values of the others left behind. An insert is refused for
-    /// each of these too (<see cref="InsertRefusal"/>).
+    /// rewritten by some of its columns and the long values of the others left behind; or a complex column. An
+    /// insert is refused for each of these too (<see cref="InsertRefusal"/>).
     /// </summary>
     /// <exception cref="NotSupportedException">The table's rows are not changed. Nothing is.</exception>
     internal void EnsureRowsCanChange()
@@ -1323,6 +1324,12 @@ public sealed class Table
         if (_definition.HasUnreadColumns)
             throw new NotSupportedException(
                 $"No row of table '{Name}' is changed: its definition was not read whole, so its columns were not all read. Nothing was changed.");
+        // Access deletes a row's values in a complex column's own table with the row; Access-made tables are refused
+        // before this, by the unique index Access keeps on each complex column and does not let be dropped.
+        if (_definition.Columns.FirstOrDefault(c => c.DataType == DataType.Complex) is { } complex)
+            throw new NotSupportedException(
+                $"No row of table '{Name}' is changed: its column '{complex.Name}' is a complex one (attachments, several values or " +
+                "version history), whose values are in a table of their own that this library does not write. Nothing was changed.");
     }
 
     /// <summary>

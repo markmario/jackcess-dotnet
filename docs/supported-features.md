@@ -85,6 +85,9 @@ it does not do. Work not yet done is tracked in this repository's
   Binary or OLE column is refused ([Ranges and the closest row](cursors-and-rows.md#ranges-and-the-closest-row)).
 - A complex or calculated column is not added, and a complex column is not dropped; a calculated column reads as
   null, and a table with one is not written to: [Calculated columns](data-types.md#calculated-columns).
+- The values of a complex column - attachments, a multi-value field, version history - are not read or written
+  ([#24]): the column reads as null, and a table with one is not written to:
+  [Complex columns](data-types.md#complex-columns).
 - An AutoNumber column is not added to a table that has rows, and a table's last column is not dropped:
   [Tables and schema changes](tables-and-schema.md).
 - A column's default value is not filled in: [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
@@ -95,4 +98,5 @@ it does not do. Work not yet done is tracked in this repository's
 
 [Back to contents](README.md)
 
+[#24]: https://github.com/markmario/jackcess-dotnet/issues/24
 [#26]: https://github.com/markmario/jackcess-dotnet/issues/26

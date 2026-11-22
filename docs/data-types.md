@@ -1,8 +1,8 @@
 # Data types
 
 The names `DataType` gives Access's column types, and what is particular to reading and writing some of them:
-Large Number and Date/Time Extended, Currency, Decimal, Date/Time, text, binary values, Yes/No and calculated
-columns. How a lookup compares a caller's value with each type is in
+Large Number and Date/Time Extended, Currency, Decimal, Date/Time, text, binary values, Yes/No, calculated and
+complex columns. How a lookup compares a caller's value with each type is in
 [How a lookup matches values](cursors-and-rows.md#how-a-lookup-matches-values), and which column an import makes
 for each CLR type, and what comes back, in the
 [type round-trip cheat sheet](importing-and-exporting.md#type-round-trip-cheat-sheet).
@@ -288,8 +288,29 @@ A Yes/No holds no null: what a null given one becomes, and how it is matched as 
 **A calculated column reads as null**, and a table with one is not written to: an insert, an update and a delete
 are each refused with `NotSupportedException`.
 
+## Complex columns
+
+An attachment, a multi-value field and a column's version history (`DataType.Complex`, Access 2007 and later) keep
+their values in a hidden table of their own, which this library does not read ([#24]).
+
+- **A complex column reads as null**, in every row and however the table is read: `Table.Rows`, a cursor, an index
+  cursor, `FindRowByPrimaryKey`. The row holds a number for the column, the key of the row's values in the hidden
+  table, and that number is not the column's value, so it is not given either.
+- **In a `DataTable`** (`ToDataTable`, `ToDataSet`) a complex column is a column of type `object`, each row's value
+  `DBNull.Value`. An object made by `ReadRows<T>` keeps whatever its property for the column already holds.
+- **A table with a complex column is not written to.** Access gives every row a number for its complex columns
+  from a counter of the table's own, whether or not the row has values, and deletes a row's values with it. This
+  library does neither, so an insert, an update and a delete are refused with `NotSupportedException`, and
+  `Table.InsertRefusal` says why. Access keeps a unique index on each complex column, which it does not let be
+  dropped, so a table Access made is refused for that index first.
+  Measured with ACE 16 (`tools/dao-complex-rows.ps1`).
+
+A complex column is not added, dropped or renamed, and a table that has one is not dropped; each is refused
+with `NotSupportedException`. Adding and dropping are in [Tables and schema changes](tables-and-schema.md).
+
 [Back to contents](README.md)
 
+[#24]: https://github.com/markmario/jackcess-dotnet/issues/24
 [#63]: https://github.com/markmario/jackcess-dotnet/issues/63
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64
 [#65]: https://github.com/markmario/jackcess-dotnet/issues/65

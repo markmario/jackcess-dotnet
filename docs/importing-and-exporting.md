@@ -119,6 +119,12 @@ IEnumerable<Customer> cs = db.GetTable("Customers").ReadRows<Customer>();
 The `IEnumerable<T>` path is lazy via `yield`, so `Take(n)` stops early without
 materialising the whole table.
 
+A complex column - an attachment, a multi-value field, version history - is a `DataColumn` of type `object` holding
+`DBNull.Value` in every row: its values are not read ([#24]; [Complex columns](data-types.md#complex-columns)).
+An import of that `DataTable` leaves the column out, as it does any column of a type with no Access type, and
+tells `ImportOptions.OnUnmappableColumn`; with `FallbackUnmappableToString` it makes a `Memo` column of nulls.
+
 [Back to contents](README.md)
 
+[#24]: https://github.com/markmario/jackcess-dotnet/issues/24
 [#44]: https://github.com/markmario/jackcess-dotnet/issues/44
