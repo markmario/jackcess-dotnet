@@ -1,0 +1,77 @@
+# What DAO.DBEngine.36 (32-bit) reads of access97-cp1251.mdb, made with code page 1251 by tools/access97-code-page-fixture.ps1, with each code page it was read with first on each line. \N is a null.
+1251	table	Города
+1251	column	Города	Id
+1251	column	Города	Название
+1251	index	Города	ПоНазванию	Название
+1251	index	Города	PrimaryKey	Id
+1251	tabledef	Города	Города
+1251	tabledef	ГОРОДА	Города
+1251	tabledef	города	Города
+1251	row	1	Москва
+1251	row	2	Санкт-Петербург
+1251	row	3	Ёлки
+1251	row	4	ёлки
+1251	row	5	Київ
+1251	row	6	cafe
+1251	row	7	€100
+1251	row	8	??????
+1251	row	9	Abc
+1251	seek	Москва	1
+1251	seek	МОСКВА	1
+1251	seek	москва	1
+1251	seek	Санкт-Петербург	2
+1251	seek	САНКТ-ПЕТЕРБУРГ	2
+1251	seek	санкт-петербург	2
+1251	seek	Ёлки	3
+1251	seek	ЁЛКИ	3
+1251	seek	ёлки	4
+1251	seek	Київ	5
+1251	seek	КИЇВ	-
+1251	seek	київ	5
+1251	seek	café	6
+1251	seek	CAFÉ	6
+1251	seek	€100	7
+1251	seek	Ελλάδα	8
+1251	seek	ΕΛΛΆΔΑ	8
+1251	seek	ελλάδα	8
+1251	seek	Abc	9
+1251	seek	ABC	9
+1251	seek	abc	9
+1252	table	Ãîðîäà
+1252	column	Ãîðîäà	Id
+1252	column	Ãîðîäà	Íàçâàíèå
+1252	index	Ãîðîäà	ÏîÍàçâàíèþ	Íàçâàíèå
+1252	index	Ãîðîäà	PrimaryKey	Id
+1252	tabledef	Города	-
+1252	tabledef	ГОРОДА	-
+1252	tabledef	города	-
+1252	row	1	Ìîñêâà
+1252	row	2	Ñàíêò-Ïåòåðáóðã
+1252	row	3	¨ëêè
+1252	row	4	¸ëêè
+1252	row	5	Êè¿â
+1252	row	6	cafe
+1252	row	7	ˆ100
+1252	row	8	??????
+1252	row	9	Abc
+1252	seek	Москва	8
+1252	seek	МОСКВА	8
+1252	seek	москва	8
+1252	seek	Санкт-Петербург	-
+1252	seek	САНКТ-ПЕТЕРБУРГ	-
+1252	seek	санкт-петербург	-
+1252	seek	Ёлки	-
+1252	seek	ЁЛКИ	-
+1252	seek	ёлки	-
+1252	seek	Київ	-
+1252	seek	КИЇВ	-
+1252	seek	київ	-
+1252	seek	café	-
+1252	seek	CAFÉ	-
+1252	seek	€100	-
+1252	seek	Ελλάδα	-
+1252	seek	ΕΛΛΆΔΑ	8
+1252	seek	ελλάδα	-
+1252	seek	Abc	9
+1252	seek	ABC	9
+1252	seek	abc	9
