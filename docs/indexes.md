@@ -109,6 +109,41 @@ Microsoft's own engine writes.
   key is the one ACE writes for the value in a database of locale 1033. A table
   created in such a file sorts as the file does.
 
+### The marks keyed by the character before them
+
+Twelve characters have no key of their own in General - Legacy: the prolonged
+sound mark ー (U+30FC) and its half-width form ｰ (U+FF70); the iteration marks
+々 (U+3005), ゝ ゞ (U+309D, U+309E), ヽ ヾ (U+30FD, U+30FE) and 〱 〲 (U+3031,
+U+3032); and the Arabic shadda (U+0651) with its presentation forms U+FE7C and
+U+FE7D. Access keys each by the character before it, and so does this library
+([#156]):
+
+- **A mark weighs what the character before it weighs**: 日々 is keyed as 日日
+  and aー as aa, so in a unique index the second of aー and aa is a duplicate.
+  ー and ｰ after a kana weigh that kana's vowel (カー as カア, ッー as ッウ, ンー
+  as ンン). A mark has its own accent, not the character's: 々 has one of its
+  own, ゞ, ヾ and 〲 the voiced mark's, and the others none, so éー is not éé.
+- **The character before it** is the last one that is not such a mark and has a
+  weight: a mark after a mark is keyed by the same character (カ々ー as カカア), and a
+  surrogate pair, which General - Legacy leaves out, and a mark that only changes
+  the accent before it (ﾞ) are passed over. A control character or a hyphen,
+  which has a weight of its own, is the character before it.
+- **With nothing before it**, or after a character Access sorts as several
+  letters (Æ, ß, ǅ, ﬃ), a mark weighs FF FF, the highest weight, and has no
+  accent.
+- **After a kana**, the mark counts as a kana among the codes Access adds for
+  kana, small or not as that kana is, and in a run of its own those codes give
+  each kana a place: a mark that repeats one and a mark that lengthens one each
+  have a code of their own there.
+
+ACE 16 was had to key each of the twelve after every character of the BMP, every
+character of the BMP after 々, a々 and カー, and some 6,000 values more - runs of
+kana, marks before control characters, keys cut at 510 bytes - in a Text column,
+and some of them in a Memo (`tools/ace-mark-keys.ps1`): some 960,000 values, and
+every key is the one this library makes. Java Jackcess keys each mark as its
+codes file says, which is the key it has after "a", whatever is before it
+([Differences](differences.md#where-this-library-and-java-jackcess-differ)).
+
 ### Searched by, in a file that is only read
 
 - **Access 97's General order** (1033 in an Access 97 file). An Access 97 file
@@ -142,17 +177,23 @@ Refused, rather than write a key Access cannot find:
   sorts in one is not inserted into, updated or deleted from. Such a file is
   still read; its text indexes are not searched, its tables are scanned. Jackcess
   writes none of them either.
-- **A value in an indexed Text or Memo column, or a table name, with a
-  character Access keys by the character before it.** These are the Japanese length and iteration marks (ー U+30FC,
-  々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD, ヾ U+30FE, 〱 U+3031, 〲 U+3032,
-  ｰ U+FF70; in General also U+3033-3035, 〻 U+303B, ゠ U+30A0 and ꀕ U+A015) and,
-  in General - Legacy, the Arabic shadda (U+0651, U+FE7C, U+FE7D). So a Japanese
-  name with ー (データ, コンピューター) or an Arabic word with a shadda cannot be a
-  value of an indexed column (the primary key or any other index) or a table name: `Insert`, `Update`,
-  `Delete` and `CreateTable` throw `NotSupportedException` before anything
-  is written. In General the same goes for four Arabic ligatures (U+06D6,
-  U+06D7, U+FD24, U+FD6F). Any text is fine in a column that is no key, and a
-  row Access wrote with such a key is still found: the index's rows are gone through for it.
+- **In General, a value in an indexed Text or Memo column with a character
+  Access keys by the characters around it.** These are the Japanese length and
+  iteration marks (ー U+30FC, ｰ U+FF70, 々 U+3005, ゝ U+309D, ゞ U+309E, ヽ U+30FD,
+  ヾ U+30FE, 〱-〵 U+3031-3035, 〻 U+303B, ゠ U+30A0 and ꀕ U+A015) and four
+  Arabic ligatures (U+06D6, U+06D7, U+FD24, U+FD6F). So in a database that sorts
+  in General a Japanese name with ー (データ, コンピューター) cannot be a value of
+  an indexed column (the primary key or any other index): `Insert`, `Update`,
+  `Delete` and `AddIndex` throw `NotSupportedException` before anything is
+  written. General keys them otherwise than General - Legacy - 々 after a kanji
+  is not that kanji's weight again - and that was not measured further. Any
+  text is fine in a column that is no key, and a row Access wrote with such a
+  key is still found: the index's rows are gone through for it.
+- **A table or relationship name with one of those marks, in either order.**
+  General - Legacy's key of such a name is made, but Access compares names with
+  one by readings of their own ([Names](tables-and-schema.md#names)), and no name
+  with one was put before Access: `CreateTable`, `RenameTable` and
+  `CreateRelationship` throw `NotSupportedException` before anything is written.
 
 ## Keys longer than 510 bytes
 
@@ -210,3 +251,4 @@ made by `tools/ace-cut-keys.ps1`.
 
 [#56]: https://github.com/markmario/jackcess-dotnet/issues/56
 [#88]: https://github.com/markmario/jackcess-dotnet/pull/88
+[#156]: https://github.com/markmario/jackcess-dotnet/issues/156
