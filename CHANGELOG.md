@@ -872,6 +872,12 @@ changes with them.
     refuses a row that refers to one not yet inserted. An import that keeps its rows' numbers, which checks a
     batch before inserting any of it, leaves relationships to each row's insert, so a row may still refer to an
     earlier row of its batch.
+  - **Breaking for a caller that checks parents and children together before inserting any of them**, in a
+    database whose relationships are enforced: 2.0.0-preview.4 accepted every child of such a batch, and from
+    2.0.0-preview.5 `Validate(row)` refuses each child whose parent is in the batch with
+    `ConstraintViolationException`, as the parent is not in the file yet. Check such a batch with
+    `Validate(row, checkRelationships: false)` (#34), which makes every other check and leaves the relationships
+    to each row's insert, as `Validate(row)` did before.
   - It encoded before it checked the columns' rules and the indexes, so a row with two faults could be refused
     with another exception than `Insert`'s.
 
