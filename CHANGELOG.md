@@ -708,6 +708,20 @@ changes with them.
 
 ### Added
 
+- **A value with ー, 々, ゝ or the shadda is a key in General - Legacy** (#156). The twelve marks Access keys by the
+  character before them - ー and ｰ, 々, ゝ ゞ, ヽ ヾ, 〱 〲 and the shadda with its two presentation forms - are keyed
+  as Access keys them: as that character, or after a kana as its vowel, with the mark's own accent; FF FF with
+  nothing before it or after a character Access sorts as several letters; and after a kana a code of its own among
+  the codes Access adds for kana. So a row with データ, コンピューター, 佐々木 or an Arabic name with a shadda in an
+  indexed Text or Memo column is written, found through the index, updated and deleted, where it was refused with
+  `NotSupportedException`; an index is built over such values; and a unique index takes aー and aa as one, as Access
+  does. Measured with ACE 16 (`tools/ace-mark-keys.ps1`): each mark after every character of the BMP, every
+  character after a mark, and some 6,000 values more - some 960,000 keys, each the one this library makes. In
+  General such a value is still refused, and a table or relationship is still not given a name with a mark its
+  order keys so ([Refused](docs/indexes.md#refused)). A file that version 1.2.2 or Jackcess wrote such a value
+  into holds it under another key: the row is not found through that index, as Access does not find it, where
+  the lookup was refused; [`VerifyIndexes`](docs/earlier-versions.md#indexes-that-do-not-hold-every-row) is for
+  such a file.
 - **Row ids.** `Row.Id` is a `RowId` - the page a row is on and its number there, Jackcess's `RowId` - for a
   row that was read or inserted, and null for one a caller made (#34). A row given to `Insert` or `InsertRange`
   is the row inserted afterwards - one read from a table and inserted as a copy among them - so an update of it

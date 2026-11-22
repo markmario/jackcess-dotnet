@@ -62,6 +62,7 @@
   <ItemGroup>
     <EmbeddedResource Include="IndexKeys\general-legacy-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\general-legacy-more-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-more-ace16.tsv" />
+    <EmbeddedResource Include="IndexKeys\general-legacy-marks-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-legacy-marks-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\general-ace16.tsv" LogicalName="JackcessDotNet.Tests.general-ace16.tsv" />
     <EmbeddedResource Include="IndexKeys\access97-ace12.tsv" LogicalName="JackcessDotNet.Tests.access97-ace12.tsv" />
     <EmbeddedResource Include="IndexKeys\access97-more-ace12.tsv" LogicalName="JackcessDotNet.Tests.access97-more-ace12.tsv" />

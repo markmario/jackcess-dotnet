@@ -34,8 +34,8 @@ internal static class IndexKeys
     /// <summary>
     /// True when <see cref="Encode"/> writes the key Access writes for <paramref name="value"/> in
     /// <paramref name="column"/>: a column it writes keys for and, for text, a value with no character Access keys
-    /// by the characters around it and, in an Access 97 file, none its code page has not
-    /// (<see cref="TextIndexCodes.CanEncode"/>).
+    /// by the characters around it in General (in General - Legacy those are keyed) and, in an Access 97 file, none
+    /// its code page has not (<see cref="TextIndexCodes.CanEncode"/>).
     /// </summary>
     public static bool CanEncode(Column column, object? value)
         => CanEncode(column)

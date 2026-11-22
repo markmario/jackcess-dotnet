@@ -16,6 +16,8 @@ namespace JackcessDotNet.Tests;
 ///                                  BMP, supplementary characters, and names (1,863 values).
 ///   general-legacy-more-ace16.tsv  General - Legacy: what the first file does not hold - values with many kana, keys
 ///                                  longer than an entry holds, and the characters Access keys by their neighbours.
+///   general-legacy-marks-ace16.tsv General - Legacy: the twelve marks Access keys by the character before them
+///                                  (ー, 々, ゝ, the shadda), after characters of every kind (tools/ace-mark-keys.ps1).
 ///   general-ace16.tsv              General (Access 2010 and later): the first file's values, and the second's
 ///                                  kinds, with surrogates alone and in pairs, which that order weighs.
 ///
@@ -24,7 +26,7 @@ namespace JackcessDotNet.Tests;
 ///                                  same). Access97TextKeyTests reads them.
 ///
 /// Each value was indexed by ACE and its entries read back, by tools/ace-text-keys.ps1. A value with a character
-/// Access keys by the characters around it is in the files with ACE's key, and the engine must refuse it.
+/// Access keys by the characters around it is in the files with ACE's key: in General the engine must refuse it.
 /// </summary>
 public sealed class TextIndexKeyTests
 {
@@ -34,10 +36,9 @@ public sealed class TextIndexKeyTests
 
     public static TheoryData<string, string, int, int> GoldenFiles() => new()
     {
-        // In the first file "a ﹽ é" is refused, though the key Jackcess's codes give is ACE's there: ﹽ repeats
-        // the character before it, and its code is that of "a".
-        { "general-legacy-ace16.tsv", "General - Legacy", 1863, 1 },
-        { "general-legacy-more-ace16.tsv", "General - Legacy", 337, 51 },
+        { "general-legacy-ace16.tsv", "General - Legacy", 1863, 0 },
+        { "general-legacy-more-ace16.tsv", "General - Legacy", 337, 0 },
+        { "general-legacy-marks-ace16.tsv", "General - Legacy", 6163, 0 },
         { "general-ace16.tsv", "General", 2328, 79 },
     };
 
@@ -133,21 +134,49 @@ public sealed class TextIndexKeyTests
     }
 
     // 々, ー, ゝ and their like repeat or lengthen the character before them, and Access keys them by that
-    // character: ー after カ is ア, after a is a, and alone is FF FF. No codes of their own give that.
+    // character: ー after カ is ア, after a is a, and alone is FF FF. In General those keys are not made.
     [Theory]
     [InlineData("\u30FC")]
     [InlineData("データ")]
     [InlineData("日々")]
     [InlineData("a\uFF70")]
-    public void A_value_with_a_character_keyed_by_its_neighbours_is_refused(string value)
+    public void A_value_with_a_character_keyed_by_its_neighbours_is_refused_in_General(string value)
     {
-        foreach (var codes in new[] { Legacy, General })
-        {
-            Assert.False(codes.CanEncode(value));
-            Assert.Throws<NotSupportedException>(() => codes.Encode(value, ascending: true));
-            Assert.Throws<NotSupportedException>(() => codes.Encode(value, ascending: false));
-        }
-        Assert.True(Legacy.CanEncode("テスト") && General.CanEncode("テスト"));
+        Assert.False(General.CanEncode(value));
+        Assert.Throws<NotSupportedException>(() => General.Encode(value, ascending: true));
+        Assert.Throws<NotSupportedException>(() => General.Encode(value, ascending: false));
+        Assert.True(Legacy.CanEncode(value));
+        Assert.True(General.CanEncode("テスト"));
+    }
+
+    // In General - Legacy such a mark weighs what the character before it weighs, with its own accent (々 05) and
+    // not that character's; ー after a kana weighs the kana's vowel. With nothing before it, or after a character
+    // Access sorts as several letters, it weighs FF FF and takes no place among the accents. After a kana it is a
+    // kana too, and the run between the kana's packed codes and their suffix gives it 2 (it repeats) or 3 (it
+    // lengthens): the run is empty for kana alone. The keys are ACE 16's (general-legacy-marks-ace16.tsv).
+    [Theory]
+    [InlineData("ー", "FFFF0100")]                                         // ー alone
+    [InlineData("aー", "4A4A0100")]
+    [InlineData("éー", "5151010E00")]                                 // é's accent is not repeated
+    [InlineData("Æー", "4A51FFFF0100")]                               // after two letters
+    [InlineData("-ー", "0682010101018007068200")]                          // after a hyphen, its weight 06 82
+    [InlineData("日々", "B756B75601020500")]                           // 々's own accent, 05
+    [InlineData("々é", "FFFF51010E00")]                               // no place: é's accent is the first
+    [InlineData("々\u0001", "FFFF01010101800B060300")]                     // but a place where a control character's is told
+    [InlineData("a\U0001F600々é", "4A4A510102050E00")]                // the pair is passed over
+    [InlineData("بّ", "79AC79AC010800")]                             // the shadda after beh
+    [InlineData("カー", "7F0A7F02010101FF9C0280FF8000")]               // カ's vowel, ア; the run 1 3
+    [InlineData("データ", "7F1D7F057F1A01030101FF9C0280FF8000")]   // デ's vowel, エ, without デ's accent
+    [InlineData("ッー", "7F1C7F04010101A8FF9C0280FF8000")]             // small, as ッ is
+    [InlineData("ｶﾞー", "7F0A7F0201030101FF9C0280FF8000")]       // ﾞ changes ｶ's accent, and is passed over
+    [InlineData("カ々", "7F0A7F0A0102050101FF980280FF8000")]           // the run 1 2
+    [InlineData("カ々ー", "7F0A7F0A7F020102050101FF9B0280FF8000")] // each mark by カ: the run 1 2 3
+    [InlineData("ュカキクケコサー",
+                "7F3C7F0A7F0B7F0C7F0D7F0E7F127F02010101A0FF95959C028080FF808000")]   // eight kana: the suffix twice
+    public void A_character_keyed_by_its_neighbours_has_ACE_s_key_in_General_Legacy(string value, string key)
+    {
+        Assert.True(Legacy.CanEncode(value));
+        Assert.Equal(key, Hex(Legacy.Encode(value, ascending: true)));
     }
 
     // ── General - Legacy ────────────────────────────────────────────────────

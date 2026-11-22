@@ -135,14 +135,15 @@ public sealed class GeneralForeignKeyTests : IDisposable
         }
     }
 
-    // A new key with a character Access keys by its neighbours is one the engine makes no key for: ACE makes the
-    // change and cascades it, the engine refuses it - at the parent, whose key is always indexed - with the file
-    // as it was. So too a child's new value, where the foreign key has an index.
+    // In General, a new key with a character Access keys by its neighbours is one the engine makes no key for: ACE
+    // makes the change and cascades it, the engine refuses it - at the parent, whose key is always indexed - with
+    // the file as it was. So too a child's new value, where the foreign key has an index.
     [Theory]
-    [MemberData(nameof(Cases))]
-    public void A_cascade_to_a_key_the_engine_cannot_make_is_refused_with_nothing_changed(bool general, bool indexForeignKey)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_cascade_to_a_key_the_engine_cannot_make_is_refused_with_nothing_changed(bool indexForeignKey)
     {
-        string path = ParentAndChild(general, indexForeignKey);
+        string path = ParentAndChild(general: true, indexForeignKey);
         byte[] before = File.ReadAllBytes(path);
         using (var db = OpenEnforcing(path))
         {
@@ -152,6 +153,30 @@ public sealed class GeneralForeignKeyTests : IDisposable
                 Assert.Throws<NotSupportedException>(() => db.GetTable("Child").UpdateByPrimaryKey(6, new Row { ["Code"] = "ー" }));
         }
         Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // In General - Legacy such a key is made: the cascade carries it to the children, a child names the parent by
+    // it, and a deleted parent takes its children with it.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_cascade_carries_a_key_with_a_mark_in_General_Legacy(bool indexForeignKey)
+    {
+        string path = ParentAndChild(general: false, indexForeignKey);
+        using (var db = OpenEnforcing(path))
+        {
+            db.GetTable("Parent").UpdateByPrimaryKey("résumé", new Row { ["Code"] = "データ" });
+            db.GetTable("Parent").Insert(new Row { ["Code"] = "日々" });
+            db.GetTable("Child").UpdateByPrimaryKey(6, new Row { ["Code"] = "日々" });
+            Assert.Throws<ConstraintViolationException>(() => db.GetTable("Child").Insert(new Row { ["Id"] = 10, ["Code"] = "データー" }));
+            db.GetTable("Parent").DeleteRow("Code", "日々");
+        }
+        using (var db = Database.Open(path))
+        {
+            Assert.Equal(new[] { "O'Brien", "Zürich", "Æther", "データ", "日本" }, Codes(db, "Parent"));
+            Assert.Equal(new[] { "ZÜRICH", "æther", "データ", "データ", "日本" }, Codes(db, "Child"));
+            AssertIndexesHoldTheRows(db);
+        }
     }
 
     // A key longer than an entry holds is cut, as Access cuts it, and the cascade carries it: the children's

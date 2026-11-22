@@ -14,14 +14,16 @@ namespace JackcessDotNet;
 /// <c>General97IndexCodes</c>), one line per character in embedded resources: U+0000..U+00FF in one file, read
 /// at once, and U+0100..U+FFFF less the surrogates in another, read on first use. A code in those files drops
 /// its leading zero ("C" is 0x0C). Where Access writes a key those codes do not give, Access is followed: the
-/// golden files of ACE's own keys in the tests say where.
+/// golden files of ACE's own keys in the tests say where. The marks that repeat or lengthen the character before them
+/// (々, ー, the shadda) have no codes of their own in General - Legacy: they are keyed by that character
+/// (<see cref="MarkCodes"/>). In General their keys are not made.
 ///
 /// A General or General - Legacy key's layout:
 ///   [inline bytes per char]
 ///   END_TEXT (0x01)
 ///   [extra/international bytes section, if any]
 ///   [END_TEXT × 2 if crazy or unprintable]
-///   [crazy codes packed into 6-bit groups, if any]
+///   [crazy codes packed into 6-bit groups, if any, then their suffix, which holds the codes of marks after kana]
 ///   [CRAZY_CODES_UNPRINT_SUFFIX if both]
 ///   [END_TEXT before unprintable section, if any]
 ///   [unprintable codes]
@@ -68,7 +70,9 @@ internal sealed class TextIndexCodes
         {
             ['\u0E4C'] = "P0",
         },
-        contextDependent: "\u0651\u3005\u3031\u3032\u309D\u309E\u30FC\u30FD\u30FE\uFE7C\uFE7D\uFF70",
+        contextDependent: "",
+        repeatMarks: "\u0651\u3005\u3031\u3032\u309D\u309E\u30FD\u30FE\uFE7C\uFE7D",
+        lengthMarks: "\u30FC\uFF70",
         twoLetters: "\u00C6\u00DE\u00DF\u00E6\u00FE\u0132\u0133\u0152\u0153\u01C7\u01C8\u01C9\u01CA\u01CB\u01CC\u01F1\u01F2\u01F3"
                   + "\u05F0\u05F1\u05F2\uFB00\uFB01\uFB02\uFB05\uFB06",
         threeLetters: "\uFB03\uFB04");
@@ -119,9 +123,15 @@ internal sealed class TextIndexCodes
     /// the files.
     /// </param>
     /// <param name="contextDependent">
-    /// The characters ACE keys by the characters around them, whose keys this library therefore does not make: the
-    /// marks that repeat or lengthen the character before them (々, ー, ゝ and the like), and in General four Arabic
-    /// ligatures.
+    /// The characters ACE keys by the characters around them whose keys this library does not make: in General, the
+    /// marks that repeat or lengthen the character before them (々, ー, ゝ and the like) and four Arabic ligatures.
+    /// </param>
+    /// <param name="repeatMarks">
+    /// The marks ACE keys as the character before them, with the extra code of their own line (々, ゝ, the shadda).
+    /// </param>
+    /// <param name="lengthMarks">
+    /// The marks ACE keys as the character before them, or after a kana as that kana's vowel (ー and its half-width
+    /// form).
     /// </param>
     /// <param name="twoLetters">
     /// In General - Legacy, the characters Access sorts as two letters (Æ as AE, ß as ss).
@@ -131,7 +141,7 @@ internal sealed class TextIndexCodes
     /// </param>
     private TextIndexCodes(
         string basicResource, string extResource, bool isGeneral, Dictionary<char, string> corrections,
-        string contextDependent, string twoLetters = "", string threeLetters = "")
+        string contextDependent, string repeatMarks = "", string lengthMarks = "", string twoLetters = "", string threeLetters = "")
     {
         _isGeneral = isGeneral;
         _basicCodes = Load(basicResource, (char)0, FirstExtChar);
@@ -146,7 +156,12 @@ internal sealed class TextIndexCodes
             foreach (var correction in corrections.Where(c => InTable(c.Key)))
                 codes[IndexOf(correction.Key)] = ParseCodeLine(correction.Value);
             foreach (char c in contextDependent.Where(InTable))
-                codes[IndexOf(c)] = new CharCodes { IsContextDependent = true };
+                codes[IndexOf(c)] = new CharCodes { Mark = MarkKind.Unkeyed };
+            // A mark's line holds its key after "a": a's inline code, and the mark's own extra code.
+            foreach (char c in repeatMarks.Where(InTable))
+                codes[IndexOf(c)] = new CharCodes { Mark = MarkKind.Repeat, Extra = codes[IndexOf(c)].Extra };
+            foreach (char c in lengthMarks.Where(InTable))
+                codes[IndexOf(c)] = new CharCodes { Mark = MarkKind.Lengthen, Extra = codes[IndexOf(c)].Extra };
 
             if (isGeneral)
             {
@@ -207,11 +222,11 @@ internal sealed class TextIndexCodes
          : null;
 
     /// <summary>
-    /// False for a value whose key <see cref="Encode"/> refuses to make: one with a character Access keys by the
-    /// characters around it (ー, 々 and the like) or, in Access 97's order, with a character code page 1252 has
-    /// not.
+    /// False for a value whose key <see cref="Encode"/> refuses to make: in General, one with a character Access
+    /// keys by the characters around it (ー, 々 and the like) or, in Access 97's order, with a character code page
+    /// 1252 has not.
     /// </summary>
-    public bool CanEncode(string value) => !ToIndexCharSequence(value).Any(c => CodesOf(c) is { IsContextDependent: true } or { IsNotInCodePage: true });
+    public bool CanEncode(string value) => !ToIndexCharSequence(value).Any(c => CodesOf(c) is { Mark: MarkKind.Unkeyed } or { IsNotInCodePage: true });
 
     /// <summary>Why <see cref="CanEncode"/> is false for <paramref name="value"/>, to follow "No index key is made for ".</summary>
     public string WhyNot(string value)
@@ -219,7 +234,7 @@ internal sealed class TextIndexCodes
         foreach (char c in ToIndexCharSequence(value))
         {
             var codes = CodesOf(c);
-            if (codes.IsContextDependent) return $"a value with U+{(int)c:X4}: Access keys that character by the ones around it";
+            if (codes.Mark == MarkKind.Unkeyed) return $"a value with U+{(int)c:X4}: Access keys that character by the ones around it";
             if (codes.IsNotInCodePage) return $"a value with U+{(int)c:X4}: Access 97 keeps text in code page 1252, which has no such character";
         }
         return "this value";
@@ -243,7 +258,11 @@ internal sealed class TextIndexCodes
         return EncodeChars(str, ascending: true);
     }
 
-    /// <summary>Whether Access keys <paramref name="c"/> by the characters around it in this order: ー, 々 and the like.</summary>
+    /// <summary>
+    /// Whether Access keys <paramref name="c"/> by the characters around it in this order: ー, 々 and the like. In
+    /// General - Legacy a value's key is made with such a character (<see cref="Encode"/>); a name with one is
+    /// compared by its readings (<see cref="ObjectNames"/>), which DAO was measured by, and not by that key.
+    /// </summary>
     internal bool IsContextDependent(char c) => CodesOf(c).IsContextDependent;
 
     // The key of text that is already as a key takes it: no longer than an entry holds, and trimmed or not.
@@ -255,14 +274,20 @@ internal sealed class TextIndexCodes
         ExtraCodes? extraCodes = null;
         List<byte>? unprintableCodes = null;
         List<byte>? crazyCodes = null;
+        List<byte>? kanaMarkCodes = null;
         int charOffset = 0;         // the place of the character among the extra codes
         int unprintableOffset = 0;  // and where an unprintable character's place is told
+        CharCodes? repeated = null; // the character a mark after it repeats or lengthens
 
         foreach (char c in str)
         {
             var codes = CodesOf(c);
-            if (codes.IsContextDependent)
+            if (codes.Mark == MarkKind.Unkeyed)
                 throw new NotSupportedException($"No index key is made for {WhyNot(str)}.");
+            if (codes.Mark != MarkKind.None)
+                codes = MarkCodes(codes, repeated);
+            else if (codes.Inline is not null || codes.Unprintable is not null)
+                repeated = codes;
 
             int curCharOffset = charOffset;
             int curUnprintableOffset = unprintableOffset;
@@ -283,7 +308,10 @@ internal sealed class TextIndexCodes
                 AddUnprintableCodes(curUnprintableOffset, codes.Unprintable, unprintableCodes ??= new List<byte>(), extraCodes);
 
             if (codes.CrazyFlag != 0)
+            {
                 (crazyCodes ??= new List<byte>()).Add(codes.CrazyFlag);
+                (kanaMarkCodes ??= new List<byte>()).Add(codes.KanaMarkCode);
+            }
         }
 
         key.Add(EndText);
@@ -302,7 +330,7 @@ internal sealed class TextIndexCodes
 
             if (hasCrazy)
             {
-                AddCrazyCodes(crazyCodes!, key);
+                AddCrazyCodes(crazyCodes!, kanaMarkCodes!, key);
                 if (hasUnprint)
                     key.Add(CrazyCodesUnprintSuffix);
             }
@@ -447,10 +475,20 @@ internal sealed class TextIndexCodes
         /// <summary>What the character adds to the extra code before it; 0 still starts the extra codes when none is.</summary>
         public byte? ExtraModifier { get; init; }
         public byte CrazyFlag { get; init; }
+
+        /// <summary>
+        /// For a kana (<see cref="CrazyFlag"/>), its code in the run after the kana's packed codes: 1 for a kana,
+        /// and for a mark after one 2 when it repeats it and 3 when it lengthens it (<see cref="MarkCodes"/>).
+        /// </summary>
+        public byte KanaMarkCode { get; init; } = KanaCode;
+
         public bool IsSimple { get; init; }
 
+        /// <summary>Whether the character is a mark Access keys by the character before it, and how.</summary>
+        public MarkKind Mark { get; init; }
+
         /// <summary>A character Access keys by the characters around it, so that no codes of its own make its key.</summary>
-        public bool IsContextDependent { get; init; }
+        public bool IsContextDependent => Mark != MarkKind.None;
 
         /// <summary>In Access 97's order, a character code page 1252 has not: no value of an Access 97 file holds it.</summary>
         public bool IsNotInCodePage { get; init; }
@@ -464,6 +502,68 @@ internal sealed class TextIndexCodes
 
         /// <summary>The places it takes where an unprintable character's place is told.</summary>
         public int UnprintablePlaces { get; set; } = 1;
+    }
+
+    /// <summary>How Access keys a mark by the character before it.</summary>
+    private enum MarkKind : byte
+    {
+        /// <summary>Not such a mark: the character's own codes make its key.</summary>
+        None,
+
+        /// <summary>A mark keyed as the character before it, with its own extra code: 々, ゝ, ゞ, the shadda.</summary>
+        Repeat,
+
+        /// <summary>The prolonged sound mark ー and its half-width form: after a kana, that kana's vowel.</summary>
+        Lengthen,
+
+        /// <summary>A mark keyed by the characters around it whose key this library does not make, in General.</summary>
+        Unkeyed,
+    }
+
+    private const byte KanaCode           = 1;
+    private const byte KanaRepeatCode     = 2;
+    private const byte KanaLengthenCode   = 3;
+    private const byte UnprintableScript  = 0x06;
+    private const byte KanaScript         = 0x7F;
+    private const byte FirstKanaVowel     = 0x02;
+    private const byte KanaRowLength      = 8;
+    private const byte KanaN              = 0x80;
+
+    // A mark with no character before it to repeat, or after a character Access sorts as several letters.
+    private static readonly CharCodes UnrepeatedMark = new() { Inline = new byte[] { 0xFF, 0xFF }, Places = 0, IsSimple = true };
+
+    /// <summary>
+    /// The codes of a mark Access keys by <paramref name="repeated"/>, the last character before it that is not such a
+    /// mark and has a weight of its own - a character Access leaves out (a surrogate) or one that only changes the
+    /// accent before it (the half-width voiced sound mark) is passed over. As ACE 16 keyed the mark after each character
+    /// of the BMP (tools/ace-mark-keys.ps1):
+    /// <list type="bullet">
+    /// <item>with none before it, or after a character Access sorts as several letters (Æ, ß, ǅ, ﬃ), the mark weighs
+    /// FF FF, takes no place among the accents and has no extra code;</item>
+    /// <item>otherwise it weighs what that character weighs - an unprintable character's weight is 06 and its code -
+    /// and takes a place with its own extra code (々 05, ゞ 03), not the character's;</item>
+    /// <item>ー and ｰ after a kana weigh that kana's vowel: the kana of a row are a, i, u, e, o from its first code,
+    /// eight codes to a row, and ン is itself;</item>
+    /// <item>after a kana the mark is a kana too, small or not as it is, and its code in the run after the kana's codes
+    /// is 2 for a mark that repeats and 3 for one that lengthens.</item>
+    /// </list>
+    /// </summary>
+    private static CharCodes MarkCodes(CharCodes mark, CharCodes? repeated)
+    {
+        if (repeated is null || repeated.Places > 1 || repeated.Extra is { Length: > 1 }) return UnrepeatedMark;
+
+        byte[] inline = repeated.Unprintable is { } unprintable ? new[] { UnprintableScript, unprintable[0] } : repeated.Inline!;
+        if (repeated.CrazyFlag == 0) return new CharCodes { Inline = inline, Extra = mark.Extra };
+
+        if (mark.Mark == MarkKind.Lengthen && inline[0] == KanaScript && inline[1] < KanaN)
+            inline = new[] { KanaScript, (byte)(FirstKanaVowel + (inline[1] - FirstKanaVowel) % KanaRowLength) };
+        return new CharCodes
+        {
+            Inline = inline,
+            Extra = mark.Extra,
+            CrazyFlag = repeated.CrazyFlag,
+            KanaMarkCode = mark.Mark == MarkKind.Lengthen ? KanaLengthenCode : KanaRepeatCode,
+        };
     }
 
     // ── The sections after the text ───────────────────────────────────────────
@@ -530,32 +630,40 @@ internal sealed class TextIndexCodes
         unprintableCodes.AddRange(codes);
     }
 
-    private static void AddCrazyCodes(List<byte> crazyCodes, List<byte> key)
+    private static void AddCrazyCodes(List<byte> crazyCodes, List<byte> kanaMarkCodes, List<byte> key)
     {
         // The trailing CRAZY_CODE_2s are left out, and the rest packed three to a byte.
-        int length = crazyCodes.Count;
-        while (length > 0 && crazyCodes[length - 1] == CrazyCode2) length--;
+        AddPacked(crazyCodes, CrazyCode2, key);
+
+        // The suffix repeats once for every seven crazy characters in the value, wherever they are, counted
+        // before the trim. Between its start and its midfix are the codes of the marks after kana, packed as the
+        // crazy codes are, a kana's own code 1 and the trailing ones left out: none in a value without such a mark.
+        int repeats = (crazyCodes.Count + CrazyCodesPerSuffixRepeat - 1) / CrazyCodesPerSuffixRepeat;
+        key.Add(CrazyCodesSuffixStart);
+        AddPacked(kanaMarkCodes, KanaCode, key);
+        key.Add(CrazyCodesSuffixMidfix);
+        key.AddRange(Enumerable.Repeat(CrazyCodesSuffixRepeat, repeats));
+        key.Add(CrazyCodesSuffixStart);
+        key.AddRange(Enumerable.Repeat(CrazyCodesSuffixRepeat, repeats));
+    }
+
+    // Two-bit codes three to a byte after a set top bit, those equal to trailing left out at the end.
+    private static void AddPacked(List<byte> codes, byte trailing, List<byte> key)
+    {
+        int length = codes.Count;
+        while (length > 0 && codes[length - 1] == trailing) length--;
 
         byte packed = CrazyCodeStart;
         int inByte = 0;
         for (int i = 0; i < length; i++)
         {
-            packed |= (byte)(crazyCodes[i] << (2 - inByte) * 2);
+            packed |= (byte)(codes[i] << (2 - inByte) * 2);
             if (++inByte < 3) continue;
             key.Add(packed);
             packed = CrazyCodeStart;
             inByte = 0;
         }
         if (inByte > 0) key.Add(packed);
-
-        // The suffix repeats once for every seven crazy characters in the value, wherever they are, counted
-        // before the trim.
-        int repeats = (crazyCodes.Count + CrazyCodesPerSuffixRepeat - 1) / CrazyCodesPerSuffixRepeat;
-        key.Add(CrazyCodesSuffixStart);
-        key.Add(CrazyCodesSuffixMidfix);
-        key.AddRange(Enumerable.Repeat(CrazyCodesSuffixRepeat, repeats));
-        key.Add(CrazyCodesSuffixStart);
-        key.AddRange(Enumerable.Repeat(CrazyCodesSuffixRepeat, repeats));
     }
 
     // ── Codes file loader ─────────────────────────────────────────────────────
