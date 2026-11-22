@@ -462,13 +462,16 @@ jobs:
           $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
           New-Item -ItemType Directory -Force $dumps | Out-Null
           # Both registry views: a 32-bit process's crash left no dump with the
-          # 64-bit one alone (run 44888628752, #145).
+          # 64-bit one alone (run 44888628752, #145). A 32-bit crash leaves two
+          # dumps of about 15 MB, the second named with "(1)" (runs 44904695547
+          # and 44905503645); only the first is uploaded, below. The folder keeps
+          # six, which is three such crashes.
           foreach ($key in 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps',
                            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\Windows Error Reporting\LocalDumps') {
             New-Item -Path $key -Force | Out-Null
             Set-ItemProperty -Path $key -Name DumpFolder -Value $dumps -Type ExpandString
             Set-ItemProperty -Path $key -Name DumpType -Value 1 -Type DWord
-            Set-ItemProperty -Path $key -Name DumpCount -Value 5 -Type DWord
+            Set-ItemProperty -Path $key -Name DumpCount -Value 6 -Type DWord
           }
 
       # The installer started above, finished and registered. Should its
@@ -534,6 +537,33 @@ jobs:
             TestResults/*.trx
             TestResults/*.xml
           if-no-files-found: warn
+
+      # Windows names a second dump of one process "name(1).pid.dmp" beside
+      # "name.pid.dmp". In the pairs of runs 44904695547 and 44905503645 both
+      # are of the same 32-bit process, modules and faulting thread: the first
+      # records the fault itself (0xC0000005) and the second, written a second
+      # or two later, the 0xC000041D that follows it. The second is removed
+      # where the first is there and was written within a minute of it, which
+      # another process given the same id would not be. A dump that cannot be
+      # removed is uploaded with the rest, with a warning.
+      - name: One dump for each process that crashed
+        if: always()
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+          foreach ($dump in @(Get-ChildItem -LiteralPath $dumps -Filter '*.dmp' -ErrorAction SilentlyContinue)) {
+            if ($dump.Name -notmatch '^(?<name>.+)\(\d+\)(?<rest>\.\d+\.dmp)$') { continue }
+            $first = Join-Path $dumps ($Matches.name + $Matches.rest)
+            if (-not (Test-Path -LiteralPath $first)) { continue }
+            $apart = [math]::Abs(($dump.LastWriteTimeUtc - (Get-Item -LiteralPath $first).LastWriteTimeUtc).TotalSeconds)
+            if ($apart -gt 60) { continue }
+            try {
+              Remove-Item -LiteralPath $dump.FullName -ErrorAction Stop
+              "Removed $($dump.Name): $(Split-Path -Leaf $first) is of the same process."
+            } catch {
+              "::warning::$($dump.Name) was not removed: $($_.Exception.Message)"
+            }
+          }
 
       - name: Upload crash dumps
         if: always()
