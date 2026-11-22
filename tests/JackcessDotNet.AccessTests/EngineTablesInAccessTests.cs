@@ -540,20 +540,194 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal(250, table.FindRowByPrimaryKey(Code(250))["N"]);
                 Assert.Null(table.FindRowByPrimaryKey("データー"));
 
-                // In General - Legacy the engine makes no key for any of the five; in General the shadda has a key
-                // of its own. A row whose key it cannot make is not deleted or rewritten with its entry left behind.
-                Assert.Throws<NotSupportedException>(() => table.DeleteRow("Code", "データ"));
-                Assert.Throws<NotSupportedException>(() => table.UpdateByPrimaryKey("日々", new Row { ["N"] = 7 }));
+                // In General the engine makes no key for ー or 々 (the shadda has a key of its own there). A row whose
+                // key it cannot make is not deleted or rewritten with its entry left behind.
+                if (general)
+                {
+                    Assert.Throws<NotSupportedException>(() => table.DeleteRow("Code", "データ"));
+                    Assert.Throws<NotSupportedException>(() => table.UpdateByPrimaryKey("日々", new Row { ["N"] = 7 }));
+                }
             }
             Assert.Equal(before, File.ReadAllBytes(path));
+
+            // In General - Legacy it makes ACE's key for each: it takes the row ACE wrote out of the index, and ACE no
+            // longer finds it; it rewrites another, and ACE reads the change.
+            if (!general)
+            {
+                using (var db = Database.Open(path))
+                {
+                    db.GetTable("Coded").DeleteRow("Code", "データ");
+                    db.GetTable("Coded").UpdateByPrimaryKey("日々", new Row { ["N"] = 7 });
+                }
+                Assert.Equal(new[] { "データ" }, NotFoundBySeek(path, "Coded", new[] { "データ" }));
+                Assert.Equal(7, Convert.ToInt32(Scalar(path, "SELECT N FROM Coded WHERE Code = '日々'")));
+            }
 
             // The long key is one the engine makes as ACE does, cut and ended in a digest: it takes the row ACE
             // wrote out of the key, and ACE no longer finds it.
             using (var db = Database.Open(path))
                 db.GetTable("Coded").DeleteRow("Code", longKey);
-            Assert.Equal(505, Scalar(path, "SELECT COUNT(*) FROM Coded"));
+            Assert.Equal(general ? 505 : 504, Scalar(path, "SELECT COUNT(*) FROM Coded"));
             Assert.Equal(new[] { longKey }, NotFoundBySeek(path, "Coded", new[] { longKey }));
-            Assert.Empty(NotFoundBySeek(path, "Coded", keyedByNeighbours.Concat(Enumerable.Range(1, 500).Select(Code))));
+            Assert.Empty(NotFoundBySeek(path, "Coded",
+                keyedByNeighbours.Where(code => general || code != "データ").Concat(Enumerable.Range(1, 500).Select(Code))));
+        }
+
+        // ── Values with the marks Access keys by the character before them, in General - Legacy ─────────
+
+        private static readonly string[] Marks =
+            { "ّ", "々", "〱", "〲", "ゝ", "ゞ", "ー", "ヽ", "ヾ", "ﹼ", "ﹽ", "ｰ" };
+
+        // What comes before a mark: each kind of character the rule tells apart (tools/ace-mark-keys.ps1), and in a
+        // full sweep every kana.
+        private static IEnumerable<string> BeforeMarks()
+        {
+            var before = new List<string>
+            {
+                "", "あ", "か", "が", "っ", "ん", "ア", "カ", "ガ", "ッ", "ュ", "ン", "ヴ", "パ", "ｶ", "ｶﾞ", "ｯ", "日", "人",
+                "a", "é", "Æ", "ß", "1", "-", "'", "\u0001", "ب", "مَ", "a\U0001F600", "カー", "日々",
+            };
+            if (Sweeps.Full)
+                before.AddRange(Enumerable.Range(0x3041, 0x30FA - 0x3041 + 1).Concat(Enumerable.Range(0xFF66, 0xFF9D - 0xFF66 + 1))
+                    .Select(c => ((char)c).ToString()));
+            return before;
+        }
+
+        private static List<string> MarkedValues()
+        {
+            var values = new List<string>
+            {
+                "データ", "メール", "コンピューター", "佐々木", "人々", "時々", "ｺｰﾋｰ", "いすゞ", "こころゝ", "محمّد",
+                "ー", "々", "ーー", "々é", "Æー", "aー", "aa",
+            };
+            foreach (var b in BeforeMarks())
+                foreach (var m in Marks)
+                    foreach (var after in new[] { "", "é", "カ" })
+                        values.Add(b + m + after);
+            return values.Distinct(StringComparer.Ordinal).ToList();
+        }
+
+        /// <summary>The values among <paramref name="codes"/> that DAO does not find by a Seek on <paramref name="index"/>.</summary>
+        private static List<string> NotFoundBySeek(string path, string table, string index, IEnumerable<string> codes)
+        {
+            var missing = new List<string>();
+            var dbe = Dao.Engine;
+            try
+            {
+                var db = Com(dbe, "OpenDatabase", path);
+                try
+                {
+                    var rs = Com(db, "OpenRecordset", table, 1);   // dbOpenTable
+                    rs.GetType().InvokeMember("Index", BindingFlags.SetProperty, null, rs, new object[] { index });
+                    foreach (var code in codes)
+                    {
+                        Com(rs, "Seek", "=", code);
+                        if ((bool)Com(rs, "NoMatch")) missing.Add(code);
+                    }
+                    Com(rs, "Close");
+                }
+                finally { Com(db, "Close"); }
+            }
+            finally { Dao.Release(dbe); }
+            return missing;
+        }
+
+        private static List<int> InIndexOrder(string path, string table, string index)
+        {
+            return AccessReferee.DaoRows(path, table, index).Select(row => Convert.ToInt32(row["Id"])).ToList();
+        }
+
+        // Values with each of the twelve marks after each kind of character, in a table the engine creates with a
+        // unique index on a Text column and an index on a Memo. The engine refuses as a duplicate each value whose key
+        // is one it already wrote ("aー" is "aa", ｰ is ー), and ACE refuses each of those too. ACE adds the values the
+        // engine kept to a table of its own, and DAO walks the two unique indexes to the rows in the same order. ACE
+        // finds each value through both of the engine's indexes, by a Seek and by a query, as a scan finds it; ACE adds,
+        // changes and deletes rows, and the engine finds, refuses and takes out what ACE wrote; and DAO compacts the
+        // file - rebuilding the indexes with ACE's own keys - to the same order, every row kept. A sample of the kana
+        // unless JACKCESS_FULL_SWEEPS=1.
+        [Fact]
+        public void ace_seeks_orders_writes_and_compacts_values_with_marks_the_engine_keys_in_general_legacy()
+        {
+            var path = _tmp.NewMdbPath();
+            var kept = new List<string>();
+            var duplicates = new List<string>();
+            using (var db = Database.Create(path, FileFormat.Access2000))
+            {
+                var table = db.CreateTable("Marked",
+                    Columns(Long("Id"), Text("Code", 255), new ColumnDefinition("Notes", DataType.Memo)),
+                    new[] { "Id" },
+                    new[] { new IndexDefinition("ByCode", "Code") { IsUnique = true }, new IndexDefinition("ByNotes", "Notes") });
+                foreach (var value in MarkedValues())
+                {
+                    try
+                    {
+                        table.Insert(new Row { ["Id"] = kept.Count, ["Code"] = value, ["Notes"] = value });
+                        kept.Add(value);
+                    }
+                    catch (ConstraintViolationException) { duplicates.Add(value); }
+                }
+            }
+            Assert.Contains("aー", kept);
+            Assert.Contains("aa", duplicates);
+            Assert.Contains("ｶｰ", duplicates);
+
+            AccessReferee.Execute(path, "CREATE TABLE AceMarked (Id LONG PRIMARY KEY, Code TEXT(255), Notes MEMO)",
+                          "CREATE UNIQUE INDEX ByCode ON AceMarked (Code)");
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                for (var i = 0; i < kept.Count; i++)
+                    Exec(connection, "INSERT INTO AceMarked (Id, Code, Notes) VALUES (?, ?, ?)", i, kept[i], kept[i]);
+
+                // Each value the engine took as a duplicate, ACE takes as one too.
+                for (var i = 0; i < duplicates.Count; i++)
+                    Assert.True(Refused(connection, "INSERT INTO Marked (Id, Code) VALUES (?, ?)", 100000 + i, duplicates[i]), duplicates[i]);
+
+                // Found through each index as a scan finds it.
+                foreach (var value in kept)
+                {
+                    Assert.Equal(1, CountWhere(connection, "Marked", "[Code] = ?", value));
+                    Assert.Equal(CountWhere(connection, "Marked", "[Notes] & '' = ?", value), CountWhere(connection, "Marked", "[Notes] = ?", value));
+                }
+            }
+            var order = InIndexOrder(path, "AceMarked", "ByCode");
+            Assert.Equal(order, InIndexOrder(path, "Marked", "ByCode"));
+            Assert.Empty(NotFoundBySeek(path, "Marked", "ByCode", kept));
+            Assert.Empty(NotFoundBySeek(path, "Marked", "ByNotes", kept));
+
+            // ACE writes to the engine's table, between the engine's keys; the engine finds and refuses what ACE wrote.
+            string[] fromAce = { "ゴール", "々木", "ﾃﾞｰﾀﾍﾞｰｽ", "こゝろ", "شّ" };
+            using (var connection = new OleDbConnection(AceVerification.ConnectionString(path)))
+            {
+                connection.Open();
+                for (var i = 0; i < fromAce.Length; i++)
+                    Exec(connection, "INSERT INTO Marked (Id, Code, Notes) VALUES (?, ?, ?)", 50000 + i, fromAce[i], fromAce[i]);
+                Exec(connection, "UPDATE Marked SET Code = ?, Notes = ? WHERE Id = ?", "テーブル", "テーブル", kept.IndexOf("コンピューター"));
+                Exec(connection, "DELETE FROM Marked WHERE Code = ?", "佐々木");
+            }
+            using (var db = Database.Open(path))
+            {
+                var table = db.GetTable("Marked");
+                for (var i = 0; i < fromAce.Length; i++)
+                    Assert.Equal(50000 + i, table.CreateIndexCursor("ByCode").FindRowByEntry(fromAce[i])?["Id"]);
+                Assert.Equal(kept.IndexOf("コンピューター"), table.CreateIndexCursor("ByCode").FindRowByEntry("テーブル")?["Id"]);
+                Assert.Null(table.CreateIndexCursor("ByCode").FindRowByEntry("佐々木"));
+                Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 60000, ["Code"] = "ゴｰル" }));   // ゴール, to Access
+                table.DeleteRow("Code", "こゝろ");
+                table.UpdateByPrimaryKey(50000, new Row { ["Code"] = "ゴーーール", ["Notes"] = "ゴーーール" });
+                table.Insert(new Row { ["Id"] = 60001, ["Code"] = "佐々木", ["Notes"] = "佐々木" });
+            }
+            var now = kept.Where(v => v != "コンピューター").Concat(new[] { "テーブル", "ゴーーール", "々木", "ﾃﾞｰﾀﾍﾞｰｽ", "شّ" }).ToList();
+            Assert.Empty(NotFoundBySeek(path, "Marked", "ByCode", now));
+            Assert.Equal(new[] { "こゝろ", "コンピューター", "ゴール" }, NotFoundBySeek(path, "Marked", "ByCode", new[] { "こゝろ", "コンピューター", "ゴール" }));
+            var before = InIndexOrder(path, "Marked", "ByCode");
+
+            var compacted = AccessReferee.Compact(path);
+            Assert.DoesNotContain("MSysCompactError", ListedTables(compacted));
+            Assert.Equal(before, InIndexOrder(compacted, "Marked", "ByCode"));
+            Assert.Empty(NotFoundBySeek(compacted, "Marked", "ByCode", now));
+            Assert.Empty(NotFoundBySeek(compacted, "Marked", "ByNotes", now));
+            Assert.Equal(now.Count, Convert.ToInt32(Scalar(compacted, "SELECT COUNT(*) FROM Marked")));
         }
 
         [Fact]
