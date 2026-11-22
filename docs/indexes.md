@@ -152,9 +152,12 @@ codes file says, which is the key it has after "a", whatever is before it
   found through a text index of one instead of by reading its table. The codes
   are Jackcess's `General97IndexCodes`, with what ACE writes otherwise: a
   character keyed as two letters (Œ, Æ, ß) takes a place for each among the
-  accents. Access 97 keeps text in code page 1252, and a value with a character
-  that code page has not, or whose key is longer than the 255 bytes an entry
-  there holds, is looked for by reading the table. The keys are those the 32-bit
+  accents. The keys are of the text's bytes in its code page - 1252, or the one
+  `DatabaseOpenOptions.Access97CodePage` names
+  ([Text in a code page](file-formats.md#text-in-a-code-page)) - with the codes
+  those bytes have in 1252, and a value with a character the code page has not,
+  or whose key is longer than the 255 bytes an entry there holds, is looked for
+  by reading the table. The keys are those the 32-bit
   ACE 12.0 and Jet 4.0 write in an Access 97 file (ACE 16 opens none): every
   character of the code page alone and in every pair, and 40,000 longer values,
   were compared, and every text key in the nine files Access 97 itself wrote, in

@@ -73,8 +73,9 @@ internal static class HeaderMask
     /// this is it, exactly. An Access 97 file keeps its password in its code page, converted as Windows converts text
     /// to it - a character the code page lacks is the one Windows' best fit gives for it (L for Ł), or a question mark
     /// (Cyrillic, Chinese) - and Jet 3 checks a password given after the same conversion, case and all: passwords
-    /// that convert alike open the file alike (<c>tools/jet3-password-fixture.ps1</c>). An Access 2000-2003 file
-    /// keeps its password in UTF-16.
+    /// that convert alike open the file alike (<c>tools/jet3-password-fixture.ps1</c>). The conversion of the password
+    /// given is in the code page the file is read in, as Jet's is in the machine's
+    /// (<c>tools/access97-code-page-fixture.ps1</c>). An Access 2000-2003 file keeps its password in UTF-16.
     /// </summary>
     internal static bool OpensWith(byte[] header, JetFormat format, string? password)
     {
@@ -104,12 +105,15 @@ internal static class HeaderMask
     };
 
     // Text in code page 1252 (an Access 97 file's) as Windows converts it, best fit and all, the same on every target:
-    // the code page's encoding, which converts as Windows does but for the characters above.
+    // the code page's encoding, which converts as Windows does but for the characters above. A file read in another
+    // code page (DatabaseOpenOptions.Access97CodePage) has its password converted by that code page's encoding, whose
+    // best fit for a character the code page has not was not compared with Windows'.
     private static byte[] AsWindowsConverts(string text, System.Text.Encoding codePage)
     {
         char[] chars = text.ToCharArray();
-        for (int i = 0; i < chars.Length; i++)
-            if (WindowsBestFit.TryGetValue(chars[i], out char fit)) chars[i] = fit;
+        if (codePage.CodePage == 1252)
+            for (int i = 0; i < chars.Length; i++)
+                if (WindowsBestFit.TryGetValue(chars[i], out char fit)) chars[i] = fit;
         return codePage.GetBytes(chars);
     }
 

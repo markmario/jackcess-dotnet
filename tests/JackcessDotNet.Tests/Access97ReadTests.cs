@@ -445,4 +445,272 @@ public sealed class Access97ReadTests
 
     private static Row RowAt(Table table, int rowPointer)
         => table.ReadRowAt(rowPointer, table.Columns) ?? throw new InvalidDataException($"No row at {rowPointer:X8}.");
+
+    // ── Text in another code page (#154) ─────────────────────────────────────
+
+    // Assets/access97-cp1251.mdb, access97-cp932.mdb and access97-cp1251-password.mdb were made by Jet 4.0 (32-bit DAO
+    // 3.6) in a process whose code page was 1251 or 932, and each .tsv beside them is what that DAO read of the file
+    // with that code page and with 1252, every line led by the code page (tools/access97-code-page-fixture.ps1). Jet
+    // keeps and reads the text in the process's code page, whatever the file's header says: the first two say General
+    // and code page 1252.
+
+    /// <summary>The lines DAO read of the fixture with <paramref name="codePage"/>, each without the code page that leads it.</summary>
+    private static List<string[]> AsDaoRead(string fixture, int codePage)
+        => File.ReadAllLines(Asset($"access97-{fixture}.tsv"), System.Text.Encoding.UTF8)
+            .Where(line => line.Length > 0 && line[0] != '#')
+            .Select(line => line.Split('\t'))
+            .Where(cells => cells[0] == codePage.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .Select(cells => cells.Skip(1).ToArray())
+            .ToList();
+
+    /// <summary>The fixture, opened with its text in <paramref name="codePage"/>: for 1252, with nothing set.</summary>
+    private static Database OpenInCodePage(string fixture, int codePage, string? password = null)
+        => Database.Open(Asset($"access97-{fixture}.mdb"),
+                         new DatabaseOpenOptions { Access97CodePage = codePage == 1252 ? null : codePage, Password = password });
+
+    public static TheoryData<string, int> CodePageReadings() => new()
+    {
+        { "cp1251", 1251 }, { "cp1251", 1252 }, { "cp932", 932 }, { "cp932", 1252 }, { "cp1251-password", 1251 }, { "cp1251-password", 1252 },
+    };
+
+    /// <summary>
+    /// The names of the table, its columns and its indexes, and every row's text, are what DAO read with the code page
+    /// the file is opened in; and the table is found by the names DAO found it by. Opened with nothing set, a file
+    /// written in another code page reads as Access reads it on a machine of code page 1252.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CodePageReadings))]
+    public void Text_of_an_Access_97_file_reads_in_the_code_page_it_is_opened_in_as_DAO_reads_it_with_that_code_page(string fixture, int codePage)
+    {
+        var dao = AsDaoRead(fixture, codePage);
+        string? password = dao.FirstOrDefault(line => line[0] == "password" && line[2] == "opens")?[1];
+        using var db = OpenInCodePage(fixture, codePage, password);
+
+        string name = Assert.Single(dao, line => line[0] == "table")[1];
+        Assert.Equal(new[] { name }, db.GetTableNames());
+        var table = db.GetTable(name);
+        Assert.Equal(dao.Where(line => line[0] == "column").Select(line => line[2]).OrderBy(n => n, StringComparer.Ordinal),
+                     table.Columns.Select(c => c.Name).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal(dao.Where(line => line[0] == "index").Select(line => line[2] + ":" + line[3]).OrderBy(n => n, StringComparer.Ordinal),
+                     table.Indexes.Select(ix => ix.Name + ":" + string.Join(",", ix.Columns.Select(c => c.Column.Name))).OrderBy(n => n, StringComparer.Ordinal));
+
+        var text = table.Columns.Single(c => c.DataType == DataType.Text);
+        Assert.Equal(codePage, text.SortOrder.CodePage);
+        Assert.Equal(dao.Where(line => line[0] == "row").Select(line => line[1] + "=" + line[2]),
+                     table.Rows.Select(row => Convert.ToInt32(row["Id"]) + "=" + ((string?)row[text.Name] ?? "\\N")));
+
+        foreach (var line in dao.Where(line => line[0] == "tabledef"))
+        {
+            bool found = db.TryGetTable(line[1], out var byName);
+            Assert.True(found == (line[2] != "-"), $"'{line[1]}': DAO found {line[2]}, this library {(found ? byName!.Name : "nothing")}.");
+            if (found) Assert.Equal(line[2], byName!.Name);
+        }
+    }
+
+    /// <summary>
+    /// Jet keys an Access 97 file's text in General by its bytes, whatever its code page: every entry of the text
+    /// index is the key this library makes of its row's value in the code page the file is opened in, and a value is
+    /// found through the index as DAO's Seek found it with that code page - Cyrillic in either case with code page
+    /// 1251, whose two cases have the bytes of the two cases of Latin-1's letters, and only as it is with 932, whose
+    /// two bytes a letter do not. A value with a character the code page has not is not looked for, where DAO looked
+    /// for what Windows' best fit made of it.
+    /// </summary>
+    [Theory]
+    [InlineData("cp1251", 1251, 16)]
+    [InlineData("cp1251", 1252, 6)]
+    [InlineData("cp932", 932, 11)]
+    [InlineData("cp932", 1252, 4)]
+    public void Text_of_an_Access_97_file_is_found_through_its_index_as_DAO_found_it_with_the_code_page_it_is_opened_in(string fixture, int codePage, int looked)
+    {
+        var dao = AsDaoRead(fixture, codePage);
+        using var db = OpenInCodePage(fixture, codePage);
+        var table = db.GetTable(db.GetTableNames().Single());
+        var index = table.Indexes.Single(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text);
+        var codes = TextIndexCodes.For(index.Columns[0].Column.SortOrder);
+        Assert.NotNull(codes);
+        Assert.Equal(codePage, codes!.CodePage);
+
+        var writer = new IndexWriter(db.File, new PageAllocator(db.File));
+        int entries = 0;
+        foreach (var (key, pointer) in writer.EntriesWithPrefix(index.RootPageNumber, Array.Empty<byte>()))
+        {
+            object?[] values = { Value(RowAt(table, pointer), index.Columns[0]) };
+            Assert.Equal(Convert.ToHexString(key), Convert.ToHexString(IndexKeys.Encode(index.Columns, values)));
+            entries++;
+        }
+        Assert.Equal(9, entries);
+
+        var reader = new IndexReader(db.File, index);
+        int lookups = 0;
+        foreach (var line in dao.Where(line => line[0] == "seek"))
+        {
+            object?[] asked = { line[1] };
+            if (!IndexKeys.CanSearch(index.Columns, asked))
+            {
+                Assert.False(codes.CanEncode(line[1]), $"'{line[1]}' is not looked for, and its code page has every character of it.");
+                continue;
+            }
+            // No two rows of a fixture have one key, so DAO's Seek, which gives the first row of a key, names them all.
+            var ids = reader.FindRowPointersForEntry(asked).Select(p => Convert.ToInt32(RowAt(table, p)["Id"])).ToList();
+            var expected = line[2] == "-" ? new List<int>() : new List<int> { int.Parse(line[2], System.Globalization.CultureInfo.InvariantCulture) };
+            Assert.True(expected.SequenceEqual(ids), $"'{line[1]}': DAO found {line[2]}, this library {string.Join(", ", ids)}.");
+            lookups++;
+        }
+        Assert.Equal(looked, lookups);
+    }
+
+    /// <summary>
+    /// A database password is converted to the code page the file is opened in before it is compared, as Jet converts
+    /// it to the machine's: the password set as "Пароль1" with code page 1251 opens the file with that code page, and
+    /// with 1252 the password "Ïàðîëü1", which has its bytes there, does.
+    /// </summary>
+    [Theory]
+    [InlineData(1251)]
+    [InlineData(1252)]
+    public void A_database_password_of_an_Access_97_file_opens_it_as_DAO_opened_it_with_the_code_page_it_is_opened_in(int codePage)
+    {
+        var tried = AsDaoRead("cp1251-password", codePage).Where(line => line[0] == "password").ToList();
+        Assert.Equal(4, tried.Count);
+        foreach (var line in tried)
+        {
+            if (line[2] == "opens")
+                OpenInCodePage("cp1251-password", codePage, line[1]).Dispose();
+            else
+                Assert.Throws<System.Security.Authentication.InvalidCredentialException>(() => OpenInCodePage("cp1251-password", codePage, line[1]));
+        }
+    }
+
+    [Fact]
+    public void The_code_page_1252_named_reads_as_nothing_set_does()
+    {
+        using var named = Database.Open(Asset("access97-cp1251.mdb"), new DatabaseOpenOptions { Access97CodePage = 1252 });
+        using var unset = Database.Open(Asset("access97-cp1251.mdb"));
+        Assert.Same(JetFormat.Jet3, named.File.Format);
+        Assert.Equal(unset.GetTableNames(), named.GetTableNames());
+        string name = unset.GetTableNames().Single();
+        Assert.Equal(unset.GetTable(name).Rows.Select(Cells), named.GetTable(name).Rows.Select(Cells));
+
+        static string Cells(Row row) => string.Join("|", row.Select(cell => cell.Key + "=" + cell.Value));
+    }
+
+    /// <summary>
+    /// A code page that is not one of Windows' ANSI code pages, which are the ones Jet keeps Access 97 text in, is
+    /// refused before the file is opened, whatever its format: Unicode's encodings (with UTF-8 for its code page DAO 3.6
+    /// makes no Access 97 file), EBCDIC (37 did not read the catalog), ASCII, ISO-2022 and GB 18030 (20127 and 50220
+    /// gave wrong answers through an index), a DOS code page, and numbers that are no code page. A file of a later
+    /// format, whose text is Unicode, is read as it is whatever code page is named.
+    /// </summary>
+    [Theory]
+    [InlineData(37)]
+    [InlineData(437)]
+    [InlineData(850)]
+    [InlineData(20127)]
+    [InlineData(28591)]
+    [InlineData(50220)]
+    [InlineData(54936)]
+    [InlineData(65001)]
+    [InlineData(65000)]
+    [InlineData(1200)]
+    [InlineData(1201)]
+    [InlineData(12000)]
+    [InlineData(12001)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(99999)]
+    public void A_code_page_no_Access_97_text_is_kept_in_is_refused_before_the_file_is_opened(int codePage)
+    {
+        foreach (string path in new[] { Asset("access97-cp1251.mdb"), TestCorpus.File("V2003", "queryV2003.mdb")! })
+        {
+            var refused = Assert.Throws<ArgumentException>(() => Database.Open(path, new DatabaseOpenOptions { Access97CodePage = codePage, ReadOnly = true }));
+            Assert.Contains(nameof(DatabaseOpenOptions.Access97CodePage), refused.Message);
+        }
+    }
+
+    [Fact]
+    public void A_file_of_a_later_format_reads_the_same_whatever_code_page_is_named()
+    {
+        string path = TestCorpus.File("V2003", "queryV2003.mdb")!;
+        using var unset = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true });
+        using var named = Database.Open(path, new DatabaseOpenOptions { ReadOnly = true, Access97CodePage = 1251 });
+        Assert.Same(unset.File.Format, named.File.Format);
+        Assert.Equal(unset.GetTableNames(), named.GetTableNames());
+    }
+
+    /// <summary>Every one of Windows' ANSI code pages is taken, and the file opens and its names read.</summary>
+    [Theory]
+    [InlineData(874)]
+    [InlineData(932)]
+    [InlineData(936)]
+    [InlineData(949)]
+    [InlineData(950)]
+    [InlineData(1250)]
+    [InlineData(1251)]
+    [InlineData(1252)]
+    [InlineData(1253)]
+    [InlineData(1254)]
+    [InlineData(1255)]
+    [InlineData(1256)]
+    [InlineData(1257)]
+    [InlineData(1258)]
+    public void Every_Windows_ANSI_code_page_is_taken(int codePage)
+    {
+        using var db = Database.Open(Asset("access97-cp1251.mdb"), new DatabaseOpenOptions { Access97CodePage = codePage });
+        Assert.Single(db.GetTableNames());
+        Assert.Equal(9, db.GetTable(db.GetTableNames().Single()).Rows.Count());
+    }
+
+    /// <summary>
+    /// Code page 932 reads some characters from more than one form of bytes - ≒ from 87 90 and from 81 E0, ⅰ from EE EF
+    /// and FA 40, Ⅰ from FA 4A and 87 54 - and Jet keys the bytes a value was stored with, which differ between the
+    /// forms. Which form a stored value has, its character does not say, so a value with such a character is not
+    /// searched through an index: it is looked for by reading the table, as one with a character the code page lacks.
+    /// </summary>
+    [Fact]
+    public void A_character_of_more_than_one_form_of_bytes_is_not_searched_through_an_Access_97_index()
+    {
+        var cp932 = System.Text.Encoding.GetEncoding(932);
+        var w1252 = JetFormat.Jet3.TextEncoding;
+        foreach (var (c, first, second) in new[] { ('≒', new byte[] { 0x87, 0x90 }, new byte[] { 0x81, 0xE0 }),
+                                                  ('ⅰ', new byte[] { 0xEE, 0xEF }, new byte[] { 0xFA, 0x40 }),
+                                                  ('Ⅰ', new byte[] { 0xFA, 0x4A }, new byte[] { 0x87, 0x54 }) })
+        {
+            Assert.Equal(c.ToString(), cp932.GetString(first));
+            Assert.Equal(c.ToString(), cp932.GetString(second));
+            // The two forms have keys of their own: neither is the key of the character.
+            Assert.NotEqual(Convert.ToHexString(TextIndexCodes.Access97.Encode(w1252.GetString(first), ascending: true)),
+                            Convert.ToHexString(TextIndexCodes.Access97.Encode(w1252.GetString(second), ascending: true)));
+            Assert.Contains(c, TextIndexCodes.CharactersOfManyForms(cp932));
+        }
+
+        var codes = TextIndexCodes.Access97In(932);
+        foreach (string value in new[] { "≒", "x≒", "ⅰ", "Ⅰ" })
+        {
+            Assert.False(codes.CanEncode(value));
+            Assert.Contains("more than one form", Assert.Throws<NotSupportedException>(() => codes.Encode(value, ascending: true)).Message);
+        }
+        Assert.True(codes.CanEncode("東京"));
+
+        using var db = OpenInCodePage("cp932", 932);
+        var table = db.GetTable(db.GetTableNames().Single());
+        var index = table.Indexes.Single(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text);
+        Assert.False(IndexKeys.CanSearch(index.Columns, new object?[] { "≒" }));
+        Assert.True(IndexKeys.CanSearch(index.Columns, new object?[] { "東京" }));
+    }
+
+    /// <summary>
+    /// A caller's lookup finds a row of an Access 97 file by text that is the same as its value, letter case and all,
+    /// in whatever code page: the index's keys take МОСКВА as Москва with code page 1251, and DAO's Seek finds the one
+    /// by the other, but this library's equality in Access 97's order is the same text.
+    /// </summary>
+    [Fact]
+    public void A_lookup_in_an_Access_97_file_finds_the_same_text_only()
+    {
+        using var db = OpenInCodePage("cp1251", 1251);
+        var table = db.GetTable(db.GetTableNames().Single());
+        var index = table.Indexes.Single(ix => ix.Columns.Count == 1 && ix.Columns[0].Column.DataType == DataType.Text);
+        string column = index.Columns[0].Column.Name;
+        Assert.NotNull(table.CreateIndexCursor(index.Name).FindRow(column, "Москва"));
+        Assert.Null(table.CreateIndexCursor(index.Name).FindRow(column, "МОСКВА"));
+        Assert.Null(table.CreateCursor().FindRow(column, "москва"));
+    }
 }

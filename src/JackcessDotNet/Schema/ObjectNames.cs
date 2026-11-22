@@ -56,6 +56,19 @@ internal sealed class ObjectNames
     /// </summary>
     internal static ObjectNames Access97Columns { get; } = new(TextIndexCodes.Access97, byWholeName: false, alsoBy: GeneralLegacy);
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, ObjectNames> Access97Tables = new(), Access97ColumnsIn = new();
+
+    /// <summary>
+    /// <see cref="Access97"/>, or with <paramref name="columns"/> <see cref="Access97Columns"/>, for an Access 97 file
+    /// whose text is in <paramref name="codePage"/>: by the index keys of the bytes of the names in it
+    /// (<see cref="TextIndexCodes.Access97In"/>). DAO, with the code page 1251, found a table named "Города" by "ГОРОДА"
+    /// and "города", as those keys have it (tools/access97-code-page-fixture.ps1).
+    /// </summary>
+    internal static ObjectNames Access97In(int codePage, bool columns)
+        => codePage == TextIndexCodes.Access97.CodePage ? (columns ? Access97Columns : Access97)
+         : (columns ? Access97ColumnsIn : Access97Tables).GetOrAdd(codePage,
+               cp => new(TextIndexCodes.Access97In(cp), byWholeName: false, alsoBy: columns ? GeneralLegacy : null));
+
     /// <summary>
     /// The rule for the names a catalog sorting in <paramref name="order"/> keeps - tables, queries, relationships - or
     /// null for an order whose keys this library does not make.
@@ -63,7 +76,7 @@ internal sealed class ObjectNames
     internal static ObjectNames? ForCatalog(SortOrder order)
         => order.KeysAsGeneralLegacy ? GeneralLegacy
          : order.IsGeneral ? General
-         : order.IsAccess97General ? Access97
+         : order.IsAccess97General ? Access97In(order.CodePage, columns: false)
          : null;
 
     /// <summary>
@@ -72,7 +85,7 @@ internal sealed class ObjectNames
     /// as its tables' names are compared there; in an Access 97 file, Access 97's and General - Legacy's.
     /// </summary>
     internal static ObjectNames ForColumns(JetFormat format, SortOrder catalogOrder)
-        => format.SizeSortOrder < 4 ? Access97Columns : catalogOrder.IsGeneral ? General : GeneralLegacy;
+        => format.SizeSortOrder < 4 ? Access97In(format.TextEncoding.CodePage, columns: true) : catalogOrder.IsGeneral ? General : GeneralLegacy;
 
     /// <summary>
     /// Whether this library compares the names of a table's columns and indexes as Access does in a database whose

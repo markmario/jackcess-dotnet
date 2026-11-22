@@ -124,6 +124,8 @@ static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database
 static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet, JackcessDotNet.ImportOptions! options) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 JackcessDotNet.DatabaseInUseException
 JackcessDotNet.DatabaseOpenOptions
+JackcessDotNet.DatabaseOpenOptions.Access97CodePage.get -> int?
+JackcessDotNet.DatabaseOpenOptions.Access97CodePage.set -> void
 JackcessDotNet.DatabaseOpenOptions.DatabaseOpenOptions() -> void
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileFormat?
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.set -> void

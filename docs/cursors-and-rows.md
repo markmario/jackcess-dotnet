@@ -151,7 +151,10 @@ value. A relationship matches keys by a rule of its own, as Access's indexes hol
 Text is equal as its column's sort order has it, which is what Access's `=` and a unique index go by (measured in
 General - Legacy and General): `'abc'` is `'ABC'`, `'a'` is `'a '`, `'ss'` is `'ß'`; `'e'` is not `'é'`, and
 `'7'` is not `'007'`. Where this library makes no key for the text (another sort order, a character keyed by its
-neighbours) it is equal when it is the same text. Text is never read as a number.
+neighbours) it is equal when it is the same text, and so it is in an Access 97 file, in whatever code page
+([Text in a code page](file-formats.md#text-in-a-code-page)): its keys are made to search its indexes, but its
+equality was not measured against Access, whose index takes `'МОСКВА'` as `'Москва'` there. Text is never read as a
+number.
 
 ### Numbers
 

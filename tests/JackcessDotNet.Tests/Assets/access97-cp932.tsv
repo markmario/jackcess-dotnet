@@ -1,0 +1,57 @@
+# What DAO.DBEngine.36 (32-bit) reads of access97-cp932.mdb, made with code page 932 by tools/access97-code-page-fixture.ps1, with each code page it was read with first on each line. \N is a null.
+932	table	都市
+932	column	都市	Id
+932	column	都市	名前
+932	index	都市	名前順	名前
+932	index	都市	PrimaryKey	Id
+932	tabledef	都市	都市
+932	row	1	東京
+932	row	2	大阪
+932	row	3	ｶﾀｶﾅ
+932	row	4	カタカナ
+932	row	5	Москва
+932	row	6	москва
+932	row	7	naive
+932	row	8	ABC
+932	row	9	ＡＢＣ
+932	seek	東京	1
+932	seek	大阪	2
+932	seek	ｶﾀｶﾅ	3
+932	seek	カタカナ	4
+932	seek	Москва	5
+932	seek	МОСКВА	-
+932	seek	москва	6
+932	seek	naïve	7
+932	seek	NAÏVE	7
+932	seek	ABC	8
+932	seek	abc	8
+932	seek	ＡＢＣ	9
+932	seek	ａｂｃ	-
+1252	table	“sŽs
+1252	column	“sŽs	Id
+1252	column	“sŽs	–¼‘O
+1252	index	“sŽs	–¼‘O‡	–¼‘O
+1252	index	“sŽs	PrimaryKey	Id
+1252	tabledef	都市	-
+1252	row	1	“Œ‹ž
+1252	row	2	‘åã
+1252	row	3	¶À¶Å
+1252	row	4	ƒJƒ^ƒJƒi
+1252	row	5	„M„€„ƒ„{„r„p
+1252	row	6	„}„€„ƒ„{„r„p
+1252	row	7	naive
+1252	row	8	ABC
+1252	row	9	‚`‚a‚b
+1252	seek	東京	-
+1252	seek	大阪	-
+1252	seek	ｶﾀｶﾅ	-
+1252	seek	カタカナ	-
+1252	seek	Москва	-
+1252	seek	МОСКВА	-
+1252	seek	москва	-
+1252	seek	naïve	-
+1252	seek	NAÏVE	-
+1252	seek	ABC	8
+1252	seek	abc	8
+1252	seek	ＡＢＣ	8
+1252	seek	ａｂｃ	8

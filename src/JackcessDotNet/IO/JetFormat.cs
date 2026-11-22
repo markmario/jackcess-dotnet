@@ -231,7 +231,7 @@ internal sealed class JetFormat
         IsReadOnly                       = s.IsReadOnly;
     }
 
-    public static JetFormat Jet3 { get; } = new(FileFormat.Access97, new FormatSpec(
+    private static readonly FormatSpec _jet3Spec = new(
         PageSize:              2048,
         HasPageChecksum:       false,
         TextEncoding:          Encoding.GetEncoding(1252),
@@ -277,7 +277,18 @@ internal sealed class JetFormat
         OffsetIndexEntryMask:            22,
         SizeIndexEntryMask:              226,
         SizeIndexCompressedByteCount:    1,
-        IsReadOnly:                      true));
+        IsReadOnly:                      true);
+
+    public static JetFormat Jet3 { get; } = new(FileFormat.Access97, _jet3Spec);
+
+    /// <summary>
+    /// The Access 97 format with its text - values, names, the database password - in <paramref name="codePage"/>:
+    /// <see cref="Jet3"/> itself for 1252. Jet keeps an Access 97 file's text in the code page of the machine that
+    /// writes it, and reads it in the code page of the machine that reads it; the file does not say which
+    /// (<see cref="DatabaseOpenOptions.Access97CodePage"/>).
+    /// </summary>
+    public static JetFormat Access97In(Encoding codePage)
+        => codePage.CodePage == Jet3.TextEncoding.CodePage ? Jet3 : new(FileFormat.Access97, _jet3Spec with { TextEncoding = codePage });
 
     // Jet4 spec extracted so the ACE 12-17 (.accdb) instances can share it.
     // On-disk layout for unencrypted .accdb is identical to Jet4; what differs
