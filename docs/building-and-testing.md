@@ -93,7 +93,8 @@ should carry the label, so that it is refereed in 32 bits before it merges:
 - A run by hand on the branch has them too: `gh workflow run ci.yml --ref <branch> -f full_sweeps=false`.
 
 A piece missing from its timing table (`$table.x86` in `Invoke-AccessTests.ps1`) is a warning, except in a 32-bit
-run of a pull request, where it fails as the other tables' do.
+run of a pull request, where it fails as the other tables' do. A row in any of the tables for a piece the tests do not
+have - a class renamed or gone - fails every pull request's run.
 
 ```
 dotnet build tests/JackcessDotNet.AccessTests --configuration Release

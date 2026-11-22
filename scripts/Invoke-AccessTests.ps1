@@ -61,8 +61,9 @@
 # summary, which lists every piece's time beside its number. The numbers only balance the shards: a wrong or stale one
 # makes one shard longer, and leaves nothing out. -RequireTimings, which CI gives a pull request's run, makes a piece
 # missing from the samples' or the full sweeps' table - or, in a 32-bit run, from the 32-bit run's - a failure rather
-# than a warning, so that the tables cannot fall behind the tests unnoticed. The pieces still run first, and the error
-# says what each table it is missing from wants: the seconds it took, in this run's own table. CI's 32-bit shards run
+# than a warning, so that the tables cannot fall behind the tests unnoticed; so does a row in any table for a piece the
+# tests do not have. The pieces still run first, and the error says what each table it is missing from wants: the
+# seconds it took, in this run's own table. CI's 32-bit shards run
 # every night and in a run by hand, and on a pull request only when it has the ci:access-x86 label, so a piece missing
 # from the 32-bit table is a warning in any other run.
 #
@@ -374,6 +375,15 @@ foreach ($unit in $units) {
     $from = @('samples', 'full', 'x86' | Where-Object { -not $table[$_].ContainsKey($unit.Name) })
     if ($from.Count) { $untimed[$unit.Name] = $from }
 }
+# Every row of any table that is no piece of this run - a class or piece renamed or gone - and the tables it is in.
+$stale = [ordered]@{}
+foreach ($t in 'samples', 'full', 'x86') {
+    foreach ($name in @($table[$t].Keys | Sort-Object)) {
+        if ($units | Where-Object Name -eq $name) { continue }
+        if (-not $stale.Contains($name)) { $stale[$name] = [System.Collections.Generic.List[string]]::new() }
+        $stale[$name].Add($t)
+    }
+}
 
 # Longest first, each to the shard with least so far; ties by name and by shard number, so every run splits alike.
 $ordered = @($units | Sort-Object @{ Expression = { Get-Seconds $_.Name }; Descending = $true }, @{ Expression = { $_.Name } })
@@ -639,10 +649,16 @@ if ($untimed.Count) {
         }
         Write-Host "::$($level)::$name has no time in scripts/Invoke-AccessTests.ps1. Add '$name' = <seconds> to $($wants -join '; to ')."
     }
-    if ($required.Count -and -not $failed.Count) {
-        Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')"
-        exit 1
-    }
+}
+# A row for a piece this run does not have - its class or piece renamed or gone - balances nothing. It fails a run with
+# -RequireTimings, as a missing row does, and is a warning otherwise.
+foreach ($name in $stale.Keys) {
+    Write-Host "::$(if ($RequireTimings) { 'error' } else { 'warning' })::'$name' in scripts/Invoke-AccessTests.ps1 is no piece of these tests. Remove it from $(($stale[$name] | ForEach-Object { "`$table.$_" }) -join ', ')."
+}
+if (($required.Count -or ($RequireTimings -and $stale.Count)) -and -not $failed.Count) {
+    if ($required.Count) { Write-Host "::error::$($required.Count) pieces have no time in scripts/Invoke-AccessTests.ps1: $($required -join ', ')" }
+    if ($RequireTimings -and $stale.Count) { Write-Host "::error::$($stale.Count) rows of scripts/Invoke-AccessTests.ps1 are no piece of these tests: $($stale.Keys -join ', ')" }
+    exit 1
 }
 
 if ($failed.Count) {
