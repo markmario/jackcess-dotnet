@@ -4,23 +4,11 @@ namespace JackcessDotNet;
 /// A value longer than its column allows - text with more characters than a Text column's length, or a
 /// <c>byte[]</c> with more bytes than a Binary column's - refused before anything of its row is written, as Access
 /// refuses one. Its own type, so a caller can tell it from any other argument error and say which record held the
-/// value.
+/// value. Its <see cref="Exception.Message"/> names the column and gives both lengths, in characters for a Text column
+/// and in bytes for a Binary one.
 /// </summary>
 public sealed class ColumnValueTooLongException : ArgumentException
 {
-    /// <summary>
-    /// Creates the exception for a text of <paramref name="length"/> characters given to a Text column that holds
-    /// <paramref name="maxLength"/>. Its <see cref="Exception.Message"/> names the column and both numbers, in
-    /// characters. The exception this library throws for a Binary column gives them in bytes.
-    /// </summary>
-    /// <param name="columnName">The column's name.</param>
-    /// <param name="maxLength">The most characters the column holds.</param>
-    /// <param name="length">The characters the value has.</param>
-    public ColumnValueTooLongException(string columnName, int maxLength, int length)
-        : this(columnName, maxLength, length, $"Column '{columnName}' holds at most {maxLength} characters; the value has {length}.")
-    {
-    }
-
     /// <summary>
     /// The exception with a message of the caller's, which says where the value came from: an import's row.
     /// <paramref name="maxLength"/> and <paramref name="length"/> are in the column's units

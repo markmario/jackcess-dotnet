@@ -13,7 +13,7 @@ public sealed class ConstraintViolationException : InvalidOperationException
 {
     /// <summary>Creates the exception with a message that says which rule the data would break.</summary>
     /// <param name="message">What was refused, and why.</param>
-    public ConstraintViolationException(string message) : base(message) { }
+    internal ConstraintViolationException(string message) : base(message) { }
 
     /// <summary>
     /// Creates the exception with a message that says which rule the data would break, and the exception that
@@ -21,5 +21,5 @@ public sealed class ConstraintViolationException : InvalidOperationException
     /// </summary>
     /// <param name="message">What was refused, and why.</param>
     /// <param name="innerException">The exception this one is raised for, or null when there is none.</param>
-    public ConstraintViolationException(string message, Exception? innerException) : base(message, innerException) { }
+    internal ConstraintViolationException(string message, Exception? innerException) : base(message, innerException) { }
 }

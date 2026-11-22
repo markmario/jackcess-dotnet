@@ -409,9 +409,7 @@ internal sealed class RowEncoder
             int maxChars = col.LengthInBytes / 2;
             string text = Convert.ToString(value) ?? string.Empty;
             if (text.Length > maxChars)
-                throw stored
-                    ? new ColumnValueTooLongException(col.Name, DataType.Text, maxChars, text.Length, stored: true)
-                    : new ColumnValueTooLongException(col.Name, maxChars, text.Length);
+                throw new ColumnValueTooLongException(col.Name, DataType.Text, maxChars, text.Length, stored);
         }
     }
 

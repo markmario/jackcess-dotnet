@@ -15,6 +15,10 @@ changed since 1.2.2.
 
 - **Breaking for code written against a 2.0.0 preview: `Database.DatabaseProperties` is `Database.Properties`**
   (#34), as a table's are `Table.Properties` and a column's `Column.Properties`. 1.2.2 had neither.
+- **Breaking for code written against a 2.0.0 preview: `ColumnValueTooLongException`, `ConstraintViolationException`
+  and `DatabaseInUseException` have no public constructor** (#34), as `BatchInsertException` and
+  `DatabaseFullException` have none: the library is what throws them. Catching one and reading it are as they were.
+  1.2.2 had none of the three.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and

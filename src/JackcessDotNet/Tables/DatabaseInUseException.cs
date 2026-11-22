@@ -22,7 +22,7 @@ public sealed class DatabaseInUseException : IOException
 
     /// <summary>Creates the exception with a message that says which file is in use, and what was not done.</summary>
     /// <param name="message">What was refused, and why.</param>
-    public DatabaseInUseException(string message) : base(message) => HResult = SharingViolation;
+    internal DatabaseInUseException(string message) : base(message) => HResult = SharingViolation;
 
     /// <summary>
     /// Creates the exception with a message that says which file is in use, and what was not done, and the exception
@@ -30,7 +30,7 @@ public sealed class DatabaseInUseException : IOException
     /// </summary>
     /// <param name="message">What was refused, and why.</param>
     /// <param name="innerException">The exception this one is raised for, or null when there is none.</param>
-    public DatabaseInUseException(string message, Exception? innerException) : base(message, innerException)
+    internal DatabaseInUseException(string message, Exception? innerException) : base(message, innerException)
         => HResult = SharingViolation;
 
     // On Linux, the errno .NET gives the IOException when the advisory lock it takes for a handle's sharing (flock) is

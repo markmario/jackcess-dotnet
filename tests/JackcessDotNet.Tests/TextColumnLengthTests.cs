@@ -33,7 +33,7 @@ public sealed class TextColumnLengthTests : IDisposable
         Assert.Equal("Date", ex.ColumnName);
         Assert.Equal(11, ex.MaxLength);
         Assert.Equal(12, ex.Length);
-        Assert.Contains("Date", ex.Message);
+        Assert.Equal("Column 'Date' holds at most 11 characters; the value has 12.", ex.Message);
         var rows = table.Rows.ToList();
         Assert.Single(rows);
         Assert.Equal("14-Sep-2026", rows[0]["Date"]);

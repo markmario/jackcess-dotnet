@@ -35,12 +35,9 @@ JackcessDotNet.ColumnDefinition.Scale.get -> byte
 JackcessDotNet.ColumnDefinition.Scale.set -> void
 JackcessDotNet.ColumnValueTooLongException
 JackcessDotNet.ColumnValueTooLongException.ColumnName.get -> string!
-JackcessDotNet.ColumnValueTooLongException.ColumnValueTooLongException(string! columnName, int maxLength, int length) -> void
 JackcessDotNet.ColumnValueTooLongException.Length.get -> int
 JackcessDotNet.ColumnValueTooLongException.MaxLength.get -> int
 JackcessDotNet.ConstraintViolationException
-JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message) -> void
-JackcessDotNet.ConstraintViolationException.ConstraintViolationException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.Cursor
 JackcessDotNet.Cursor.ColumnNames.get -> System.Collections.Generic.IReadOnlyList<string!>?
 JackcessDotNet.Cursor.ColumnNames.set -> void
@@ -126,8 +123,6 @@ static JackcessDotNet.DatabaseImporter.ImportTable<T>(this JackcessDotNet.Databa
 static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 static JackcessDotNet.DatabaseImporter.ImportTables(this JackcessDotNet.Database! database, System.Data.DataSet! dataSet, JackcessDotNet.ImportOptions! options) -> System.Collections.Generic.IReadOnlyList<JackcessDotNet.Table!>!
 JackcessDotNet.DatabaseInUseException
-JackcessDotNet.DatabaseInUseException.DatabaseInUseException(string! message) -> void
-JackcessDotNet.DatabaseInUseException.DatabaseInUseException(string! message, System.Exception? innerException) -> void
 JackcessDotNet.DatabaseOpenOptions
 JackcessDotNet.DatabaseOpenOptions.DatabaseOpenOptions() -> void
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileFormat?
