@@ -186,7 +186,7 @@ public sealed class Database : IDisposable
     /// </para>
     /// <para>
     /// <b>What it does:</b> the first time a session compares a row with a table's unique indexes
-    /// (<see cref="Table.Insert"/>, <see cref="Table.Update"/>, <see cref="Table.Validate"/>), or
+    /// (<see cref="Table.Insert"/>, <see cref="Table.Update"/>, <see cref="Table.Validate(Row)"/>), or
     /// looks for rows through an index to keep a relationship, the table is read once and each index's entries
     /// are compared with its rows. The rows an index does not hold are kept while the database is open: a row is
     /// compared with them as well as with the index, so the duplicate is refused, and an index that lacks rows

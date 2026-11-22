@@ -793,6 +793,10 @@ changes with them.
   refuses every change to it, as a file past 2 GB is refused. A value that is not positive, or is past 2 GB, is an
   `ArgumentOutOfRangeException` from `Database.Open`, before the file is opened. So a caller's tests reach the limit
   without writing 2 GB.
+- **`Table.Validate(row, checkRelationships)`** (#34): `false` makes every check `Validate(row)` makes but the
+  relationships, for a batch whose rows refer to each other - parents and children - checked whole before any of it
+  is inserted. Each row's insert still checks its relationships, so a child whose parent is never inserted is
+  refused when it is inserted. `Validate(row)` is `Validate(row, true)`.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.

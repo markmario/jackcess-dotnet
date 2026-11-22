@@ -122,7 +122,7 @@ public sealed class Table
 
     /// <summary>
     /// Why the table takes no new row, whatever the row holds, or <c>null</c> when it takes rows: the message of
-    /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate"/> throw for it,
+    /// the <see cref="NotSupportedException"/> that <see cref="Insert"/> and <see cref="Validate(Row)"/> throw for it,
     /// which they throw by asking this. The table has an index whose keys this library does not write as Access
     /// does, or indexes it did not read whole; an AutoNumber column that is neither Long nor Guid; or a definition
     /// rows cannot be written by - a calculated column, columns whose names run past the definition's end, or two
@@ -130,7 +130,7 @@ public sealed class Table
     /// <para>
     /// A caller about to write to several tables can ask each first, and so write to none when one of them
     /// would refuse. Asking reads the table's definition as it was opened and changes nothing in the file. A table
-    /// that takes rows can still refuse a row for what the row holds: <see cref="Validate"/> checks one.
+    /// that takes rows can still refuse a row for what the row holds: <see cref="Validate(Row)"/> checks one.
     /// </para>
     /// </summary>
     public string? InsertRefusal
@@ -707,16 +707,47 @@ public sealed class Table
     /// The table takes no row (<see cref="InsertRefusal"/>), or the row has a value in an indexed text column that no
     /// key is made for.
     /// </exception>
-    public void Validate(Row row) => ValidateCore(row, relationships: true);
+    public void Validate(Row row) => Validate(row, checkRelationships: true);
 
     /// <summary>
-    /// <see cref="Validate(Row)"/> of a row checked ahead of the batch it is inserted with, the rows before it not
-    /// yet in the table: its relationships are not looked at, since its foreign key may refer to a row of the batch.
-    /// Each row's insert looks at them, in turn.
+    /// Checks <paramref name="row"/> as <see cref="Validate(Row)"/> does, and with <paramref name="checkRelationships"/>
+    /// false leaves out the one check that looks at other tables: whether its foreign keys refer to rows that are
+    /// there. Everything else <see cref="Insert"/> checks is checked, in the insert's order, and nothing is written.
+    /// <para>
+    /// <c>false</c> is for a batch whose rows refer to each other, checked whole before any of it is inserted:
+    /// parents and their children together, so that a refused row stops the batch with the file as it was. Checked
+    /// with <c>true</c>, every child whose parent is in the batch would be refused, since the parent is not in the
+    /// file yet. The relationships are still kept: each row's insert checks them, as it always does, so a child
+    /// whose parent was never inserted is refused when it is inserted
+    /// (<see cref="ConstraintViolationException"/>, with <see cref="Database.EnforceForeignKeys"/> on).
+    /// </para>
     /// </summary>
-    internal void ValidateAheadOfBatch(Row row) => ValidateCore(row, relationships: false);
-
-    private void ValidateCore(Row row, bool relationships)
+    /// <param name="row">The row to check, as it would be given to <see cref="Insert"/>.</param>
+    /// <param name="checkRelationships">
+    /// Whether the row's foreign keys are checked against the rows in the file now: <c>true</c> as
+    /// <see cref="Validate(Row)"/> does, <c>false</c> to leave them to the insert.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// As <see cref="Validate(Row)"/>: two of the row's names go to one column, a number column's value is of a kind no
+    /// number is made of, or a Text or Memo value begins with U+FEFF where Access would read it back changed.
+    /// </exception>
+    /// <exception cref="FormatException">As <see cref="Validate(Row)"/>.</exception>
+    /// <exception cref="OverflowException">As <see cref="Validate(Row)"/>.</exception>
+    /// <exception cref="InvalidCastException">As <see cref="Validate(Row)"/>.</exception>
+    /// <exception cref="InvalidOperationException">The row is too large for its page; or an OLE Object column's value is not bytes.</exception>
+    /// <exception cref="ColumnValueTooLongException">A Text or Binary value is longer than its column.</exception>
+    /// <exception cref="ConstraintViolationException">
+    /// The row would be a duplicate in the primary key or another unique index, or has a null an index does not
+    /// take, no value in a required column, or a zero-length string where one is not allowed; or, with
+    /// <paramref name="checkRelationships"/>, a foreign key that refers to no row, with
+    /// <see cref="Database.EnforceForeignKeys"/> on.
+    /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The table takes no row (<see cref="InsertRefusal"/>), or the row has a value in an indexed text column that no
+    /// key is made for.
+    /// </exception>
+    public void Validate(Row row, bool checkRelationships)
     {
         if (row is null) throw new ArgumentNullException(nameof(row));
         EnsureTakesRows();
@@ -727,7 +758,7 @@ public sealed class Table
             asWritten = new Row(row);
             FillAutoNumbers(asWritten);
         }
-        CheckInsert(RowValues.AsWritten(asWritten, _definition), relationships);
+        CheckInsert(RowValues.AsWritten(asWritten, _definition), checkRelationships);
     }
 
     /// <summary>
@@ -743,7 +774,7 @@ public sealed class Table
     /// built after a bulk insert - and the row's encoding, with each long value placed by the table's own pages.
     /// <see cref="Insert"/> writes what this returns; <see cref="Validate(Row)"/> does no more than this, so the two
     /// cannot refuse a row differently. Without <paramref name="relationships"/> the relationships are left to the
-    /// insert (<see cref="ValidateAheadOfBatch"/>).
+    /// insert (<see cref="Validate(Row, bool)"/>).
     /// </summary>
     private CheckedInsert CheckInsert(Row written, bool relationships = true)
     {
@@ -849,7 +880,7 @@ public sealed class Table
     /// <summary>
     /// Finds the rows among <paramref name="rows"/> that an insert of them all would be refused for as duplicates: for
     /// each unique index and the primary key, each key that two or more of the rows would have, or that one of them
-    /// would have and a row of the table already has. What <see cref="Validate"/> does not do, which looks at one row
+    /// would have and a row of the table already has. What <see cref="Validate(Row)"/> does not do, which looks at one row
     /// against the table. Rows are compared by the index's key, as Access compares them - so "ABC" and "abc" are one
     /// key in an index on text, as are text with and without trailing spaces - and a row with a null in a column of an
     /// index is no row's duplicate in it. Each row is taken as given: an AutoNumber column a row brings no value for is

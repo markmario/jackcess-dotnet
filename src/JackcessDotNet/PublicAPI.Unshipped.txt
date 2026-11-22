@@ -350,3 +350,4 @@ JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.Table.Update(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.Validate(JackcessDotNet.Row! row) -> void
+JackcessDotNet.Table.Validate(JackcessDotNet.Row! row, bool checkRelationships) -> void
