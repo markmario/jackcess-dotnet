@@ -601,10 +601,9 @@ changes with them.
   `InvalidOperationException` for a table with no primary key (it made a cursor that read the table), and
   `IndexCursor.Index` is never null. Its rows come in the index's order (they came in the table's). Every
   lookup goes through the cursor's own index: `FindRowByEntry` is `FindRowByKey`, which with more values than the
-  index has columns
-  throws `ArgumentException` (it looked in another index, or in the table's leading columns), and with fewer
-  finds the first row with those leading values. `FindRow(column, value)` is `Cursor`'s, finds the first row in
-  the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
+  index has columns throws `ArgumentException` (it looked in another index, or in the table's leading columns),
+  and with fewer finds the first row with those leading values. `FindRow(column, value)` is `Cursor`'s, finds the
+  first row in the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
   A lookup that finds a row leaves the cursor on it, and one that finds none leaves the cursor where it was;
   a row that cannot be read is an `InvalidDataException`, not "no such row". `CreateIndexCursor(null)` needs
   a cast, `(string)null`, now that there is an overload taking an `IndexRange`. Rows can be inserted, updated

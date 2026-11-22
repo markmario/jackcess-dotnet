@@ -709,9 +709,9 @@ namespace JackcessDotNet.AccessTests
             {
                 var table = db.GetTable("Marked");
                 for (var i = 0; i < fromAce.Length; i++)
-                    Assert.Equal(50000 + i, table.CreateIndexCursor("ByCode").FindRowByEntry(fromAce[i])?["Id"]);
-                Assert.Equal(kept.IndexOf("コンピューター"), table.CreateIndexCursor("ByCode").FindRowByEntry("テーブル")?["Id"]);
-                Assert.Null(table.CreateIndexCursor("ByCode").FindRowByEntry("佐々木"));
+                    Assert.Equal(50000 + i, table.CreateIndexCursor("ByCode").FindRowByKey(fromAce[i])?["Id"]);
+                Assert.Equal(kept.IndexOf("コンピューター"), table.CreateIndexCursor("ByCode").FindRowByKey("テーブル")?["Id"]);
+                Assert.Null(table.CreateIndexCursor("ByCode").FindRowByKey("佐々木"));
                 Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 60000, ["Code"] = "ゴｰル" }));   // ゴール, to Access
                 table.DeleteRow("Code", "こゝろ");
                 table.UpdateByPrimaryKey(50000, new Row { ["Code"] = "ゴーーール", ["Notes"] = "ゴーーール" });
