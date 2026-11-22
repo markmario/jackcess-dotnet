@@ -983,15 +983,31 @@ namespace JackcessDotNet.AccessTests
             Assert.Equal(Describe(further), Describe(ReadWithAccess(enginePath)));
             Assert.Equal(Describe(further), Describe(ReadWithEngine(enginePath)));
         }
-        // A cascade to a key with a character Access keys by the character before it (ー): ACE makes the change and
-        // carries it to the children. The engine makes no key for such a value, so it refuses the change - as not
-        // supported, at the parent, before anything is written - and its file is byte for byte as it was.
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void a_cascade_to_a_key_the_engine_cannot_make_is_made_by_ace_and_refused_whole_by_the_engine(bool general)
+        // A cascade to a key with a character Access keys by the character before it (ー), in General - Legacy, where
+        // the engine makes that key as ACE does (#156): the change, its cascade and a child that names no parent by
+        // such a key are made or refused alike, and ACE answers through the engine's indexes as through its own.
+        [Fact]
+        public void a_cascade_to_a_key_with_a_mark_is_made_alike_in_general_legacy()
         {
-            _inGeneral = general;
+            _inGeneral = false;
+            var setup = AccentedParentAndChild("ON UPDATE CASCADE ON DELETE CASCADE").ToList();
+
+            var made = Referee(setup, "UPDATE P SET K = 'データ' WHERE K = 'résumé'", Update("P", "résumé", "K", "データ"));
+            Assert.False(made.Refused);
+            Assert.Contains("Id=1, K=データ, T=upper", made.Rows("C"));
+            Assert.Contains("Id=2, K=データ, T=lower", made.Rows("C"));
+            Assert.True(Referee(setup, "UPDATE C SET K = 'ー' WHERE Id = 5", Update("C", 5, "K", "ー")).Refused);
+            Assert.False(Referee(setup, "INSERT INTO P VALUES ('日々', 't')", Insert("P", new Row { ["K"] = "日々", ["T"] = "t" })).Refused);
+        }
+
+        // A cascade to a key with a character Access keys by the character before it (ー), in General: ACE makes the
+        // change and carries it to the children. The engine makes no key for such a value there, so it refuses the
+        // change - as not supported, at the parent, before anything is written - and its file is byte for byte as it
+        // was.
+        [Fact]
+        public void a_cascade_to_a_key_the_engine_cannot_make_is_made_by_ace_and_refused_whole_by_the_engine()
+        {
+            _inGeneral = true;
             var setup = AccentedParentAndChild("ON UPDATE CASCADE ON DELETE CASCADE").ToList();
 
             var accessPath = Build(setup);
