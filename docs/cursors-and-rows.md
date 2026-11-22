@@ -51,6 +51,12 @@ int loaded = people.BulkInsert(ReadRowsFromSomewhere());
   not taken. It answers for the table as it is: a row that refers to another not yet inserted is refused, as its
   insert would be now. An import that keeps its rows' numbers checks a batch ahead of inserting it, and leaves
   relationships to each row's insert, so a row may refer to an earlier row of its batch.
+- **`Validate(row, checkRelationships: false)` checks a row ahead of a batch** ([#34]): every check `Validate(row)`
+  makes but the relationships. It is for a batch whose rows refer to each other - parents and their children -
+  checked whole before any of it is inserted, so that a refused row stops the batch with the file as it was:
+  checked with `Validate(row)`, each child whose parent is in the batch is refused, as the parent is not in the file
+  yet. The relationships are still kept, by each row's insert: a child whose parent is never inserted passes the
+  check and is refused when it is inserted (`ConstraintViolationException`, with `EnforceForeignKeys` on).
 
 - **A row keeps its place when it is updated**, as Access keeps it, so its `Row.Id` does not change and every
   index entry that names it stays good. A row that still fits its page is rewritten in its slot, the page's
@@ -270,6 +276,7 @@ where Jackcess finds one.
 
 [Back to contents](README.md)
 
+[#34]: https://github.com/markmario/jackcess-dotnet/issues/34
 [#51]: https://github.com/markmario/jackcess-dotnet/issues/51
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58
 [#64]: https://github.com/markmario/jackcess-dotnet/issues/64

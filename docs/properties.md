@@ -17,8 +17,8 @@ orders.Properties.Set("Description", "One row an order");
 orders.Columns.First(c => c.Name == "Placed").Properties.Set("Caption", "Placed on");
 orders.Properties.Save();                         // the table's and its columns', together
 
-db.DatabaseProperties.Set("AppTitle", "The shop");
-db.DatabaseProperties.Save();
+db.Properties.Set("AppTitle", "The shop");
+db.Properties.Save();
 string? title = (string?)db.SummaryProperties["Title"];
 ```
 
@@ -39,7 +39,7 @@ string? title = (string?)db.SummaryProperties["Title"];
   (`DefaultValue` a Memo, `Required` a Yes/No, `Format` Text, and so on) or else the type of the value; an
   overload names the type. Access keeps no property as a Large Number or a Decimal - DAO refuses to make one,
   and reads a Large Number property as 0 - so neither is written.
-- **The database's three sets**: `DatabaseProperties` (what DAO's `Database.Properties` lists beyond its
+- **The database's three sets**: `Database.Properties` (what DAO's own `Database.Properties` lists beyond its
   built-in ones), `SummaryProperties` and `UserDefinedProperties` (the Summary and Custom sheets). The last
   two are kept with documents that Access's own interface adds to a database. A database made by DAO alone,
   or by this library as an `.accdb`, has neither, and saving to one is refused: the library does not add the

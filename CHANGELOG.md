@@ -13,6 +13,8 @@ changed since 1.2.2.
 
 ### Changed
 
+- **Breaking for code written against a 2.0.0 preview: `Database.DatabaseProperties` is `Database.Properties`**
+  (#34), as a table's are `Table.Properties` and a column's `Column.Properties`. 1.2.2 had neither.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and
@@ -767,7 +769,7 @@ changes with them.
   unique one, built over the rows.
 - **Properties are written** (#27). `PropertyMap.Set`, `Remove` and `Save` change the properties of a table
   (`Table.Properties`) and of a column (`Column.Properties`), and `TryGetProperty` gives a property's type and
-  whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
+  whether it is a DDL property. `Database.Properties`, `SummaryProperties` and `UserDefinedProperties`
   are the database's own, read and written the same way. A property Access wrote and the caller did not change
   goes back byte for byte.
 - **`DatabaseOpenOptions.ReadOnly`** (#32), Java's `DatabaseBuilder.withReadOnly`: the file is opened only to be
@@ -799,6 +801,16 @@ changes with them.
   as `ReadOnly` alone does, its pages again at every move. It needs `ReadOnly`: set without it,
   `ArgumentException`, before the file is opened, in every format; an Access 97 file opened with both keeps writers
   out. `ReadOnly` alone, and an Access 97 file opened without either, are as they were.
+- **`DatabaseOpenOptions.MaxFileLength`** (#34): the longest, in bytes, a database's file may grow to while it is
+  open, below the 2 GB an Access file can be. A change that would pass it is refused with `DatabaseFullException`,
+  whose `MaxLength` is the value given, and taken back, as at 2 GB; a value under the file's length when it is opened
+  refuses every change to it, as a file past 2 GB is refused. A value that is not positive, or is past 2 GB, is an
+  `ArgumentOutOfRangeException` from `Database.Open`, before the file is opened. So a caller's tests reach the limit
+  without writing 2 GB.
+- **`Table.Validate(row, checkRelationships)`** (#34): `false` makes every check `Validate(row)` makes but the
+  relationships, for a batch whose rows refer to each other - parents and children - checked whole before any of it
+  is inserted. Each row's insert still checks its relationships, so a child whose parent is never inserted is
+  refused when it is inserted. `Validate(row)` is `Validate(row, true)`.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.
@@ -874,6 +886,12 @@ changes with them.
     refuses a row that refers to one not yet inserted. An import that keeps its rows' numbers, which checks a
     batch before inserting any of it, leaves relationships to each row's insert, so a row may still refer to an
     earlier row of its batch.
+  - **Breaking for a caller that checks parents and children together before inserting any of them**, in a
+    database whose relationships are enforced: 2.0.0-preview.4 accepted every child of such a batch, and from
+    2.0.0-preview.5 `Validate(row)` refuses each child whose parent is in the batch with
+    `ConstraintViolationException`, as the parent is not in the file yet. Check such a batch with
+    `Validate(row, checkRelationships: false)` (#34), which makes every other check and leaves the relationships
+    to each row's insert, as `Validate(row)` did in 2.0.0-preview.4.
   - It encoded before it checked the columns' rules and the indexes, so a row with two faults could be refused
     with another exception than `Insert`'s.
 

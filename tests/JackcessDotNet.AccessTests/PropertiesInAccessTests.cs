@@ -218,9 +218,9 @@ namespace JackcessDotNet.AccessTests
                 table.Columns.Single(c => c.Name == "Id").Properties.Set("Caption", "An AutoNumber Access keeps no property for");
                 table.Properties.Save();
 
-                db.DatabaseProperties.Set("EngineTitle", "The engine's own");
-                db.DatabaseProperties.Set("EngineCount", 42);
-                db.DatabaseProperties.Save();
+                db.Properties.Set("EngineTitle", "The engine's own");
+                db.Properties.Set("EngineCount", 42);
+                db.Properties.Save();
             }
 
             var expected = new Read
@@ -277,7 +277,7 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal(AMemo, name["EngineMemo"]);
                 Assert.Equal(AGuid, name["EngineGuid"]);
                 Assert.Equal("Changed by Access", table.Properties["EngineTableText"]);
-                Assert.Equal(43, db.DatabaseProperties["EngineCount"]);
+                Assert.Equal(43, db.Properties["EngineCount"]);
             }
         }
 

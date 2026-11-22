@@ -91,7 +91,7 @@ static JackcessDotNet.Database.Create(string! path, JackcessDotNet.FileFormat fo
 JackcessDotNet.Database.CreateRelationship(JackcessDotNet.RelationshipDefinition! definition) -> JackcessDotNet.Relationship!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, System.Collections.Generic.IEnumerable<string!>? primaryKey, System.Collections.Generic.IEnumerable<JackcessDotNet.IndexDefinition!>! indexes) -> JackcessDotNet.Table!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, params string![]! primaryKey) -> JackcessDotNet.Table!
-JackcessDotNet.Database.DatabaseProperties.get -> JackcessDotNet.PropertyMap!
+JackcessDotNet.Database.Properties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void
@@ -134,6 +134,8 @@ JackcessDotNet.DatabaseOpenOptions.FallbackFormat.get -> JackcessDotNet.FileForm
 JackcessDotNet.DatabaseOpenOptions.FallbackFormat.set -> void
 JackcessDotNet.DatabaseOpenOptions.KeepWritersOut.get -> bool
 JackcessDotNet.DatabaseOpenOptions.KeepWritersOut.set -> void
+JackcessDotNet.DatabaseOpenOptions.MaxFileLength.get -> long?
+JackcessDotNet.DatabaseOpenOptions.MaxFileLength.set -> void
 JackcessDotNet.DatabaseOpenOptions.Password.get -> string?
 JackcessDotNet.DatabaseOpenOptions.Password.set -> void
 JackcessDotNet.DatabaseOpenOptions.ReadOnly.get -> bool
@@ -348,3 +350,4 @@ JackcessDotNet.Table.RowCount.get -> int
 JackcessDotNet.Table.Rows.get -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.Table.Update(JackcessDotNet.Row! row) -> void
 JackcessDotNet.Table.Validate(JackcessDotNet.Row! row) -> void
+JackcessDotNet.Table.Validate(JackcessDotNet.Row! row, bool checkRelationships) -> void

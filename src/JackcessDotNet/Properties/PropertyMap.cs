@@ -5,7 +5,7 @@ namespace JackcessDotNet;
 
 /// <summary>
 /// The properties Access keeps for a table, for one of its columns, or for the database, by name: what
-/// <see cref="Table.Properties"/>, <see cref="Column.Properties"/> and <see cref="Database.DatabaseProperties"/>
+/// <see cref="Table.Properties"/>, <see cref="Column.Properties"/> and <see cref="Database.Properties"/>
 /// return, as in Jackcess. It is the collection of its properties, in the order the file lists them.
 ///
 /// Access stores well-known property names like:

@@ -4,7 +4,7 @@ using Xunit;
 namespace JackcessDotNet.Tests;
 
 /// <summary>
-/// <see cref="Table.Validate"/> refuses a row exactly when <see cref="Table.Insert"/> does, with the same exception,
+/// <see cref="Table.Validate(Row)"/> refuses a row exactly when <see cref="Table.Insert"/> does, with the same exception,
 /// and writes nothing (#141, #143).
 /// <list type="bullet">
 /// <item>Where the answer depends on where a long value goes - in the row, in one long-value row, or a chain - and on
@@ -68,7 +68,7 @@ public sealed class ValidateAsInsertTests : IDisposable
 
     /// <summary>
     /// Validates each row in one session, which leaves the file byte for byte as it was; then inserts each, and holds
-    /// what <see cref="Table.Validate"/> said of each row to what <see cref="Table.Insert"/> did.
+    /// what <see cref="Table.Validate(Row)"/> said of each row to what <see cref="Table.Insert"/> did.
     /// </summary>
     private static void AssertValidateAnswersAsInsert(string path, string table, IReadOnlyList<(string What, Func<Row> Row)> rows)
     {
@@ -312,8 +312,8 @@ public sealed class ValidateAsInsertTests : IDisposable
     /// <summary>
     /// An import that keeps its rows' numbers checks every row of a batch before it inserts any, and a row may refer to
     /// an earlier row of the same batch: that check leaves relationships to each row's insert, so the batch goes in,
-    /// as it did before <see cref="Table.Validate"/> looked at relationships. A row that refers to no row is still
-    /// refused, and nothing of its batch is written. <see cref="Table.Validate"/> itself answers for the table as it
+    /// as it did before <see cref="Table.Validate(Row)"/> looked at relationships. A row that refers to no row is still
+    /// refused, and nothing of its batch is written. <see cref="Table.Validate(Row)"/> itself answers for the table as it
     /// is, and refuses a row that refers to one not yet inserted.
     /// </summary>
     [Theory]
@@ -368,6 +368,44 @@ public sealed class ValidateAsInsertTests : IDisposable
         child.Validate(new Row { ["ParentId"] = 1 });
         Assert.Throws<ConstraintViolationException>(() => child.Validate(new Row { ["ParentId"] = 2 }));
         Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row { ["ParentId"] = 2 }));
+    }
+
+    /// <summary>
+    /// A batch of parents and children is checked whole before any of it is inserted: without the relationship check
+    /// a child whose parent is in the batch, not yet in the file, passes, and every other check is still made. The
+    /// relationship is kept by the insert: the child inserted without its parent is refused, and the file is as it was;
+    /// inserted after its parent, it goes in (#34).
+    /// </summary>
+    [Fact]
+    public void A_row_checked_ahead_of_its_batch_leaves_its_relationships_to_its_insert()
+    {
+        string path = EveryType(FileFormat.Access2000);
+        byte[] before = File.ReadAllBytes(path);   // checks write nothing, and a refused insert leaves the file so
+        using var db = Database.Open(path);
+        Assert.True(db.EnforceForeignKeys);
+        var parent = db.GetTable("Parent");
+        var child  = db.GetTable("Child");
+        var parentRow = new Row { ["Id"] = 7, ["Code"] = "seven" };
+        var childRow  = new Row { ["ParentId"] = 7, ["Note"] = "of seven" };
+
+        parent.Validate(parentRow, checkRelationships: false);
+        child.Validate(childRow, checkRelationships: false);
+        Assert.Throws<ConstraintViolationException>(() => child.Validate(childRow, checkRelationships: true));
+        Assert.Throws<ConstraintViolationException>(() => child.Validate(childRow));
+
+        // The other checks are made: a note too long for its column.
+        Assert.Throws<ColumnValueTooLongException>(
+            () => child.Validate(new Row { ["ParentId"] = 7, ["Note"] = new string('n', 21) }, checkRelationships: false));
+
+        Assert.Throws<ConstraintViolationException>(() => child.Insert(new Row(childRow)));
+        Assert.Equal(0, child.RowCount);
+        db.Dispose();
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "the refused insert changed the file");
+
+        using var again = Database.Open(path);
+        again.GetTable("Parent").Insert(parentRow);
+        again.GetTable("Child").Insert(childRow);
+        Assert.Equal(1, again.GetTable("Child").RowCount);
     }
 
     /// <summary>

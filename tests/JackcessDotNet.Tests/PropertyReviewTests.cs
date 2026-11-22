@@ -199,11 +199,11 @@ public sealed class PropertyReviewTests : IDisposable
         using (var db = Database.Open(_path))
         {
             var table = db.GetTable("DaoMade");
-            _ = db.DatabaseProperties.Count;
+            _ = db.Properties.Count;
             long writes = db.File.WriteCount;
             table.Properties.Save();
             Column(table, "OptLong").Properties.Save();
-            db.DatabaseProperties.Save();
+            db.Properties.Save();
             db.SummaryProperties.Save();                    // no document, and nothing to write to it
             Assert.Equal(writes, db.File.WriteCount);
 
