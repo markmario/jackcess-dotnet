@@ -421,8 +421,8 @@ internal sealed class SystemCatalog
 
         EnsureKeysCanBeWritten(catalogDef);
         var nameColumn = catalogDef.Columns.First(c => c.Name == ColName);
-        if (!IndexKeys.CanEncode(nameColumn, name))
-            throw new NotSupportedException($"A relationship cannot be named '{name}': {IndexKeys.WhyNot(nameColumn, name)}. Nothing was changed.");
+        if (WhyNotNamed(nameColumn, name) is { } why)
+            throw new NotSupportedException($"A relationship cannot be named '{name}': {why}. Nothing was changed.");
         if (acesDef is not null) EnsureKeysCanBeWritten(acesDef);
 
         return new RelationshipEntry(catalogDef, containerId, objectId, AdminOwner(catalog), acesDef);
@@ -538,11 +538,27 @@ internal sealed class SystemCatalog
         // Every index must be one this library can write a key for, the name's among them.
         EnsureKeysCanBeWritten(catalogDef);
         var nameColumn = catalogDef.Columns.First(c => c.Name == ColName);
-        if (!IndexKeys.CanEncode(nameColumn, tableName))
-            throw new NotSupportedException($"A table cannot be named '{tableName}': {IndexKeys.WhyNot(nameColumn, tableName)}.");
+        if (WhyNotNamed(nameColumn, tableName) is { } why)
+            throw new NotSupportedException($"A table cannot be named '{tableName}': {why}.");
         if (acesDef is not null) EnsureKeysCanBeWritten(acesDef);
 
         return (catalogDef, tablesId, AdminOwner(catalog), acesDef);
+    }
+
+    /// <summary>
+    /// Why an object of the catalog cannot be given <paramref name="name"/>, or null: a name whose key in the catalog's
+    /// index is not made, or one with a mark Access keys by the characters around it (ー, 々, the shadda). General -
+    /// Legacy's key of such a value is made, but a name with one was not put before Access, which compares such names
+    /// by readings this library takes no key of (<see cref="ObjectNames"/>).
+    /// </summary>
+    private static string? WhyNotNamed(Column nameColumn, string name)
+    {
+        if (!IndexKeys.CanEncode(nameColumn, name)) return IndexKeys.WhyNot(nameColumn, name);
+        if (TextIndexCodes.For(nameColumn.SortOrder) is { } codes)
+            foreach (char c in name)
+                if (codes.IsContextDependent(c))
+                    return $"Access keys U+{(int)c:X4} by the characters around it, and this library makes no name with such a character";
+        return null;
     }
 
     private static void EnsureKeysCanBeWritten(TableDefinition def)
