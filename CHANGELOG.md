@@ -715,8 +715,11 @@ changes with them.
   `NotSupportedException`; an index is built over such values; and a unique index takes aー and aa as one, as Access
   does. Measured with ACE 16 (`tools/ace-mark-keys.ps1`): each mark after every character of the BMP, every
   character after a mark, and some 6,000 values more - some 960,000 keys, each the one this library makes. In
-  General such a value is still refused, and a table or relationship is still not given a name with such a mark
-  in either order ([Refused](docs/indexes.md#refused)).
+  General such a value is still refused, and a table or relationship is still not given a name with a mark its
+  order keys so ([Refused](docs/indexes.md#refused)). A file that version 1.2.2 or Jackcess wrote such a value
+  into holds it under another key: the row is not found through that index, as Access does not find it, where
+  the lookup was refused; [`VerifyIndexes`](docs/earlier-versions.md#indexes-that-do-not-hold-every-row) is for
+  such a file.
 - **Row ids.** `Row.Id` is a `RowId` - the page a row is on and its number there, Jackcess's `RowId` - for a
   row that was read or inserted, and null for one a caller made (#34). A row given to `Insert` or `InsertRange`
   is the row inserted afterwards - one read from a table and inserted as a copy among them - so an update of it

@@ -189,7 +189,9 @@ Refused, rather than write a key Access cannot find:
   is not that kanji's weight again - and that was not measured further. Any
   text is fine in a column that is no key, and a row Access wrote with such a
   key is still found: the index's rows are gone through for it.
-- **A table or relationship name with one of those marks, in either order.**
+- **A table or relationship name with a mark its sort order keys so:** each of
+  the twelve in General - Legacy, and in General those on its own list, which
+  the shadda is not on.
   General - Legacy's key of such a name is made, but Access compares names with
   one by readings of their own ([Names](tables-and-schema.md#names)), and no name
   with one was put before Access: `CreateTable`, `RenameTable` and
