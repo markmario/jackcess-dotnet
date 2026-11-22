@@ -13,6 +13,8 @@ changed since 1.2.2.
 
 ### Changed
 
+- **Breaking for code written against a 2.0.0 preview: `Database.DatabaseProperties` is `Database.Properties`**
+  (#34), as a table's are `Table.Properties` and a column's `Column.Properties`. 1.2.2 had neither.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and
@@ -753,7 +755,7 @@ changes with them.
   unique one, built over the rows.
 - **Properties are written** (#27). `PropertyMap.Set`, `Remove` and `Save` change the properties of a table
   (`Table.Properties`) and of a column (`Column.Properties`), and `TryGetProperty` gives a property's type and
-  whether it is a DDL property. `Database.DatabaseProperties`, `SummaryProperties` and `UserDefinedProperties`
+  whether it is a DDL property. `Database.Properties`, `SummaryProperties` and `UserDefinedProperties`
   are the database's own, read and written the same way. A property Access wrote and the caller did not change
   goes back byte for byte.
 - **`DatabaseOpenOptions.ReadOnly`** (#32), Java's `DatabaseBuilder.withReadOnly`: the file is opened only to be

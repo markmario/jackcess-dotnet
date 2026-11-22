@@ -91,7 +91,7 @@ static JackcessDotNet.Database.Create(string! path, JackcessDotNet.FileFormat fo
 JackcessDotNet.Database.CreateRelationship(JackcessDotNet.RelationshipDefinition! definition) -> JackcessDotNet.Relationship!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, System.Collections.Generic.IEnumerable<string!>? primaryKey, System.Collections.Generic.IEnumerable<JackcessDotNet.IndexDefinition!>! indexes) -> JackcessDotNet.Table!
 JackcessDotNet.Database.CreateTable(string! name, System.Collections.Generic.IEnumerable<JackcessDotNet.ColumnDefinition!>! columns, params string![]! primaryKey) -> JackcessDotNet.Table!
-JackcessDotNet.Database.DatabaseProperties.get -> JackcessDotNet.PropertyMap!
+JackcessDotNet.Database.Properties.get -> JackcessDotNet.PropertyMap!
 JackcessDotNet.Database.Dispose() -> void
 JackcessDotNet.Database.EnforceForeignKeys.get -> bool
 JackcessDotNet.Database.EnforceForeignKeys.set -> void

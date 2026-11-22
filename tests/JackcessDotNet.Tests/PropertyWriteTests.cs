@@ -118,7 +118,7 @@ public sealed class PropertyWriteTests : IDisposable
         {
             before = PropertyValues(db);
             db.GetTable("DaoMade").Properties.Save();
-            db.DatabaseProperties.Save();
+            db.Properties.Save();
         }
         using var read = Database.Open(_path);
         var after = PropertyValues(read);
@@ -159,9 +159,9 @@ public sealed class PropertyWriteTests : IDisposable
             name.Set("AMemo", DataType.Memo, memo);
             name.Save();
 
-            db.DatabaseProperties.Set("AppTitle", "A title");
-            db.DatabaseProperties.Set("Count", 42);
-            db.DatabaseProperties.Save();
+            db.Properties.Set("AppTitle", "A title");
+            db.Properties.Set("Count", 42);
+            db.Properties.Save();
         }
 
         using var read = Database.Open(_path);
@@ -182,8 +182,8 @@ public sealed class PropertyWriteTests : IDisposable
             Assert.Equal(value, property.Value);
             Assert.False(property.IsDdl);
         }
-        Assert.Equal("A title", read.DatabaseProperties["AppTitle"]);
-        Assert.Equal(42, read.DatabaseProperties["Count"]);
+        Assert.Equal("A title", read.Properties["AppTitle"]);
+        Assert.Equal(42, read.Properties["Count"]);
     }
 
     [Fact]
@@ -303,7 +303,7 @@ public sealed class PropertyWriteTests : IDisposable
             Assert.Equal("test", db.SummaryProperties["Title"]);
             Assert.Equal("tmccune", db.SummaryProperties["Author"]);
             Assert.Equal(true, db.UserDefinedProperties["ReplicateProject"]);
-            Assert.Equal("09.50", db.DatabaseProperties["AccessVersion"]);
+            Assert.Equal("09.50", db.Properties["AccessVersion"]);
 
             db.SummaryProperties.Set("Title", "Retitled");
             db.SummaryProperties.Set("Subject", "Added");
@@ -311,8 +311,8 @@ public sealed class PropertyWriteTests : IDisposable
             db.UserDefinedProperties.Set("Project", "A project");
             db.UserDefinedProperties.Set("Count", 9);
             db.UserDefinedProperties.Save();
-            db.DatabaseProperties.Set("Mine", true);
-            db.DatabaseProperties.Save();
+            db.Properties.Set("Mine", true);
+            db.Properties.Save();
         }
         using var read = Database.Open(_path);
         Assert.Equal(new[] { "Title", "Author", "Company", "Subject" }, read.SummaryProperties.Select(p => p.Name));
@@ -322,8 +322,8 @@ public sealed class PropertyWriteTests : IDisposable
         Assert.Equal("A project", read.UserDefinedProperties["Project"]);
         Assert.Equal(9, read.UserDefinedProperties["Count"]);
         Assert.Equal(true, read.UserDefinedProperties["ReplicateProject"]);
-        Assert.Equal(true, read.DatabaseProperties["Mine"]);
-        Assert.Equal("09.50", read.DatabaseProperties["AccessVersion"]);
+        Assert.Equal(true, read.Properties["Mine"]);
+        Assert.Equal("09.50", read.Properties["AccessVersion"]);
     }
 
     [Fact]
@@ -433,8 +433,8 @@ public sealed class PropertyWriteTests : IDisposable
         byte[] before = File.ReadAllBytes(_path);
         using (var db = Database.Open(_path))
         {
-            db.DatabaseProperties.Set("Mine", 1);
-            Assert.Throws<NotSupportedException>(() => db.DatabaseProperties.Save());
+            db.Properties.Set("Mine", 1);
+            Assert.Throws<NotSupportedException>(() => db.Properties.Save());
             var table = db.GetTable(db.GetTableNames()[0]);
             table.Properties.Set("Description", "No");
             Assert.Throws<NotSupportedException>(() => table.Properties.Save());

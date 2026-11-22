@@ -1227,7 +1227,7 @@ public sealed class Database : IDisposable
     /// change them.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The database is closed.</exception>
-    public PropertyMap DatabaseProperties => DatabaseMaps(ref _databaseProperties, "MSysDb").Default;
+    public PropertyMap Properties => DatabaseMaps(ref _databaseProperties, "MSysDb").Default;
 
     /// <summary>
     /// The properties of the database's Summary sheet - <c>Title</c>, <c>Author</c>, <c>Company</c> and the
