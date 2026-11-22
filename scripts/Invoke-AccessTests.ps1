@@ -34,8 +34,10 @@
 # in managed code would have left. What a test's COM calls may have provoked in the engine cannot be told apart.
 #
 # And one way of failing a test: an OleDbException whose message ACE did not write - it begins with a space,
-# " in query expression '?'." - raised by ACE's own work, on a file ACE made, and passing when run again. A piece whose
-# only failures are such is run once more, with a warning naming each test. Any other OleDbException fails at once: a
+# " in query expression '?'.", or it is "Unknown" and nothing else - raised by ACE's own work, on a file ACE made, and
+# passing when run again. "Unknown" failed three tests of PropertiesInAccessTests in one 64-bit process, each in a
+# statement ACE ran - INSERTs, an ALTER TABLE - on an .mdb DAO made (run 44910076686, #145). A piece whose only failures are such is run once more, with a
+# warning naming each test, so one that fails so again fails the step. Any other OleDbException fails at once: a
 # message ACE wrote, about a file the engine wrote, is what these tests are for.
 #
 # Nothing is left out by running class by class: the tests are listed first, every process must run the number of
@@ -465,7 +467,8 @@ $failCode = 0
 $took = [ordered]@{}       # every attempt's seconds, summed: what the run spent
 $lastTook = @{}            # the last attempt's: what a piece takes, for its number in a table
 $notes = @{}
-$aceWroteNoMessage = '^System\.Data\.OleDb\.OleDbException : (\s|$)'
+# A message ACE did not write: one that begins with a space, or that is "Unknown" and nothing else.
+$aceWroteNoMessage = '^System\.Data\.OleDb\.OleDbException : (\s|$|Unknown\s*$)'
 
 function Start-Unit($entry) {
     $unit = $entry.Unit

@@ -123,8 +123,9 @@ project runs its tests one after another.
 The redistributable has crashed a test process from a thread of its own (exit code -1073740771, or an
 `AccessViolationException` under `System.Data.OleDb` with no test failed), and, in a 32-bit process, with an access
 violation .NET made no exception of (exit code -1073741819, 0xC0000005, no test failed and no unhandled exception
-written; #145). It has also failed a statement with a message whose text is missing (" in query expression '?'").
-`Invoke-AccessTests.ps1` runs such a process again, and nothing else; none of these has been seen with Access itself.
+written; #145). It has also failed a statement with a message whose text is missing (" in query expression '?'", or "Unknown" and
+nothing else). `Invoke-AccessTests.ps1` runs such a process again, and nothing else: a piece whose failures are all
+such is run once more, and fails if it fails again. None of these has been seen with Access itself.
 
 ## The test corpus
 
