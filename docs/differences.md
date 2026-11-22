@@ -123,6 +123,12 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   switch to UTF-16LE two bytes at a time. Java Jackcess reads such bytes as compressed text in every column and
   switches at every 0x00 byte. Text that begins with U+FEFF is written in runs where ACE writes it so, where
   Jackcess writes it as UTF-16LE ([Text and Memo](data-types.md#text-and-memo)).
+- **An Access 97 file's text** is read in code page 1252 on every machine, unless
+  `DatabaseOpenOptions.Access97CodePage` names another. Access reads it in the code page of the machine it runs on,
+  which the file does not record; Java Jackcess reads it in the JVM's default charset (UTF-8 from Java 18), unless
+  `DatabaseBuilder.withCharset`, `Database.setCharset` or the system property `jackcess.charset.VERSION_3` names
+  another. A text index of such a file is searched here by the bytes of a value in its code page, as Jet keys it
+  ([Text in a code page](file-formats.md#text-in-a-code-page)).
 - **Text given for a Double or a Single** is the number Access stores for it, the nearest to its first 20 or 12
   significant digits, where Java Jackcess reads it with `Double.valueOf`, every digit, and a Single through that
   double; and **a number given for a Text column** is written as Access writes it, 15 or 7 significant digits, where

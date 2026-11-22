@@ -39,13 +39,16 @@ compacted by Access (`ProtectedFilesInAccessTests`).
   password, or with a value MS-OFFCRYPTO does not allow or AES and its hash do not take - a salt, block, key or hash
   of another size, a spin count past 10,000,000 - which is refused as the file is opened, not at a page, and not
   spun.
-- An .mdb's password is at most 20 characters, which is all DAO takes; an Access 97 file keeps it in the code page
-  of its text (1252), converted as Windows converts text to it: a character the code page lacks is the one Windows'
+- An .mdb's password is at most 20 characters, which is all DAO takes; an Access 97 file keeps it in a code page
+  (1252 here), converted as Windows converts text to it: a character the code page lacks is the one Windows'
   best fit gives for it (L for Ł) or a question mark (Cyrillic, Chinese). Jet 3 checks a password given after the
   same conversion, and so does this library: `Пароль密码` opens such a file with `ПАРОЛЬ密码` too, and with
   `????????` (`tools/jet3-password-fixture.ps1`). The conversion is Windows', the same on every target: .NET's own
   best fit for the code page makes a question mark of eleven characters - spaces of other widths, dashes, quotation
-  marks - that Windows gives a character of the code page for.
+  marks - that Windows gives a character of the code page for. Jet converts the password given to the code page of
+  the machine it runs on; this library converts it to the one the file is opened in, 1252 unless
+  `DatabaseOpenOptions.Access97CodePage` names another, and there with .NET's best fit, which was not compared with
+  Windows' ([Text in a code page](file-formats.md#text-in-a-code-page)).
 - The descriptor Access writes for an Agile-encrypted database has no data-integrity element, so there is no hash
   for a write to leave stale: Access reads what this library wrote as it reads its own.
 

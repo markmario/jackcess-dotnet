@@ -732,6 +732,20 @@ changes with them.
 
 ### Added
 
+- **`DatabaseOpenOptions.Access97CodePage`: an Access 97 file written in another code page reads as Access reads it
+  there** (#154). An Access 97 file keeps its text one or two bytes a character in the code page of the machine
+  that wrote it, and does not record which: Jet 4.0 and ACE 12 write and read it in the code page of the process
+  they run in, whatever the sort order and code page in the file's header say, so a file written on a Russian
+  machine shows "Ìîñêâà" for "Москва" on a Western one. This library read every such file in code page 1252, and
+  still does unless the option names another: with `Access97CodePage = 1251` (or 1250, 1253, 932 and so on) the
+  values, the names of tables, columns and indexes and the database password are read in that code page, and a
+  table's name and a text index are searched by the bytes of the text in that code page, which is how Jet keys
+  them. Measured with Jet 4.0's DAO 3.6 and ACE 12's DAO, which read alike, in processes given code pages 1251 and
+  932 by their manifests (`tools/access97-code-page-fixture.ps1`): the text each wrote, what each read with that
+  code page and with 1252, the keys of every value of a General text index, its Seeks, the tables it found by name
+  and its password; and 1253 the same way by hand. The code
+  page of a Unicode encoding, or a number that is no code page, is refused with `ArgumentException` before the file
+  is opened ([Text in a code page](docs/file-formats.md#text-in-a-code-page)).
 - **A value with ー, 々, ゝ or the shadda is a key in General - Legacy** (#156). The twelve marks Access keys by the
   character before them - ー and ｰ, 々, ゝ ゞ, ヽ ヾ, 〱 〲 and the shadda with its two presentation forms - are keyed
   as Access keys them: as that character, or after a kana as its vowel, with the mark's own accent; FF FF with
