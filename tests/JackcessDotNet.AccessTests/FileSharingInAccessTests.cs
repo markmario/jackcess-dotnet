@@ -423,8 +423,8 @@ namespace JackcessDotNet.AccessTests
             try
             {
                 dynamic made = dbe.CreateDatabase(path, ";LANGID=0x0409;CP=1252;COUNTRY=0", 32 /* dbVersion30, Access 97 */);
-                made.Execute("CREATE TABLE T (Id LONG CONSTRAINT PK PRIMARY KEY, V TEXT(100))");
-                made.Close();
+                try { made.Execute("CREATE TABLE T (Id LONG CONSTRAINT PK PRIMARY KEY, V TEXT(100))"); }
+                finally { made.Close(); }
 
                 var rows = new List<Values>();
                 using (var db = OpenBesideDao((object)dbe, path, rows))

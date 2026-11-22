@@ -80,6 +80,10 @@ made with DAO does not allow a zero-length string unless asked. A column's defau
 required column with a `DefaultValue` and no value in the row is refused here, where Access would use the
 default.
 
+A column's or a table's validation rule - its `ValidationRule` property, with the `ValidationText` Access shows
+when the rule is broken - is read and written as a property and nothing more ([#25]): no row is checked against
+it, and a row that breaks it is written, where Access would refuse it.
+
 ## Replication ID AutoNumbers
 
 **A Replication ID AutoNumber** is given the `DefaultValue` property `GenGUID()` ([#33]): Access fills the column
@@ -88,6 +92,7 @@ and without the flag (DAO and SQL make them so) is not an AutoNumber to this lib
 
 [Back to contents](README.md)
 
+[#25]: https://github.com/markmario/jackcess-dotnet/issues/25
 [#27]: https://github.com/markmario/jackcess-dotnet/issues/27
 [#33]: https://github.com/markmario/jackcess-dotnet/issues/33
 [#41]: https://github.com/markmario/jackcess-dotnet/issues/41

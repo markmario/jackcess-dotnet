@@ -154,6 +154,14 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   is not written to, because this library does not read or write the column's values ([#24]). Java Jackcess reads
   the number the row holds as a `ComplexValueForeignKey`, through which the values are read and changed, and gives
   a new row the next number of the table's counter, as Access does ([Complex columns](data-types.md#complex-columns)).
+- **A validation rule** is not applied: a row that breaks it is written ([#25]). Java Jackcess evaluates the rule,
+  unless expression evaluation is switched off, and refuses the row, as Access does
+  ([Required and Allow Zero Length](properties.md#required-and-allow-zero-length)).
+- **A linked table** is not followed, and is not among a database's tables ([#28]). Java Jackcess opens the
+  database it points to through a `LinkResolver` and gives the table
+  ([Opening and creating a database](getting-started.md#opening-and-creating-a-database)).
+- **A database is opened from a path** ([#32]), where Java Jackcess also takes a `FileChannel`, which its
+  `MemFileChannel` makes of a file held in memory.
 
 And where the two agree: an Access 97 file is only read, as in Jackcess
 ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)); `EnforceForeignKeys` is on by
@@ -166,4 +174,7 @@ an import makes a Large Number only in a format that has one, as Java Jackcess d
 [Back to contents](README.md)
 
 [#24]: https://github.com/markmario/jackcess-dotnet/issues/24
+[#25]: https://github.com/markmario/jackcess-dotnet/issues/25
+[#28]: https://github.com/markmario/jackcess-dotnet/issues/28
+[#32]: https://github.com/markmario/jackcess-dotnet/issues/32
 [#58]: https://github.com/markmario/jackcess-dotnet/issues/58

@@ -350,18 +350,21 @@ namespace JackcessDotNet.AccessTests
             try
             {
                 dynamic db = dbe.OpenDatabase(path);
-                dynamic table = db.CreateTableDef("G");
-                table.Fields.Append(table.CreateField("Id", 4));        // dbLong
-                table.Fields.Append(table.CreateField("Flag", 1));      // dbBoolean
-                table.Fields.Append(table.CreateField("Gid", 15));      // dbGUID
-                // A Text field DAO makes does not allow a zero-length string unless asked, and the engine holds a
-                // row to that as ACE does (#41): row 5 below has one.
-                dynamic text = table.CreateField("Txt", 10, 30);        // dbText
-                text.AllowZeroLength = true;
-                table.Fields.Append(text);
-                table.Fields.Append(table.CreateField("Gid2", 15));
-                db.TableDefs.Append(table);
-                db.Close();
+                try
+                {
+                    dynamic table = db.CreateTableDef("G");
+                    table.Fields.Append(table.CreateField("Id", 4));        // dbLong
+                    table.Fields.Append(table.CreateField("Flag", 1));      // dbBoolean
+                    table.Fields.Append(table.CreateField("Gid", 15));      // dbGUID
+                    // A Text field DAO makes does not allow a zero-length string unless asked, and the engine holds a
+                    // row to that as ACE does (#41): row 5 below has one.
+                    dynamic text = table.CreateField("Txt", 10, 30);        // dbText
+                    text.AllowZeroLength = true;
+                    table.Fields.Append(text);
+                    table.Fields.Append(table.CreateField("Gid2", 15));
+                    db.TableDefs.Append(table);
+                }
+                finally { db.Close(); }
             }
             finally { Dao.Release(dbe); }
             Execute(path, "CREATE UNIQUE INDEX pk ON G (Id) WITH PRIMARY", "CREATE INDEX ByGuid ON G (Gid)");
