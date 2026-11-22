@@ -51,8 +51,8 @@ internal static class IndexKeys
 
     /// <summary>Why no key is made for <paramref name="value"/> in a column whose keys are made.</summary>
     public static string WhyNot(Column column, object? value)
-        => TextIndexCodes.For(column.SortOrder) == TextIndexCodes.Access97
-            ? $"{column.Name}'s value '{value}' has a character that Access 97's code page 1252 has not, and this library makes no key for it"
+        => TextIndexCodes.For(column.SortOrder) is { IsAccess97: true } codes
+            ? $"{column.Name}'s value '{value}' has a character that code page {codes.CodePage}, the code page of the Access 97 file's text, has not, and this library makes no key for it"
             : $"Access keys a character of {column.Name}'s value '{value}' by the characters around it, and this library makes no such key";
 
     /// <summary>

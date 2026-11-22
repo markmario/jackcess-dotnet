@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Security.Authentication;
+using System.Text;
 
 namespace JackcessDotNet;
 
@@ -368,8 +369,9 @@ public sealed class Database : IDisposable
     /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), the format to read a file as when its
     /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), whether it is only to be read
     /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), whether, read, it keeps writers out
-    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>), and the longest it may grow to
-    /// (<see cref="DatabaseOpenOptions.MaxFileLength"/>). With none set this is <see cref="Open(string)"/>.
+    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>), the longest it may grow to
+    /// (<see cref="DatabaseOpenOptions.MaxFileLength"/>), and the code page an Access 97 file's text is in
+    /// (<see cref="DatabaseOpenOptions.Access97CodePage"/>). With none set this is <see cref="Open(string)"/>.
     /// <para>
     /// Opened to be written, the file is refused while another program or <see cref="Database"/> has it open for
     /// writing - Access, while the database is open in it - and kept from every other writer while it is open (see
@@ -418,7 +420,8 @@ public sealed class Database : IDisposable
     /// <returns>The database, open. The caller disposes it.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="DatabaseOpenOptions.KeepWritersOut"/> is set without <see cref="DatabaseOpenOptions.ReadOnly"/>, in
+    /// <see cref="DatabaseOpenOptions.KeepWritersOut"/> is set without <see cref="DatabaseOpenOptions.ReadOnly"/>, or
+    /// <see cref="DatabaseOpenOptions.Access97CodePage"/> names no code page .NET has, or one of Unicode's encodings, in
     /// any format. The file is not opened.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -444,8 +447,35 @@ public sealed class Database : IDisposable
             throw new ArgumentOutOfRangeException(nameof(options), maxLength,
                 $"{nameof(DatabaseOpenOptions.MaxFileLength)} is {maxLength:N0}: it is a length in bytes, more than 0 and at most " +
                 $"{PageFile.FormatMaxLength:N0}, the 2 GB an Access file can be. '{path}' was not opened.");
+        var access97Text = options.Access97CodePage is { } codePage ? Access97Text(codePage, path, nameof(options)) : null;
         return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly,
-                        options.KeepWritersOut, options.MaxFileLength);
+                        options.KeepWritersOut, options.MaxFileLength, access97Text);
+    }
+
+    // The code pages of Unicode's encodings - UTF-16 and UTF-32 of both byte orders, UTF-7, UTF-8 - in none of which
+    // Jet keeps an Access 97 file's text: with UTF-8 for the process's code page, DAO 3.6 makes no Access 97 file at all.
+    private static readonly int[] UnicodeCodePages = { 1200, 1201, 12000, 12001, 65000, 65001 };
+
+    /// <summary>The encoding of <see cref="DatabaseOpenOptions.Access97CodePage"/>, <paramref name="codePage"/>.</summary>
+    /// <exception cref="ArgumentException">.NET has no such code page, or it is one of Unicode's encodings.</exception>
+    private static Encoding Access97Text(int codePage, string path, string paramName)
+    {
+        string refused = $"{nameof(DatabaseOpenOptions.Access97CodePage)} is {codePage}";
+        if (Array.IndexOf(UnicodeCodePages, codePage) >= 0)
+            throw new ArgumentException(
+                $"{refused}, one of Unicode's encodings: an Access 97 file keeps its text in a Windows code page of one or two bytes " +
+                $"a character, such as 1252 or 1251. '{path}' was not opened.", paramName);
+        // The Access 97 format registers the code pages .NET has only from a provider.
+        _ = JetFormat.Jet3;
+        try
+        {
+            if (codePage > 0) return Encoding.GetEncoding(codePage);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException)
+        {
+            throw new ArgumentException($"{refused}, which is no code page .NET has. '{path}' was not opened.", paramName, e);
+        }
+        throw new ArgumentException($"{refused}, which is no code page .NET has. '{path}' was not opened.", paramName);
     }
 
     /// <summary>
@@ -457,12 +487,15 @@ public sealed class Database : IDisposable
     /// <see cref="Open(string, DatabaseOpenOptions)"/> describes; a file is opened only to be read when
     /// <paramref name="readOnly"/> is true, and one opened only to be read is shared for reading only when
     /// <paramref name="keepWritersOut"/> is true. The file grows to <paramref name="maxLength"/> at most, when it is
-    /// given, and otherwise to the format's own limit.
+    /// given, and otherwise to the format's own limit. An Access 97 file's text is read in
+    /// <paramref name="access97Text"/>, when it is given, and otherwise in code page 1252.
     /// </summary>
     private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly, bool keepWritersOut = false,
-                                     long? maxLength = null)
+                                     long? maxLength = null, Encoding? access97Text = null)
     {
         var (format, hasHeader) = FormatOf(path, fallback);
+        if (access97Text is not null && format.Version == FileFormat.Access97)
+            format = JetFormat.Access97In(access97Text);
         var file = new PageFile(path, format, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, keepWritersOut);
         if (maxLength is { } limit) file.MaxLength = limit;
         try

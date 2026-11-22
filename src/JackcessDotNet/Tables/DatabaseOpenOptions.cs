@@ -13,7 +13,7 @@ public sealed class DatabaseOpenOptions
 {
     /// <summary>
     /// Creates options with nothing set: no password, no format to fall back on, the file opened for reading and
-    /// writing, and no limit on its length but the format's own.
+    /// writing, no limit on its length but the format's own, and an Access 97 file's text read in code page 1252.
     /// </summary>
     public DatabaseOpenOptions()
     {
@@ -136,4 +136,29 @@ public sealed class DatabaseOpenOptions
     /// </para>
     /// </summary>
     public long? MaxFileLength { get; set; }
+
+    /// <summary>
+    /// The Windows code page an Access 97 file's text is read in: its values, the names of its tables, columns and
+    /// indexes, and its database password. Null (the default) for 1252, Western European. A file of any later format
+    /// keeps its text in Unicode, and this is not used for it.
+    /// <para>
+    /// An Access 97 file keeps text one or two bytes a character, in the code page of the machine that wrote it, and
+    /// does not record which: Access reads those bytes in the code page of the machine it runs on, and so shows a
+    /// file written on a Russian machine, read on a Western one, as "Ìîñêâà" for "Москва". The sort order and the code
+    /// page the file's header holds are what its creator was told when the file was made, and are not the code page
+    /// its text is in. Set this to the code page of the machine that wrote the file - 1251 for Cyrillic, 1250 for
+    /// Central European, 1253 for Greek, 932 for Japanese - and the file reads as Access reads it on such a machine.
+    /// Its text indexes are searched by the bytes of a value in this code page, as Access keys them, and a value with
+    /// a character the code page has not is not looked for through them.
+    /// </para>
+    /// <para>
+    /// A number that names no code page .NET has, or one of Unicode's encodings (UTF-7, UTF-8, UTF-16, UTF-32), in
+    /// which Access keeps no Access 97 text, is refused by <see cref="Database.Open(string, DatabaseOpenOptions)"/>
+    /// with <see cref="ArgumentException"/> before the file is opened, whatever its format.
+    /// </para>
+    /// <code>
+    ///   using var db = Database.Open("Orders97.mdb", new DatabaseOpenOptions { Access97CodePage = 1251 });
+    /// </code>
+    /// </summary>
+    public int? Access97CodePage { get; set; }
 }

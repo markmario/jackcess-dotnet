@@ -90,19 +90,41 @@ internal sealed class TextIndexCodes
                         + "\u06D6\u06D7\uFD24\uFD6F");
 
     /// <summary>
-    /// Access 97's General order (sort order 1033 in a Jet3 file). Access 97 keeps text in the Windows code page
-    /// 1252, one byte a character, and its codes are of those 256 bytes: a character beyond U+00FF has the codes
-    /// of its byte when the code page has it (€ is 0x80, Š 0x8A), and no key when it has not - no value of such
-    /// a file holds it.
+    /// Access 97's General order (sort order 1033 in a Jet3 file), its text in the Windows code page 1252, one byte
+    /// a character, and its codes are of those 256 bytes: a character beyond U+00FF has the codes of its byte when
+    /// the code page has it (€ is 0x80, Š 0x8A), and no key when it has not - no value of such a file holds it. A
+    /// file read in another code page has the same codes for the bytes of its own (<see cref="Access97In"/>).
     /// </summary>
     public static TextIndexCodes Access97 { get; } = new("index_codes_gen_97.txt", "index_mappings_ext_gen_97.txt");
 
+    /// <summary>
+    /// Access 97's General order in a file whose text is in <paramref name="codePage"/>
+    /// (<see cref="DatabaseOpenOptions.Access97CodePage"/>): <see cref="Access97"/> for 1252. Jet keys the bytes of
+    /// the text, whatever their code page, with the codes those bytes have in code page 1252 - Jet 4.0 and ACE 12 wrote
+    /// the same key for the bytes of "Привет" in code page 1251 as for the same bytes written as "Ïðèâåò" with 1252,
+    /// and keyed code page 932's two bytes a character the same way (tools/access97-code-page-fixture.ps1) - so a value
+    /// is keyed as the characters of code page 1252 that have its bytes in its own.
+    /// </summary>
+    internal static TextIndexCodes Access97In(int codePage)
+        => codePage == Access97.CodePage ? Access97 : Access97InCodePage.GetOrAdd(codePage, cp => new TextIndexCodes(Access97, Encoding.GetEncoding(cp)));
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, TextIndexCodes> Access97InCodePage = new();
+
     private static readonly CharCodes NotInCodePage = new() { IsNotInCodePage = true };
+
+    // Stands, in a value turned into code page 1252's characters, for a character its own code page has not: one
+    // Access 97's codes have as not in the code page (0x80 is €, not U+0080).
+    private const char NotInCodePageMark = '\u0080';
 
     private readonly CharCodes[] _basicCodes;
     private readonly Lazy<CharCodes[]> _extCodes;
     private readonly bool _isGeneral;
     private readonly bool _isAccess97;
+
+    // Access 97 in a code page other than 1252: the code page, and the characters of code page 1252 that have the
+    // bytes of each character in it, or null for a character it has not.
+    private readonly Encoding? _codePage;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<char, string?>? _asCodePage1252;
 
     // Access 97: the byte of each character from FirstMappedChar on that the code page has; 0 for one it has not.
     private readonly byte[] _mappedBytes = Array.Empty<byte>();
@@ -211,6 +233,48 @@ internal sealed class TextIndexCodes
         }
     }
 
+    /// <summary>Access 97's codes for text in <paramref name="codePage"/>: those of <paramref name="access97"/>, for the bytes of the text in it.</summary>
+    private TextIndexCodes(TextIndexCodes access97, Encoding codePage)
+    {
+        _isAccess97     = true;
+        _basicCodes     = access97._basicCodes;
+        _extCodes       = access97._extCodes;
+        _mappedBytes    = access97._mappedBytes;
+        _codePage       = codePage;
+        _asCodePage1252 = new System.Collections.Concurrent.ConcurrentDictionary<char, string?>();
+    }
+
+    /// <summary>For Access 97's General order, the code page of the text whose bytes it keys.</summary>
+    public int CodePage => _codePage?.CodePage ?? CodePage1252.CodePage;
+
+    /// <summary>True for Access 97's General order, in any code page.</summary>
+    public bool IsAccess97 => _isAccess97;
+
+    // Code page 1252, through the Access 97 format, which registers the code pages .NET has only from a provider.
+    private static Encoding CodePage1252 => JetFormat.Jet3.TextEncoding;
+
+    /// <summary>
+    /// <paramref name="value"/> as the characters of code page 1252 that have its bytes in this order's code page,
+    /// each character that code page has not as <see cref="NotInCodePageMark"/>; the value itself in code page 1252.
+    /// </summary>
+    private string AsCodePage1252(string value)
+    {
+        if (_codePage is null) return value;
+        var text = new StringBuilder(value.Length);
+        foreach (char c in value) text.Append(InCodePage1252(c) ?? NotInCodePageMark.ToString());
+        return text.ToString();
+    }
+
+    // The characters of code page 1252 with the bytes c has in this order's code page, or null for a character the code
+    // page has not: one whose bytes do not read back as it, a character Windows' best fit or a question mark stands for.
+    private string? InCodePage1252(char c)
+        => _asCodePage1252!.GetOrAdd(c, ch =>
+        {
+            byte[] bytes = _codePage!.GetBytes(new[] { ch });
+            string back = _codePage.GetString(bytes);
+            return back.Length == 1 && back[0] == ch ? CodePage1252.GetString(bytes) : null;
+        });
+
     /// <summary>
     /// The codes of the order a column sorts in, or null when this library does not make that order's keys. A
     /// locale's order whose keys are those of General - Legacy has its codes (<see cref="SortOrder.KeysAsGeneralLegacy"/>).
@@ -218,19 +282,23 @@ internal sealed class TextIndexCodes
     public static TextIndexCodes? For(SortOrder order)
         => order.KeysAsGeneralLegacy ? GeneralLegacy
          : order.IsGeneral ? General
-         : order.IsAccess97General ? Access97
+         : order.IsAccess97General ? Access97In(order.CodePage)
          : null;
 
     /// <summary>
     /// False for a value whose key <see cref="Encode"/> refuses to make: in General, one with a character Access
-    /// keys by the characters around it (ー, 々 and the like) or, in Access 97's order, with a character code page
-    /// 1252 has not.
+    /// keys by the characters around it (ー, 々 and the like) or, in Access 97's order, with a character the code
+    /// page of its text (1252 unless the file is read in another) has not.
     /// </summary>
-    public bool CanEncode(string value) => !ToIndexCharSequence(value).Any(c => CodesOf(c) is { Mark: MarkKind.Unkeyed } or { IsNotInCodePage: true });
+    public bool CanEncode(string value) => !ToIndexCharSequence(AsCodePage1252(value)).Any(c => CodesOf(c) is { Mark: MarkKind.Unkeyed } or { IsNotInCodePage: true });
 
     /// <summary>Why <see cref="CanEncode"/> is false for <paramref name="value"/>, to follow "No index key is made for ".</summary>
     public string WhyNot(string value)
     {
+        if (_codePage is not null)
+            foreach (char c in ToIndexCharSequence(value))
+                if (InCodePage1252(c) is null)
+                    return $"a value with U+{(int)c:X4}: this Access 97 file's text is in code page {_codePage.CodePage}, which has no such character";
         foreach (char c in ToIndexCharSequence(value))
         {
             var codes = CodesOf(c);
@@ -242,16 +310,22 @@ internal sealed class TextIndexCodes
 
     /// <summary>The key of <paramref name="value"/>, without the flag byte an index entry starts each column with.</summary>
     /// <exception cref="NotSupportedException">The value is one <see cref="CanEncode"/> is false for.</exception>
-    public byte[] Encode(string value, bool ascending) => EncodeChars(ToIndexCharSequence(value), ascending);
+    public byte[] Encode(string value, bool ascending)
+    {
+        if (_codePage is not null && !CanEncode(value))
+            throw new NotSupportedException($"No index key is made for {WhyNot(value)}.");
+        return EncodeChars(ToIndexCharSequence(AsCodePage1252(value)), ascending);
+    }
 
     /// <summary>
     /// The key of an object's name, as Access compares names in this order (<see cref="ObjectNames"/>): the key an
     /// index entry has for it, its trailing spaces dropped as a value's are, or with <paramref name="whole"/> the key
     /// of the whole name, its trailing spaces kept. Null for a name with a character Access keys by the characters
-    /// around it (<see cref="IsContextDependent"/>) or, in Access 97's order, one code page 1252 has not.
+    /// around it (<see cref="IsContextDependent"/>) or, in Access 97's order, one the code page of its text has not.
     /// </summary>
     internal byte[]? NameKey(string name, bool whole)
     {
+        name = AsCodePage1252(name);
         string str = whole ? (name.Length > MaxTextIndexCharLength ? name.Substring(0, MaxTextIndexCharLength) : name) : ToIndexCharSequence(name);
         foreach (char c in str)
             if (CodesOf(c) is { IsContextDependent: true } or { IsNotInCodePage: true }) return null;

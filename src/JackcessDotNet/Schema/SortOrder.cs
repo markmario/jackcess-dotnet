@@ -24,8 +24,16 @@ internal readonly record struct SortOrder(short Code, byte Version)
     /// <summary>"General": the order Access 2010 and later can make a new database in.</summary>
     public static SortOrder General { get; } = new(GeneralCode, 1);
 
-    /// <summary>Access 97's General order: sort order 1033 in a Jet3 file.</summary>
-    public static SortOrder Access97General { get; } = new(GeneralCode, Access97Version);
+    /// <summary>Access 97's General order: sort order 1033 in a Jet3 file, its text in code page 1252.</summary>
+    public static SortOrder Access97General { get; } = new(GeneralCode, Access97Version) { CodePage = 1252 };
+
+    /// <summary>
+    /// The code page of the text of an Access 97 order - the one its file is read in
+    /// (<see cref="DatabaseOpenOptions.Access97CodePage"/>) - and 0 for any other order. Access 97's General order
+    /// keys the bytes of the text in that code page, not its characters (tools/access97-code-page-fixture.ps1), so
+    /// the keys of a value depend on it.
+    /// </summary>
+    public int CodePage { get; init; }
 
     public bool IsGeneralLegacy => this == GeneralLegacy;
 
@@ -34,7 +42,8 @@ internal readonly record struct SortOrder(short Code, byte Version)
     /// <summary>One of Access 97's orders, read from a Jet3 column: Jet4 has no form for it.</summary>
     public bool IsAccess97 => Version == Access97Version;
 
-    public bool IsAccess97General => this == Access97General;
+    /// <summary>Access 97's General order, in whatever code page (<see cref="CodePage"/>).</summary>
+    public bool IsAccess97General => Code == GeneralCode && IsAccess97;
 
     /// <summary>
     /// Whether text in this order has the keys it has in General - Legacy: that order itself, and the orders of
@@ -80,7 +89,7 @@ internal readonly record struct SortOrder(short Code, byte Version)
     public static SortOrder Read(byte[] page, int at, JetFormat format)
     {
         short code = ByteUtil.GetShort(page, at);
-        if (format.SizeSortOrder < 4) return new(code, Access97Version);
+        if (format.SizeSortOrder < 4) return new(code, Access97Version) { CodePage = format.TextEncoding.CodePage };
         if (code == 0) return GeneralLegacy;
         return new(code, page[at + 3]);
     }
@@ -97,7 +106,7 @@ internal readonly record struct SortOrder(short Code, byte Version)
     public override string ToString()
         => IsGeneralLegacy ? "General - Legacy"
          : IsGeneral ? "General"
-         : IsAccess97General ? "Access 97's General order"
+         : IsAccess97General ? (CodePage == Access97General.CodePage ? "Access 97's General order" : $"Access 97's General order, in code page {CodePage}")
          : Version == Access97Version ? $"Access 97's order {Code}"
          : $"order {Code}, version {Version}";
 }
