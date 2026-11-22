@@ -877,7 +877,7 @@ changes with them.
     2.0.0-preview.5 `Validate(row)` refuses each child whose parent is in the batch with
     `ConstraintViolationException`, as the parent is not in the file yet. Check such a batch with
     `Validate(row, checkRelationships: false)` (#34), which makes every other check and leaves the relationships
-    to each row's insert, as `Validate(row)` did before.
+    to each row's insert, as `Validate(row)` did in 2.0.0-preview.4.
   - It encoded before it checked the columns' rules and the indexes, so a row with two faults could be refused
     with another exception than `Insert`'s.
 

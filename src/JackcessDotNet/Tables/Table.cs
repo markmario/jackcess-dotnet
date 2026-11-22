@@ -724,7 +724,7 @@ public sealed class Table
     /// </summary>
     /// <param name="row">The row to check, as it would be given to <see cref="Insert"/>.</param>
     /// <param name="checkRelationships">
-    /// Whether the row's foreign keys are checked against the rows in the file now: <c>true</c> as
+    /// Whether the row's foreign keys are checked against the rows in the file: <c>true</c> as
     /// <see cref="Validate(Row)"/> does, <c>false</c> to leave them to the insert.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="row"/> is null.</exception>
