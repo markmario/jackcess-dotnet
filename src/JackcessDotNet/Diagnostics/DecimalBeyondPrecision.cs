@@ -9,10 +9,10 @@ namespace JackcessDotNet.Diagnostics;
 /// </summary>
 public sealed class DecimalBeyondPrecision
 {
-    internal DecimalBeyondPrecision(string table, Column column, int rowIndex, Row primaryKey,
+    internal DecimalBeyondPrecision(string tableName, Column column, int rowIndex, Row primaryKey,
                                     decimal? value, bool isCut, decimal? valueInEarlierByteOrder)
     {
-        Table                   = table;
+        TableName               = tableName;
         Column                  = column;
         RowIndex                = rowIndex;
         PrimaryKey              = primaryKey;
@@ -21,8 +21,8 @@ public sealed class DecimalBeyondPrecision
         ValueInEarlierByteOrder = valueInEarlierByteOrder;
     }
 
-    /// <summary>The table's name.</summary>
-    public string Table { get; }
+    /// <summary>The name of the table the row is in.</summary>
+    public string TableName { get; }
 
     /// <summary>The column: its name, and the <see cref="JackcessDotNet.Column.Precision"/> the value is beyond.</summary>
     public Column Column { get; }
@@ -64,7 +64,7 @@ public sealed class DecimalBeyondPrecision
     /// Text such as <c>Prices.Price, row 1 (Id=2): reads 16777216.00, 1.00 in the earlier byte order</c>.
     /// </returns>
     public override string ToString()
-        => $"{Table}.{Column.Name}, row {RowIndex}" +
+        => $"{TableName}.{Column.Name}, row {RowIndex}" +
            (PrimaryKey.Count > 0 ? $" ({string.Join(", ", PrimaryKey.Select(k => $"{k.Key}={k.Value}"))})" : string.Empty) +
            $": reads {Show(Value)}{(IsCut ? " (the low 96 bits of a longer number)" : string.Empty)}, " +
            $"{Show(ValueInEarlierByteOrder)} in the earlier byte order";

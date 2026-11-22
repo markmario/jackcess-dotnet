@@ -144,9 +144,9 @@ The [CHANGELOG's breaking changes](../CHANGELOG.md#breaking-changes-to-the-publi
   almost certainly one. Access-written Decimals, which earlier versions misread, read correctly.
 
   `DecimalByteOrder.Find(database)`, and the same for a `Table`, in the `JackcessDotNet.Diagnostics` namespace,
-  lists the values that read with more digits than their column holds: the table, the column, the row (its
-  primary key, and its place among the table's rows), the value as it reads and the value its bytes make in the
-  earlier order. It changes nothing - a read returns what it did - and repairs nothing:
+  lists the values that read with more digits than their column holds: the table's name (`TableName`), the
+  column, the row (its primary key, and its place among the table's rows), the value as it reads and the value its
+  bytes make in the earlier order. It changes nothing - a read returns what it did - and repairs nothing:
 
   ```csharp
   foreach (var suspect in DecimalByteOrder.Find(db))

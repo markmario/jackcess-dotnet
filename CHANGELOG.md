@@ -25,6 +25,8 @@ changed since 1.2.2.
   `IndexCursor.FindRowByEntry`, which 1.2.2 had, is `FindRowByKey`; and, for code written against a 2.0.0
   preview, `FindRowsByEntry` is `FindRowsByKey`, `FindClosestRowByEntry` is `FindClosestRowByKey`, and
   `IndexRange.StartEntry` and `EndEntry` are `StartKey` and `EndKey`. Each lookup's parameter is `keyValues`.
+- **Breaking for code written against a 2.0.0 preview: `Diagnostics.DecimalBeyondPrecision.Table` is `TableName`**
+  (#34), as a relationship's `FromTableName` is: it is the table's name, not a `Table`. 1.2.2 had no such type.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and

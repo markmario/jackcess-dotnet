@@ -80,7 +80,7 @@ public sealed class DecimalBeyondPrecisionTests : IDisposable
         var found = DecimalByteOrder.Find(table).ToList();
 
         Assert.Equal(2, found.Count);
-        Assert.All(found, f => { Assert.Equal("Prices", f.Table); Assert.Equal("Price", f.Column.Name); Assert.Equal(5, f.Column.Precision); Assert.False(f.IsCut); });
+        Assert.All(found, f => { Assert.Equal("Prices", f.TableName); Assert.Equal("Price", f.Column.Name); Assert.Equal(5, f.Column.Precision); Assert.False(f.IsCut); });
 
         Assert.Equal(1, found[0].RowIndex);
         Assert.Equal(2, found[0].PrimaryKey["Id"]);

@@ -140,7 +140,7 @@ JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Column.get -> JackcessDotNet.C
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.IsCut.get -> bool
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.PrimaryKey.get -> JackcessDotNet.Row!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.RowIndex.get -> int
-JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Table.get -> string!
+JackcessDotNet.Diagnostics.DecimalBeyondPrecision.TableName.get -> string!
 override JackcessDotNet.Diagnostics.DecimalBeyondPrecision.ToString() -> string!
 JackcessDotNet.Diagnostics.DecimalBeyondPrecision.Value.get -> decimal?
 JackcessDotNet.DatabaseFullException
