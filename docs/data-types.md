@@ -305,7 +305,8 @@ their values in a hidden table of their own, which this library does not read ([
   dropped, so a table Access made is refused for that index first.
   Measured with ACE 16 (`tools/dao-complex-rows.ps1`).
 
-A complex column is not added, dropped or renamed: [Tables and schema changes](tables-and-schema.md).
+A complex column is not added, dropped or renamed, and a table that has one is not dropped; each is refused
+with `NotSupportedException`. Adding and dropping are in [Tables and schema changes](tables-and-schema.md).
 
 [Back to contents](README.md)
 

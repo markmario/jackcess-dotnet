@@ -17,7 +17,9 @@ changed since 1.2.2.
   `object` in a `DataTable`** (#152), where 1.2.2 and the 2.0.0 previews to preview 6 made it one of type `int`.
   Its value there is `DBNull.Value` in every row, as it was, and a row read from the table has null for it, as it
   had: the column's values are not read (#24), and the number the row holds for it, which is not its value, is not
-  given. A column of `object` can hold whatever those values are read as without changing its type. A table with a
+  given. A column of `object` can hold whatever those values are read as without changing its type. An import of
+  such a `DataTable` leaves the column out, as it does any column of a type it has no Access type for, and tells
+  `ImportOptions.OnUnmappableColumn`, where it made a Long Integer column of nulls. A table with a
   complex column takes no insert, update or delete, and `Table.InsertRefusal` says why: Access gives each row a
   number for the column from a counter of the table's own and deletes a row's values with it, neither of which this
   library does. A table Access made was refused already, for the unique index Access keeps on every complex column

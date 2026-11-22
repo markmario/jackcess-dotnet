@@ -121,6 +121,8 @@ materialising the whole table.
 
 A complex column - an attachment, a multi-value field, version history - is a `DataColumn` of type `object` holding
 `DBNull.Value` in every row: its values are not read ([#24]; [Complex columns](data-types.md#complex-columns)).
+An import of that `DataTable` leaves the column out, as it does any column of a type with no Access type, and
+tells `ImportOptions.OnUnmappableColumn`; with `FallbackUnmappableToString` it makes a `Memo` column of nulls.
 
 [Back to contents](README.md)
 
