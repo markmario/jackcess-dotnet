@@ -283,8 +283,8 @@ internal sealed class RowEncoder
     }
 
     /// <summary>
-    /// Throws when the table's definition is not one a row can be written by - a column placed outside the row, or
-    /// two in one place - so that nothing is written wrongly.
+    /// Throws when the table's definition is not one a row can be written by - a calculated or complex column, a
+    /// column placed outside the row, or two in one place - so that nothing is written wrongly.
     /// </summary>
     internal void EnsureWritable()
     {
@@ -298,7 +298,11 @@ internal sealed class RowEncoder
             ? "its definition ends before its columns' names do, so its columns were not all read"
             : _columns.FirstOrDefault(c => c.IsCalculated) is { } calculated
                 ? $"its column {calculated.Name} is calculated, and this library works no expression out"
-                : _layout.WhyNotWritable;
+                : _columns.FirstOrDefault(c => c.DataType == DataType.Complex) is { } complex
+                    ? $"its column {complex.Name} is a complex one (attachments, several values or version history), " +
+                      "for which Access gives each row a number from the table's own counter and keeps the values in a " +
+                      "table of their own, neither of which this library writes"
+                    : _layout.WhyNotWritable;
         return why is null ? null : $"No row of this table is written: {why}. Nothing was changed.";
     }
 
