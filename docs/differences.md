@@ -109,6 +109,10 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
 - **A Large Number or Date/Time Extended column** in an `.accdb` of an earlier format is created, and the file
   becomes one of a later format, where Jackcess refuses the table
   ([A column that changes a file's format](file-formats.md#a-column-that-changes-a-files-format)).
+- **ー, 々, ゝ, the shadda and the other marks Access keys by the character before them** have that character's
+  weight in a General - Legacy key, or after a kana its vowel, as Access keys them; Jackcess gives each the key its
+  codes file has for it, which is its key after "a", wherever it is, so its keys for データ and 日々 are not the ones
+  Access writes ([The marks keyed by the character before them](indexes.md#the-marks-keyed-by-the-character-before-them)).
 - **A key longer than 510 bytes** is cut with Access's digest; the versions of Jackcess that cut keys leave the
   last byte out, and Jackcess before 5.2.0 wrote such keys whole
   ([Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes)).

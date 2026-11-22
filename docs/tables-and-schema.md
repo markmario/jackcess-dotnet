@@ -131,6 +131,8 @@ and the two definitions hold the same index slots.
     iteration mark as the plain one and U+3099 (`ゞ` is one with `ゝ` and U+3099, as to Access); each as the
     character before it, as Access reads `ー` after a Latin letter; and the Arabic marks left out. That takes as
     one some names Access keeps apart (`人々` and `人人`): 47 of the verdicts, and as two none it takes as one.
+    Such a name is a column's or an index's; a table or a relationship is not given one, in either order, though
+    General - Legacy's key of it is made ([Refused](indexes.md#refused)).
 - **A database whose text sorts in another order.** Access compares the names of its columns and indexes by that
   order's own keys, which this library makes for General - Legacy, General and the orders whose keys are General -
   Legacy's ([Text index keys](indexes.md#text-index-keys-sort-orders-and-limits)). In another, names General -

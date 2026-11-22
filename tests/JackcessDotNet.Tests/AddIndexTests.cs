@@ -213,13 +213,23 @@ public sealed class AddIndexTests : IDisposable
         AssertRefusedAndUnchanged<NotSupportedException>(table => table.AddIndex(new IndexDefinition("ByAmount", "Amount")), "not supported");
     }
 
+    // ー and 々 are keyed by the character before them: an index built over values that hold them has their keys.
+    // (In General their keys are not made, and such an index is refused: GeneralSortOrderTests.)
     [Fact]
-    public void An_index_over_a_value_no_key_is_made_for_is_refused_and_nothing_changes()
+    public void An_index_over_values_Access_keys_by_their_neighbours_holds_them()
     {
         using (var db = CreateWithRows(40))
-            db.GetTable("Rows").UpdateByPrimaryKey(9, new Row { ["Code"] = "コーヒー" });   // ー is keyed by the character before it
+        {
+            var table = db.GetTable("Rows");
+            table.UpdateByPrimaryKey(9, new Row { ["Code"] = "コーヒー" });
+            table.UpdateByPrimaryKey(10, new Row { ["Code"] = "佐々木" });
+            table.AddIndex(new IndexDefinition("ByCode", "Code") { IsUnique = true });
+            Assert.Equal(2, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Rows", expectedRows: 40));
+        }
 
-        AssertRefusedAndUnchanged<NotSupportedException>(table => table.AddIndex(new IndexDefinition("ByCode", "Code")));
+        using var reopened = Database.Open(_path);
+        Assert.Equal(9, reopened.GetTable("Rows").CreateIndexCursor("ByCode").FindRow("Code", "コーヒー")?["Id"]);
+        Assert.Equal(10, reopened.GetTable("Rows").CreateIndexCursor("ByCode").FindRowByEntry("佐々木")?["Id"]);
     }
 
     [Fact]

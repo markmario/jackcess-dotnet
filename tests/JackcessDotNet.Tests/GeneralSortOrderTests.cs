@@ -5,7 +5,8 @@ namespace JackcessDotNet.Tests;
 
 /// <summary>
 /// Text keys in a database that sorts in Access 2010's General order, and what the engine still refuses: a value
-/// with a character Access keys by the characters around it, in either order it writes, before anything changes.
+/// with a character Access keys by the characters around it, in General, before anything changes. In General -
+/// Legacy such a value is keyed.
 /// The keys themselves are checked against ACE's in <see cref="TextIndexKeyTests"/>; these check that the tables
 /// and the catalog use them.
 /// </summary>
@@ -117,14 +118,12 @@ public sealed class GeneralSortOrderTests : IDisposable
         }
     }
 
-    // ー is keyed by the character before it. A row whose key holds it is refused before it is written, a table
-    // is not given such a name, and the file is left byte for byte as it was.
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void A_key_value_Access_keys_by_its_neighbours_is_refused_and_the_file_left_as_it_was(bool general)
+    // ー is keyed by the character before it, and in General that key is not made. A row whose key holds it is
+    // refused before it is written, a table is not given such a name, and the file is left byte for byte as it was.
+    [Fact]
+    public void A_key_value_Access_keys_by_its_neighbours_is_refused_in_General_and_the_file_left_as_it_was()
     {
-        string path = general ? GeneralDatabase() : LegacyDatabase();
+        string path = GeneralDatabase();
         using (var db = Database.Open(path))
         {
             var table = db.CreateTable("Coded", CodeAndNumber(), primaryKey: "Code");
@@ -145,6 +144,44 @@ public sealed class GeneralSortOrderTests : IDisposable
             Assert.Equal(1, table.FindRowByPrimaryKey("テスト")?["N"]);
         }
         Assert.Equal(before, File.ReadAllBytes(path));
+    }
+
+    // In General - Legacy the same values are keys, under ACE's keys for them (TextIndexKeyTests): written, found
+    // through the index, updated and deleted. A table is still not given a name with such a mark, with the file as
+    // it was.
+    [Fact]
+    public void A_key_value_Access_keys_by_its_neighbours_is_kept_and_found_in_General_Legacy()
+    {
+        string path = LegacyDatabase();
+        string[] marked = { "データ", "日々", "コンピューター", "ー", "佐々木", "ｺｰﾋｰ", "محمّد" };
+        using (var db = Database.Open(path))
+        {
+            var table = db.CreateTable("Coded", CodeAndNumber(), primaryKey: "Code");
+            table.Insert(new Row { ["Code"] = "テスト", ["N"] = 0 });
+            for (int i = 0; i < marked.Length; i++)
+                table.Insert(new Row { ["Code"] = marked[i], ["N"] = i + 1 });
+            table.UpdateByPrimaryKey("テスト", new Row { ["Code"] = "テースト" });
+            table.DeleteRow("Code", "日々");
+        }
+        byte[] before = File.ReadAllBytes(path);
+        using (var db = Database.Open(path))
+            Assert.Throws<NotSupportedException>(() => db.CreateTable("データ", CodeAndNumber()));
+        Assert.Equal(before, File.ReadAllBytes(path));
+
+        using (var db = Database.Open(path))
+        {
+            var table = db.GetTable("Coded");
+            int tdef = TdefOf(db.File, "Coded");
+            Assert.Equal(
+                marked.Where(m => m != "日々").Append("テースト")
+                      .Select(c => Convert.ToHexString(IndexKeys.EncodeText(TextIndexCodes.GeneralLegacy, ascending: true, c)))
+                      .OrderBy(k => k, StringComparer.Ordinal),
+                JetPages.LeafEntries(db.File, JetPages.IndexBlocks(db.File, tdef)[0].Root).Select(e => e.Hex));
+            for (int i = 0; i < marked.Length; i++)
+                Assert.Equal(marked[i] == "日々" ? null : i + 1, table.FindRowByPrimaryKey(marked[i])?["N"]);
+            Assert.Equal(0, table.FindRowByPrimaryKey("テースト")?["N"]);
+            Assert.Null(table.FindRowByPrimaryKey("テスト"));
+        }
     }
     // ── Every index, not only the primary key ───────────────────────────────
 
@@ -199,15 +236,13 @@ public sealed class GeneralSortOrderTests : IDisposable
         }
     }
 
-    // A value Access keys by its neighbours is refused in any indexed column - the unique index, the second column
-    // of the two-column one, the Memo - on insert and on update, with every page as it was; and taken in a column
-    // no index is on.
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void A_value_Access_keys_by_its_neighbours_is_refused_in_any_indexed_column_and_taken_in_others(bool general)
+    // In General, a value Access keys by its neighbours is refused in any indexed column - the unique index, the
+    // second column of the two-column one, the Memo - on insert and on update, with every page as it was; and taken
+    // in a column no index is on.
+    [Fact]
+    public void A_value_Access_keys_by_its_neighbours_is_refused_in_any_indexed_column_in_General_and_taken_in_others()
     {
-        using var db = Database.Open(general ? GeneralDatabase() : LegacyDatabase());
+        using var db = Database.Open(GeneralDatabase());
         var table = CreateIndexed(db);
         table.Insert(new Row { ["Id"] = 1, ["Code"] = "one", ["Family"] = "f", ["Given"] = "g", ["Notes"] = "n", ["Free"] = "データ 日々" });
         var before = IndexChecks.AllPages(db);
@@ -218,12 +253,49 @@ public sealed class GeneralSortOrderTests : IDisposable
             Assert.Contains(column, refused.Message);
             Assert.Throws<NotSupportedException>(() => table.UpdateByPrimaryKey(1, new Row { [column] = "日々" }));
         }
+        // Nor is an index built over a column that holds such a value.
+        Assert.Throws<NotSupportedException>(() => table.AddIndex(new IndexDefinition("ByFree", "Free")));
         IndexChecks.AssertUnchanged(before, db);
 
         table.UpdateByPrimaryKey(1, new Row { ["Free"] = "コンピューター" });
         table.Insert(new Row { ["Id"] = 2, ["Code"] = "two", ["Free"] = "ー" });
         Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
         Assert.Equal("コンピューター", table.FindRowByPrimaryKey(1)?["Free"]);
+    }
+
+    // In General - Legacy the same values are kept in every indexed column, and found through each index. A key is
+    // the key of every value that has it: "aー" is "aa" to Access, and to the unique index a duplicate of it.
+    [Fact]
+    public void A_value_Access_keys_by_its_neighbours_is_kept_in_any_indexed_column_in_General_Legacy()
+    {
+        using var db = Database.Open(LegacyDatabase());
+        var table = CreateIndexed(db);
+        table.Insert(new Row { ["Id"] = 1, ["Code"] = "one", ["Family"] = "f", ["Given"] = "g", ["Notes"] = "n", ["Free"] = "データ 日々" });
+        foreach (string column in new[] { "Code", "Family", "Given", "Notes" })
+        {
+            table.Insert(new Row { ["Id"] = 2, ["Code"] = "two", [column] = "データ" });
+            table.UpdateByPrimaryKey(1, new Row { [column] = "日々" });
+            Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
+            table.DeleteRow("Id", 2);
+            table.UpdateByPrimaryKey(1, new Row { [column] = column == "Code" ? "one" : "x" });
+        }
+
+        table.Insert(new Row { ["Id"] = 3, ["Code"] = "aー", ["Family"] = "佐々木", ["Given"] = "ｺｰﾋｰ", ["Notes"] = "コンピューター" });
+        Assert.Throws<ConstraintViolationException>(() => table.Insert(new Row { ["Id"] = 4, ["Code"] = "aa" }));
+        Assert.Equal(4, IndexChecks.AssertEveryIndexHoldsTheRows(db, "Indexed", expectedRows: 2));
+        Assert.Equal(3, table.CreateIndexCursor("ByCode").FindRowByEntry("aー")?["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByName").FindRow("Family", "佐々木")?["Id"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByNotes").FindRowByEntry("コンピューター")?["Id"]);
+
+        // A range of the one key, and the rows an insert would be refused for: aa beside the table's aー, and カー
+        // beside カｰ, whose keys are one.
+        var range = table.CreateIndexCursor("ByCode", new IndexRange { StartEntry = new object[] { "aa" }, EndEntry = new object[] { "aa" } });
+        Assert.Equal(new[] { 3 }, range.Select(r => (int)r["Id"]!));
+        var duplicates = table.FindDuplicates(new[]
+        {
+            new Row { ["Id"] = 5, ["Code"] = "aa" }, new Row { ["Id"] = 6, ["Code"] = "カー" }, new Row { ["Id"] = 7, ["Code"] = "カｰ" },
+        }).Where(d => d.IndexName == "ByCode").ToList();
+        Assert.Equal(new[] { "0 True", "1,2 False" }, duplicates.Select(d => $"{string.Join(",", d.RowIndexes)} {d.InTable}"));
     }
 
     // Two values of 255 characters that differ only where their keys are cut, and whose digests are the same:
