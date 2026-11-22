@@ -12,8 +12,8 @@ namespace JackcessDotNet;
 public sealed class DatabaseOpenOptions
 {
     /// <summary>
-    /// Creates options with nothing set: no password, no format to fall back on, and the file opened for reading and
-    /// writing.
+    /// Creates options with nothing set: no password, no format to fall back on, the file opened for reading and
+    /// writing, and no limit on its length but the format's own.
     /// </summary>
     public DatabaseOpenOptions()
     {
@@ -116,4 +116,24 @@ public sealed class DatabaseOpenOptions
     /// </para>
     /// </summary>
     public bool KeepWritersOut { get; set; }
+
+    /// <summary>
+    /// The longest, in bytes, the file may grow to while the database is open. Null (the default) for the 2 GB
+    /// (2,147,483,648 bytes) an Access file can be in every format; a value given lowers that limit and cannot raise
+    /// it. A change that would make the file longer is refused with <see cref="DatabaseFullException"/>, whose
+    /// <see cref="DatabaseFullException.MaxLength"/> is this value, and is taken back whole, as at 2 GB.
+    /// <para>
+    /// A value less than the file's length when it is opened is taken as the limit of a file already past 2 GB is: the
+    /// file opens and is read whole, and every change to it is refused, with the file left as it is. A value that is
+    /// not positive, or is more than 2 GB, is refused by <see cref="Database.Open(string, DatabaseOpenOptions)"/> with
+    /// <see cref="ArgumentOutOfRangeException"/> before the file is opened.
+    /// </para>
+    /// <para>
+    /// This is for a caller with a limit of its own - and for its tests, which reach the limit without writing 2 GB:
+    /// <code>
+    ///   using var db = Database.Open(path, new DatabaseOpenOptions { MaxFileLength = new FileInfo(path).Length });
+    /// </code>
+    /// </para>
+    /// </summary>
+    public long? MaxFileLength { get; set; }
 }

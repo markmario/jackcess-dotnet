@@ -367,8 +367,9 @@ public sealed class Database : IDisposable
     /// Opens an existing .mdb / .accdb file with what <paramref name="options"/> says about it: the password of
     /// a protected file (<see cref="DatabaseOpenOptions.Password"/>), the format to read a file as when its
     /// header does not say (<see cref="DatabaseOpenOptions.FallbackFormat"/>), whether it is only to be read
-    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), and whether, read, it keeps writers out
-    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>). With none set this is <see cref="Open(string)"/>.
+    /// (<see cref="DatabaseOpenOptions.ReadOnly"/>), whether, read, it keeps writers out
+    /// (<see cref="DatabaseOpenOptions.KeepWritersOut"/>), and the longest it may grow to
+    /// (<see cref="DatabaseOpenOptions.MaxFileLength"/>). With none set this is <see cref="Open(string)"/>.
     /// <para>
     /// Opened to be written, the file is refused while another program or <see cref="Database"/> has it open for
     /// writing - Access, while the database is open in it - and kept from every other writer while it is open (see
@@ -420,6 +421,10 @@ public sealed class Database : IDisposable
     /// <see cref="DatabaseOpenOptions.KeepWritersOut"/> is set without <see cref="DatabaseOpenOptions.ReadOnly"/>, in
     /// any format. The file is not opened.
     /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="DatabaseOpenOptions.MaxFileLength"/> is not positive, or is more than the 2 GB an Access file can be.
+    /// The file is not opened.
+    /// </exception>
     /// <exception cref="FileNotFoundException">There is no file at <paramref name="path"/>.</exception>
     /// <exception cref="DatabaseInUseException">
     /// Another program, or another <see cref="Database"/>, has the file open in a way that does not let this one in:
@@ -435,8 +440,12 @@ public sealed class Database : IDisposable
                 $"{nameof(DatabaseOpenOptions.KeepWritersOut)} is set without {nameof(DatabaseOpenOptions.ReadOnly)}: it keeps " +
                 $"writers out of a file opened only to be read, so set {nameof(DatabaseOpenOptions.ReadOnly)} too. " +
                 $"'{path}' was not opened.", nameof(options));
+        if (options.MaxFileLength is { } maxLength && (maxLength <= 0 || maxLength > PageFile.FormatMaxLength))
+            throw new ArgumentOutOfRangeException(nameof(options), maxLength,
+                $"{nameof(DatabaseOpenOptions.MaxFileLength)} is {maxLength:N0}: it is a length in bytes, more than 0 and at most " +
+                $"{PageFile.FormatMaxLength:N0}, the 2 GB an Access file can be. '{path}' was not opened.");
         return OpenFile(path, options.FallbackFormat, options.Password is { Length: > 0 } password ? password : null, options.ReadOnly,
-                        options.KeepWritersOut);
+                        options.KeepWritersOut, options.MaxFileLength);
     }
 
     /// <summary>
@@ -447,12 +456,15 @@ public sealed class Database : IDisposable
     /// file it is, read and written as any other. A protected file is opened with <paramref name="password"/>, as
     /// <see cref="Open(string, DatabaseOpenOptions)"/> describes; a file is opened only to be read when
     /// <paramref name="readOnly"/> is true, and one opened only to be read is shared for reading only when
-    /// <paramref name="keepWritersOut"/> is true.
+    /// <paramref name="keepWritersOut"/> is true. The file grows to <paramref name="maxLength"/> at most, when it is
+    /// given, and otherwise to the format's own limit.
     /// </summary>
-    private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly, bool keepWritersOut = false)
+    private static Database OpenFile(string path, FileFormat? fallback, string? password, bool readOnly, bool keepWritersOut = false,
+                                     long? maxLength = null)
     {
         var (format, hasHeader) = FormatOf(path, fallback);
         var file = new PageFile(path, format, FileMode.Open, readOnly ? FileAccess.Read : FileAccess.ReadWrite, keepWritersOut);
+        if (maxLength is { } limit) file.MaxLength = limit;
         try
         {
             // A file read in the fallback format has no header to say how it is protected: what its bytes there

@@ -785,6 +785,12 @@ changes with them.
   as `ReadOnly` alone does, its pages again at every move. It needs `ReadOnly`: set without it,
   `ArgumentException`, before the file is opened, in every format; an Access 97 file opened with both keeps writers
   out. `ReadOnly` alone, and an Access 97 file opened without either, are as they were.
+- **`DatabaseOpenOptions.MaxFileLength`** (#34): the longest, in bytes, a database's file may grow to while it is
+  open, below the 2 GB an Access file can be. A change that would pass it is refused with `DatabaseFullException`,
+  whose `MaxLength` is the value given, and taken back, as at 2 GB; a value under the file's length when it is opened
+  refuses every change to it, as a file past 2 GB is refused. A value that is not positive, or is past 2 GB, is an
+  `ArgumentOutOfRangeException` from `Database.Open`, before the file is opened. So a caller's tests reach the limit
+  without writing 2 GB.
 - **`DatabaseInUseException`** (#62), an `IOException`: the file is open in another program or `Database` in a way
   that does not let this one in - open to write, when this one would write; open exclusively, when it would read.
 - `NOTICE`, crediting the works this is derived from, in the repository and the package.

@@ -99,6 +99,13 @@ ACE 16 in `.mdb` and `.accdb` files, on tables Access made and tables this libra
   Access's does, up to the 2 GB a Jet file can be. The page that would make the file longer than 2,147,483,648
   bytes is refused with `DatabaseFullException`, and the change it was part of taken back: ACE reads a longer
   file and cannot write to it ("Cannot open database ''... may be corrupt", measured on 2,160,779,264 bytes).
+- **A lower limit of the caller's own.** `DatabaseOpenOptions.MaxFileLength` opens a database that grows no
+  longer than the bytes it gives, refused as at 2 GB: `DatabaseFullException`, whose `MaxLength` is that value,
+  and the change taken back. It lowers the limit and cannot raise it; a value that is not positive, or is past
+  2 GB, is an `ArgumentOutOfRangeException` from `Open`, before the file is opened. A value under the file's
+  length when it is opened is taken as 2 GB is for a file already past it: the file is read, and every change to
+  it refused. A caller's tests reach the limit so without writing 2 GB, as this library's own do.
+  `Database.Create` takes no such limit: create the file, close it, and open it with one.
 - **An index takes room of its own.** Its tree holds every row's key, so a table with indexes reaches the limit
   sooner: a measured export is 22% larger with its template's 35 indexes, and 77% larger when every
   row has a text key of 510 bytes ([Indexes built page after page](indexes.md#indexes-built-page-after-page)).

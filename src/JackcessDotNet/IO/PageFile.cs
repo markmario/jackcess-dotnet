@@ -370,8 +370,14 @@ internal sealed class PageFile : IDisposable
         return (byte[])page.Clone();
     }
 
-    /// <summary>The longest the file may grow to: 2 GB, the most an Access file can be. Lower only in a test.</summary>
-    internal long MaxLength { get; set; } = 1L << 31;
+    /// <summary>The most an Access file can be, in every format: 2 GB, 2,147,483,648 bytes.</summary>
+    internal const long FormatMaxLength = 1L << 31;
+
+    /// <summary>
+    /// The longest the file may grow to: <see cref="FormatMaxLength"/>, or the lower limit the database was opened
+    /// with (<see cref="DatabaseOpenOptions.MaxFileLength"/>). Tests lower it directly.
+    /// </summary>
+    internal long MaxLength { get; set; } = FormatMaxLength;
 
     public void WritePage(int pageNumber, byte[] data)
     {
@@ -394,7 +400,7 @@ internal sealed class PageFile : IDisposable
         long requiredLength = offset + _format.PageSize;
         // Access cannot write to a file longer than 2 GB, though it reads one: the page that would pass it is refused,
         // and so is any write to a file already past it - one an earlier version of this library wrote - which is
-        // read whole and left as it is.
+        // read whole and left as it is. A lower limit the caller opened the file with is kept the same way.
         if (requiredLength > MaxLength || _stream.Length > MaxLength)
             throw new DatabaseFullException(_path, MaxLength, _stream.Length);
         byte[] encoded = Codec.EncodePage(data, pageNumber);
