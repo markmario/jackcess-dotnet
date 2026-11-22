@@ -110,8 +110,8 @@ public sealed class ReaderBesideWriterTests : IDisposable
         var byDate = reader.GetTable("T").CreateIndexCursor("KAsc");
         var byHowAndDate = reader.GetTable("T").CreateIndexCursor("HowK");
         // Rows 1 to 3 in the two forms Access's SQL writes, 4 to 6 in the table-type layout; 7 in it too, of d1.
-        Assert.Equal(new[] { 2, 3, 1, 6, 5, 4 }, Ids(byDate.FindRowsByEntry(d0)));
-        Assert.Equal(new[] { 7 }, Ids(byHowAndDate.FindRowsByEntry("AddNew, table-type", d1)));
+        Assert.Equal(new[] { 2, 3, 1, 6, 5, 4 }, Ids(byDate.FindRowsByKey(d0)));
+        Assert.Equal(new[] { 7 }, Ids(byHowAndDate.FindRowsByKey("AddNew, table-type", d1)));
 
         using (var writer = Database.Open(path))
         {
@@ -124,9 +124,9 @@ public sealed class ReaderBesideWriterTests : IDisposable
             t.DeleteRowAt(pointers[7]);
         }
 
-        Assert.Equal(new[] { 2, 3, 1, 6 }, Ids(byDate.FindRowsByEntry(d0)));
-        Assert.Equal(new[] { 4 }, Ids(byDate.FindRowsByEntry(d0.AddDays(1))));
-        Assert.Empty(byHowAndDate.FindRowsByEntry("AddNew, table-type", d1));
+        Assert.Equal(new[] { 2, 3, 1, 6 }, Ids(byDate.FindRowsByKey(d0)));
+        Assert.Equal(new[] { 4 }, Ids(byDate.FindRowsByKey(d0.AddDays(1))));
+        Assert.Empty(byHowAndDate.FindRowsByKey("AddNew, table-type", d1));
     }
 
     // ── A row with another row's long value ──────────────────────────────────

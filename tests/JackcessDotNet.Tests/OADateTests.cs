@@ -150,7 +150,7 @@ public sealed class OADateTests : IDisposable
                 var (date, bits) = written[i];
                 Assert.NotNull(cursor.FindRow("Id", i));
                 Assert.Equal(bits, Bits(cursor.GetCurrentRowDateNumber("D")!.Value));
-                Assert.Equal(i, dates.CreateIndexCursor("ByD").FindRowByEntry(date)?["Id"]);
+                Assert.Equal(i, dates.CreateIndexCursor("ByD").FindRowByKey(date)?["Id"]);
             }
             foreach (var row in db.GetTable("R").CreateCursor())
                 Assert.Equal(read[(int)row["Id"]!].Item2, row["D"]);

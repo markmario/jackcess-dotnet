@@ -302,8 +302,8 @@ namespace JackcessDotNet.AccessTests
                     // Each row is found through the engine's index by its own value: ACE's row holds what ACE stores,
                     // which is the engine's value or differs from it as compared above.
                     object stored = rows[id][column], added = rows[id + 100000][column];
-                    var byIndex = table.CreateIndexCursor("By" + column).FindRowsByEntry(stored).Select(r => (int)r["Id"]).ToList();
-                    var itsByIndex = table.CreateIndexCursor("By" + column).FindRowsByEntry(added).Select(r => (int)r["Id"]).ToList();
+                    var byIndex = table.CreateIndexCursor("By" + column).FindRowsByKey(stored).Select(r => (int)r["Id"]).ToList();
+                    var itsByIndex = table.CreateIndexCursor("By" + column).FindRowsByKey(added).Select(r => (int)r["Id"]).ToList();
                     Assert.True(byIndex.Contains(id) && itsByIndex.Contains(id + 100000),
                         column + " " + values[id].Value + ": the engine's index finds " + string.Join(", ", byIndex) + " and " + string.Join(", ", itsByIndex));
                     if (Measured)

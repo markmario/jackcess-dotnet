@@ -261,29 +261,29 @@ namespace JackcessDotNet.AccessTests
                 var cursor = db.GetTable("P").CreateIndexCursor();
 
                 // The key of a parent changes: its children follow it.
-                Assert.NotNull(cursor.FindRowByEntry(1, 2));
+                Assert.NotNull(cursor.FindRowByKey(1, 2));
                 cursor.UpdateCurrentRow(new Row { ["B"] = 200 });
                 Assert.Equal(200, cursor.Current["B"]);
                 parents[2]["B"] = 200;
                 foreach (var child in children.Values.Where(c => (int)c["B"] == 2).ToList()) child["B"] = 200;
 
                 // A parent goes: its children go with it.
-                Assert.NotNull(cursor.FindRowByEntry(1, 3));
+                Assert.NotNull(cursor.FindRowByKey(1, 3));
                 cursor.DeleteCurrentRow();
                 parents.Remove(3);
                 foreach (var id in children.Where(c => (int)c.Value["B"] == 3).Select(c => c.Key).ToList()) children.Remove(id);
 
                 // What Access refuses is refused, and changes nothing: another parent's key, and a child with no parent.
-                Assert.NotNull(cursor.FindRowByEntry(1, 4));
+                Assert.NotNull(cursor.FindRowByKey(1, 4));
                 Assert.Throws<ConstraintViolationException>(() => cursor.UpdateCurrentRow(new Row { ["B"] = 5 }));
                 var child7 = db.GetTable("C").CreateIndexCursor();
-                Assert.NotNull(child7.FindRowByEntry(7));
+                Assert.NotNull(child7.FindRowByKey(7));
                 Assert.Throws<ConstraintViolationException>(() => child7.UpdateCurrentRow(new Row { ["B"] = 999 }));
 
                 // A child is moved to another parent, and one is deleted, through the cursor.
                 child7.UpdateCurrentRow(new Row { ["B"] = 10 });
                 children[7]["B"] = 10;
-                Assert.NotNull(child7.FindRowByEntry(8));
+                Assert.NotNull(child7.FindRowByKey(8));
                 child7.DeleteCurrentRow();
                 children.Remove(8);
             }
@@ -352,35 +352,35 @@ namespace JackcessDotNet.AccessTests
                 // Ranges: the rows ACE's WHERE gives, in the index's order.
                 Func<object, object[]> e = value => new[] { value };
                 Assert.Equal(ace("SELECT Id FROM X WHERE N BETWEEN -20 AND 35 ORDER BY N, Id"),
-                             ids(table.CreateIndexCursor("ByN", new IndexRange { StartEntry = e(-20), EndEntry = e(35) })));
+                             ids(table.CreateIndexCursor("ByN", new IndexRange { StartKey = e(-20), EndKey = e(35) })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE N > -20 AND N < 35 ORDER BY N, Id"),
-                             ids(table.CreateIndexCursor("ByN", new IndexRange { StartEntry = e(-20), IsStartInclusive = false, EndEntry = e(35), IsEndInclusive = false })));
+                             ids(table.CreateIndexCursor("ByN", new IndexRange { StartKey = e(-20), IsStartInclusive = false, EndKey = e(35), IsEndInclusive = false })));
                 // (A descending index holds its nulls last, and a range with no end runs to them.)
                 Assert.Equal(ace("SELECT Id FROM X WHERE N <= 0 ORDER BY N DESC, Id").Concat(ace("SELECT Id FROM X WHERE N IS NULL ORDER BY Id")).ToList(),
-                             ids(table.CreateIndexCursor("ByNDown", new IndexRange { StartEntry = e(0) })));
+                             ids(table.CreateIndexCursor("ByNDown", new IndexRange { StartKey = e(0) })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE N <= 0 AND N > -40 ORDER BY N DESC, Id"),
-                             ids(table.CreateIndexCursor("ByNDown", new IndexRange { StartEntry = e(0), EndEntry = e(-40), IsEndInclusive = false })));
+                             ids(table.CreateIndexCursor("ByNDown", new IndexRange { StartKey = e(0), EndKey = e(-40), IsEndInclusive = false })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE N IS NULL ORDER BY Id"),
-                             ids(table.CreateIndexCursor("ByN", new IndexRange { EndEntry = e(null) })));
+                             ids(table.CreateIndexCursor("ByN", new IndexRange { EndKey = e(null) })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE T >= 'b' AND T < 'd' ORDER BY T, Id").OrderBy(i => i).ToList(),
-                             ids(table.CreateIndexCursor("ByT", new IndexRange { StartEntry = e("b"), EndEntry = e("d"), IsEndInclusive = false })).OrderBy(i => i).ToList());
+                             ids(table.CreateIndexCursor("ByT", new IndexRange { StartKey = e("b"), EndKey = e("d"), IsEndInclusive = false })).OrderBy(i => i).ToList());
                 Assert.Equal(ace("SELECT Id FROM X WHERE T = 'Apple' AND N >= 0 ORDER BY N, Id"),
-                             ids(table.CreateIndexCursor("ByTN", new IndexRange { StartEntry = new object[] { "apple", 0 }, EndEntry = e("APPLE") })));
+                             ids(table.CreateIndexCursor("ByTN", new IndexRange { StartKey = new object[] { "apple", 0 }, EndKey = e("APPLE") })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE D >= #1/1/2021# AND D < #1/1/2022# ORDER BY D, Id"),
-                             ids(table.CreateIndexCursor("ByD", new IndexRange { StartEntry = e(new DateTime(2021, 1, 1)), EndEntry = e(new DateTime(2022, 1, 1)), IsEndInclusive = false })));
+                             ids(table.CreateIndexCursor("ByD", new IndexRange { StartKey = e(new DateTime(2021, 1, 1)), EndKey = e(new DateTime(2022, 1, 1)), IsEndInclusive = false })));
                 Assert.Equal(ace("SELECT Id FROM X WHERE M BETWEEN -10.5 AND 250.25 ORDER BY M, Id"),
-                             ids(table.CreateIndexCursor("ByM", new IndexRange { StartEntry = e(-10.5m), EndEntry = e(250.25m) })));
+                             ids(table.CreateIndexCursor("ByM", new IndexRange { StartKey = e(-10.5m), EndKey = e(250.25m) })));
 
                 // The closest row: the least value at or after the one asked for; the rows of one entry: ACE's WHERE.
                 foreach (var n in new[] { -1000, -57, 0, 13, 99, 1000 })
                 {
                     var least = Scalar(path, "SELECT MIN(N) FROM X WHERE N >= " + n);
-                    var closest = table.CreateIndexCursor("ByN").FindClosestRowByEntry(n);
+                    var closest = table.CreateIndexCursor("ByN").FindClosestRowByKey(n);
                     Assert.Equal(least is DBNull ? null : least, closest == null ? null : closest["N"]);
-                    Assert.Equal(ace("SELECT Id FROM X WHERE N = " + n + " ORDER BY Id"), ids(table.CreateIndexCursor("ByN").FindRowsByEntry(n)).OrderBy(i => i).ToList());
+                    Assert.Equal(ace("SELECT Id FROM X WHERE N = " + n + " ORDER BY Id"), ids(table.CreateIndexCursor("ByN").FindRowsByKey(n)).OrderBy(i => i).ToList());
                 }
                 // ACE's = on text is the index's, without regard to case, and so is the engine's.
-                Assert.Equal(ace("SELECT Id FROM X WHERE T = 'Apple' ORDER BY Id"), ids(table.CreateIndexCursor("ByT").FindRowsByEntry("Apple")).OrderBy(i => i).ToList());
+                Assert.Equal(ace("SELECT Id FROM X WHERE T = 'Apple' ORDER BY Id"), ids(table.CreateIndexCursor("ByT").FindRowsByKey("Apple")).OrderBy(i => i).ToList());
             }
         }
 
@@ -532,12 +532,12 @@ namespace JackcessDotNet.AccessTests
             {
                 var table = db.GetTable("U");
                 var cursor = table.CreateIndexCursor("ByN");
-                Assert.NotNull(cursor.FindRowByEntry(200));
+                Assert.NotNull(cursor.FindRowByKey(200));
                 var was = cursor.Current.Id;
                 cursor.UpdateCurrentRow(new Row { ["C"] = Wide(999, 255), ["N"] = 20000 });
                 Assert.Equal(was, cursor.Current.Id);
                 rows[20]["C"] = Wide(999, 255); rows[20]["N"] = 20000;
-                Assert.NotNull(cursor.FindRowByEntry(210));
+                Assert.NotNull(cursor.FindRowByKey(210));
                 cursor.UpdateCurrentRow(new Row { ["A"] = "home", ["B"] = null, ["C"] = null });
                 rows[21]["A"] = "home"; rows[21]["B"] = null; rows[21]["C"] = null;
                 table.Delete(table.FindRowByPrimaryKey(22));
@@ -585,9 +585,9 @@ namespace JackcessDotNet.AccessTests
                     var date = (DateTime)row["D"];
                     var id = (int)row["Id"];
                     Assert.Equal(id, w1.FindRowByPrimaryKey(date)["Id"]);
-                    Assert.Equal(id, w2.CreateIndexCursor("ByD").FindRowByEntry(date)["Id"]);
-                    Assert.Equal(id, w1.CreateIndexCursor(new IndexRange { StartEntry = new object[] { date }, EndEntry = new object[] { date } }).Single()["Id"]);
-                    Assert.Equal(id, cursor.FindClosestRowByEntry(date)["Id"]);
+                    Assert.Equal(id, w2.CreateIndexCursor("ByD").FindRowByKey(date)["Id"]);
+                    Assert.Equal(id, w1.CreateIndexCursor(new IndexRange { StartKey = new object[] { date }, EndKey = new object[] { date } }).Single()["Id"]);
+                    Assert.Equal(id, cursor.FindClosestRowByKey(date)["Id"]);
                     var number = cursor.GetCurrentRowDateNumber("D").Value;
                     if (BitConverter.DoubleToInt64Bits(number) != BitConverter.DoubleToInt64Bits(date.ToOADate())) notTheDateTimesNumber++;
                     Assert.Equal(id, w1.FindRowByPrimaryKey(number)["Id"]);
@@ -641,7 +641,7 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal("on the second", table.FindRowByPrimaryKey(stored["on the second"])["Name"]);
                 Assert.Equal("a hair after", table.FindRowByPrimaryKey(stored["a hair after"])["Name"]);
                 var cursor = table.CreateIndexCursor();
-                Assert.Equal("on the second", cursor.FindClosestRowByEntry(when)["Name"]);
+                Assert.Equal("on the second", cursor.FindClosestRowByKey(when)["Name"]);
                 Assert.True(cursor.MoveNext());
                 Assert.Equal("a hair after", cursor.Current["Name"]);
 
@@ -686,7 +686,7 @@ namespace JackcessDotNet.AccessTests
                 Assert.Equal(first.AddHours(6), table.FindRowByPrimaryKey(1)["D"]);
                 Assert.Equal(first.AddSeconds(86399), table.FindRowByPrimaryKey(2)["D"]);
                 Assert.Equal(new DateTime(9999, 12, 31, 23, 59, 59), table.FindRowByPrimaryKey(3)["D"]);
-                Assert.Equal(1, table.CreateIndexCursor("ByD").FindRowByEntry(first.AddHours(6))["Id"]);
+                Assert.Equal(1, table.CreateIndexCursor("ByD").FindRowByKey(first.AddHours(6))["Id"]);
 
                 // And written by the engine: inserted, and given by an update.
                 table.Insert(new Row { ["Id"] = 5, ["D"] = first.AddHours(12).AddMinutes(30) });
@@ -773,7 +773,7 @@ namespace JackcessDotNet.AccessTests
                 for (var i = 0; i < NumbersAHairFromAHalf.Length; i++)
                 {
                     Assert.Equal(NumbersAHairFromAHalf[i].Date, a.FindRowByPrimaryKey(i)["D"]);
-                    Assert.Equal(i, a.CreateIndexCursor("ByD").FindRowByEntry(NumbersAHairFromAHalf[i].Date)["Id"]);
+                    Assert.Equal(i, a.CreateIndexCursor("ByD").FindRowByKey(NumbersAHairFromAHalf[i].Date)["Id"]);
                 }
                 var e = db.GetTable("E");
                 for (var i = 0; i < DatesWrittenAHairApart.Length; i++)
@@ -846,13 +846,13 @@ namespace JackcessDotNet.AccessTests
                     // Numbers: what BETWEEN gives, which takes its two ends either way round.
                     var between = ids(AceRows(path, "SELECT Id FROM N WHERE D BETWEEN " + Sql(from) + " AND " + Sql(to)));
                     double low = Math.Min(from.ToOADate(), to.ToOADate()), high = Math.Max(from.ToOADate(), to.ToOADate());
-                    var byNumbers = table.CreateIndexCursor("ByD", new IndexRange { StartEntry = new object[] { low }, EndEntry = new object[] { high } })
+                    var byNumbers = table.CreateIndexCursor("ByD", new IndexRange { StartKey = new object[] { low }, EndKey = new object[] { high } })
                         .Select(r => (int)r["Id"]).OrderBy(id => id).ToList();
                     Assert.True(between.SequenceEqual(byNumbers), what + " as numbers: BETWEEN gives " + string.Join(",", between) + ", the engine " + string.Join(",", byNumbers));
 
                     // Dates: the rows Access reads a date in the range for.
                     var reading = ids(AceRows(path, "SELECT Id FROM N WHERE " + Seconds + " BETWEEN " + secondsOf(from) + " AND " + secondsOf(to)));
-                    var byDates = table.CreateIndexCursor("ByD", new IndexRange { StartEntry = new object[] { from }, EndEntry = new object[] { to } })
+                    var byDates = table.CreateIndexCursor("ByD", new IndexRange { StartKey = new object[] { from }, EndKey = new object[] { to } })
                         .Select(r => (int)r["Id"]).OrderBy(id => id).ToList();
                     Assert.True(reading.SequenceEqual(byDates), what + " as dates: Access reads " + string.Join(",", reading) + ", the engine gives " + string.Join(",", byDates));
                 }
@@ -860,12 +860,12 @@ namespace JackcessDotNet.AccessTests
                 // Where the two part: six in the morning of 30 December 1899 stored as -0.25 (row 8) is not between
                 // five and seven to BETWEEN, and is to a range of dates.
                 Assert.DoesNotContain(8, ids(AceRows(path, "SELECT Id FROM N WHERE D BETWEEN #12/30/1899 5:00:00# AND #12/30/1899 7:00:00#")));
-                Assert.Contains(8, table.CreateIndexCursor("ByD", new IndexRange { StartEntry = new object[] { day.AddHours(5) }, EndEntry = new object[] { day.AddHours(7) } })
+                Assert.Contains(8, table.CreateIndexCursor("ByD", new IndexRange { StartKey = new object[] { day.AddHours(5) }, EndKey = new object[] { day.AddHours(7) } })
                     .Select(r => (int)r["Id"]));
 
                 // The closest row to a date the rows have: the first in the index's order Access reads it for.
                 var first = AceRows(path, "SELECT Id FROM N WHERE " + Seconds + " = " + secondsOf(day.AddHours(6)) + " ORDER BY D");
-                Assert.Equal(Convert.ToInt32(first[0]["Id"]), table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(6))["Id"]);
+                Assert.Equal(Convert.ToInt32(first[0]["Id"]), table.CreateIndexCursor("ByD").FindClosestRowByKey(day.AddHours(6))["Id"]);
             }
         }
 

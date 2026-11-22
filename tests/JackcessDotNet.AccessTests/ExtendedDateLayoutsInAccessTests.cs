@@ -329,8 +329,8 @@ namespace JackcessDotNet.AccessTests
                     Assert.Equal(Made.Where(m => m.Reads == date && m.How == "INSERT").Select(m => m.Id),
                                  AceIds(path, "SELECT Id FROM T WHERE K = '" + Literal(date) + "'"));
 
-                    Assert.Equal(byScan, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(date)).OrderBy(id => id));
-                    Assert.Equal(byScan, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByEntry(date)).OrderBy(id => id));
+                    Assert.Equal(byScan, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(date)).OrderBy(id => id));
+                    Assert.Equal(byScan, IdsOf(t.CreateIndexCursor("KDesc").FindRowsByKey(date)).OrderBy(id => id));
                     var cursor = t.CreateCursor();
                     var found = new List<int>();
                     for (var row = cursor.FindRow("K", date); row != null; row = cursor.FindNextRow("K", date)) found.Add(Convert.ToInt32(row["Id"]));
@@ -469,7 +469,7 @@ namespace JackcessDotNet.AccessTests
             using (var db = Database.Open(compacted))
             {
                 var t = db.GetTable("T");
-                Assert.Equal(new[] { 9, 21 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByEntry(D1)).OrderBy(id => id));
+                Assert.Equal(new[] { 9, 21 }, IdsOf(t.CreateIndexCursor("KAsc").FindRowsByKey(D1)).OrderBy(id => id));
                 Assert.Equal(D1, (DateTime?)t.FindRowByPrimaryKey(21)["K"]);
             }
         }

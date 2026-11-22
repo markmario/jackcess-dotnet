@@ -245,7 +245,7 @@ public sealed class Access97ReadTests
             Assert.Equal(id, RowAt(table, Assert.Single(reader.FindRowPointersForEntry(keys)))["Id"]);
             Assert.Equal(id, RowAt(table, Assert.Single(writer.RowPointersForKey(index.RootPageNumber, IndexKeys.Encode(index.Columns, keys))))["Id"]);
 
-            var found = cursor.FindRowByEntry(keys);
+            var found = cursor.FindRowByKey(keys);
             Assert.NotNull(found);
             Assert.Equal(id, found!["Id"]);
         }
@@ -254,9 +254,9 @@ public sealed class Access97ReadTests
         object[] none = KeysOf(1);
         none[9] = (int)none[9] + 1;
         Assert.Empty(reader.FindRowPointersForEntry(none));
-        Assert.Null(cursor.FindRowByEntry(none));
-        Assert.Null(cursor.FindRowByEntry(Enumerable.Repeat((object)int.MinValue, 10).ToArray()));
-        Assert.Null(cursor.FindRowByEntry(Enumerable.Repeat((object)int.MaxValue, 10).ToArray()));
+        Assert.Null(cursor.FindRowByKey(none));
+        Assert.Null(cursor.FindRowByKey(Enumerable.Repeat((object)int.MinValue, 10).ToArray()));
+        Assert.Null(cursor.FindRowByKey(Enumerable.Repeat((object)int.MaxValue, 10).ToArray()));
     }
 
     // ── Every index of every Access 97 file ──────────────────────────────────

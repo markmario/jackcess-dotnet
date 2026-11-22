@@ -86,8 +86,8 @@ public sealed class StoredRangeTests
                 object? one = null, two = null;
                 var found = await EndsInTime(() =>
                 {
-                    one = table.CreateIndexCursor("ByD").FindRowByEntry(first.AddHours(6))?["Id"];
-                    two = table.CreateIndexCursor("ByD").FindRowByEntry(last)?["Id"];
+                    one = table.CreateIndexCursor("ByD").FindRowByKey(first.AddHours(6))?["Id"];
+                    two = table.CreateIndexCursor("ByD").FindRowByKey(last)?["Id"];
                 });
                 Assert.True(found, "the lookups did not end in 20 seconds");
                 Assert.Equal(1, one);

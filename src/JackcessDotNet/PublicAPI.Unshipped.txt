@@ -189,9 +189,9 @@ JackcessDotNet.IndexColumn.Column.get -> JackcessDotNet.Column!
 JackcessDotNet.IndexColumn.IsAscending.get -> bool
 override JackcessDotNet.IndexColumn.ToString() -> string!
 JackcessDotNet.IndexCursor
-JackcessDotNet.IndexCursor.FindClosestRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
-JackcessDotNet.IndexCursor.FindRowByEntry(params object?[]! entryValues) -> JackcessDotNet.Row?
-JackcessDotNet.IndexCursor.FindRowsByEntry(params object?[]! entryValues) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
+JackcessDotNet.IndexCursor.FindClosestRowByKey(params object?[]! keyValues) -> JackcessDotNet.Row?
+JackcessDotNet.IndexCursor.FindRowByKey(params object?[]! keyValues) -> JackcessDotNet.Row?
+JackcessDotNet.IndexCursor.FindRowsByKey(params object?[]! keyValues) -> System.Collections.Generic.IEnumerable<JackcessDotNet.Row!>!
 JackcessDotNet.IndexCursor.Index.get -> JackcessDotNet.Index!
 JackcessDotNet.IndexDefinition
 JackcessDotNet.IndexDefinition.Columns.get -> System.Collections.Generic.IReadOnlyList<string!>!
@@ -209,15 +209,15 @@ const JackcessDotNet.IndexDefinition.MaxColumns = 10 -> int
 const JackcessDotNet.IndexDefinition.MaxIndexesPerTable = 32 -> int
 JackcessDotNet.IndexDefinition.Name.get -> string!
 JackcessDotNet.IndexRange
-JackcessDotNet.IndexRange.EndEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
-JackcessDotNet.IndexRange.EndEntry.set -> void
+JackcessDotNet.IndexRange.EndKey.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.EndKey.set -> void
 JackcessDotNet.IndexRange.IndexRange() -> void
 JackcessDotNet.IndexRange.IsEndInclusive.get -> bool
 JackcessDotNet.IndexRange.IsEndInclusive.set -> void
 JackcessDotNet.IndexRange.IsStartInclusive.get -> bool
 JackcessDotNet.IndexRange.IsStartInclusive.set -> void
-JackcessDotNet.IndexRange.StartEntry.get -> System.Collections.Generic.IReadOnlyList<object?>?
-JackcessDotNet.IndexRange.StartEntry.set -> void
+JackcessDotNet.IndexRange.StartKey.get -> System.Collections.Generic.IReadOnlyList<object?>?
+JackcessDotNet.IndexRange.StartKey.set -> void
 JackcessDotNet.JoinType
 JackcessDotNet.JoinType.Inner = 0 -> JackcessDotNet.JoinType
 JackcessDotNet.JoinType.LeftOuter = 1 -> JackcessDotNet.JoinType

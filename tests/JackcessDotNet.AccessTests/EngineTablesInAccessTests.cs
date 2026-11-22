@@ -534,7 +534,7 @@ namespace JackcessDotNet.AccessTests
                 {
                     Assert.Equal(-1 - i, table.FindRowByPrimaryKey(keyedByNeighbours[i])["N"]);
                     Assert.Equal(-1 - i, table.CreateIndexCursor().FindRow("Code", keyedByNeighbours[i])["N"]);
-                    Assert.Equal(-1 - i, table.CreateIndexCursor().FindRowByEntry(keyedByNeighbours[i])["N"]);
+                    Assert.Equal(-1 - i, table.CreateIndexCursor().FindRowByKey(keyedByNeighbours[i])["N"]);
                 }
                 Assert.Equal(-100, table.FindRowByPrimaryKey(longKey)["N"]);
                 Assert.Equal(250, table.FindRowByPrimaryKey(Code(250))["N"]);

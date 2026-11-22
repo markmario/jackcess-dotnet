@@ -90,7 +90,7 @@ public sealed class CursorPassModelTests : IDisposable
 
         public IndexRange? Range => Start is null && End is null
             ? null
-            : new IndexRange { StartEntry = Start, EndEntry = End, IsStartInclusive = StartIn, IsEndInclusive = EndIn };
+            : new IndexRange { StartKey = Start, EndKey = End, IsStartInclusive = StartIn, IsEndInclusive = EndIn };
 
         public override string ToString()
             => (ByDL ? "ByDL " : "ByK ") + (StartIn ? "[" : "(") + Show(Start) + " .. " + Show(End) + (EndIn ? "]" : ")");
@@ -246,7 +246,7 @@ public sealed class CursorPassModelTests : IDisposable
             return null;
         }
 
-        // A lookup from the start: FindRowByEntry, the first row with the values; FindClosestRowByEntry, that or
+        // A lookup from the start: FindRowByKey, the first row with the values; FindClosestRowByKey, that or
         // the first after them. A pass begins with the row found.
         int? ModelLookup(int c, object?[] values, bool closest)
         {
@@ -370,13 +370,13 @@ public sealed class CursorPassModelTests : IDisposable
                     case 1:
                     {
                         int? expected = ModelLookup(c, new object?[] { v }, closest: false);
-                        Check($"c{c} FindRowByEntry {v}", cursor.FindRowByEntry(v) is { } row ? IdOf(row) : null, expected);
+                        Check($"c{c} FindRowByKey {v}", cursor.FindRowByKey(v) is { } row ? IdOf(row) : null, expected);
                         break;
                     }
                     default:
                     {
                         int? expected = ModelLookup(c, new object?[] { v }, closest: true);
-                        Check($"c{c} FindClosestRowByEntry {v}", cursor.FindClosestRowByEntry(v) is { } row ? IdOf(row) : null, expected);
+                        Check($"c{c} FindClosestRowByKey {v}", cursor.FindClosestRowByKey(v) is { } row ? IdOf(row) : null, expected);
                         break;
                     }
                 }
@@ -385,7 +385,7 @@ public sealed class CursorPassModelTests : IDisposable
             {
                 var values = DateEnd();
                 int? expected = ModelLookup(c, values, closest: true);
-                Check($"c{c} FindClosestRowByEntry {Show(values)}", cursor.FindClosestRowByEntry(values) is { } row ? IdOf(row) : null, expected);
+                Check($"c{c} FindClosestRowByKey {Show(values)}", cursor.FindClosestRowByKey(values) is { } row ? IdOf(row) : null, expected);
             }
         }
     }

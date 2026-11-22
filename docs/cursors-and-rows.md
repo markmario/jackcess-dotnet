@@ -117,17 +117,17 @@ var here = cursor.GetSavepoint();               // ... and later: cursor.Restore
 ## Index cursors and joins
 
 ```csharp
-// An index cursor goes through its index's rows in the index's order: all of them, or those between two entries.
+// An index cursor goes through its index's rows in the index's order: all of them, or those between two keys.
 var byDate = orders.CreateIndexCursor("ByCustomerAndDate", new IndexRange
 {
-    StartEntry = new object?[] { 42, new DateTime(2024, 1, 1) },
-    EndEntry   = new object?[] { 42, new DateTime(2025, 1, 1) },
+    StartKey = new object?[] { 42, new DateTime(2024, 1, 1) },
+    EndKey   = new object?[] { 42, new DateTime(2025, 1, 1) },
     IsEndInclusive = false,
 });
 foreach (Row row in byDate) { }
-Row? first   = byDate.FindRowByEntry(42, new DateTime(2024, 3, 1));          // that entry, or null
-Row? closest = byDate.FindClosestRowByEntry(42, new DateTime(2024, 3, 1));   // that entry, or the next after it
-foreach (Row row in orders.CreateIndexCursor("ByCustomerAndDate").FindRowsByEntry(42)) { }   // every order of customer 42
+Row? first   = byDate.FindRowByKey(42, new DateTime(2024, 3, 1));          // that key, or null
+Row? closest = byDate.FindClosestRowByKey(42, new DateTime(2024, 3, 1));   // that key, or the next after it
+foreach (Row row in orders.CreateIndexCursor("ByCustomerAndDate").FindRowsByKey(42)) { }   // every order of customer 42
 
 // A joiner finds the rows of one table that go with a row of another, through an index.
 var ordersOf = new Joiner(customers, new[] { "CustomerID" }, orders, new[] { "CustomerID" });
@@ -135,7 +135,7 @@ foreach (Row row in ordersOf.FindRows(alfki!)) { }
 ```
 
 - **An index cursor keeps to its index.** Its rows are the index's entries, in their order, and every lookup
-  goes through that index or refuses the values: an entry has at most as many values as the index has columns.
+  goes through that index or refuses the values: a key has at most as many values as the index has columns.
   With fewer it stands for every row with those values in its leading columns.
 
 Which indexes there are and how their keys are made: [Indexes and keys](indexes.md).
@@ -168,12 +168,12 @@ doubles.
 ### Currency
 
 A Currency is the caller's number taken to its four places as a row written with it stores it - its exact value,
-half to even, as Access takes one ([#65]) - by an equality, in a range and for `FindClosestRowByEntry` alike, as
+half to even, as Access takes one ([#65]) - by an equality, in a range and for `FindClosestRowByKey` alike, as
 ACE's `=`, `BETWEEN`, `>=`, `>`, `<=` and `<` through an index and DAO's `Seek` take it: the double 0.03125 finds
 0.0312, the double 0.00015, which is just under that half, finds 0.0001, and 1.23465m finds 1.2346. ACE's scan,
 with no index to answer, takes a decimal through a double, and finds 1.2347 for it. Text is no number to an
 equality, as in every number column, and a range takes it as a write does. NaN, an infinity or a number past the
-range is no Currency: it finds no row, and a range or `FindClosestRowByEntry` refuses it with `ArgumentException`,
+range is no Currency: it finds no row, and a range or `FindClosestRowByKey` refuses it with `ArgumentException`,
 as ACE's refuses a number past the range. A row an earlier version wrote holds that version's rounding, and some
 such rows are found by the value they hold and not by the number they were written from (see
 [Currency](data-types.md#currency)).
@@ -198,8 +198,8 @@ millisecond, so `DateTime.Now` finds the row written with it - finds every row w
 `DateTime`: so the date read from a row finds the row again, which `DateTime.ToOADate()` does not for about a
 third of the dates Access computes (`DateAdd`, a date plus fractions of a day). Through an index that is the
 small range of numbers that read as it (two, for a time of 30 December 1899, which -0.25 and 0.25 both read as).
-In a range's entry, in any place, and given to `FindClosestRowByEntry`, a `DateTime` is put against a row by the
-date its number reads as: a range of dates has the rows whose dates are in it. A `double` is the number itself:
+In a range's start or end key, in any place, and given to `FindClosestRowByKey`, a `DateTime` is put against a
+row by the date its number reads as: a range of dates has the rows whose dates are in it. A `double` is the number itself:
 it finds the row that stores exactly that number, and `cursor.GetCurrentRowDateNumber(column)` gives it, so two
 dates within a millisecond are told apart; in a range it is put against the numbers, as Access's `BETWEEN` and
 an index's `Seek` put a date literal (measured: `BETWEEN #12/30/1899 05:00# AND #12/30/1899 07:00#` leaves out a
@@ -219,8 +219,8 @@ a third, the day in fifteen digits and four bytes after the value that are whate
 among the keys that begin with the third's other bytes, where Access's own `=` through an index finds the first
 alone (measured; without an index it finds all three). A value in a shape that reads as its date and that Access
 was not seen to write - a space or a plus sign among its digits, fewer digits, a count other than 7 or 0 - is found
-by a cursor over the table, and not through an index, which holds it under a key of its own. In a range's entry and
-given to `FindClosestRowByEntry`, a `DateTime` is the first form's key and a row is put against it by its key, as
+by a cursor over the table, and not through an index, which holds it under a key of its own. In a range's start or end
+key and given to `FindClosestRowByKey`, a `DateTime` is the first form's key and a row is put against it by its key, as
 Access's `BETWEEN` through an index puts it (measured): a row in another layout is where its bytes are. A row in the
 third comes after every row of the other two from the year 2 on in an ascending index (before them in a descending
 one), so ACE's own `K > '2020-01-02 03:04:05'` through an ascending index gives the rows in the third layout of that
@@ -233,11 +233,11 @@ A null is never a match.
 
 ## Ranges and the closest row
 
-A range and `FindClosestRowByEntry` need the key Access keeps for the values, and are refused with
+A range and `FindClosestRowByKey` need the key Access keeps for the values, and are refused with
 `NotSupportedException` where this library makes none: a Decimal, Binary or OLE column, text in a sort order
 whose keys it does not make ([Refused](indexes.md#refused)), a character Access keys by its neighbours, or a key
 longer than an entry holds ([Keys longer than 510 bytes](indexes.md#keys-longer-than-510-bytes)).
-`FindRowByEntry` and `FindRow` still find such a row, by going through the index's rows.
+`FindRowByKey` and `FindRow` still find such a row, by going through the index's rows.
 
 ## When a change is refused
 

@@ -383,7 +383,7 @@ public class Cursor : IEnumerable<Row>
     /// The number the row the cursor is on stores in a Date/Time column: days since 30 December 1899, the time
     /// of day its fraction. It is the value Access holds and keys the row by, to the last digit, where the
     /// <see cref="DateTime"/> a row is read with is rounded to the millisecond; given to a lookup -
-    /// <see cref="FindRow(string, object?)"/>, <see cref="IndexCursor.FindRowByEntry"/>, a range - it finds the
+    /// <see cref="FindRow(string, object?)"/>, <see cref="IndexCursor.FindRowByKey"/>, a range - it finds the
     /// row that stores exactly that number.
     /// </summary>
     /// <param name="columnName">The column's name, whatever the case of its letters.</param>

@@ -229,7 +229,7 @@ public sealed class RowTests : IDisposable
             () => table.CreateCursor().ToList(),
             () => table.CreateIndexCursor().ToList(),
             () => new List<Row> { table.FindRowByPrimaryKey(1)!, table.FindRowByPrimaryKey(2)! },
-            () => new List<Row> { table.CreateIndexCursor().FindRow("Id", 1)!, table.CreateIndexCursor().FindRowByEntry(2)! },
+            () => new List<Row> { table.CreateIndexCursor().FindRow("Id", 1)!, table.CreateIndexCursor().FindRowByKey(2)! },
         };
         foreach (var read in readers)
         {

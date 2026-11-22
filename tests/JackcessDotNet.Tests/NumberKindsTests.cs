@@ -174,10 +174,10 @@ public sealed class NumberKindsTests : IDisposable
         table.Insert(new Row { ["Id"] = 1, ["N"] = true });
         table.Insert(new Row { ["Id"] = 2, ["N"] = new DateTime(2020, 1, 2) });
         var cursor = table.CreateIndexCursor("ixN");
-        Assert.Equal(1, (int)cursor.FindRowByEntry(-1)!["Id"]!);
-        Assert.Equal(2, (int)cursor.FindRowByEntry(43832)!["Id"]!);
+        Assert.Equal(1, (int)cursor.FindRowByKey(-1)!["Id"]!);
+        Assert.Equal(2, (int)cursor.FindRowByKey(43832)!["Id"]!);
         // A range takes true for the number a row is written with for it; an equality takes a bool for no number.
-        Assert.Equal(new[] { 1 }, table.CreateIndexCursor("ixN", new IndexRange { StartEntry = new object[] { true }, EndEntry = new object[] { true } }).Select(r => (int)r["Id"]!));
-        Assert.Null(table.CreateIndexCursor("ixN").FindRowByEntry(true));
+        Assert.Equal(new[] { 1 }, table.CreateIndexCursor("ixN", new IndexRange { StartKey = new object[] { true }, EndKey = new object[] { true } }).Select(r => (int)r["Id"]!));
+        Assert.Null(table.CreateIndexCursor("ixN").FindRowByKey(true));
     }
 }

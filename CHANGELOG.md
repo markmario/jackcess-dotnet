@@ -21,6 +21,10 @@ changed since 1.2.2.
   1.2.2 had none of the three.
 - **Breaking: `PropertyMap.Property` is `Property`** (#34), a type of its own rather than one inside
   `PropertyMap`: what a table's, a column's or the database's `Properties` lists. Its members are as they were.
+- **Breaking: an index cursor finds rows by key, as `Table.FindRowByPrimaryKey` does** (#34).
+  `IndexCursor.FindRowByEntry`, which 1.2.2 had, is `FindRowByKey`; and, for code written against a 2.0.0
+  preview, `FindRowsByEntry` is `FindRowsByKey`, `FindClosestRowByEntry` is `FindClosestRowByKey`, and
+  `IndexRange.StartEntry` and `EndEntry` are `StartKey` and `EndKey`. Each lookup's parameter is `keyValues`.
 - **A `double` or a `float` given for a Text or a Memo column is written as Access writes it, on every target, and
   a lookup by one looks for that text** (#124). It is 15 significant digits for a double and 7 for a single, a half
   away from zero, written out below 10^15 (10^7) unless that takes more than 15 (7) places after the point, and
@@ -29,7 +33,7 @@ changed since 1.2.2.
   "0.00001", and "0" for -0.0, which Access writes "-0". Measured with ACE 16 (a Double or Single parameter, and
   `INSERT ... SELECT` from a Double or Single column) and DAO (`AddNew`, and a Text property), which write the same.
   The row, its index keys and a lookup of the column by a double take that text. **So a row an earlier version wrote
-  with a double is not found by it**: `Cursor.FindRow`, an index cursor's `FindRow` and `FindRowByEntry` given
+  with a double is not found by it**: `Cursor.FindRow`, an index cursor's `FindRow` and `FindRowByKey` given
   0.1 + 0.2 do not find `0.30000000000000004`, nor 1E-05 `1E-05`; such a value is found by its text
   ([Files written by earlier versions](docs/earlier-versions.md#other-things-an-earlier-version-wrote)). A Text
   property given a double or a float is written the same, in the invariant culture.
@@ -200,7 +204,7 @@ changed since 1.2.2.
     Currency for 2,005 of 3,619 doubles, 530 of 841 floats and 1,369 of 2,736 decimals on .NET Framework and .NET up
     to 10, and for 201, 107 and 1,369 of them on .NET 11, whose `Convert.ToDecimal` is exact. A file an earlier
     version wrote keeps the values it was written with: see "Breaking changes" below.
-  - **Ranges and `FindClosestRowByEntry`** keyed a `double` as a write did: a range of 0.03125 alone had the rows
+  - **Ranges and `FindClosestRowByKey`** keyed a `double` as a write did: a range of 0.03125 alone had the rows
     of 0.0313, where `=` found 0.0312's, and on .NET Framework and .NET up to 10 a bound past 15 significant digits
     was refused with `ArgumentException` or found no row. A bound no Currency holds - NaN, an infinity, a number past
     the range - is refused with `ArgumentException`, as Access refuses one past the range ("Overflow").
@@ -254,10 +258,10 @@ changed since 1.2.2.
   which is what Access's `INSERT` writes and this library writes: every entry ACE made over rows in its two forms,
   and in three more it reads a date from but does not write, is the key this library makes. Such an index is
   searched for a relationship's rows and a unique index's duplicates as an index of any other type is. A
-  `DateTime` looked for through one - `Table.FindRowByPrimaryKey`, an index cursor's `FindRow`, `FindRowByEntry`
-  and `FindRowsByEntry` - is looked for under the key of each form, so a row ACE stored in its second form is
-  found, as a cursor over the table finds it (it was not); in a range's entry and given to
-  `FindClosestRowByEntry` it is the first form's key, as Access's `BETWEEN` through an index has it. A `Joiner`
+  `DateTime` looked for through one - `Table.FindRowByPrimaryKey`, an index cursor's `FindRow`, `FindRowByKey`
+  and `FindRowsByKey` - is looked for under the key of each form, so a row ACE stored in its second form is
+  found, as a cursor over the table finds it (it was not); in a range's start or end key and given to
+  `FindClosestRowByKey` it is the first form's key, as Access's `BETWEEN` through an index has it. A `Joiner`
   joins a row read from a table on the bytes it stores. A row in the second form is deleted, or its date
   rewritten, for what a Date/Time row costs, its entry found under the key of its bytes: at 5,000 rows 6 pages
   where 86 were read, every leaf of the index. An entry a version of this library since 2930d3f made for a row in
@@ -594,7 +598,8 @@ changes with them.
 - **An index cursor is a cursor over its index** (#43, #29). `CreateIndexCursor()` throws
   `InvalidOperationException` for a table with no primary key (it made a cursor that read the table), and
   `IndexCursor.Index` is never null. Its rows come in the index's order (they came in the table's). Every
-  lookup goes through the cursor's own index: `FindRowByEntry` with more values than the index has columns
+  lookup goes through the cursor's own index: `FindRowByEntry` is `FindRowByKey`, which with more values than the
+  index has columns
   throws `ArgumentException` (it looked in another index, or in the table's leading columns), and with fewer
   finds the first row with those leading values. `FindRow(column, value)` is `Cursor`'s, finds the first row in
   the cursor's order, and throws `ArgumentException` for a column the table does not have (it returned null).
@@ -604,15 +609,15 @@ changes with them.
   and deleted while an index cursor goes through them: going one way it gives each row once, wherever updates
   move rows in its index meanwhile, and a cursor that turns back begins again from where it is. A row it went
   past without looking at it - outside its range, left out by a range's date, looked past by
-  `FindClosestRowByEntry` - is given once an update moves it ahead of the cursor. A savepoint keeps what the
+  `FindClosestRowByKey` - is given once an update moves it ahead of the cursor. A savepoint keeps what the
   cursor had come to, as rows move. What a cursor holds of that stays a few stretches of its index however many
   rows it moves, and is told only once a change is in the file for good: a batch taken back tells it nothing.
 - **A Date/Time is matched by the number a row stores when a number is given** (#35): a `double` finds the row
   that stores exactly it, and `Cursor.GetCurrentRowDateNumber` gives a row's. A `DateTime` - taken first to
   what it reads as once stored, to the millisecond, so that `DateTime.Now` finds the row written with it - finds
   every row that reads as it, through an index as by reading the table: a lookup through an index used to look
-  for `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. In a range's entry,
-  in whichever place, and given to `FindClosestRowByEntry`, a `DateTime` is put against a row by the date the
+  for `DateTime.ToOADate()` alone, and missed the dates Access computes to another number. In a range's key,
+  in whichever place, and given to `FindClosestRowByKey`, a `DateTime` is put against a row by the date the
   row's number reads as, a time of 30 December 1899 stored as a negative number among them; Access's `BETWEEN`
   goes by the numbers, as a `double` in a range does.
 - **Text is found as its column's sort order has it**, which is Access's `=`: without regard to case or to
@@ -687,7 +692,7 @@ changes with them.
     digits (98765432f, written as 98765430 and now 98765432).
 
   For a row written from such a number, a lookup by the number - `FindRowByPrimaryKey`, an index cursor's
-  `FindRowByEntry` and `FindRowsByEntry`, a cursor's `FindRow` - a range of it and `FindClosestRowByEntry` go by the
+  `FindRowByKey` and `FindRowsByKey`, a cursor's `FindRow` - a range of it and `FindClosestRowByKey` go by the
   Currency the number makes now, and come to the neighbouring row or to none. In a file an earlier version wrote,
   `FindRowByPrimaryKey(1.23465m)` finds the row of 1.2346, not the row of 1.2347 written for 1.23465m, and a
   `Delete` of what it finds deletes that row, and with a cascade its children; a range of 0.03125 alone, of 0.00015,
@@ -726,9 +731,9 @@ changes with them.
   from the table, the columns given a value since; `FindRow` and `FindNextRow`, by one column or by a
   pattern of several; `GetCurrentRowValue` for one column of the current row; `ColumnNames` to read some of the
   columns; `EnumerateBackward`; `IsBeforeFirst` and `IsAfterLast`; `GetSavepoint` and `RestoreSavepoint`.
-- **Index cursors** (#29): a cursor over the rows between two entries of an index
-  (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByEntry` for the first row at or after
-  an entry, and `FindRowsByEntry` for every row of an entry - for every type an index is kept for, and refused
+- **Index cursors** (#29): a cursor over the rows between two keys of an index
+  (`CreateIndexCursor(name, new IndexRange { ... })`), `FindClosestRowByKey` for the first row at or after
+  a key, and `FindRowsByKey` for every row of a key - for every type an index is kept for, and refused
   with `NotSupportedException` for a value no key is made for.
 - **Indexes built once, page after page** (#82). `Table.InsertRange` into a table with no rows, and the new
   `Table.BulkInsert`, put the rows in without index entries and then build each index from the table's rows:
@@ -824,7 +829,7 @@ changes with them.
   does not, until the middle came out equal to an end. Where something in the process had left the x87 unit computing
   with 64 bits of precision - ACE's OLE DB provider leaves the thread that ran a statement so (measured with Microsoft
   365's ACE, 32-bit: 53 bits before an INSERT, 64 after it) - the middle of two neighbouring doubles was a number
-  between them, and the halving never ended: FindRowByEntry, a range or a join on a Date/Time spun for ever. The
+  between them, and the halving never ended: FindRowByKey, a range or a join on a Date/Time spun for ever. The
   halving is now of the doubles' places in order, integers, and ends within 64 steps on every runtime. The tests run
   in a 32-bit process too (-p:TestX86=true, and a CI job).
 - **A Date/Time is read and written alike whatever the state of the x87 unit** (#100). `DateTime.FromOADate` and

@@ -124,9 +124,9 @@ public sealed class RowUpdateDeleteTests : IDisposable
             Assert.Contains("5|56|name 56|notes 56", lines);
             IndexChecks.AssertEveryIndexHoldsTheRows(db, "T", 199);
 
-            Assert.Equal(57, table.CreateIndexCursor("ByName").FindRowByEntry("renamed")!["B"]);
-            Assert.Null(table.CreateIndexCursor("ByName").FindRowByEntry("name 57"));
-            Assert.Null(table.CreateIndexCursor("ByName").FindRowByEntry("name 58"));
+            Assert.Equal(57, table.CreateIndexCursor("ByName").FindRowByKey("renamed")!["B"]);
+            Assert.Null(table.CreateIndexCursor("ByName").FindRowByKey("name 57"));
+            Assert.Null(table.CreateIndexCursor("ByName").FindRowByKey("name 58"));
         }
     }
 

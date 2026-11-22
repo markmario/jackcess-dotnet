@@ -248,7 +248,7 @@ public sealed class EngineReviewTests : IDisposable
                         else
                         {
                             scannedFor++;
-                            found = table.CreateIndexCursor(index.Name).FindRowByEntry(values!) is not null;
+                            found = table.CreateIndexCursor(index.Name).FindRowByKey(values!) is not null;
                         }
                         if (!found)
                             misses.Add($"{name}.{index.Name}: {string.Join(" | ", values.Select(v => v is string s ? string.Join(" ", s.Select(ch => ((int)ch).ToString("X4"))) : v!.ToString()))}");

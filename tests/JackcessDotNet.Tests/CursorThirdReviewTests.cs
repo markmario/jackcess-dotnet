@@ -236,17 +236,17 @@ public sealed class CursorThirdReviewTests : IDisposable
         void SetK(int id, int k) { var row = table.FindRowByPrimaryKey(id)!; row["K"] = k; table.Update(row); }
 
         // Row 1, before the range's start, moved into it ahead of the cursor: the cursor never came to it.
-        var cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 30 }, EndEntry = new object?[] { 60 } });
+        var cursor = table.CreateIndexCursor("ByK", new IndexRange { StartKey = new object?[] { 30 }, EndKey = new object?[] { 60 } });
         Assert.Equal(new[] { 3, 4, 1, 5, 6 }, Give(cursor, forward: true, () => SetK(1, 45)));
         SetK(1, 10);
 
         // Row 2, the start an exclusive range leaves out, moved to 55.
-        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 20 }, IsStartInclusive = false, EndEntry = new object?[] { 60 } });
+        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartKey = new object?[] { 20 }, IsStartInclusive = false, EndKey = new object?[] { 60 } });
         Assert.Equal(new[] { 3, 4, 5, 2, 6 }, Give(cursor, forward: true, () => SetK(2, 55)));
         SetK(2, 20);
 
         // Backwards: row 6, after the range's end, moved to 15.
-        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartEntry = new object?[] { 10 }, EndEntry = new object?[] { 40 } });
+        cursor = table.CreateIndexCursor("ByK", new IndexRange { StartKey = new object?[] { 10 }, EndKey = new object?[] { 40 } });
         cursor.MoveAfterLast();
         Assert.Equal(new[] { 4, 3, 2, 6, 1 }, Give(cursor, forward: false, () => SetK(6, 15)));
     }
@@ -267,18 +267,18 @@ public sealed class CursorThirdReviewTests : IDisposable
         void Set(int id, string column, object value) { var row = table.FindRowByPrimaryKey(id)!; row[column] = value; table.Update(row); }
 
         // After 1 January, exclusive: rows 1 and 2 are passed, not come to; row 1 moved to 3 January is given.
-        var cursor = table.CreateIndexCursor("ByD", new IndexRange { StartEntry = new object?[] { day }, IsStartInclusive = false });
+        var cursor = table.CreateIndexCursor("ByD", new IndexRange { StartKey = new object?[] { day }, IsStartInclusive = false });
         Assert.Equal(new[] { 3, 1, 4 }, Give(cursor, forward: true, () => Set(1, "D", day.AddDays(2))));
         Set(1, "D", day);
 
         // (1 January, 5) to (1 January, 9): row 1, (1 January, 3), is passed on the way to row 2, then moved to L 7.
-        cursor = table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = new object?[] { day, 5 }, EndEntry = new object?[] { day, 9 } });
+        cursor = table.CreateIndexCursor("ByDL", new IndexRange { StartKey = new object?[] { day, 5 }, EndKey = new object?[] { day, 9 } });
         Assert.Equal(new[] { 2, 1 }, Give(cursor, forward: true, () => Set(1, "L", 7)));
         Set(1, "L", 3);
 
         // The closest row to (1 January, 5) is row 2: the lookup looks past row 1, which an update then moves ahead.
         cursor = table.CreateIndexCursor("ByDL");
-        Assert.Equal(2, (int)cursor.FindClosestRowByEntry(day, 5)!["Id"]!);
+        Assert.Equal(2, (int)cursor.FindClosestRowByKey(day, 5)!["Id"]!);
         Set(1, "L", 7);
         var rest = new List<int>();
         while (cursor.MoveNext()) rest.Add(IdOf(cursor));
@@ -382,7 +382,7 @@ public sealed class CursorThirdReviewTests : IDisposable
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void MakeAndLetGo(Table table, int count)
     {
-        for (int i = 0; i < count; i++) table.CreateIndexCursor("ByK").FindRowByEntry(i % 100 + 1);
+        for (int i = 0; i < count; i++) table.CreateIndexCursor("ByK").FindRowByKey(i % 100 + 1);
     }
 
     // ── A cursor's update of a row it read ───────────────────────────────────

@@ -18,7 +18,7 @@ internal static class RowOperations
     {
         var cursor = table.CreateIndexCursor();
         cursor.ColumnNames = cursor.Index.Columns.Select(c => c.Column.Name).ToArray();
-        if (cursor.FindRowByEntry(primaryKeyValue) is null)
+        if (cursor.FindRowByKey(primaryKeyValue) is null)
             throw new InvalidOperationException($"No row with primary key '{primaryKeyValue}' found in table '{table.Name}'.");
         cursor.UpdateCurrentRow(newValues);
     }

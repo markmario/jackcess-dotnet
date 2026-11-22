@@ -57,10 +57,10 @@ public sealed class CursorReviewTests : IDisposable
 
         Assert.Equal(1, table.FindRowByPrimaryKey(now)?["Id"]);
         Assert.Equal(1, table.CreateCursor().FindRow("D", now)?["Id"]);
-        Assert.Equal(1, table.CreateIndexCursor().FindRowByEntry(now)?["Id"]);
+        Assert.Equal(1, table.CreateIndexCursor().FindRowByKey(now)?["Id"]);
         Assert.Equal(1, table.CreateIndexCursor("ById").FindRow("D", now)?["Id"]);
-        Assert.Equal(new[] { 1 }, table.CreateIndexCursor(new IndexRange { StartEntry = E(now), EndEntry = E(now) }).Select(r => (int)r["Id"]!));
-        Assert.Equal(1, table.CreateIndexCursor().FindClosestRowByEntry(now)?["Id"]);
+        Assert.Equal(new[] { 1 }, table.CreateIndexCursor(new IndexRange { StartKey = E(now), EndKey = E(now) }).Select(r => (int)r["Id"]!));
+        Assert.Equal(1, table.CreateIndexCursor().FindClosestRowByKey(now)?["Id"]);
     }
 
     [Fact]
@@ -79,16 +79,16 @@ public sealed class CursorReviewTests : IDisposable
         var table = Dated(db, false, (1, -657434.25, 1), (1, -657434.99998842593, 2));
         Assert.Equal(new DateTime(100, 1, 1, 6, 0, 0), table.FindRowByPrimaryKey(0)!["D"]);
         Assert.Equal(new DateTime(100, 1, 1, 23, 59, 59), table.FindRowByPrimaryKey(1)!["D"]);
-        Assert.Equal(1, table.CreateIndexCursor("ByD").FindRowByEntry(new DateTime(100, 1, 1, 6, 0, 0))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindRowByKey(new DateTime(100, 1, 1, 6, 0, 0))?["L"]);
         table.Insert(new Row { ["Id"] = 10, ["D"] = new DateTime(100, 1, 1, 12, 30, 0), ["L"] = 3 });
         table.Insert(new Row { ["Id"] = 11, ["D"] = new DateTime(9999, 12, 31, 23, 59, 59), ["L"] = 4 });
         Assert.Equal(new DateTime(100, 1, 1, 12, 30, 0), table.FindRowByPrimaryKey(10)!["D"]);
         var cursor = table.CreateIndexCursor();
-        Assert.NotNull(cursor.FindRowByEntry(10));
+        Assert.NotNull(cursor.FindRowByKey(10));
         Assert.Equal(new DateTime(100, 1, 1, 12, 30, 0).ToOADate(), cursor.GetCurrentRowDateNumber("D"));
         Assert.True(cursor.GetCurrentRowDateNumber("D") < -657434.5);
         Assert.Equal(new DateTime(9999, 12, 31, 23, 59, 59), table.FindRowByPrimaryKey(11)!["D"]);
-        Assert.Equal(new[] { 1, 2, 3 }, table.CreateIndexCursor("ByD", new IndexRange { EndEntry = E(new DateTime(100, 1, 2)) })
+        Assert.Equal(new[] { 1, 2, 3 }, table.CreateIndexCursor("ByD", new IndexRange { EndKey = E(new DateTime(100, 1, 2)) })
             .Select(r => (int)r["L"]!).OrderBy(l => l));
     }
 
@@ -536,7 +536,7 @@ public sealed class CursorReviewTests : IDisposable
             int id = (int)reader.Current!["Id"]!;
             given.Add(id);
             Assert.True(given.Count <= 30);
-            Assert.NotNull(writer.FindRowByEntry(reader.Current["K"]));
+            Assert.NotNull(writer.FindRowByKey(reader.Current["K"]));
             writer.UpdateCurrentRow(new Row { ["K"] = (int)reader.Current["K"]! + 1000 });
         }
         Assert.Equal(Enumerable.Range(1, 10), given);
@@ -637,23 +637,23 @@ public sealed class CursorReviewTests : IDisposable
         int[] Ls(IndexCursor cursor) => cursor.Select(r => (int)r["L"]!).OrderBy(l => l).ToArray();
 
         // (Date, Long): the rows whose date reads as it and whose Long is between.
-        Assert.Equal(new[] { 6, 7, 8 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 5), EndEntry = E(date, 9) })));
-        Assert.Equal(new[] { 6, 7 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 5), EndEntry = E(date, 8), IsEndInclusive = false })));
-        Assert.Equal(new[] { 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date, 6), IsStartInclusive = false, EndEntry = E(date) })));
-        Assert.Equal(new[] { 3, 4, 6, 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartEntry = E(date), EndEntry = E(date) })));
+        Assert.Equal(new[] { 6, 7, 8 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartKey = E(date, 5), EndKey = E(date, 9) })));
+        Assert.Equal(new[] { 6, 7 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartKey = E(date, 5), EndKey = E(date, 8), IsEndInclusive = false })));
+        Assert.Equal(new[] { 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartKey = E(date, 6), IsStartInclusive = false, EndKey = E(date) })));
+        Assert.Equal(new[] { 3, 4, 6, 7, 8, 11 }, Ls(table.CreateIndexCursor("ByDL", new IndexRange { StartKey = E(date), EndKey = E(date) })));
         // (Long, Date, Long).
-        Assert.Equal(new[] { 4, 7, 8 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartEntry = E(1, date, 4), EndEntry = E(1, date, 8) })));
-        Assert.Equal(new[] { 6, 11 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartEntry = E(2, date), EndEntry = E(2, date, 50) })));
+        Assert.Equal(new[] { 4, 7, 8 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartKey = E(1, date, 4), EndKey = E(1, date, 8) })));
+        Assert.Equal(new[] { 6, 11 }, Ls(table.CreateIndexCursor("ByGDL", new IndexRange { StartKey = E(2, date), EndKey = E(2, date, 50) })));
 
         // The closest row to an entry with the date in it: the row with those values when there is one.
-        Assert.Equal(7, table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 7)!["L"]);
-        Assert.Equal(8, table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 8)!["L"]);
-        Assert.Equal(11, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(2, date, 11)!["L"]);
-        Assert.Equal(4, table.CreateIndexCursor("ByGDL").FindClosestRowByEntry(1, date, 4)!["L"]);
+        Assert.Equal(7, table.CreateIndexCursor("ByDL").FindClosestRowByKey(date, 7)!["L"]);
+        Assert.Equal(8, table.CreateIndexCursor("ByDL").FindClosestRowByKey(date, 8)!["L"]);
+        Assert.Equal(11, table.CreateIndexCursor("ByGDL").FindClosestRowByKey(2, date, 11)!["L"]);
+        Assert.Equal(4, table.CreateIndexCursor("ByGDL").FindClosestRowByKey(1, date, 4)!["L"]);
         // None has (date, 5): the first row after it in the index's order, which is by the numbers stored first and
         // by L within one number. Ascending, (date, 7) stored as d1 comes before (date, 6) stored as d2, and is the
         // one; descending, d2 comes first, and (date, 6) is.
-        var closest = table.CreateIndexCursor("ByDL").FindClosestRowByEntry(date, 5)!;
+        var closest = table.CreateIndexCursor("ByDL").FindClosestRowByKey(date, 5)!;
         Assert.Equal(descending ? 6 : 1, closest["Id"]);
         Assert.Equal(descending ? 6 : 7, closest["L"]);
     }
@@ -669,22 +669,22 @@ public sealed class CursorReviewTests : IDisposable
 
         int[] Ls(IndexRange range) => table.CreateIndexCursor("ByD", range).Select(r => (int)r["L"]!).OrderBy(l => l).ToArray();
 
-        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartEntry = E(day.AddHours(6)), EndEntry = E(day.AddHours(6)) }));
-        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartEntry = E(day.AddHours(5)), EndEntry = E(day.AddHours(7)) }));
-        Assert.Equal(new[] { 1, 2, 3, 4 }, Ls(new IndexRange { StartEntry = E(day.AddHours(5)), EndEntry = E(day.AddHours(19)) }));
-        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartEntry = E(day.AddHours(12)), EndEntry = E(day.AddDays(3)) }));
-        Assert.Equal(new[] { 1, 2, 3, 4, 6 }, Ls(new IndexRange { StartEntry = E(day.AddDays(-3)), EndEntry = E(day.AddDays(1)) }));
-        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartEntry = E(day.AddHours(6)), IsStartInclusive = false, EndEntry = E(day.AddDays(2).AddHours(6)) }));
+        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartKey = E(day.AddHours(6)), EndKey = E(day.AddHours(6)) }));
+        Assert.Equal(new[] { 1, 2 }, Ls(new IndexRange { StartKey = E(day.AddHours(5)), EndKey = E(day.AddHours(7)) }));
+        Assert.Equal(new[] { 1, 2, 3, 4 }, Ls(new IndexRange { StartKey = E(day.AddHours(5)), EndKey = E(day.AddHours(19)) }));
+        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartKey = E(day.AddHours(12)), EndKey = E(day.AddDays(3)) }));
+        Assert.Equal(new[] { 1, 2, 3, 4, 6 }, Ls(new IndexRange { StartKey = E(day.AddDays(-3)), EndKey = E(day.AddDays(1)) }));
+        Assert.Equal(new[] { 3, 4, 5 }, Ls(new IndexRange { StartKey = E(day.AddHours(6)), IsStartInclusive = false, EndKey = E(day.AddDays(2).AddHours(6)) }));
 
         // A number is put against the numbers, as Access's BETWEEN puts a literal against them.
-        Assert.Equal(new[] { 2 }, Ls(new IndexRange { StartEntry = E(5 / 24.0), EndEntry = E(7 / 24.0) }));
+        Assert.Equal(new[] { 2 }, Ls(new IndexRange { StartKey = E(5 / 24.0), EndKey = E(7 / 24.0) }));
 
-        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(18))?["L"]);
-        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(6))?["L"]);
+        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByKey(day.AddHours(18))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByKey(day.AddHours(6))?["L"]);
         table.Delete(table.FindRowByPrimaryKey(1)!);
         table.Delete(table.FindRowByPrimaryKey(3)!);
-        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(6))?["L"]);
-        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByEntry(day.AddHours(5))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByKey(day.AddHours(6))?["L"]);
+        Assert.Equal(1, table.CreateIndexCursor("ByD").FindClosestRowByKey(day.AddHours(5))?["L"]);
     }
 
     [Fact]
@@ -700,14 +700,14 @@ public sealed class CursorReviewTests : IDisposable
 
         int[] Ls(IndexRange range) => table.CreateIndexCursor("ByD", range).Select(r => (int)r["L"]!).ToArray();
 
-        Assert.Equal(new[] { 1, 5 }, Ls(new IndexRange { StartEntry = E(dec28.AddHours(12)), EndEntry = E(dec29.AddHours(3)) }));
-        Assert.Equal(new[] { 4, 5 }, Ls(new IndexRange { StartEntry = E(dec29), EndEntry = E(dec29.AddHours(12)) }));
-        Assert.Equal(new[] { 3, 4 }, Ls(new IndexRange { StartEntry = E(dec29.AddHours(6)), EndEntry = E(dec29.AddHours(18)) }));
+        Assert.Equal(new[] { 1, 5 }, Ls(new IndexRange { StartKey = E(dec28.AddHours(12)), EndKey = E(dec29.AddHours(3)) }));
+        Assert.Equal(new[] { 4, 5 }, Ls(new IndexRange { StartKey = E(dec29), EndKey = E(dec29.AddHours(12)) }));
+        Assert.Equal(new[] { 3, 4 }, Ls(new IndexRange { StartKey = E(dec29.AddHours(6)), EndKey = E(dec29.AddHours(18)) }));
         // Numbers, as Access's BETWEEN #12/28/1899 12:00# AND #12/29/1899 03:00# takes them.
-        Assert.Equal(new[] { 2, 3, 4 }, Ls(new IndexRange { StartEntry = E(-2.5), EndEntry = E(-1.125) }));
+        Assert.Equal(new[] { 2, 3, 4 }, Ls(new IndexRange { StartKey = E(-2.5), EndKey = E(-1.125) }));
 
-        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByEntry(dec29.AddHours(6))!["L"]);
+        Assert.Equal(4, table.CreateIndexCursor("ByD").FindClosestRowByKey(dec29.AddHours(6))!["L"]);
         // None at five: the first after it in the index's order, which is six in the evening.
-        Assert.Equal(3, table.CreateIndexCursor("ByD").FindClosestRowByEntry(dec29.AddHours(5))!["L"]);
+        Assert.Equal(3, table.CreateIndexCursor("ByD").FindClosestRowByKey(dec29.AddHours(5))!["L"]);
     }
 }

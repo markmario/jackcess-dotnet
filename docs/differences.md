@@ -132,6 +132,10 @@ Where Access and Jackcess differ, Access is followed. Each of these is described
   in the table ([CHANGELOG](../CHANGELOG.md#added)).
 - **Cursors** have no column matchers of a caller's own (Jackcess's `ColumnMatcher`), and do not find a null by
   looking for null, where Jackcess finds one ([What cursors do not do](cursors-and-rows.md#what-cursors-do-not-do)).
+  An index cursor finds rows by key, the word `Table.FindRowByPrimaryKey` uses: Jackcess's `findRowByEntry`,
+  `findClosestRowByEntry` and `newEntryIterable` are `IndexCursor.FindRowByKey`, `FindClosestRowByKey` and
+  `FindRowsByKey`, and the start and end entries `CursorBuilder` takes are an `IndexRange`'s `StartKey` and `EndKey`
+  ([Index cursors and joins](cursors-and-rows.md#index-cursors-and-joins)).
 - **A file open to be written** is kept from other writers by the file's sharing, where Java Jackcess takes no lock
   and says a file must not be written by two programs at once; both open a file read-only when asked, and Java
   Jackcess also opens one it cannot write to read-only without being asked, which this library leaves to the

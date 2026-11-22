@@ -105,7 +105,7 @@ public sealed class LegacyLongKeyTests : IDisposable
         Assert.Equal(24, coded.FindRowByPrimaryKey(CutAlike2)?["N"]);
         Assert.Equal(25, coded.FindRowByPrimaryKey(LongAe)?["N"]);
         Assert.Equal(7, coded.FindRowByPrimaryKey("short 07")?["N"]);
-        Assert.Equal(5, db.GetTable("Paired").CreateIndexCursor().FindRowByEntry(PairA(5), PairB(5))?["N"]);
+        Assert.Equal(5, db.GetTable("Paired").CreateIndexCursor().FindRowByKey(PairA(5), PairB(5))?["N"]);
     }
 
     // A deleted row's whole entry goes with it: the index holds the rows left and nothing else. A delete that

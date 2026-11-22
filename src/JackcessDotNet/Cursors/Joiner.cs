@@ -11,7 +11,7 @@ namespace JackcessDotNet;
 ///       foreach (Row order in ordersOf.FindRows(customer))
 ///           Use(customer, order);
 /// </code>
-/// Each lookup goes through the index (<see cref="IndexCursor.FindRowsByEntry"/>), so it costs a few pages
+/// Each lookup goes through the index (<see cref="IndexCursor.FindRowsByKey"/>), so it costs a few pages
 /// however many rows the table has, and values are matched as an index cursor matches them: a null joins no
 /// row. A Date/Time of a row that was read from the table is joined on the number the row stores, as Access
 /// joins it, and a Date/Time Extended joined to one on the bytes the row stores, as an Access relationship joins
@@ -101,7 +101,7 @@ public sealed class Joiner
     /// <exception cref="ArgumentNullException"><paramref name="fromRow"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="fromRow"/> has no entry for one of <see cref="FromColumnNames"/>.</exception>
     public Row? FindFirstRow(IReadOnlyDictionary<string, object?> fromRow)
-        => ToTable.CreateIndexCursor(ToIndex.Name).FindRowByEntry(ValuesOf(fromRow));
+        => ToTable.CreateIndexCursor(ToIndex.Name).FindRowByKey(ValuesOf(fromRow));
 
     /// <summary>
     /// The rows of <see cref="ToTable"/> that go with <paramref name="fromRow"/>, in its index's order. They are
@@ -117,7 +117,7 @@ public sealed class Joiner
 
         IEnumerable<Row> Rows()
         {
-            foreach (var row in ToTable.CreateIndexCursor(ToIndex.Name).FindRowsByEntry(values))
+            foreach (var row in ToTable.CreateIndexCursor(ToIndex.Name).FindRowsByKey(values))
                 yield return row;
         }
     }
