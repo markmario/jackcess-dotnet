@@ -196,93 +196,93 @@ $pieces = @{
     )
 }
 
-# Seconds each piece took in a process of its own on a windows-latest runner, two at a time, for the samples (run
-# 44844453781) and for the full sweeps (the mean of runs 44846769290 and 44847393534), from the line "Seconds each
-# process took" of each shard's log. The first lines of each are classes with no sweep, timed in each mode's runs.
-# TextMarkerInAccessTests, the last line of each, is the mean of five pull requests' runs, 44860480279 to 44865291603,
-# and of five runs on main, 44860125207 to 44866192633 (2026-11-21). NumberTextInAccessTests, after it, is as it ran on
-# a developer's machine, until CI's runs time it.
+# Seconds each piece took in a process of its own on a windows-latest runner, from the line "Seconds each process took"
+# of each shard's log, the median of the runs of each kind since one DAO engine serves a whole test process (#151,
+# 2026-11-21 and 22): for the samples, two at a time, eight pull requests' runs, 44975717930 to 44995058738; for the
+# full sweeps, two at a time, five pushes to main, 44914652046 to 44995660449, and the nightly run 44952727300.
 $table = @{
     samples = @{
-        BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 13; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 61
-        FileSharingInAccessTests = 22
-        ImporterInAccessTests = 14; LookupsInAccessTests = 5; ProtectedFilesInAccessTests = 55
-        RoomReuseInAccessTests = 64
-        AccdbFormatsInAccessTests = 33; Access97InAccessTests = 1; CorpusInAccessTests = 10; 'CorpusInAccessTests.ReadsAccdb' = 157
-        'CorpusInAccessTests.ReadsMdb' = 57; 'CorpusInAccessTests.the_engine_reads-others' = 7; CursorsAndRowsInAccessTests = 36
-        'CursorsAndRowsInAccessTests.TAccessKeyed' = 98; 'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 78
-        'CursorsAndRowsInAccessTests.TEngineKeyed' = 100; 'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 70
-        'CursorsAndRowsInAccessTests.UAccess' = 48; 'CursorsAndRowsInAccessTests.UEngine' = 30; CutKeysInAccessTests = 14
-        DivergentKeysInAccessTests = 2; EarlierEngineFilesInAccessTests = 16; EngineIndexesInAccessTests = 73
-        'EngineIndexesInAccessTests.EveryType' = 58; EngineTablesInAccessTests = 46; ForeignKeysInAccessTests = 66
-        'ForeignKeysInAccessTests.Cascades' = 68; 'ForeignKeysInAccessTests.Keys' = 90; LongValuesInAccessTests = 6
-        'LongValuesInAccessTests.Accdb' = 14; 'LongValuesInAccessTests.Mdb' = 13; OverflowRowsInAccessTests = 13
-        PropertiesInAccessTests = 32; RowLayoutInAccessTests = 21; 'RowLayoutInAccessTests.ReplicationIdIndex' = 7
-        SchemaChangesInAccessTests = 93; 'SchemaChangesInAccessTests.Boundaries' = 39; 'SchemaChangesInAccessTests.ColumnDrops' = 44
-        'SchemaChangesInAccessTests.Drops' = 80; 'SchemaChangesInAccessTests.RelationshipDrops' = 23
-        'SchemaChangesInAccessTests.Relationships' = 73; 'SchemaChangesInAccessTests.Renames' = 105; SortOrdersInAccessTests = 7
-        'SortOrdersInAccessTests.Seeks' = 31; 'SortOrdersInAccessTests.WalkArabic' = 7; 'SortOrdersInAccessTests.WalkCyrillic' = 8
-        'SortOrdersInAccessTests.WalkDutch' = 9; 'SortOrdersInAccessTests.WalkEnglishUK' = 6; 'SortOrdersInAccessTests.WalkGerman' = 9
-        'SortOrdersInAccessTests.WalkGreek' = 9; 'SortOrdersInAccessTests.WalkHebrew' = 5; 'SortOrdersInAccessTests.WalkItalian' = 9
-        'SortOrdersInAccessTests.WalkPortuguese' = 7
-        BulkIndexesInAccessTests = 60; MemoStorageInAccessTests = 12; 'SchemaChangesInAccessTests.Names' = 13; ValuesAndEntriesInAccessTests = 14
-        TextMarkerInAccessTests = 23
-        NumberTextInAccessTests = 8
+        AccdbFormatsInAccessTests = 17; Access97InAccessTests = 2; BinaryLengthInAccessTests = 3
+        BulkIndexesInAccessTests = 80; CorpusInAccessTests = 11; 'CorpusInAccessTests.ReadsAccdb' = 20
+        'CorpusInAccessTests.ReadsMdb' = 11; 'CorpusInAccessTests.the_engine_reads-others' = 3
+        CurrencyInAccessTests = 8; CursorsAndRowsInAccessTests = 17; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 11
+        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 9; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 33
+        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 20; 'CursorsAndRowsInAccessTests.UAccess' = 8
+        'CursorsAndRowsInAccessTests.UEngine' = 15; CutKeysInAccessTests = 8; DivergentKeysInAccessTests = 2
+        EarlierEngineFilesInAccessTests = 4; EngineIndexesInAccessTests = 30
+        'EngineIndexesInAccessTests.EveryType' = 22; EngineTablesInAccessTests = 33
+        ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 8; FileSharingInAccessTests = 11
+        ForeignKeysInAccessTests = 11; 'ForeignKeysInAccessTests.Cascades' = 15; 'ForeignKeysInAccessTests.Keys' = 15
+        ImporterInAccessTests = 5; LongValuesInAccessTests = 3; 'LongValuesInAccessTests.Accdb' = 4
+        'LongValuesInAccessTests.Mdb' = 6; LookupsInAccessTests = 2; MemoStorageInAccessTests = 4
+        NumberTextInAccessTests = 8; OverflowRowsInAccessTests = 7; PropertiesInAccessTests = 9
+        ProtectedFilesInAccessTests = 39; RoomReuseInAccessTests = 11; RowLayoutInAccessTests = 7
+        'RowLayoutInAccessTests.ReplicationIdIndex' = 4; SchemaChangesInAccessTests = 20
+        'SchemaChangesInAccessTests.Boundaries' = 12; 'SchemaChangesInAccessTests.ColumnDrops' = 8
+        'SchemaChangesInAccessTests.Drops' = 17; 'SchemaChangesInAccessTests.Names' = 7
+        'SchemaChangesInAccessTests.RelationshipDrops' = 4; 'SchemaChangesInAccessTests.Relationships' = 10
+        'SchemaChangesInAccessTests.Renames' = 17; SortOrdersInAccessTests = 3; 'SortOrdersInAccessTests.Seeks' = 35
+        'SortOrdersInAccessTests.WalkArabic' = 5; 'SortOrdersInAccessTests.WalkCyrillic' = 9
+        'SortOrdersInAccessTests.WalkDutch' = 6; 'SortOrdersInAccessTests.WalkEnglishUK' = 5
+        'SortOrdersInAccessTests.WalkGerman' = 4; 'SortOrdersInAccessTests.WalkGreek' = 9
+        'SortOrdersInAccessTests.WalkHebrew' = 9; 'SortOrdersInAccessTests.WalkItalian' = 10
+        'SortOrdersInAccessTests.WalkPortuguese' = 9; TextMarkerInAccessTests = 4; ValuesAndEntriesInAccessTests = 4
     }
     full = @{
-        BinaryLengthInAccessTests = 8; CurrencyInAccessTests = 16; ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 66
-        FileSharingInAccessTests = 24
-        ImporterInAccessTests = 20; LookupsInAccessTests = 5; ProtectedFilesInAccessTests = 56
-        RoomReuseInAccessTests = 62
-        AccdbFormatsInAccessTests = 50; Access97InAccessTests = 2; CorpusInAccessTests = 15; 'CorpusInAccessTests.ReadsAccdb' = 123
-        'CorpusInAccessTests.ReadsMdb' = 52; 'CorpusInAccessTests.the_engine_reads-others' = 6; CursorsAndRowsInAccessTests = 24
-        'CursorsAndRowsInAccessTests.TAccessKeyed' = 270; 'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 194
-        'CursorsAndRowsInAccessTests.TEngineKeyed' = 268; 'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 154
-        'CursorsAndRowsInAccessTests.UAccess' = 122; 'CursorsAndRowsInAccessTests.UEngine' = 102; CutKeysInAccessTests = 24
-        DivergentKeysInAccessTests = 2; EarlierEngineFilesInAccessTests = 12; EngineIndexesInAccessTests = 56
-        'EngineIndexesInAccessTests.EveryType' = 56; EngineTablesInAccessTests = 42; ForeignKeysInAccessTests = 85
-        'ForeignKeysInAccessTests.Cascades' = 82; 'ForeignKeysInAccessTests.Keys' = 83; LongValuesInAccessTests = 6
-        'LongValuesInAccessTests.Accdb' = 10; 'LongValuesInAccessTests.Mdb' = 10; OverflowRowsInAccessTests = 12
-        PropertiesInAccessTests = 34; RowLayoutInAccessTests = 21; 'RowLayoutInAccessTests.ReplicationIdIndex' = 5
-        SchemaChangesInAccessTests = 118; 'SchemaChangesInAccessTests.Boundaries' = 63; 'SchemaChangesInAccessTests.ColumnDrops' = 52
-        'SchemaChangesInAccessTests.Drops' = 86; 'SchemaChangesInAccessTests.RelationshipDrops' = 98
-        'SchemaChangesInAccessTests.Relationships' = 152; 'SchemaChangesInAccessTests.Renames' = 90; SortOrdersInAccessTests = 9
-        'SortOrdersInAccessTests.Seeks' = 87; 'SortOrdersInAccessTests.WalkArabic' = 126; 'SortOrdersInAccessTests.WalkCyrillic' = 108
-        'SortOrdersInAccessTests.WalkDutch' = 109; 'SortOrdersInAccessTests.WalkEnglishUK' = 68; 'SortOrdersInAccessTests.WalkGerman' = 78
-        'SortOrdersInAccessTests.WalkGreek' = 92; 'SortOrdersInAccessTests.WalkHebrew' = 56; 'SortOrdersInAccessTests.WalkItalian' = 78
-        'SortOrdersInAccessTests.WalkPortuguese' = 94
-        BulkIndexesInAccessTests = 152; MemoStorageInAccessTests = 8; 'SchemaChangesInAccessTests.Names' = 15; ValuesAndEntriesInAccessTests = 10
-        TextMarkerInAccessTests = 25
-        NumberTextInAccessTests = 60
+        AccdbFormatsInAccessTests = 30; Access97InAccessTests = 2; BinaryLengthInAccessTests = 3
+        BulkIndexesInAccessTests = 58; CorpusInAccessTests = 8; 'CorpusInAccessTests.ReadsAccdb' = 22
+        'CorpusInAccessTests.ReadsMdb' = 9; 'CorpusInAccessTests.the_engine_reads-others' = 2
+        CurrencyInAccessTests = 6; CursorsAndRowsInAccessTests = 29; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 22
+        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 12; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 94
+        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 58; 'CursorsAndRowsInAccessTests.UAccess' = 9
+        'CursorsAndRowsInAccessTests.UEngine' = 29; CutKeysInAccessTests = 6; DivergentKeysInAccessTests = 2
+        EarlierEngineFilesInAccessTests = 6; EngineIndexesInAccessTests = 49
+        'EngineIndexesInAccessTests.EveryType' = 28; EngineTablesInAccessTests = 34
+        ExtendedDateLayoutsInAccessTests = 2; FailedWritesInAccessTests = 8; FileSharingInAccessTests = 11
+        ForeignKeysInAccessTests = 17; 'ForeignKeysInAccessTests.Cascades' = 14; 'ForeignKeysInAccessTests.Keys' = 11
+        ImporterInAccessTests = 7; LongValuesInAccessTests = 5; 'LongValuesInAccessTests.Accdb' = 4
+        'LongValuesInAccessTests.Mdb' = 5; LookupsInAccessTests = 2; MemoStorageInAccessTests = 4
+        NumberTextInAccessTests = 194; OverflowRowsInAccessTests = 8; PropertiesInAccessTests = 8
+        ProtectedFilesInAccessTests = 51; RoomReuseInAccessTests = 23; RowLayoutInAccessTests = 6
+        'RowLayoutInAccessTests.ReplicationIdIndex' = 4; SchemaChangesInAccessTests = 20
+        'SchemaChangesInAccessTests.Boundaries' = 116; 'SchemaChangesInAccessTests.ColumnDrops' = 9
+        'SchemaChangesInAccessTests.Drops' = 24; 'SchemaChangesInAccessTests.Names' = 5
+        'SchemaChangesInAccessTests.RelationshipDrops' = 10; 'SchemaChangesInAccessTests.Relationships' = 16
+        'SchemaChangesInAccessTests.Renames' = 11; SortOrdersInAccessTests = 4; 'SortOrdersInAccessTests.Seeks' = 95
+        'SortOrdersInAccessTests.WalkArabic' = 81; 'SortOrdersInAccessTests.WalkCyrillic' = 154
+        'SortOrdersInAccessTests.WalkDutch' = 208; 'SortOrdersInAccessTests.WalkEnglishUK' = 59
+        'SortOrdersInAccessTests.WalkGerman' = 139; 'SortOrdersInAccessTests.WalkGreek' = 158
+        'SortOrdersInAccessTests.WalkHebrew' = 57; 'SortOrdersInAccessTests.WalkItalian' = 126
+        'SortOrdersInAccessTests.WalkPortuguese' = 208; TextMarkerInAccessTests = 4; ValuesAndEntriesInAccessTests = 5
     }
     # The samples in a 32-bit process (-X86), three processes at a time, against the redistributable's 32-bit ACE 16:
-    # run 44877333525. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests, the Seeks).
+    # the nightly run 44952727300. Some pieces take three times their 64-bit time there (BulkIndexesInAccessTests).
     x86 = @{
-        AccdbFormatsInAccessTests = 60; Access97InAccessTests = 2; BinaryLengthInAccessTests = 9
-        BulkIndexesInAccessTests = 196; CorpusInAccessTests = 13; 'CorpusInAccessTests.ReadsAccdb' = 31
-        'CorpusInAccessTests.ReadsMdb' = 16; 'CorpusInAccessTests.the_engine_reads-others' = 5; CurrencyInAccessTests = 12
-        CursorsAndRowsInAccessTests = 36; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 71
-        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 35; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 72
-        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 48; 'CursorsAndRowsInAccessTests.UAccess' = 34
-        'CursorsAndRowsInAccessTests.UEngine' = 32; CutKeysInAccessTests = 22; DivergentKeysInAccessTests = 2
-        EarlierEngineFilesInAccessTests = 11; EngineIndexesInAccessTests = 70; 'EngineIndexesInAccessTests.EveryType' = 57
-        EngineTablesInAccessTests = 45; ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 30
-        FileSharingInAccessTests = 25; ForeignKeysInAccessTests = 100; 'ForeignKeysInAccessTests.Cascades' = 86
-        'ForeignKeysInAccessTests.Keys' = 105; ImporterInAccessTests = 12; LongValuesInAccessTests = 8
-        'LongValuesInAccessTests.Accdb' = 14; 'LongValuesInAccessTests.Mdb' = 12; LookupsInAccessTests = 4
-        MemoStorageInAccessTests = 9; OverflowRowsInAccessTests = 16; PropertiesInAccessTests = 40
-        ProtectedFilesInAccessTests = 54; RoomReuseInAccessTests = 64; RowLayoutInAccessTests = 22
-        'RowLayoutInAccessTests.ReplicationIdIndex' = 6; SchemaChangesInAccessTests = 95
-        'SchemaChangesInAccessTests.Boundaries' = 41; 'SchemaChangesInAccessTests.ColumnDrops' = 56
-        'SchemaChangesInAccessTests.Drops' = 100; 'SchemaChangesInAccessTests.Names' = 18
-        'SchemaChangesInAccessTests.RelationshipDrops' = 33; 'SchemaChangesInAccessTests.Relationships' = 79
-        'SchemaChangesInAccessTests.Renames' = 110; SortOrdersInAccessTests = 5; 'SortOrdersInAccessTests.Seeks' = 108
-        'SortOrdersInAccessTests.WalkArabic' = 9; 'SortOrdersInAccessTests.WalkCyrillic' = 9
-        'SortOrdersInAccessTests.WalkDutch' = 12; 'SortOrdersInAccessTests.WalkEnglishUK' = 23
-        'SortOrdersInAccessTests.WalkGerman' = 8; 'SortOrdersInAccessTests.WalkGreek' = 10
-        'SortOrdersInAccessTests.WalkHebrew' = 20; 'SortOrdersInAccessTests.WalkItalian' = 11
-        'SortOrdersInAccessTests.WalkPortuguese' = 24; TextMarkerInAccessTests = 36; ValuesAndEntriesInAccessTests = 5
-        NumberTextInAccessTests = 12
+        AccdbFormatsInAccessTests = 44; Access97InAccessTests = 2; BinaryLengthInAccessTests = 3
+        BulkIndexesInAccessTests = 230; CorpusInAccessTests = 14; 'CorpusInAccessTests.ReadsAccdb' = 24
+        'CorpusInAccessTests.ReadsMdb' = 17; 'CorpusInAccessTests.the_engine_reads-others' = 2
+        CurrencyInAccessTests = 6; CursorsAndRowsInAccessTests = 32; 'CursorsAndRowsInAccessTests.TAccessKeyed' = 20
+        'CursorsAndRowsInAccessTests.TAccessUnkeyed' = 12; 'CursorsAndRowsInAccessTests.TEngineKeyed' = 33
+        'CursorsAndRowsInAccessTests.TEngineUnkeyed' = 26; 'CursorsAndRowsInAccessTests.UAccess' = 12
+        'CursorsAndRowsInAccessTests.UEngine' = 15; CutKeysInAccessTests = 8; DivergentKeysInAccessTests = 2
+        EarlierEngineFilesInAccessTests = 4; EngineIndexesInAccessTests = 70
+        'EngineIndexesInAccessTests.EveryType' = 23; EngineTablesInAccessTests = 49
+        ExtendedDateLayoutsInAccessTests = 1; FailedWritesInAccessTests = 9; FileSharingInAccessTests = 15
+        ForeignKeysInAccessTests = 17; 'ForeignKeysInAccessTests.Cascades' = 20; 'ForeignKeysInAccessTests.Keys' = 21
+        ImporterInAccessTests = 7; LongValuesInAccessTests = 3; 'LongValuesInAccessTests.Accdb' = 5
+        'LongValuesInAccessTests.Mdb' = 4; LookupsInAccessTests = 3; MemoStorageInAccessTests = 4
+        NumberTextInAccessTests = 14; OverflowRowsInAccessTests = 6; PropertiesInAccessTests = 8
+        ProtectedFilesInAccessTests = 47; RoomReuseInAccessTests = 18; RowLayoutInAccessTests = 4
+        'RowLayoutInAccessTests.ReplicationIdIndex' = 5; SchemaChangesInAccessTests = 23
+        'SchemaChangesInAccessTests.Boundaries' = 69; 'SchemaChangesInAccessTests.ColumnDrops' = 6
+        'SchemaChangesInAccessTests.Drops' = 26; 'SchemaChangesInAccessTests.Names' = 5
+        'SchemaChangesInAccessTests.RelationshipDrops' = 6; 'SchemaChangesInAccessTests.Relationships' = 13
+        'SchemaChangesInAccessTests.Renames' = 24; SortOrdersInAccessTests = 4; 'SortOrdersInAccessTests.Seeks' = 90
+        'SortOrdersInAccessTests.WalkArabic' = 17; 'SortOrdersInAccessTests.WalkCyrillic' = 9
+        'SortOrdersInAccessTests.WalkDutch' = 19; 'SortOrdersInAccessTests.WalkEnglishUK' = 15
+        'SortOrdersInAccessTests.WalkGerman' = 11; 'SortOrdersInAccessTests.WalkGreek' = 10
+        'SortOrdersInAccessTests.WalkHebrew' = 17; 'SortOrdersInAccessTests.WalkItalian' = 16
+        'SortOrdersInAccessTests.WalkPortuguese' = 18; TextMarkerInAccessTests = 3; ValuesAndEntriesInAccessTests = 4
     }
 }
 
