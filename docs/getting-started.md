@@ -58,14 +58,20 @@ What a build from source writes, and the version it has: [Building](building-and
   when its header does not say, `ReadOnly`, which opens the file only to read it, `KeepWritersOut`, which, with
   `ReadOnly`, keeps every writer out while the file is open, and `MaxFileLength`, a limit below 2 GB on how long
   the file may grow ([How a file grows](storage.md#how-a-file-grows)).
+- A database is opened, and made, from a path: not from a `Stream` or a file held in memory ([#32]).
 - `Database.Create(path)` makes an Access 2000-2003 `.mdb`, and `Database.Create(path, format)` an `.accdb` of
   Access 2007's, 2010's, 2016's or 2019's format ([Creating a file](file-formats.md#creating-a-file)).
 - `Database.IsReadOnly` says whether a database can be written to: one opened `ReadOnly` cannot, and an Access 97
   file, for one, is only read ([Access 97 files are read-only](file-formats.md#access-97-files-are-read-only)).
 - `db.GetTable(name)` gives a table. `Database.TryGetTable` asks for a table without an exception when there is
-  none.
+  none. `db.GetTableNames()` names the database's own tables.
+- A linked table - one Access links to a table in another database or an ODBC source - is not followed ([#28]): it
+  is not among `GetTableNames`, and `GetTable` does not find it.
 - While a `Database` has a file open to be written, no other program or `Database` writes to it, and a file another
   program has open for writing is refused with `DatabaseInUseException`; a file opened `ReadOnly` opens beside
   Access: [Sharing a file with Access](sharing.md).
 
 [Back to contents](README.md)
+
+[#28]: https://github.com/markmario/jackcess-dotnet/issues/28
+[#32]: https://github.com/markmario/jackcess-dotnet/issues/32

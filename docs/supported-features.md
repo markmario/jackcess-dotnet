@@ -91,6 +91,12 @@ it does not do. Work not yet done is tracked in this repository's
 - An AutoNumber column is not added to a table that has rows, and a table's last column is not dropped:
   [Tables and schema changes](tables-and-schema.md).
 - A column's default value is not filled in: [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
+- A column's or a table's validation rule is not applied: a row that breaks it is written ([#25]):
+  [Required and Allow Zero Length](properties.md#required-and-allow-zero-length).
+- A linked table is not followed: it is not among `Database.GetTableNames`, and `GetTable` does not find it
+  ([#28]): [Opening and creating a database](getting-started.md#opening-and-creating-a-database).
+- A database is not opened or made from a `Stream` or a file held in memory, only from a path ([#32]):
+  [Opening and creating a database](getting-started.md#opening-and-creating-a-database).
 - Column matchers of a caller's own, and looking for a null: [What cursors do not do](cursors-and-rows.md#what-cursors-do-not-do).
 - Access's lock file (`.ldb`, `.laccdb`) is neither made nor read: a file is kept from other writers by its own
   sharing, and a reading beside a writer is not kept from the writer's changes
@@ -99,4 +105,7 @@ it does not do. Work not yet done is tracked in this repository's
 [Back to contents](README.md)
 
 [#24]: https://github.com/markmario/jackcess-dotnet/issues/24
+[#25]: https://github.com/markmario/jackcess-dotnet/issues/25
 [#26]: https://github.com/markmario/jackcess-dotnet/issues/26
+[#28]: https://github.com/markmario/jackcess-dotnet/issues/28
+[#32]: https://github.com/markmario/jackcess-dotnet/issues/32
