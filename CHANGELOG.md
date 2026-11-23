@@ -6,10 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0]
+
 The first release of this repository as a package of its own, `Jackcess.Net`. Everything below
 1.2.2 is the history of [`mehran-ghanizadeh/jackcess-dotnet`](https://github.com/mehran-ghanizadeh/jackcess-dotnet),
-where this started; nothing from it was released under this ID. It will be 2.0.0, because the public API has
-changed since 1.2.2.
+where this started; nothing from it was released under this ID. It is 2.0.0, because the public API has changed
+since 1.2.2.
 
 ### Changed
 
